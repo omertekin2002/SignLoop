@@ -22,9 +22,9 @@ export default {
         sm: ["0.9375rem", { lineHeight: "1.375rem" }],
       },
       fontFamily: {
-        sans: ['"EB Garamond"', "Garamond", "Georgia", "serif"],
-        serif: ['"EB Garamond"', "Garamond", "Georgia", "serif"],
-        mono: ['"EB Garamond"', "Garamond", "Georgia", "serif"],
+        sans: ["var(--font-eb-garamond)", '"EB Garamond"', "Garamond", "Georgia", "serif"],
+        serif: ["var(--font-eb-garamond)", '"EB Garamond"', "Garamond", "Georgia", "serif"],
+        mono: ["var(--font-eb-garamond)", '"EB Garamond"', "Garamond", "Georgia", "serif"],
       },
       colors: {
         border: "hsl(var(--border))",
