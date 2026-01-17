@@ -2739,3 +2739,165 @@ thinking
 **Preparing final commit**
 
 Staging all three modified files again with a full add to ensure second commit includes all changes before committing.
+exec
+/bin/zsh -lc 'cd /Users/omertekin/Desktop/Grind/SignLoop && git add -A' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 5c07f8ac1bf0b4a2589cd91637d1e75ebb001850..9c20430f77b252d359346c8ab516e84377792b1f
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -44,9 +44,9 @@
+   - apps/web/package.json
+   - package-lock.json
+   - package.json
+-- What was implemented
++- What was implemented: Added the contract metadata migration, DB helper, and db:migrate script using @vercel/postgres.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Use @vercel/postgres sql tag for parameterized queries and createClient for migrations.
++  - Gotchas encountered: `npm test` is undefined and Next build warns about multiple lockfiles.
++  - Useful context: Migration enables pgcrypto for UUIDs and indexes user_id/project_id.
+ ---
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+thinking
+**Committing with concise conventional message**
+exec
+/bin/zsh -lc 'cd /Users/omertekin/Desktop/Grind/SignLoop && git commit -m "chore(ralph): update progress logs"' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+[main 07fa03a] chore(ralph): update progress logs
+ 3 files changed, 765 insertions(+)
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 5c07f8ac1bf0b4a2589cd91637d1e75ebb001850..9c20430f77b252d359346c8ab516e84377792b1f
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -44,9 +44,9 @@
+   - apps/web/package.json
+   - package-lock.json
+   - package.json
+-- What was implemented
++- What was implemented: Added the contract metadata migration, DB helper, and db:migrate script using @vercel/postgres.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Use @vercel/postgres sql tag for parameterized queries and createClient for migrations.
++  - Gotchas encountered: `npm test` is undefined and Next build warns about multiple lockfiles.
++  - Useful context: Migration enables pgcrypto for UUIDs and indexes user_id/project_id.
+ ---
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+thinking
+**Checking clean git status**
+exec
+/bin/zsh -lc 'cd /Users/omertekin/Desktop/Grind/SignLoop && git status --porcelain' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 51ms:
+ M .ralph/runs/run-20260117-174946-13514-iter-1.log
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 5c07f8ac1bf0b4a2589cd91637d1e75ebb001850..9c20430f77b252d359346c8ab516e84377792b1f
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -44,9 +44,9 @@
+   - apps/web/package.json
+   - package-lock.json
+   - package.json
+-- What was implemented
++- What was implemented: Added the contract metadata migration, DB helper, and db:migrate script using @vercel/postgres.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Use @vercel/postgres sql tag for parameterized queries and createClient for migrations.
++  - Gotchas encountered: `npm test` is undefined and Next build warns about multiple lockfiles.
++  - Useful context: Migration enables pgcrypto for UUIDs and indexes user_id/project_id.
+ ---
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+
