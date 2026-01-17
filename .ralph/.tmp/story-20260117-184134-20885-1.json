@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "total": 3,
+  "remaining": 3,
+  "quality_gates": [
+    "npm run build"
+  ],
+  "id": "US-002",
+  "title": "Extend analysis schema to include Parties and Obligations"
+}

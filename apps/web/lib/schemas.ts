@@ -57,6 +57,10 @@ export const AnalysisResultSchema = z.object({
         derived_from: z.string().nullable(),
     })),
 
+    obligations: z.array(z.string()),
+
+    parties: z.array(z.string()),
+
     disclaimer: z.string(),
 });
 
@@ -116,6 +120,8 @@ export const PartialAnalysisResultSchema = z.object({
         date: z.string(),
         derived_from: z.string().nullable().optional().default(null),
     })).optional().default([]),
+    obligations: z.array(z.string()).optional().default([]),
+    parties: z.array(z.string()).optional().default([]),
     disclaimer: z.string().optional().default('This is an AI analysis, not legal advice.'),
 });
 

@@ -83,6 +83,8 @@ export async function analyzeText(text: string, metadata?: any): Promise<{ resul
                 "email_templates": [{ "subject": "string", "body": "string" }]
             },
             "key_dates": [{ "type": "RENEWAL" | "NOTICE_CUTOFF" | "PRICE_REVIEW" | "OTHER", "date": "string (ISO)", "derived_from": "string|null" }],
+            "obligations": ["string"],
+            "parties": ["string"],
             "disclaimer": "This is an AI analysis, not legal advice."
         }
 

@@ -18,3 +18,9 @@
 
 ## Learned Signs
 
+
+### Sign: Expect Lint Warnings Baseline
+- **Trigger**: When running `npm run lint` in this repo
+- **Instruction**: Note existing warnings cause failure; only fix if the story requires lint cleanup.
+- **Added after**: Iteration 1 - lint fails with max-warnings 0 due to existing warnings
+- **Example**: apps/web has unused vars and explicit any warnings that trigger lint failure

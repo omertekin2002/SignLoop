@@ -2,3 +2,6 @@
 
 > Failures and repeated issues. Use this to add guardrails.
 
+
+## [2026-01-17 18:49:33] Lint warnings fail (max-warnings 0)
+- npm run lint fails due to existing warnings in apps/web (expected baseline issue).

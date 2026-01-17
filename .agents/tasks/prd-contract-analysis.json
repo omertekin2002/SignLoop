@@ -119,7 +119,7 @@
     {
       "id": "US-002",
       "title": "Extend analysis schema to include Parties and Obligations",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [],
       "description": "As a user, I want parties and obligations extracted from analyses so those sections can be populated consistently.",
       "acceptanceCriteria": [
@@ -128,7 +128,10 @@
         "Persist obligations and parties on analysis records in latestAnalysis/analyses",
         "Example: analysis result includes two parties and three obligations that are stored in resultJson",
         "Negative case: model returns no parties/obligations -> analysis still completes and defaults to empty arrays"
-      ]
+      ],
+      "startedAt": "2026-01-17T15:41:35.004314+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-17T15:41:35.004456+00:00"
     },
     {
       "id": "US-003",
