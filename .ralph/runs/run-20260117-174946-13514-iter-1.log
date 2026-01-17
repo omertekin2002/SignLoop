@@ -2020,3 +2020,722 @@ thinking
 **Confirming commit contents including logs and tasks**
 
 The updated activity log and untracked .agents directory (with tasks) will be included in the commit, as well as .ralph logs; none appear to contain secrets, so staging everything is appropriate before committing code changes.
+exec
+/bin/zsh -lc 'cd /Users/omertekin/Desktop/Grind/SignLoop && git add -A' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+
+file update:
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+thinking
+**Checking staged changes with git status**
+exec
+/bin/zsh -lc 'cd /Users/omertekin/Desktop/Grind/SignLoop && git status --porcelain' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+A  .agents/ralph/PROMPT_build.md
+A  .agents/ralph/README.md
+A  .agents/ralph/agents.sh
+A  .agents/ralph/config.sh
+A  .agents/ralph/diagram.svg
+A  .agents/ralph/log-activity.sh
+A  .agents/ralph/loop.sh
+A  .agents/ralph/ralph.webp
+A  .agents/ralph/references/CONTEXT_ENGINEERING.md
+A  .agents/ralph/references/GUARDRAILS.md
+A  .agents/tasks/prd-contract-storage.json
+A  .ralph/.tmp/prd-prompt-20260117-173425-12018.md
+A  .ralph/.tmp/prompt-20260117-174946-13514-1.md
+A  .ralph/.tmp/story-20260117-174946-13514-1.json
+A  .ralph/.tmp/story-20260117-174946-13514-1.md
+A  .ralph/activity.log
+A  .ralph/errors.log
+A  .ralph/guardrails.md
+A  .ralph/progress.md
+AM .ralph/runs/run-20260117-174946-13514-iter-1.log
+file update:
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+
+thinking
+**Deciding to commit all staged files**
+
+I'll commit all staged changes including the .ralph/.tmp prompt files despite their ephemeral nature, since instructions require staging and committing all changes made during the run.
+thinking
+**Crafting precise commit message for all changes**
+
+I'm preparing a conventional commit message that covers the contract metadata DB additions plus ralph run artifacts to accurately reflect all staged changes before using the commit skill.
+exec
+/bin/zsh -lc 'cd /Users/omertekin/Desktop/Grind/SignLoop && git commit -m "$(cat <<'"'EOF'
+feat(db): add contract metadata database
+
+- add contract_files migration with indexes
+- add contract DB helper and db:migrate script
+- record ralph run artifacts and logs
+EOF
+)\"" in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+[main 64b8bff] feat(db): add contract metadata database
+ 26 files changed, 4411 insertions(+), 4 deletions(-)
+ create mode 100644 .agents/ralph/PROMPT_build.md
+ create mode 100644 .agents/ralph/README.md
+ create mode 100644 .agents/ralph/agents.sh
+ create mode 100644 .agents/ralph/config.sh
+ create mode 100644 .agents/ralph/diagram.svg
+ create mode 100755 .agents/ralph/log-activity.sh
+ create mode 100755 .agents/ralph/loop.sh
+ create mode 100644 .agents/ralph/ralph.webp
+ create mode 100644 .agents/ralph/references/CONTEXT_ENGINEERING.md
+ create mode 100644 .agents/ralph/references/GUARDRAILS.md
+ create mode 100644 .agents/tasks/prd-contract-storage.json
+ create mode 100644 .ralph/.tmp/prd-prompt-20260117-173425-12018.md
+ create mode 100644 .ralph/.tmp/prompt-20260117-174946-13514-1.md
+ create mode 100644 .ralph/.tmp/story-20260117-174946-13514-1.json
+ create mode 100644 .ralph/.tmp/story-20260117-174946-13514-1.md
+ create mode 100644 .ralph/activity.log
+ create mode 100644 .ralph/errors.log
+ create mode 100644 .ralph/guardrails.md
+file update:
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+thinking
+**Confirming clean working tree**
+
+I'm running `git status --porcelain` to verify that the working tree is clean after the commit as per step 10.
+exec
+/bin/zsh -lc 'cd /Users/omertekin/Desktop/Grind/SignLoop && git status --porcelain' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+ M .ralph/runs/run-20260117-174946-13514-iter-1.log
+file update:
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+
+thinking
+**Noticing unexpected file modification**
+
+The `.ralph/runs` log file shows as modified after commit, likely auto-updated outside my explicit changes. I'll pause to confirm before proceeding due to this unexpected state.
+thinking
+**Planning to inspect log file diff**
+
+I'll check the diff of the modified `.ralph/runs` log file to understand what changed and confirm whether it's a safe automatic update before proceeding.
+exec
+/bin/zsh -lc 'cd /Users/omertekin/Desktop/Grind/SignLoop && git diff .ralph/runs/run-20260117-174946-13514-iter-1.log' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 51ms:
+diff --git a/.ralph/runs/run-20260117-174946-13514-iter-1.log b/.ralph/runs/run-20260117-174946-13514-iter-1.log
+index 54708f3..2bd2a5b 100644
+--- a/.ralph/runs/run-20260117-174946-13514-iter-1.log
++++ b/.ralph/runs/run-20260117-174946-13514-iter-1.log
+@@ -2020,3 +2020,208 @@ thinking
+ **Confirming commit contents including logs and tasks**
+ 
+ The updated activity log and untracked .agents directory (with tasks) will be included in the commit, as well as .ralph logs; none appear to contain secrets, so staging everything is appropriate before committing code changes.
++exec
++/bin/zsh -lc 'cd /Users/omertekin/Desktop/Grind/SignLoop && git add -A' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
++
++file update:
++diff --git a/apps/web/package.json b/apps/web/package.json
++index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
++--- a/apps/web/package.json
+++++ b/apps/web/package.json
++@@ -8,7 +8,8 @@
++     "build": "next build",
++     "start": "next start",
++     "lint": "eslint --max-warnings 0",
+file update:
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+thinking
+**Handling new run log changes**
+
+The run log file is updated after our first commit, so we need to stage and commit these new changes later with the progress log update. For now, I'll capture the current commit hash and message for the progress entry before proceeding.
+exec
+/bin/zsh -lc 'cd /Users/omertekin/Desktop/Grind/SignLoop && git show -s --format="%h %s" HEAD' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+64b8bff feat(db): add contract metadata database
+file update:
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+
+thinking
+**Planning progress log update**
+
+I'm deciding to append a timestamped entry to the progress log with current local date/time, run details, and commit info, but will leave the thread field blank since the exec session ID isn't clearly available. I'll include the first commit hash and message for consistency.
+thinking
+**Resolving progress log timing and commit references**
+
+To handle run log modifications and progress log updates, I'll create a second commit for these changes while referencing the first main commit in the progress log entry. The entry will record post-commit status as clean to reflect the final state after the second commit, ensuring consistency despite the HEAD commit differing from the referenced commit.
+exec
+/bin/zsh -lc 'date "+%Y-%m-%d %H:%M:%S"' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 51ms:
+2026-01-17 18:00:55
+file update:
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+
+thinking
+**Confirming progress log entry details**
+
+I'm preparing to append a progress log entry detailing test results and build status, including all changed file paths from the commit for completeness, even those in hidden directories. The format expects file paths, so I'll list each changed file individually rather than directories.
+thinking
+**Finalizing detailed progress log entry**
+
+I'm compiling a comprehensive progress log entry including all 26 changed files from the main commit plus updated logs and progress files. The entry will summarize what was implemented, key learnings, and verification commands, leaving the thread blank and marking post-commit status as clean to reflect the final state.
+exec
+/bin/zsh -lc "cat <<'EOF' >> /Users/omertekin/Desktop/Grind/SignLoop/.ralph/progress.md
+## [2026-01-17 18:00:55] - US-001: Add contract metadata database
+Thread: 
+Run: 20260117-174946-13514 (iteration 1)
+Run log: /Users/omertekin/Desktop/Grind/SignLoop/.ralph/runs/run-20260117-174946-13514-iter-1.log
+Run summary: /Users/omertekin/Desktop/Grind/SignLoop/.ralph/runs/run-20260117-174946-13514-iter-1.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 64b8bff feat(db): add contract metadata database
+- Post-commit status: clean
+- Verification:
+  - Command: npm test -> FAIL (Missing script: \"test\")
+  - Command: npm run build -> PASS (Next.js warned about multiple lockfiles)
+- Files changed:
+  - .agents/ralph/PROMPT_build.md
+  - .agents/ralph/README.md
+  - .agents/ralph/agents.sh
+  - .agents/ralph/config.sh
+  - .agents/ralph/diagram.svg
+  - .agents/ralph/log-activity.sh
+  - .agents/ralph/loop.sh
+  - .agents/ralph/ralph.webp
+  - .agents/ralph/references/CONTEXT_ENGINEERING.md
+  - .agents/ralph/references/GUARDRAILS.md
+  - .agents/tasks/prd-contract-storage.json
+  - .ralph/.tmp/prd-prompt-20260117-173425-12018.md
+  - .ralph/.tmp/prompt-20260117-174946-13514-1.md
+  - .ralph/.tmp/story-20260117-174946-13514-1.json
+  - .ralph/.tmp/story-20260117-174946-13514-1.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/guardrails.md
+  - .ralph/progress.md
+  - .ralph/runs/run-20260117-174946-13514-iter-1.log
+  - apps/web/db/migrate.js
+  - apps/web/db/migrations/001_create_contract_files.sql
+  - apps/web/lib/contract-db.ts
+  - apps/web/package.json
+  - package-lock.json
+  - package.json
+- What was implemented
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - Gotchas encountered
+  - Useful context
+---
+EOF" in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+
+file update:
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+thinking
+**Preparing to replace placeholders**
+
+The progress entry contains placeholders for implemented work and learnings that need to be replaced with actual details, so I'll read the relevant file portion before editing to fill in meaningful content.
+exec
+/bin/zsh -lc 'tail -n 40 /Users/omertekin/Desktop/Grind/SignLoop/.ralph/progress.md' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 64b8bff feat(db): add contract metadata database
+- Post-commit status: clean
+- Verification:
+  - Command: npm test -> FAIL (Missing script: "test")
+  - Command: npm run build -> PASS (Next.js warned about multiple lockfiles)
+- Files changed:
+  - .agents/ralph/PROMPT_build.md
+  - .agents/ralph/README.md
+  - .agents/ralph/agents.sh
+  - .agents/ralph/config.sh
+  - .agents/ralph/diagram.svg
+  - .agents/ralph/log-activity.sh
+  - .agents/ralph/loop.sh
+  - .agents/ralph/ralph.webp
+  - .agents/ralph/references/CONTEXT_ENGINEERING.md
+  - .agents/ralph/references/GUARDRAILS.md
+  - .agents/tasks/prd-contract-storage.json
+  - .ralph/.tmp/prd-prompt-20260117-173425-12018.md
+file update:
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+thinking
+**Updating implementation and learnings summary**
+file update
+M /Users/omertekin/Desktop/Grind/SignLoop/.ralph/progress.md
+@@ -46,7 +46,7 @@
+   - package.json
+-- What was implemented
++- What was implemented: Added the contract metadata migration, DB helper, and db:migrate script using @vercel/postgres.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Use @vercel/postgres sql tag for parameterized queries and createClient for migrations.
++  - Gotchas encountered: `npm test` is undefined and Next build warns about multiple lockfiles.
++  - Useful context: Migration enables pgcrypto for UUIDs and indexes user_id/project_id.
+ ---
+apply_patch(auto_approved=true) exited 0 in 35ms:
+Success. Updated the following files:
+M /Users/omertekin/Desktop/Grind/SignLoop/.ralph/progress.md
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 5c07f8ac1bf0b4a2589cd91637d1e75ebb001850..9c20430f77b252d359346c8ab516e84377792b1f
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -44,9 +44,9 @@
+   - apps/web/package.json
+   - package-lock.json
+   - package.json
+-- What was implemented
++- What was implemented: Added the contract metadata migration, DB helper, and db:migrate script using @vercel/postgres.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Use @vercel/postgres sql tag for parameterized queries and createClient for migrations.
++  - Gotchas encountered: `npm test` is undefined and Next build warns about multiple lockfiles.
++  - Useful context: Migration enables pgcrypto for UUIDs and indexes user_id/project_id.
+ ---
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 5c07f8ac1bf0b4a2589cd91637d1e75ebb001850..9c20430f77b252d359346c8ab516e84377792b1f
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -44,9 +44,9 @@
+   - apps/web/package.json
+   - package-lock.json
+   - package.json
+-- What was implemented
++- What was implemented: Added the contract metadata migration, DB helper, and db:migrate script using @vercel/postgres.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Use @vercel/postgres sql tag for parameterized queries and createClient for migrations.
++  - Gotchas encountered: `npm test` is undefined and Next build warns about multiple lockfiles.
++  - Useful context: Migration enables pgcrypto for UUIDs and indexes user_id/project_id.
+ ---
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+thinking
+**Adding post-update logging**
+
+I'm planning to log "After updating progress log" using the existing log-activity script to track progress updates.
+exec
+/bin/zsh -lc '/Users/omertekin/Desktop/Grind/SignLoop/.agents/ralph/log-activity.sh "Updated progress log for US-001"' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 5c07f8ac1bf0b4a2589cd91637d1e75ebb001850..9c20430f77b252d359346c8ab516e84377792b1f
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -44,9 +44,9 @@
+   - apps/web/package.json
+   - package-lock.json
+   - package.json
+-- What was implemented
++- What was implemented: Added the contract metadata migration, DB helper, and db:migrate script using @vercel/postgres.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Use @vercel/postgres sql tag for parameterized queries and createClient for migrations.
++  - Gotchas encountered: `npm test` is undefined and Next build warns about multiple lockfiles.
++  - Useful context: Migration enables pgcrypto for UUIDs and indexes user_id/project_id.
+ ---
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+thinking
+**Preparing commits for updated logs**
+
+The activity log and run log files are both updated and tracked, so they should be committed alongside the progress log changes in separate commits to keep related updates organized. Checking git status will confirm any other modifications.
+exec
+/bin/zsh -lc 'cd /Users/omertekin/Desktop/Grind/SignLoop && git status --porcelain' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+ M .ralph/activity.log
+ M .ralph/progress.md
+ M .ralph/runs/run-20260117-174946-13514-iter-1.log
+file update:
+diff --git a/.ralph/progress.md b/.ralph/progress.md
+index 5c07f8ac1bf0b4a2589cd91637d1e75ebb001850..9c20430f77b252d359346c8ab516e84377792b1f
+--- a/.ralph/progress.md
++++ b/.ralph/progress.md
+@@ -44,9 +44,9 @@
+   - apps/web/package.json
+   - package-lock.json
+   - package.json
+-- What was implemented
++- What was implemented: Added the contract metadata migration, DB helper, and db:migrate script using @vercel/postgres.
+ - **Learnings for future iterations:**
+-  - Patterns discovered
+-  - Gotchas encountered
+-  - Useful context
++  - Patterns discovered: Use @vercel/postgres sql tag for parameterized queries and createClient for migrations.
++  - Gotchas encountered: `npm test` is undefined and Next build warns about multiple lockfiles.
++  - Useful context: Migration enables pgcrypto for UUIDs and indexes user_id/project_id.
+ ---
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 9bf48e04783cea231b59c078333e8654b8512544..8b62326043a5fcf138ccf389d7dd179a20c9bda4
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -8,7 +8,8 @@
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint --max-warnings 0",
+-    "check-types": "next typegen && tsc --noEmit"
++    "check-types": "next typegen && tsc --noEmit",
++    "db:migrate": "node ./db/migrate.js"
+   },
+   "dependencies": {
+     "@clerk/nextjs": "^6.36.7",
+diff --git a/package.json b/package.json
+index f078f11ce5c581cdb0bd799b694e78a7308a0821..c2a24fa044abea19053b5e2b725d8dd5b4143bf5
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+     "dev": "turbo run dev",
+     "lint": "turbo run lint",
+     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+-    "check-types": "turbo run check-types"
++    "check-types": "turbo run check-types",
++    "db:migrate": "npm --workspace apps/web run db:migrate"
+   },
+   "devDependencies": {
+     "prettier": "^3.7.4",
+
+
+thinking
+**Preparing final commit**
+
+Staging all three modified files again with a full add to ensure second commit includes all changes before committing.

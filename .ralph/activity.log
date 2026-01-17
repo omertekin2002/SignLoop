@@ -8,3 +8,4 @@
 [2026-01-17 17:52:41] Start US-001 work
 [2026-01-17 17:55:34] Added contract DB helper, migration SQL, and scripts
 [2026-01-17 17:56:20] Ran npm test (failed: missing script) and npm run build
+[2026-01-17 18:01:45] Updated progress log for US-001
