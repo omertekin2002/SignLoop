@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "project": "Persistent Contract Storage",
+  "overview": "Persist uploaded contract files in Vercel Blob and store metadata in a new database so users can upload, list, download, and delete their contracts across sessions.",
+  "goals": [
+    "Store user contract files in Vercel Blob for long-term retention",
+    "Persist contract metadata in a dedicated database keyed to Clerk users",
+    "Enable users to download and delete their own contracts from Contracts and Projects sections"
+  ],
+  "nonGoals": [
+    "Public or shareable contract links",
+    "Document editing or versioning",
+    "Migrating any existing files stored outside this project"
+  ],
+  "successMetrics": [
+    "100% of uploads are visible after refresh and across logins",
+    "Users can download their own contract files via the UI",
+    "Unauthorized users cannot access or delete another user's contracts"
+  ],
+  "openQuestions": [
+    "Confirm the metadata database provider (assumed Vercel Postgres) and any existing ORM preferences.",
+    "How are Projects stored today, and should contract-project linking use existing project IDs or a new mapping table?",
+    "Should there be any per-user storage quota or max contract count enforcement?"
+  ],
+  "stack": {
+    "framework": "Next.js (App Router)",
+    "hosting": "Vercel",
+    "database": "Vercel Postgres (new metadata DB)",
+    "auth": "Clerk",
+    "storage": "Vercel Blob Storage"
+  },
+  "routes": [
+    {
+      "path": "/dashboard",
+      "name": "Dashboard",
+      "purpose": "Contracts and Projects tabs where users upload and manage contracts."
+    },
+    {
+      "path": "/contracts/[id]",
+      "name": "Contract Detail",
+      "purpose": "View analysis details and contract actions for a single contract."
+    }
+  ],
+  "uiNotes": [
+    "Contracts tab shows the user's uploaded contracts with filename, size, created date, and actions (Download, Delete).",
+    "Projects tab lists contracts attached to each project and exposes the same actions.",
+    "Upload dialog enforces PDF/DOC/DOCX types and a 25MB limit with inline validation and error toasts.",
+    "UI states include loading skeletons, empty states, upload progress, and error toasts for failed upload/download."
+  ],
+  "dataModel": [
+    {
+      "entity": "ContractFile",
+      "fields": [
+        "id",
+        "userId",
+        "projectId (nullable)",
+        "title",
+        "fileName",
+        "blobPath",
+        "contentType",
+        "sizeBytes",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  ],
+  "importFormat": {
+    "description": "Not applicable; files are uploaded via the UI.",
+    "example": {}
+  },
+  "rules": [
+    "Only PDF, DOC, and DOCX files are accepted; max size is 25MB.",
+    "All contract records and blobs are scoped to the authenticated Clerk user.",
+    "Blob keys must be namespaced by userId to avoid collisions and simplify cleanup.",
+    "Downloads are served via API proxy; no public blob URLs are exposed.",
+    "Deleting a contract removes both the blob object and metadata record."
+  ],
+  "qualityGates": [
+    "npm test"
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Add contract metadata database",
+      "status": "in_progress",
+      "dependsOn": [],
+      "description": "As a developer, I want a persistent database for contract metadata so contract lists survive deployments and refreshes.",
+      "acceptanceCriteria": [
+        "Install database client: `npm install @vercel/postgres` and ensure it is available to `apps/web`.",
+        "Create a database helper (e.g., `apps/web/lib/contract-db.ts`) using `@vercel/postgres` for queries.",
+        "Add migration SQL at `apps/web/db/migrations/001_create_contract_files.sql` to create a `contract_files` table with indexes on userId and projectId.",
+        "Add a migration script (e.g., `npm run db:migrate`) that applies the SQL against the new metadata database.",
+        "Example: inserting a contract for a user returns a row and can be queried by userId.",
+        "Negative case: inserting a row without userId or fileName fails with a validation or database error."
+      ],
+      "startedAt": "2026-01-17T14:49:46.652907+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-17T14:49:46.653035+00:00"
+    },
+    {
+      "id": "US-002",
+      "title": "Persist uploads to Vercel Blob and store metadata",
+      "status": "open",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "As a user, I want uploaded contracts stored in Vercel Blob with metadata saved so they persist across logins.",
+      "acceptanceCriteria": [
+        "Install storage client: `npm install @vercel/blob` and add `BLOB_READ_WRITE_TOKEN` to environment docs/sample env.",
+        "Update the upload flow (`POST /api/contracts` + `POST /api/contracts/[id]/upload`) to require Clerk auth and validate type/size (PDF/DOC/DOCX, <=25MB).",
+        "Upload files to Vercel Blob with a key pattern like `contracts/{userId}/{contractId}/{fileName}`.",
+        "Store blobPath, fileName, contentType, and sizeBytes in the metadata record.",
+        "Example: uploading `nda.docx` (2MB) returns 200 and the contract metadata includes blobPath and sizeBytes.",
+        "Negative case: uploading `image.png` or a 30MB file returns 415/413 and does not create a metadata record."
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Read contracts from metadata DB with ownership checks",
+      "status": "open",
+      "dependsOn": [
+        "US-001"
+      ],
+      "description": "As a user, I want contract lists and detail views to load from persistent storage and only show my records.",
+      "acceptanceCriteria": [
+        "Replace in-memory store usage in `GET /api/contracts` and `GET /api/contracts/[id]` with DB queries filtered by Clerk userId.",
+        "Support optional `projectId` filtering (query param) to populate contracts within the Projects tab.",
+        "Return fields required by the UI (id, title, status, createdAt, projectId, fileName, sizeBytes).",
+        "Example: user A lists contracts and receives only their records sorted by createdAt desc.",
+        "Negative case: user A requests user B's contract and receives 404 or 403."
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Proxy downloads and delete contracts safely",
+      "status": "open",
+      "dependsOn": [
+        "US-001",
+        "US-002"
+      ],
+      "description": "As a user, I want to download or delete my contracts while keeping files private.",
+      "acceptanceCriteria": [
+        "Add `GET /api/contracts/[id]/download` to stream the blob file through the server with correct `Content-Type` and `Content-Disposition` headers.",
+        "Update `DELETE /api/contracts/[id]` to remove the blob object and its metadata row (with ownership check).",
+        "Example: after deletion, the contract no longer appears in lists and download returns 404.",
+        "Negative case: unauthenticated or non-owner download/delete returns 401/403 and leaves data unchanged."
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Update Contracts and Projects UI to access stored files",
+      "status": "open",
+      "dependsOn": [
+        "US-003",
+        "US-004"
+      ],
+      "description": "As a user, I want to see and manage my uploaded contracts in the Contracts and Projects sections.",
+      "acceptanceCriteria": [
+        "Update `apps/web/app/dashboard/page.tsx` Contracts tab cards to show filename/size and add Download + Delete actions using `/api/contracts/[id]/download` and `/api/contracts/[id]`.",
+        "Update the Projects tab to list contracts linked by projectId and provide the same actions within each project card.",
+        "Update `apps/web/components/upload-dialog.tsx` to enforce PDF/DOC/DOCX types, a 25MB limit, and updated helper text.",
+        "UI states: loading skeletons, empty states, upload progress, and error toasts for failed upload/download.",
+        "Example: after refresh, a previously uploaded contract appears in Contracts and can be downloaded.",
+        "Negative case: failed upload (415/413) shows an error toast and does not add a new card."
+      ]
+    }
+  ]
+}

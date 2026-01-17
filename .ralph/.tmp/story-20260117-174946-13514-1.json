@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "total": 5,
+  "remaining": 5,
+  "quality_gates": [
+    "npm test"
+  ],
+  "id": "US-001",
+  "title": "Add contract metadata database"
+}
