@@ -85,3 +85,36 @@ Run summary: /Users/omertekin/Desktop/Grind/SignLoop/.ralph/runs/run-20260117-18
   - Gotchas encountered: eslint fails due to existing warnings; dev-browser required Playwright install.
   - Useful context: browser verification used /contracts/:id with a mock contract from POST /api/contracts.
 ---
+## [2026-01-17 18:51:26] - US-002: Extend analysis schema to include Parties and Obligations
+Thread: 
+Run: 20260117-184134-20885 (iteration 1)
+Run log: /Users/omertekin/Desktop/Grind/SignLoop/.ralph/runs/run-20260117-184134-20885-iter-1.log
+Run summary: /Users/omertekin/Desktop/Grind/SignLoop/.ralph/runs/run-20260117-184134-20885-iter-1.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 58adaf6 feat(analysis): add parties and obligations
+- Post-commit status: clean
+- Verification:
+  - Command: npm run lint -> FAIL (existing warnings in repo)
+  - Command: npm run check-types -> PASS
+  - Command: npm run build -> PASS (Next.js warned about multiple lockfiles)
+  - Command: npm run dev -> PASS (started, then stopped)
+- Files changed:
+  - .agents/tasks/prd-contract-analysis.json
+  - .ralph/.tmp/prompt-20260117-184134-20885-1.md
+  - .ralph/.tmp/story-20260117-184134-20885-1.json
+  - .ralph/.tmp/story-20260117-184134-20885-1.md
+  - .ralph/activity.log
+  - .ralph/errors.log
+  - .ralph/guardrails.md
+  - .ralph/progress.md
+  - .ralph/runs/run-20260117-181656-16962-iter-1.log
+  - .ralph/runs/run-20260117-184134-20885-iter-1.log
+  - apps/web/lib/analysis.ts
+  - apps/web/lib/schemas.ts
+- What was implemented: Added obligations/parties to the analysis prompt and Zod schemas with default empty arrays, plus logged the recurring lint-warning failure in guardrails/errors.
+- **Learnings for future iterations:**
+  - Patterns discovered: analysis parsing uses strict schema validation with a partial fallback that supplies defaults for missing fields.
+  - Gotchas encountered: `npm run lint` fails due to existing warnings (max-warnings 0); Next.js warns about multiple lockfiles during build/dev.
+  - Useful context: resultJson fields are defined in `apps/web/lib/analysis.ts` and validated in `apps/web/lib/schemas.ts`.
+---
