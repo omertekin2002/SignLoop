@@ -1,7 +1,12 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
-  "globalEnv": ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"],
+  "globalEnv": [
+    "CLERK_SECRET_KEY",
+    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_MODEL"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
