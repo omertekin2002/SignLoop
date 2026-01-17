@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/store';
+import { processFile, validateMimeType } from '@/lib/text-extraction';
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -16,24 +17,45 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
   }
 
-  // Mock text extraction
-  const mockText = `
-  EMPLOYMENT AGREEMENT
+  const mimeType = file.type || 'application/octet-stream';
 
-  This Employment Agreement (the "Agreement") is made effective as of ${new Date().toLocaleDateString()}, by and between Company Inc. ("Employer") and John Doe ("Employee").
+  // Validate file type
+  try {
+    validateMimeType(mimeType);
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
 
-  1. TERM. The term of this Agreement shall commence on Start Date and shall continue until terminated by either party.
-  
-  2. COMPENSATION. Employee shall receive a base salary of $100,000 per year, paid bi-weekly.
-  
-  3. TERMINATION. Either party may terminate this Agreement at any time, with or without cause, upon 14 days written notice.
-  
-  4. NON-COMPETE. Employee agrees not to work for a competitor for a period of 2 years after termination within a 100-mile radius.
-  
-  5. GOVERNING LAW. This Agreement shall be governed by the laws of the State of California.
-  `;
-  
-  contract.text = mockText;
-  
-  return NextResponse.json({ success: true, message: 'File uploaded and text extracted' });
+  try {
+    // Convert File to Buffer
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // Extract text from file
+    const { text, method, confidence } = await processFile(buffer, mimeType);
+
+    if (!text || text.length === 0) {
+      return NextResponse.json(
+        { error: 'Could not extract any text from the file' },
+        { status: 400 }
+      );
+    }
+
+    // Store extracted text in contract
+    contract.text = text;
+
+    return NextResponse.json({
+      success: true,
+      message: 'File uploaded and text extracted',
+      extractionMethod: method,
+      confidence,
+      textLength: text.length,
+    });
+  } catch (error: any) {
+    console.error('Text extraction failed:', error);
+    return NextResponse.json(
+      { error: error.message || 'Failed to extract text from file' },
+      { status: 500 }
+    );
+  }
 }
