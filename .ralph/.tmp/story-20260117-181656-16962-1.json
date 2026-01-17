@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "total": 3,
+  "remaining": 3,
+  "quality_gates": [
+    "npm run build"
+  ],
+  "id": "US-001",
+  "title": "Harden contract detail route against blank-screen failures"
+}

@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "project": "Contract Analysis Detail Page Fix",
+  "overview": "Fix the blank sepia screen when opening an analyzed contract from the Contracts tab and ensure the analysis detail view reliably renders the required sections with clear empty/error states.",
+  "goals": [
+    "Prevent blank-screen failures on the contract detail page for analyzed contracts",
+    "Render analysis summary and sections (Summary, Key Risks, Obligations, Dates, Parties) with resilient fallbacks",
+    "Provide guidance when analysis data is missing or unavailable"
+  ],
+  "nonGoals": [
+    "Redesigning the dashboard or Contracts tab layout",
+    "Changing the contract upload or analysis trigger workflows",
+    "Introducing a new persistence layer or database migrations"
+  ],
+  "successMetrics": [
+    "Clicking any analyzed contract card loads the detail page without a blank screen",
+    "All required analysis sections display a populated view or an explicit empty state",
+    "No unhandled runtime errors when analysis fields are missing or malformed"
+  ],
+  "openQuestions": [
+    "Should the analysis detail remain on the existing /contracts/[id] route or move to a dedicated /contracts/[id]/analysis route?",
+    "Should legacy analyses be backfilled to include Parties/Obligations, or should the UI show empty states for older records?"
+  ],
+  "stack": {
+    "framework": "Next.js (App Router)",
+    "hosting": "TBD",
+    "database": "In-memory store via apps/web/lib/store (no persistence)",
+    "auth": "None"
+  },
+  "routes": [
+    {
+      "path": "/dashboard",
+      "name": "Dashboard",
+      "purpose": "Contracts tab listing cards that link to contract detail"
+    },
+    {
+      "path": "/contracts/[id]",
+      "name": "Contract Detail",
+      "purpose": "Shows contract metadata and analysis detail sections"
+    }
+  ],
+  "uiNotes": [
+    "Keep existing visual language and component library; no redesign",
+    "Add explicit loading, error, and empty states to avoid blank screens",
+    "Sections must be visible even when empty, with short guidance text",
+    "Prefer existing Card, Badge, Skeleton, and Button components"
+  ],
+  "dataModel": [
+    {
+      "entity": "Contract",
+      "fields": [
+        "id",
+        "title",
+        "status",
+        "createdAt",
+        "text",
+        "analyses[]",
+        "latestAnalysis"
+      ]
+    },
+    {
+      "entity": "Analysis",
+      "fields": [
+        "id",
+        "contractId",
+        "riskBadge",
+        "resultJson",
+        "llmModel",
+        "createdAt"
+      ]
+    },
+    {
+      "entity": "AnalysisResult",
+      "fields": [
+        "risk_badge",
+        "key_points[]",
+        "summary",
+        "red_flags[]",
+        "normal_in_region[]",
+        "next_actions",
+        "key_dates[]",
+        "obligations[]",
+        "parties[]",
+        "disclaimer"
+      ]
+    }
+  ],
+  "importFormat": {
+    "description": "Not applicable",
+    "example": {}
+  },
+  "rules": [
+    "Never render a blank screen; always show loading, error, or content states",
+    "If analysis data is missing, show an empty state with guidance rather than crashing",
+    "Key Risks should prefer red_flags when available, otherwise fallback to key_points",
+    "Dates should be rendered from key_dates and handle invalid or missing dates gracefully"
+  ],
+  "qualityGates": [
+    "npm run build"
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Harden contract detail route against blank-screen failures",
+      "status": "in_progress",
+      "dependsOn": [],
+      "description": "As a user, I want the contract detail page to always render a meaningful state so that I never encounter a blank screen when opening analyzed contracts.",
+      "acceptanceCriteria": [
+        "Add route-level error handling for /contracts/[id] to surface a friendly error view with a Back to Dashboard action",
+        "Guard all date formatting and nested analysis access so missing/invalid fields do not throw",
+        "Show explicit empty state guidance when analysis is absent or incomplete",
+        "Example: a contract with no analysis renders the empty state with a clear call to action",
+        "Negative case: /contracts/:id API returns 404 or 500 -> error state renders and the page does not blank"
+      ],
+      "startedAt": "2026-01-17T15:16:56.674418+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-01-17T15:16:56.674542+00:00"
+    },
+    {
+      "id": "US-002",
+      "title": "Extend analysis schema to include Parties and Obligations",
+      "status": "open",
+      "dependsOn": [],
+      "description": "As a user, I want parties and obligations extracted from analyses so those sections can be populated consistently.",
+      "acceptanceCriteria": [
+        "Update analysis prompt and schema to include obligations[] and parties[] in resultJson",
+        "Ensure analysis parsing tolerates missing fields by defaulting to empty arrays",
+        "Persist obligations and parties on analysis records in latestAnalysis/analyses",
+        "Example: analysis result includes two parties and three obligations that are stored in resultJson",
+        "Negative case: model returns no parties/obligations -> analysis still completes and defaults to empty arrays"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Render required analysis sections on the contract detail page",
+      "status": "open",
+      "dependsOn": [
+        "US-001",
+        "US-002"
+      ],
+      "description": "As a user, I want to view analysis sections (Summary, Key Risks, Obligations, Dates, Parties) so I can understand the contract quickly.",
+      "acceptanceCriteria": [
+        "On /contracts/[id], render Summary, Key Risks, Obligations, Dates, and Parties sections using existing Card-based layout",
+        "Key Risks displays red_flags when available, otherwise key_points with clear labeling",
+        "Dates section lists key_dates with safe formatting and handles invalid dates gracefully",
+        "Each section includes an empty state message with guidance when data is missing",
+        "Example: analysis with key_dates renders a list of dates sorted newest-first with their types",
+        "Negative case: analysis missing key_dates -> Dates section shows an empty state and page still renders"
+      ]
+    }
+  ]
+}

@@ -9,3 +9,9 @@
 [2026-01-17 17:55:34] Added contract DB helper, migration SQL, and scripts
 [2026-01-17 17:56:20] Ran npm test (failed: missing script) and npm run build
 [2026-01-17 18:01:45] Updated progress log for US-001
+[2026-01-17 18:16:56] ITERATION 1 start (mode=build story=US-001)
+[2026-01-17 18:17:28] Start US-001: harden contract detail route
+[2026-01-17 18:24:35] Updated contract detail route with error/empty state handling
+[2026-01-17 18:25:07] Ran npm run build
+[2026-01-17 18:29:33] Verified contract detail UI states in browser
+[2026-01-17 18:34:22] Ran npm run lint (warnings) and npm run check-types
