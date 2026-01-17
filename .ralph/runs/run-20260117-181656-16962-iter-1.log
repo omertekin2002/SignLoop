@@ -19806,3 +19806,3134 @@ index 2fb0c5fa7f9c5542bfa41fc2989e71690db7b9d4..c479b2dbda2bcb107a098be589d90cbf
 
 thinking
 **Preparing first commit with detailed message**
+exec
+/bin/zsh -lc 'git add -A' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 51ms:
+warning: in the working copy of '.ralph/runs/run-20260117-181656-16962-iter-1.log', CRLF will be replaced by LF the next time Git touches it
+file update:
+diff --git a/apps/web/app/contracts/[id]/error.tsx b/apps/web/app/contracts/[id]/error.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..bd641c22a3394d38bdda9dacae72904b90db662c
+--- /dev/null
++++ b/apps/web/app/contracts/[id]/error.tsx
+@@ -0,0 +1,48 @@
++'use client';
++
++import { useEffect } from "react";
++import Link from "next/link";
++import { Button } from "@/components/ui/button";
++import { Card, CardContent } from "@/components/ui/card";
++import { ArrowLeft, XCircle } from "lucide-react";
++
++export default function Error({
++    error,
++    reset,
++}: {
++    error: Error & { digest?: string };
++    reset: () => void;
++}) {
++    useEffect(() => {
++        console.error(error);
++    }, [error]);
++
++    return (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">Something went wrong</h2>
++                        <p className="text-sm text-muted-foreground mt-2">
++                            We hit an unexpected error while loading this contract. You can try again or return to the dashboard.
++                        </p>
++                        <div className="flex flex-wrap gap-3 mt-6 justify-center">
++                            <Button variant="outline" onClick={() => reset()}>
++                                Try Again
++                            </Button>
++                            <Button asChild>
++                                <Link href="/dashboard">
++                                    <ArrowLeft className="mr-2 h-4 w-4" />
++                                    Back to Dashboard
++                                </Link>
++                            </Button>
++                        </div>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++}
+diff --git a/apps/web/app/contracts/[id]/page.tsx b/apps/web/app/contracts/[id]/page.tsx
+index 2fb0c5fa7f9c5542bfa41fc2989e71690db7b9d4..c479b2dbda2bcb107a098be589d90cbf675c5ba9
+--- a/apps/web/app/contracts/[id]/page.tsx
++++ b/apps/web/app/contracts/[id]/page.tsx
+@@ -32,7 +32,72 @@
+     const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+     const [llmUsed, setLlmUsed] = useState<{ provider?: string; model?: string } | null>(null);
+ 
+-    const { data: contract, isLoading } = useQuery({
++    const formatDate = (value: unknown, formatStr: string, fallback: string) => {
++        if (!value) return fallback;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        if (Number.isNaN(time)) return fallback;
++        return format(date, formatStr);
++    };
++
++    const getTimestamp = (value: unknown) => {
++        if (!value) return 0;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        return Number.isNaN(time) ? 0 : time;
++    };
++
++    const getContractErrorDetails = (error: unknown) => {
++        const response = (error as any)?.response;
++        const status = response?.status;
++        const message =
++            response?.data?.message ||
++            response?.data?.error ||
++            (error instanceof Error ? error.message : null);
++
++        if (status === 404) {
++            return {
++                title: "Contract not found",
++                description: "We could not find this contract. It may have been deleted or the link is invalid.",
++            };
++        }
++
++        if (typeof status === "number" && status >= 500) {
++            return {
++                title: "Server error",
++                description: "We hit a server error while loading this contract. Please try again soon.",
++            };
++        }
++
++        return {
++            title: "Unable to load contract",
++            description: message || "We could not load this contract right now. Please try again later.",
++        };
++    };
++
++    const renderIssueState = (title: string, description: string) => (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">{title}</h2>
++                        <p className="text-sm text-muted-foreground mt-2">{description}</p>
++                        <Button asChild className="mt-6">
++                            <Link href="/dashboard">
++                                <ArrowLeft className="mr-2 h-4 w-4" />
++                                Back to Dashboard
++                            </Link>
++                        </Button>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++
++    const { data: contract, isLoading, isError, error } = useQuery({
+         queryKey: ["contract", id],
+         queryFn: async () => {
+             const response = await apiClient.get(`/contracts/${id}`);
+@@ -84,8 +149,9 @@
+         }
+     });
+ 
+-    const getRiskColor = (badge: string) => {
+-        switch (badge?.toLowerCase()) {
++    const getRiskColor = (badge: string | null | undefined) => {
++        const normalized = typeof badge === "string" ? badge.toLowerCase() : "";
++        switch (normalized) {
+             case "high": return "bg-destructive/15 text-destructive hover:bg-destructive/20";
+             case "medium": return "bg-amber-500/15 text-amber-800 hover:bg-amber-500/20 dark:text-amber-200";
+             case "low": return "bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200";
+@@ -93,17 +159,68 @@
+         }
+     };
+ 
+-    const analysis = contract?.latestAnalysis;
++    const analysis = contract?.latestAnalysis && typeof contract.latestAnalysis === "object"
++        ? contract.latestAnalysis
++        : null;
+     const analysisJobStatus = analysisJob?.status;
+     const analyses = Array.isArray(contract?.analyses) ? contract.analyses : [];
+     const sortedAnalyses = [...analyses].sort(
+-        (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
++        (a: any, b: any) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt)
+     );
+     const latestAnalysisRecord = sortedAnalyses[0];
+     const olderAnalyses = analysis?.id
+         ? sortedAnalyses.filter((a: any) => a.id !== analysis.id)
+         : sortedAnalyses.slice(1);
+ 
++    const resultJson = analysis?.resultJson && typeof analysis.resultJson === "object"
++        ? analysis.resultJson
++        : null;
++    const summary = resultJson?.summary && typeof resultJson.summary === "object"
++        ? resultJson.summary
++        : null;
++    const summaryPayments = summary?.payments && typeof summary.payments === "object"
++        ? summary.payments
++        : null;
++    const summaryTerm = summary?.term && typeof summary.term === "object"
++        ? summary.term
++        : null;
++    const summaryRenewal = summary?.renewal && typeof summary.renewal === "object"
++        ? summary.renewal
++        : null;
++
++    const riskBadge = typeof analysis?.riskBadge === "string"
++        ? analysis.riskBadge
++        : typeof resultJson?.risk_badge === "string"
++            ? resultJson.risk_badge
++            : "UNKNOWN";
++
++    const keyPoints = Array.isArray(analysis?.keyPoints)
++        ? analysis.keyPoints
++        : Array.isArray(resultJson?.key_points)
++            ? resultJson.key_points
++            : [];
++    const redFlags = Array.isArray(resultJson?.red_flags) ? resultJson.red_flags : [];
++    const redFlagFindings = redFlags
++        .map((flag: any) => {
++            const type = typeof flag?.type === "string" ? flag.type.trim() : "";
++            const explanation = typeof flag?.explanation === "string" ? flag.explanation.trim() : "";
++            if (type && explanation) return `${type}: ${explanation}`;
++            return explanation || type || "";
++        })
++        .filter(Boolean);
++    const keyFindings = redFlagFindings.length > 0 ? redFlagFindings : keyPoints;
++
++    const uploadedDateLabel = formatDate(contract?.createdAt, "MMM d, yyyy", "Unknown date");
++    const analysisDateLabel = formatDate(analysis?.createdAt, "MMM d, HH:mm", "Unknown time");
++    const renewalLabel = summaryRenewal
++        ? summaryRenewal.auto_renew
++            ? "Auto-renews"
++            : "Manual renewal"
++        : "Not specified";
++    const contractTitle = typeof contract?.title === "string" && contract.title.trim()
++        ? contract.title
++        : "Untitled contract";
++
+     const llmProvider = llmUsed?.provider ?? analysisJob?.result?.provider;
+     const llmModel = llmUsed?.model ?? analysisJob?.result?.llmModel ?? latestAnalysisRecord?.llmModel;
+     const llmProviderLabel =
+@@ -181,8 +298,18 @@
+         );
+     }
+ 
+-    if (!contract) return <div>Contract not found</div>;
++    if (isError) {
++        const { title, description } = getContractErrorDetails(error);
++        return renderIssueState(title, description);
++    }
+ 
++    if (!contract) {
++        return renderIssueState(
++            "Contract not found",
++            "We could not find this contract. It may have been deleted or the link is invalid."
++        );
++    }
++
+     return (
+         <div className="min-h-screen bg-background pb-12">
+             <div className="bg-background/60 backdrop-blur border-b">
+@@ -193,11 +320,11 @@
+                     </Link>
+                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                         <div>
+-                            <h1 className="text-3xl font-bold text-foreground">{contract.title}</h1>
++                            <h1 className="text-3xl font-bold text-foreground">{contractTitle}</h1>
+                             <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+-                                <span>Uploaded {format(new Date(contract.createdAt), "MMM d, yyyy")}</span>
++                                <span>Uploaded {uploadedDateLabel}</span>
+                                 <span>•</span>
+-                                <Badge variant="outline">{contract.status}</Badge>
++                                <Badge variant="outline">{contract.status || "UNKNOWN"}</Badge>
+                             </div>
+                         </div>
+ 
+@@ -263,11 +390,11 @@
+                                     <CardDescription>Overall contract risk level</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(analysis.riskBadge)}`}>
+-                                        {analysis.riskBadge || "UNKNOWN"}
++                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(riskBadge)}`}>
++                                        {riskBadge || "UNKNOWN"}
+                                     </Badge>
+                                     <p className="mt-4 text-sm text-muted-foreground">
+-                                        Analyzed on {format(new Date(analysis.createdAt), "MMM d, HH:mm")}
++                                        Analyzed on {analysisDateLabel}
+                                     </p>
+                                     {!!llmModel && (
+                                         <p className="mt-2 text-xs text-muted-foreground">
+@@ -284,9 +411,9 @@
+                                     <CardDescription>Important points extracted from the contract</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    {analysis.keyPoints && analysis.keyPoints.length > 0 ? (
++                                    {keyFindings.length > 0 ? (
+                                         <ul className="space-y-4">
+-                                            {analysis.keyPoints.map((point: string, idx: number) => (
++                                            {keyFindings.map((point: string, idx: number) => (
+                                                 <li key={idx} className="flex items-start gap-3 p-3 rounded-lg bg-muted/60">
+                                                     <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                                                     <span className="text-sm text-foreground/90 leading-relaxed">{point}</span>
+@@ -295,7 +422,7 @@
+                                         </ul>
+                                     ) : (
+                                         <div className="text-center py-8 text-muted-foreground">
+-                                            No key points extracted.
++                                            No key findings yet. Re-run analysis to extract highlights.
+                                         </div>
+                                     )}
+                                 </CardContent>
+@@ -303,21 +430,21 @@
+                         </div>
+ 
+                         {/* Contract Summary Section */}
+-                        {analysis.resultJson?.summary && (
+-                            <Card className="mt-6">
+-                                <CardHeader>
+-                                    <CardTitle className="flex items-center gap-2">
+-                                        <FileText className="h-5 w-5" />
+-                                        Contract Summary
+-                                    </CardTitle>
+-                                    <CardDescription>Quick overview of the contract terms</CardDescription>
+-                                </CardHeader>
+-                                <CardContent>
++                        <Card className="mt-6">
++                            <CardHeader>
++                                <CardTitle className="flex items-center gap-2">
++                                    <FileText className="h-5 w-5" />
++                                    Contract Summary
++                                </CardTitle>
++                                <CardDescription>Quick overview of the contract terms</CardDescription>
++                            </CardHeader>
++                            <CardContent>
++                                {summary ? (
+                                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                                         {/* What It Is */}
+                                         <div className="p-4 rounded-lg bg-muted/40">
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1">What It Is</h4>
+-                                            <p className="text-sm">{analysis.resultJson.summary.what_it_is || "Not specified"}</p>
++                                            <p className="text-sm">{summary.what_it_is || "Not specified"}</p>
+                                         </div>
+ 
+                                         {/* Payments */}
+@@ -326,11 +453,11 @@
+                                                 <DollarSign className="h-4 w-4" /> Payments
+                                             </h4>
+                                             <p className="text-sm font-medium">
+-                                                {analysis.resultJson.summary.payments?.amount || "Not specified"}
++                                                {summaryPayments?.amount || "Not specified"}
+                                             </p>
+-                                            {analysis.resultJson.summary.payments?.frequency && (
++                                            {summaryPayments?.frequency && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    {analysis.resultJson.summary.payments.frequency}
++                                                    {summaryPayments.frequency}
+                                                 </p>
+                                             )}
+                                         </div>
+@@ -341,7 +468,7 @@
+                                                 <Clock className="h-4 w-4" /> Term
+                                             </h4>
+                                             <p className="text-sm">
+-                                                {analysis.resultJson.summary.term?.minimum_term || "Not specified"}
++                                                {summaryTerm?.minimum_term || "Not specified"}
+                                             </p>
+                                         </div>
+ 
+@@ -350,19 +477,21 @@
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
+                                                 <RefreshCw className="h-4 w-4" /> Renewal
+                                             </h4>
+-                                            <p className="text-sm">
+-                                                {analysis.resultJson.summary.renewal?.auto_renew ? "Auto-renews" : "Manual renewal"}
+-                                            </p>
+-                                            {analysis.resultJson.summary.renewal?.renewal_period && (
++                                            <p className="text-sm">{renewalLabel}</p>
++                                            {summaryRenewal?.renewal_period && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    Period: {analysis.resultJson.summary.renewal.renewal_period}
++                                                    Period: {summaryRenewal.renewal_period}
+                                                 </p>
+                                             )}
+                                         </div>
+                                     </div>
+-                                </CardContent>
+-                            </Card>
+-                        )}
++                                ) : (
++                                    <div className="text-center py-8 text-muted-foreground">
++                                        Summary unavailable. Re-run analysis to generate the contract overview.
++                                    </div>
++                                )}
++                            </CardContent>
++                        </Card>
+                         
+                         {/* More sections can be added here (Red flags etc) - Truncated for brevity but preserving structure */}
+                     </>
+
+
+thinking
+**Committing with detailed message**
+
+I'll create a concise commit message with a scoped fix type, a clear subject under 50 characters, descriptive bullet points in the body, and an optional reference before committing.
+exec
+/bin/zsh -lc 'git commit -m "$(cat <<'"'EOF'
+fix(contracts): harden detail states
+
+- add route error boundary and API error state with CTA
+- guard nested analysis/date fields and empty summaries
+Reference: US-001
+EOF
+)\"" in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+[main 8f4bf13] fix(contracts): harden detail states
+ 14 files changed, 20377 insertions(+), 38 deletions(-)
+ create mode 100644 .agents/tasks/prd-contract-analysis.json
+ create mode 100644 .ralph/.tmp/prd-prompt-20260117-180856-16302.md
+ create mode 100644 .ralph/.tmp/prompt-20260117-181656-16962-1.md
+ create mode 100644 .ralph/.tmp/story-20260117-180658-16134-1.json
+ create mode 100644 .ralph/.tmp/story-20260117-180658-16134-1.md
+ create mode 100644 .ralph/.tmp/story-20260117-180721-16186-1.json
+ create mode 100644 .ralph/.tmp/story-20260117-180721-16186-1.md
+ create mode 100644 .ralph/.tmp/story-20260117-181656-16962-1.json
+ create mode 100644 .ralph/.tmp/story-20260117-181656-16962-1.md
+ create mode 100644 .ralph/runs/run-20260117-181656-16962-iter-1.log
+ create mode 100644 AGENTS.md
+ create mode 100644 apps/web/app/contracts/[id]/error.tsx
+file update:
+diff --git a/apps/web/app/contracts/[id]/error.tsx b/apps/web/app/contracts/[id]/error.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..bd641c22a3394d38bdda9dacae72904b90db662c
+--- /dev/null
++++ b/apps/web/app/contracts/[id]/error.tsx
+@@ -0,0 +1,48 @@
++'use client';
++
++import { useEffect } from "react";
++import Link from "next/link";
++import { Button } from "@/components/ui/button";
++import { Card, CardContent } from "@/components/ui/card";
++import { ArrowLeft, XCircle } from "lucide-react";
++
++export default function Error({
++    error,
++    reset,
++}: {
++    error: Error & { digest?: string };
++    reset: () => void;
++}) {
++    useEffect(() => {
++        console.error(error);
++    }, [error]);
++
++    return (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">Something went wrong</h2>
++                        <p className="text-sm text-muted-foreground mt-2">
++                            We hit an unexpected error while loading this contract. You can try again or return to the dashboard.
++                        </p>
++                        <div className="flex flex-wrap gap-3 mt-6 justify-center">
++                            <Button variant="outline" onClick={() => reset()}>
++                                Try Again
++                            </Button>
++                            <Button asChild>
++                                <Link href="/dashboard">
++                                    <ArrowLeft className="mr-2 h-4 w-4" />
++                                    Back to Dashboard
++                                </Link>
++                            </Button>
++                        </div>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++}
+diff --git a/apps/web/app/contracts/[id]/page.tsx b/apps/web/app/contracts/[id]/page.tsx
+index 2fb0c5fa7f9c5542bfa41fc2989e71690db7b9d4..c479b2dbda2bcb107a098be589d90cbf675c5ba9
+--- a/apps/web/app/contracts/[id]/page.tsx
++++ b/apps/web/app/contracts/[id]/page.tsx
+@@ -32,7 +32,72 @@
+     const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+     const [llmUsed, setLlmUsed] = useState<{ provider?: string; model?: string } | null>(null);
+ 
+-    const { data: contract, isLoading } = useQuery({
++    const formatDate = (value: unknown, formatStr: string, fallback: string) => {
++        if (!value) return fallback;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        if (Number.isNaN(time)) return fallback;
++        return format(date, formatStr);
++    };
++
++    const getTimestamp = (value: unknown) => {
++        if (!value) return 0;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        return Number.isNaN(time) ? 0 : time;
++    };
++
++    const getContractErrorDetails = (error: unknown) => {
++        const response = (error as any)?.response;
++        const status = response?.status;
++        const message =
++            response?.data?.message ||
++            response?.data?.error ||
++            (error instanceof Error ? error.message : null);
++
++        if (status === 404) {
++            return {
++                title: "Contract not found",
++                description: "We could not find this contract. It may have been deleted or the link is invalid.",
++            };
++        }
++
++        if (typeof status === "number" && status >= 500) {
++            return {
++                title: "Server error",
++                description: "We hit a server error while loading this contract. Please try again soon.",
++            };
++        }
++
++        return {
++            title: "Unable to load contract",
++            description: message || "We could not load this contract right now. Please try again later.",
++        };
++    };
++
++    const renderIssueState = (title: string, description: string) => (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">{title}</h2>
++                        <p className="text-sm text-muted-foreground mt-2">{description}</p>
++                        <Button asChild className="mt-6">
++                            <Link href="/dashboard">
++                                <ArrowLeft className="mr-2 h-4 w-4" />
++                                Back to Dashboard
++                            </Link>
++                        </Button>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++
++    const { data: contract, isLoading, isError, error } = useQuery({
+         queryKey: ["contract", id],
+         queryFn: async () => {
+             const response = await apiClient.get(`/contracts/${id}`);
+@@ -84,8 +149,9 @@
+         }
+     });
+ 
+-    const getRiskColor = (badge: string) => {
+-        switch (badge?.toLowerCase()) {
++    const getRiskColor = (badge: string | null | undefined) => {
++        const normalized = typeof badge === "string" ? badge.toLowerCase() : "";
++        switch (normalized) {
+             case "high": return "bg-destructive/15 text-destructive hover:bg-destructive/20";
+             case "medium": return "bg-amber-500/15 text-amber-800 hover:bg-amber-500/20 dark:text-amber-200";
+             case "low": return "bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200";
+@@ -93,17 +159,68 @@
+         }
+     };
+ 
+-    const analysis = contract?.latestAnalysis;
++    const analysis = contract?.latestAnalysis && typeof contract.latestAnalysis === "object"
++        ? contract.latestAnalysis
++        : null;
+     const analysisJobStatus = analysisJob?.status;
+     const analyses = Array.isArray(contract?.analyses) ? contract.analyses : [];
+     const sortedAnalyses = [...analyses].sort(
+-        (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
++        (a: any, b: any) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt)
+     );
+     const latestAnalysisRecord = sortedAnalyses[0];
+     const olderAnalyses = analysis?.id
+         ? sortedAnalyses.filter((a: any) => a.id !== analysis.id)
+         : sortedAnalyses.slice(1);
+ 
++    const resultJson = analysis?.resultJson && typeof analysis.resultJson === "object"
++        ? analysis.resultJson
++        : null;
++    const summary = resultJson?.summary && typeof resultJson.summary === "object"
++        ? resultJson.summary
++        : null;
++    const summaryPayments = summary?.payments && typeof summary.payments === "object"
++        ? summary.payments
++        : null;
++    const summaryTerm = summary?.term && typeof summary.term === "object"
++        ? summary.term
++        : null;
++    const summaryRenewal = summary?.renewal && typeof summary.renewal === "object"
++        ? summary.renewal
++        : null;
++
++    const riskBadge = typeof analysis?.riskBadge === "string"
++        ? analysis.riskBadge
++        : typeof resultJson?.risk_badge === "string"
++            ? resultJson.risk_badge
++            : "UNKNOWN";
++
++    const keyPoints = Array.isArray(analysis?.keyPoints)
++        ? analysis.keyPoints
++        : Array.isArray(resultJson?.key_points)
++            ? resultJson.key_points
++            : [];
++    const redFlags = Array.isArray(resultJson?.red_flags) ? resultJson.red_flags : [];
++    const redFlagFindings = redFlags
++        .map((flag: any) => {
++            const type = typeof flag?.type === "string" ? flag.type.trim() : "";
++            const explanation = typeof flag?.explanation === "string" ? flag.explanation.trim() : "";
++            if (type && explanation) return `${type}: ${explanation}`;
++            return explanation || type || "";
++        })
++        .filter(Boolean);
++    const keyFindings = redFlagFindings.length > 0 ? redFlagFindings : keyPoints;
++
++    const uploadedDateLabel = formatDate(contract?.createdAt, "MMM d, yyyy", "Unknown date");
++    const analysisDateLabel = formatDate(analysis?.createdAt, "MMM d, HH:mm", "Unknown time");
++    const renewalLabel = summaryRenewal
++        ? summaryRenewal.auto_renew
++            ? "Auto-renews"
++            : "Manual renewal"
++        : "Not specified";
++    const contractTitle = typeof contract?.title === "string" && contract.title.trim()
++        ? contract.title
++        : "Untitled contract";
++
+     const llmProvider = llmUsed?.provider ?? analysisJob?.result?.provider;
+     const llmModel = llmUsed?.model ?? analysisJob?.result?.llmModel ?? latestAnalysisRecord?.llmModel;
+     const llmProviderLabel =
+@@ -181,8 +298,18 @@
+         );
+     }
+ 
+-    if (!contract) return <div>Contract not found</div>;
++    if (isError) {
++        const { title, description } = getContractErrorDetails(error);
++        return renderIssueState(title, description);
++    }
+ 
++    if (!contract) {
++        return renderIssueState(
++            "Contract not found",
++            "We could not find this contract. It may have been deleted or the link is invalid."
++        );
++    }
++
+     return (
+         <div className="min-h-screen bg-background pb-12">
+             <div className="bg-background/60 backdrop-blur border-b">
+@@ -193,11 +320,11 @@
+                     </Link>
+                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                         <div>
+-                            <h1 className="text-3xl font-bold text-foreground">{contract.title}</h1>
++                            <h1 className="text-3xl font-bold text-foreground">{contractTitle}</h1>
+                             <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+-                                <span>Uploaded {format(new Date(contract.createdAt), "MMM d, yyyy")}</span>
++                                <span>Uploaded {uploadedDateLabel}</span>
+                                 <span>•</span>
+-                                <Badge variant="outline">{contract.status}</Badge>
++                                <Badge variant="outline">{contract.status || "UNKNOWN"}</Badge>
+                             </div>
+                         </div>
+ 
+@@ -263,11 +390,11 @@
+                                     <CardDescription>Overall contract risk level</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(analysis.riskBadge)}`}>
+-                                        {analysis.riskBadge || "UNKNOWN"}
++                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(riskBadge)}`}>
++                                        {riskBadge || "UNKNOWN"}
+                                     </Badge>
+                                     <p className="mt-4 text-sm text-muted-foreground">
+-                                        Analyzed on {format(new Date(analysis.createdAt), "MMM d, HH:mm")}
++                                        Analyzed on {analysisDateLabel}
+                                     </p>
+                                     {!!llmModel && (
+                                         <p className="mt-2 text-xs text-muted-foreground">
+@@ -284,9 +411,9 @@
+                                     <CardDescription>Important points extracted from the contract</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    {analysis.keyPoints && analysis.keyPoints.length > 0 ? (
++                                    {keyFindings.length > 0 ? (
+                                         <ul className="space-y-4">
+-                                            {analysis.keyPoints.map((point: string, idx: number) => (
++                                            {keyFindings.map((point: string, idx: number) => (
+                                                 <li key={idx} className="flex items-start gap-3 p-3 rounded-lg bg-muted/60">
+                                                     <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                                                     <span className="text-sm text-foreground/90 leading-relaxed">{point}</span>
+@@ -295,7 +422,7 @@
+                                         </ul>
+                                     ) : (
+                                         <div className="text-center py-8 text-muted-foreground">
+-                                            No key points extracted.
++                                            No key findings yet. Re-run analysis to extract highlights.
+                                         </div>
+                                     )}
+                                 </CardContent>
+@@ -303,21 +430,21 @@
+                         </div>
+ 
+                         {/* Contract Summary Section */}
+-                        {analysis.resultJson?.summary && (
+-                            <Card className="mt-6">
+-                                <CardHeader>
+-                                    <CardTitle className="flex items-center gap-2">
+-                                        <FileText className="h-5 w-5" />
+-                                        Contract Summary
+-                                    </CardTitle>
+-                                    <CardDescription>Quick overview of the contract terms</CardDescription>
+-                                </CardHeader>
+-                                <CardContent>
++                        <Card className="mt-6">
++                            <CardHeader>
++                                <CardTitle className="flex items-center gap-2">
++                                    <FileText className="h-5 w-5" />
++                                    Contract Summary
++                                </CardTitle>
++                                <CardDescription>Quick overview of the contract terms</CardDescription>
++                            </CardHeader>
++                            <CardContent>
++                                {summary ? (
+                                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                                         {/* What It Is */}
+                                         <div className="p-4 rounded-lg bg-muted/40">
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1">What It Is</h4>
+-                                            <p className="text-sm">{analysis.resultJson.summary.what_it_is || "Not specified"}</p>
++                                            <p className="text-sm">{summary.what_it_is || "Not specified"}</p>
+                                         </div>
+ 
+                                         {/* Payments */}
+@@ -326,11 +453,11 @@
+                                                 <DollarSign className="h-4 w-4" /> Payments
+                                             </h4>
+                                             <p className="text-sm font-medium">
+-                                                {analysis.resultJson.summary.payments?.amount || "Not specified"}
++                                                {summaryPayments?.amount || "Not specified"}
+                                             </p>
+-                                            {analysis.resultJson.summary.payments?.frequency && (
++                                            {summaryPayments?.frequency && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    {analysis.resultJson.summary.payments.frequency}
++                                                    {summaryPayments.frequency}
+                                                 </p>
+                                             )}
+                                         </div>
+@@ -341,7 +468,7 @@
+                                                 <Clock className="h-4 w-4" /> Term
+                                             </h4>
+                                             <p className="text-sm">
+-                                                {analysis.resultJson.summary.term?.minimum_term || "Not specified"}
++                                                {summaryTerm?.minimum_term || "Not specified"}
+                                             </p>
+                                         </div>
+ 
+@@ -350,19 +477,21 @@
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
+                                                 <RefreshCw className="h-4 w-4" /> Renewal
+                                             </h4>
+-                                            <p className="text-sm">
+-                                                {analysis.resultJson.summary.renewal?.auto_renew ? "Auto-renews" : "Manual renewal"}
+-                                            </p>
+-                                            {analysis.resultJson.summary.renewal?.renewal_period && (
++                                            <p className="text-sm">{renewalLabel}</p>
++                                            {summaryRenewal?.renewal_period && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    Period: {analysis.resultJson.summary.renewal.renewal_period}
++                                                    Period: {summaryRenewal.renewal_period}
+                                                 </p>
+                                             )}
+                                         </div>
+                                     </div>
+-                                </CardContent>
+-                            </Card>
+-                        )}
++                                ) : (
++                                    <div className="text-center py-8 text-muted-foreground">
++                                        Summary unavailable. Re-run analysis to generate the contract overview.
++                                    </div>
++                                )}
++                            </CardContent>
++                        </Card>
+                         
+                         {/* More sections can be added here (Red flags etc) - Truncated for brevity but preserving structure */}
+                     </>
+
+
+thinking
+**Confirming clean working tree**
+
+I'm verifying that the working tree is clean after the commit by checking that `git status --porcelain` returns no changes.
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+ M .ralph/runs/run-20260117-181656-16962-iter-1.log
+file update:
+diff --git a/apps/web/app/contracts/[id]/error.tsx b/apps/web/app/contracts/[id]/error.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..bd641c22a3394d38bdda9dacae72904b90db662c
+--- /dev/null
++++ b/apps/web/app/contracts/[id]/error.tsx
+@@ -0,0 +1,48 @@
++'use client';
++
++import { useEffect } from "react";
++import Link from "next/link";
++import { Button } from "@/components/ui/button";
++import { Card, CardContent } from "@/components/ui/card";
++import { ArrowLeft, XCircle } from "lucide-react";
++
++export default function Error({
++    error,
++    reset,
++}: {
++    error: Error & { digest?: string };
++    reset: () => void;
++}) {
++    useEffect(() => {
++        console.error(error);
++    }, [error]);
++
++    return (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">Something went wrong</h2>
++                        <p className="text-sm text-muted-foreground mt-2">
++                            We hit an unexpected error while loading this contract. You can try again or return to the dashboard.
++                        </p>
++                        <div className="flex flex-wrap gap-3 mt-6 justify-center">
++                            <Button variant="outline" onClick={() => reset()}>
++                                Try Again
++                            </Button>
++                            <Button asChild>
++                                <Link href="/dashboard">
++                                    <ArrowLeft className="mr-2 h-4 w-4" />
++                                    Back to Dashboard
++                                </Link>
++                            </Button>
++                        </div>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++}
+diff --git a/apps/web/app/contracts/[id]/page.tsx b/apps/web/app/contracts/[id]/page.tsx
+index 2fb0c5fa7f9c5542bfa41fc2989e71690db7b9d4..c479b2dbda2bcb107a098be589d90cbf675c5ba9
+--- a/apps/web/app/contracts/[id]/page.tsx
++++ b/apps/web/app/contracts/[id]/page.tsx
+@@ -32,7 +32,72 @@
+     const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+     const [llmUsed, setLlmUsed] = useState<{ provider?: string; model?: string } | null>(null);
+ 
+-    const { data: contract, isLoading } = useQuery({
++    const formatDate = (value: unknown, formatStr: string, fallback: string) => {
++        if (!value) return fallback;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        if (Number.isNaN(time)) return fallback;
++        return format(date, formatStr);
++    };
++
++    const getTimestamp = (value: unknown) => {
++        if (!value) return 0;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        return Number.isNaN(time) ? 0 : time;
++    };
++
++    const getContractErrorDetails = (error: unknown) => {
++        const response = (error as any)?.response;
++        const status = response?.status;
++        const message =
++            response?.data?.message ||
++            response?.data?.error ||
++            (error instanceof Error ? error.message : null);
++
++        if (status === 404) {
++            return {
++                title: "Contract not found",
++                description: "We could not find this contract. It may have been deleted or the link is invalid.",
++            };
++        }
++
++        if (typeof status === "number" && status >= 500) {
++            return {
++                title: "Server error",
++                description: "We hit a server error while loading this contract. Please try again soon.",
++            };
++        }
++
++        return {
++            title: "Unable to load contract",
++            description: message || "We could not load this contract right now. Please try again later.",
++        };
++    };
++
++    const renderIssueState = (title: string, description: string) => (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">{title}</h2>
++                        <p className="text-sm text-muted-foreground mt-2">{description}</p>
++                        <Button asChild className="mt-6">
++                            <Link href="/dashboard">
++                                <ArrowLeft className="mr-2 h-4 w-4" />
++                                Back to Dashboard
++                            </Link>
++                        </Button>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++
++    const { data: contract, isLoading, isError, error } = useQuery({
+         queryKey: ["contract", id],
+         queryFn: async () => {
+             const response = await apiClient.get(`/contracts/${id}`);
+@@ -84,8 +149,9 @@
+         }
+     });
+ 
+-    const getRiskColor = (badge: string) => {
+-        switch (badge?.toLowerCase()) {
++    const getRiskColor = (badge: string | null | undefined) => {
++        const normalized = typeof badge === "string" ? badge.toLowerCase() : "";
++        switch (normalized) {
+             case "high": return "bg-destructive/15 text-destructive hover:bg-destructive/20";
+             case "medium": return "bg-amber-500/15 text-amber-800 hover:bg-amber-500/20 dark:text-amber-200";
+             case "low": return "bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200";
+@@ -93,17 +159,68 @@
+         }
+     };
+ 
+-    const analysis = contract?.latestAnalysis;
++    const analysis = contract?.latestAnalysis && typeof contract.latestAnalysis === "object"
++        ? contract.latestAnalysis
++        : null;
+     const analysisJobStatus = analysisJob?.status;
+     const analyses = Array.isArray(contract?.analyses) ? contract.analyses : [];
+     const sortedAnalyses = [...analyses].sort(
+-        (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
++        (a: any, b: any) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt)
+     );
+     const latestAnalysisRecord = sortedAnalyses[0];
+     const olderAnalyses = analysis?.id
+         ? sortedAnalyses.filter((a: any) => a.id !== analysis.id)
+         : sortedAnalyses.slice(1);
+ 
++    const resultJson = analysis?.resultJson && typeof analysis.resultJson === "object"
++        ? analysis.resultJson
++        : null;
++    const summary = resultJson?.summary && typeof resultJson.summary === "object"
++        ? resultJson.summary
++        : null;
++    const summaryPayments = summary?.payments && typeof summary.payments === "object"
++        ? summary.payments
++        : null;
++    const summaryTerm = summary?.term && typeof summary.term === "object"
++        ? summary.term
++        : null;
++    const summaryRenewal = summary?.renewal && typeof summary.renewal === "object"
++        ? summary.renewal
++        : null;
++
++    const riskBadge = typeof analysis?.riskBadge === "string"
++        ? analysis.riskBadge
++        : typeof resultJson?.risk_badge === "string"
++            ? resultJson.risk_badge
++            : "UNKNOWN";
++
++    const keyPoints = Array.isArray(analysis?.keyPoints)
++        ? analysis.keyPoints
++        : Array.isArray(resultJson?.key_points)
++            ? resultJson.key_points
++            : [];
++    const redFlags = Array.isArray(resultJson?.red_flags) ? resultJson.red_flags : [];
++    const redFlagFindings = redFlags
++        .map((flag: any) => {
++            const type = typeof flag?.type === "string" ? flag.type.trim() : "";
++            const explanation = typeof flag?.explanation === "string" ? flag.explanation.trim() : "";
++            if (type && explanation) return `${type}: ${explanation}`;
++            return explanation || type || "";
++        })
++        .filter(Boolean);
++    const keyFindings = redFlagFindings.length > 0 ? redFlagFindings : keyPoints;
++
++    const uploadedDateLabel = formatDate(contract?.createdAt, "MMM d, yyyy", "Unknown date");
++    const analysisDateLabel = formatDate(analysis?.createdAt, "MMM d, HH:mm", "Unknown time");
++    const renewalLabel = summaryRenewal
++        ? summaryRenewal.auto_renew
++            ? "Auto-renews"
++            : "Manual renewal"
++        : "Not specified";
++    const contractTitle = typeof contract?.title === "string" && contract.title.trim()
++        ? contract.title
++        : "Untitled contract";
++
+     const llmProvider = llmUsed?.provider ?? analysisJob?.result?.provider;
+     const llmModel = llmUsed?.model ?? analysisJob?.result?.llmModel ?? latestAnalysisRecord?.llmModel;
+     const llmProviderLabel =
+@@ -181,8 +298,18 @@
+         );
+     }
+ 
+-    if (!contract) return <div>Contract not found</div>;
++    if (isError) {
++        const { title, description } = getContractErrorDetails(error);
++        return renderIssueState(title, description);
++    }
+ 
++    if (!contract) {
++        return renderIssueState(
++            "Contract not found",
++            "We could not find this contract. It may have been deleted or the link is invalid."
++        );
++    }
++
+     return (
+         <div className="min-h-screen bg-background pb-12">
+             <div className="bg-background/60 backdrop-blur border-b">
+@@ -193,11 +320,11 @@
+                     </Link>
+                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                         <div>
+-                            <h1 className="text-3xl font-bold text-foreground">{contract.title}</h1>
++                            <h1 className="text-3xl font-bold text-foreground">{contractTitle}</h1>
+                             <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+-                                <span>Uploaded {format(new Date(contract.createdAt), "MMM d, yyyy")}</span>
++                                <span>Uploaded {uploadedDateLabel}</span>
+                                 <span>•</span>
+-                                <Badge variant="outline">{contract.status}</Badge>
++                                <Badge variant="outline">{contract.status || "UNKNOWN"}</Badge>
+                             </div>
+                         </div>
+ 
+@@ -263,11 +390,11 @@
+                                     <CardDescription>Overall contract risk level</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(analysis.riskBadge)}`}>
+-                                        {analysis.riskBadge || "UNKNOWN"}
++                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(riskBadge)}`}>
++                                        {riskBadge || "UNKNOWN"}
+                                     </Badge>
+                                     <p className="mt-4 text-sm text-muted-foreground">
+-                                        Analyzed on {format(new Date(analysis.createdAt), "MMM d, HH:mm")}
++                                        Analyzed on {analysisDateLabel}
+                                     </p>
+                                     {!!llmModel && (
+                                         <p className="mt-2 text-xs text-muted-foreground">
+@@ -284,9 +411,9 @@
+                                     <CardDescription>Important points extracted from the contract</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    {analysis.keyPoints && analysis.keyPoints.length > 0 ? (
++                                    {keyFindings.length > 0 ? (
+                                         <ul className="space-y-4">
+-                                            {analysis.keyPoints.map((point: string, idx: number) => (
++                                            {keyFindings.map((point: string, idx: number) => (
+                                                 <li key={idx} className="flex items-start gap-3 p-3 rounded-lg bg-muted/60">
+                                                     <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                                                     <span className="text-sm text-foreground/90 leading-relaxed">{point}</span>
+@@ -295,7 +422,7 @@
+                                         </ul>
+                                     ) : (
+                                         <div className="text-center py-8 text-muted-foreground">
+-                                            No key points extracted.
++                                            No key findings yet. Re-run analysis to extract highlights.
+                                         </div>
+                                     )}
+                                 </CardContent>
+@@ -303,21 +430,21 @@
+                         </div>
+ 
+                         {/* Contract Summary Section */}
+-                        {analysis.resultJson?.summary && (
+-                            <Card className="mt-6">
+-                                <CardHeader>
+-                                    <CardTitle className="flex items-center gap-2">
+-                                        <FileText className="h-5 w-5" />
+-                                        Contract Summary
+-                                    </CardTitle>
+-                                    <CardDescription>Quick overview of the contract terms</CardDescription>
+-                                </CardHeader>
+-                                <CardContent>
++                        <Card className="mt-6">
++                            <CardHeader>
++                                <CardTitle className="flex items-center gap-2">
++                                    <FileText className="h-5 w-5" />
++                                    Contract Summary
++                                </CardTitle>
++                                <CardDescription>Quick overview of the contract terms</CardDescription>
++                            </CardHeader>
++                            <CardContent>
++                                {summary ? (
+                                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                                         {/* What It Is */}
+                                         <div className="p-4 rounded-lg bg-muted/40">
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1">What It Is</h4>
+-                                            <p className="text-sm">{analysis.resultJson.summary.what_it_is || "Not specified"}</p>
++                                            <p className="text-sm">{summary.what_it_is || "Not specified"}</p>
+                                         </div>
+ 
+                                         {/* Payments */}
+@@ -326,11 +453,11 @@
+                                                 <DollarSign className="h-4 w-4" /> Payments
+                                             </h4>
+                                             <p className="text-sm font-medium">
+-                                                {analysis.resultJson.summary.payments?.amount || "Not specified"}
++                                                {summaryPayments?.amount || "Not specified"}
+                                             </p>
+-                                            {analysis.resultJson.summary.payments?.frequency && (
++                                            {summaryPayments?.frequency && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    {analysis.resultJson.summary.payments.frequency}
++                                                    {summaryPayments.frequency}
+                                                 </p>
+                                             )}
+                                         </div>
+@@ -341,7 +468,7 @@
+                                                 <Clock className="h-4 w-4" /> Term
+                                             </h4>
+                                             <p className="text-sm">
+-                                                {analysis.resultJson.summary.term?.minimum_term || "Not specified"}
++                                                {summaryTerm?.minimum_term || "Not specified"}
+                                             </p>
+                                         </div>
+ 
+@@ -350,19 +477,21 @@
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
+                                                 <RefreshCw className="h-4 w-4" /> Renewal
+                                             </h4>
+-                                            <p className="text-sm">
+-                                                {analysis.resultJson.summary.renewal?.auto_renew ? "Auto-renews" : "Manual renewal"}
+-                                            </p>
+-                                            {analysis.resultJson.summary.renewal?.renewal_period && (
++                                            <p className="text-sm">{renewalLabel}</p>
++                                            {summaryRenewal?.renewal_period && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    Period: {analysis.resultJson.summary.renewal.renewal_period}
++                                                    Period: {summaryRenewal.renewal_period}
+                                                 </p>
+                                             )}
+                                         </div>
+                                     </div>
+-                                </CardContent>
+-                            </Card>
+-                        )}
++                                ) : (
++                                    <div className="text-center py-8 text-muted-foreground">
++                                        Summary unavailable. Re-run analysis to generate the contract overview.
++                                    </div>
++                                )}
++                            </CardContent>
++                        </Card>
+                         
+                         {/* More sections can be added here (Red flags etc) - Truncated for brevity but preserving structure */}
+                     </>
+
+
+
+thinking
+**Handling modified run log commit**
+
+The run log is being appended after the initial commit, causing the working tree to be unclean; I'll stage and commit the run log updates to achieve a clean state as required.
+thinking
+**Capturing first commit details**
+
+After completing step 10, I'll run the command to retrieve the latest commit hash and subject to record the first commit details before doing any follow-up commits.
+exec
+/bin/zsh -lc 'git show -s --format="%h %s" HEAD' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+8f4bf13 fix(contracts): harden detail states
+file update:
+diff --git a/apps/web/app/contracts/[id]/error.tsx b/apps/web/app/contracts/[id]/error.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..bd641c22a3394d38bdda9dacae72904b90db662c
+--- /dev/null
++++ b/apps/web/app/contracts/[id]/error.tsx
+@@ -0,0 +1,48 @@
++'use client';
++
++import { useEffect } from "react";
++import Link from "next/link";
++import { Button } from "@/components/ui/button";
++import { Card, CardContent } from "@/components/ui/card";
++import { ArrowLeft, XCircle } from "lucide-react";
++
++export default function Error({
++    error,
++    reset,
++}: {
++    error: Error & { digest?: string };
++    reset: () => void;
++}) {
++    useEffect(() => {
++        console.error(error);
++    }, [error]);
++
++    return (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">Something went wrong</h2>
++                        <p className="text-sm text-muted-foreground mt-2">
++                            We hit an unexpected error while loading this contract. You can try again or return to the dashboard.
++                        </p>
++                        <div className="flex flex-wrap gap-3 mt-6 justify-center">
++                            <Button variant="outline" onClick={() => reset()}>
++                                Try Again
++                            </Button>
++                            <Button asChild>
++                                <Link href="/dashboard">
++                                    <ArrowLeft className="mr-2 h-4 w-4" />
++                                    Back to Dashboard
++                                </Link>
++                            </Button>
++                        </div>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++}
+diff --git a/apps/web/app/contracts/[id]/page.tsx b/apps/web/app/contracts/[id]/page.tsx
+index 2fb0c5fa7f9c5542bfa41fc2989e71690db7b9d4..c479b2dbda2bcb107a098be589d90cbf675c5ba9
+--- a/apps/web/app/contracts/[id]/page.tsx
++++ b/apps/web/app/contracts/[id]/page.tsx
+@@ -32,7 +32,72 @@
+     const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+     const [llmUsed, setLlmUsed] = useState<{ provider?: string; model?: string } | null>(null);
+ 
+-    const { data: contract, isLoading } = useQuery({
++    const formatDate = (value: unknown, formatStr: string, fallback: string) => {
++        if (!value) return fallback;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        if (Number.isNaN(time)) return fallback;
++        return format(date, formatStr);
++    };
++
++    const getTimestamp = (value: unknown) => {
++        if (!value) return 0;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        return Number.isNaN(time) ? 0 : time;
++    };
++
++    const getContractErrorDetails = (error: unknown) => {
++        const response = (error as any)?.response;
++        const status = response?.status;
++        const message =
++            response?.data?.message ||
++            response?.data?.error ||
++            (error instanceof Error ? error.message : null);
++
++        if (status === 404) {
++            return {
++                title: "Contract not found",
++                description: "We could not find this contract. It may have been deleted or the link is invalid.",
++            };
++        }
++
++        if (typeof status === "number" && status >= 500) {
++            return {
++                title: "Server error",
++                description: "We hit a server error while loading this contract. Please try again soon.",
++            };
++        }
++
++        return {
++            title: "Unable to load contract",
++            description: message || "We could not load this contract right now. Please try again later.",
++        };
++    };
++
++    const renderIssueState = (title: string, description: string) => (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">{title}</h2>
++                        <p className="text-sm text-muted-foreground mt-2">{description}</p>
++                        <Button asChild className="mt-6">
++                            <Link href="/dashboard">
++                                <ArrowLeft className="mr-2 h-4 w-4" />
++                                Back to Dashboard
++                            </Link>
++                        </Button>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++
++    const { data: contract, isLoading, isError, error } = useQuery({
+         queryKey: ["contract", id],
+         queryFn: async () => {
+             const response = await apiClient.get(`/contracts/${id}`);
+@@ -84,8 +149,9 @@
+         }
+     });
+ 
+-    const getRiskColor = (badge: string) => {
+-        switch (badge?.toLowerCase()) {
++    const getRiskColor = (badge: string | null | undefined) => {
++        const normalized = typeof badge === "string" ? badge.toLowerCase() : "";
++        switch (normalized) {
+             case "high": return "bg-destructive/15 text-destructive hover:bg-destructive/20";
+             case "medium": return "bg-amber-500/15 text-amber-800 hover:bg-amber-500/20 dark:text-amber-200";
+             case "low": return "bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200";
+@@ -93,17 +159,68 @@
+         }
+     };
+ 
+-    const analysis = contract?.latestAnalysis;
++    const analysis = contract?.latestAnalysis && typeof contract.latestAnalysis === "object"
++        ? contract.latestAnalysis
++        : null;
+     const analysisJobStatus = analysisJob?.status;
+     const analyses = Array.isArray(contract?.analyses) ? contract.analyses : [];
+     const sortedAnalyses = [...analyses].sort(
+-        (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
++        (a: any, b: any) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt)
+     );
+     const latestAnalysisRecord = sortedAnalyses[0];
+     const olderAnalyses = analysis?.id
+         ? sortedAnalyses.filter((a: any) => a.id !== analysis.id)
+         : sortedAnalyses.slice(1);
+ 
++    const resultJson = analysis?.resultJson && typeof analysis.resultJson === "object"
++        ? analysis.resultJson
++        : null;
++    const summary = resultJson?.summary && typeof resultJson.summary === "object"
++        ? resultJson.summary
++        : null;
++    const summaryPayments = summary?.payments && typeof summary.payments === "object"
++        ? summary.payments
++        : null;
++    const summaryTerm = summary?.term && typeof summary.term === "object"
++        ? summary.term
++        : null;
++    const summaryRenewal = summary?.renewal && typeof summary.renewal === "object"
++        ? summary.renewal
++        : null;
++
++    const riskBadge = typeof analysis?.riskBadge === "string"
++        ? analysis.riskBadge
++        : typeof resultJson?.risk_badge === "string"
++            ? resultJson.risk_badge
++            : "UNKNOWN";
++
++    const keyPoints = Array.isArray(analysis?.keyPoints)
++        ? analysis.keyPoints
++        : Array.isArray(resultJson?.key_points)
++            ? resultJson.key_points
++            : [];
++    const redFlags = Array.isArray(resultJson?.red_flags) ? resultJson.red_flags : [];
++    const redFlagFindings = redFlags
++        .map((flag: any) => {
++            const type = typeof flag?.type === "string" ? flag.type.trim() : "";
++            const explanation = typeof flag?.explanation === "string" ? flag.explanation.trim() : "";
++            if (type && explanation) return `${type}: ${explanation}`;
++            return explanation || type || "";
++        })
++        .filter(Boolean);
++    const keyFindings = redFlagFindings.length > 0 ? redFlagFindings : keyPoints;
++
++    const uploadedDateLabel = formatDate(contract?.createdAt, "MMM d, yyyy", "Unknown date");
++    const analysisDateLabel = formatDate(analysis?.createdAt, "MMM d, HH:mm", "Unknown time");
++    const renewalLabel = summaryRenewal
++        ? summaryRenewal.auto_renew
++            ? "Auto-renews"
++            : "Manual renewal"
++        : "Not specified";
++    const contractTitle = typeof contract?.title === "string" && contract.title.trim()
++        ? contract.title
++        : "Untitled contract";
++
+     const llmProvider = llmUsed?.provider ?? analysisJob?.result?.provider;
+     const llmModel = llmUsed?.model ?? analysisJob?.result?.llmModel ?? latestAnalysisRecord?.llmModel;
+     const llmProviderLabel =
+@@ -181,8 +298,18 @@
+         );
+     }
+ 
+-    if (!contract) return <div>Contract not found</div>;
++    if (isError) {
++        const { title, description } = getContractErrorDetails(error);
++        return renderIssueState(title, description);
++    }
+ 
++    if (!contract) {
++        return renderIssueState(
++            "Contract not found",
++            "We could not find this contract. It may have been deleted or the link is invalid."
++        );
++    }
++
+     return (
+         <div className="min-h-screen bg-background pb-12">
+             <div className="bg-background/60 backdrop-blur border-b">
+@@ -193,11 +320,11 @@
+                     </Link>
+                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                         <div>
+-                            <h1 className="text-3xl font-bold text-foreground">{contract.title}</h1>
++                            <h1 className="text-3xl font-bold text-foreground">{contractTitle}</h1>
+                             <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+-                                <span>Uploaded {format(new Date(contract.createdAt), "MMM d, yyyy")}</span>
++                                <span>Uploaded {uploadedDateLabel}</span>
+                                 <span>•</span>
+-                                <Badge variant="outline">{contract.status}</Badge>
++                                <Badge variant="outline">{contract.status || "UNKNOWN"}</Badge>
+                             </div>
+                         </div>
+ 
+@@ -263,11 +390,11 @@
+                                     <CardDescription>Overall contract risk level</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(analysis.riskBadge)}`}>
+-                                        {analysis.riskBadge || "UNKNOWN"}
++                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(riskBadge)}`}>
++                                        {riskBadge || "UNKNOWN"}
+                                     </Badge>
+                                     <p className="mt-4 text-sm text-muted-foreground">
+-                                        Analyzed on {format(new Date(analysis.createdAt), "MMM d, HH:mm")}
++                                        Analyzed on {analysisDateLabel}
+                                     </p>
+                                     {!!llmModel && (
+                                         <p className="mt-2 text-xs text-muted-foreground">
+@@ -284,9 +411,9 @@
+                                     <CardDescription>Important points extracted from the contract</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    {analysis.keyPoints && analysis.keyPoints.length > 0 ? (
++                                    {keyFindings.length > 0 ? (
+                                         <ul className="space-y-4">
+-                                            {analysis.keyPoints.map((point: string, idx: number) => (
++                                            {keyFindings.map((point: string, idx: number) => (
+                                                 <li key={idx} className="flex items-start gap-3 p-3 rounded-lg bg-muted/60">
+                                                     <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                                                     <span className="text-sm text-foreground/90 leading-relaxed">{point}</span>
+@@ -295,7 +422,7 @@
+                                         </ul>
+                                     ) : (
+                                         <div className="text-center py-8 text-muted-foreground">
+-                                            No key points extracted.
++                                            No key findings yet. Re-run analysis to extract highlights.
+                                         </div>
+                                     )}
+                                 </CardContent>
+@@ -303,21 +430,21 @@
+                         </div>
+ 
+                         {/* Contract Summary Section */}
+-                        {analysis.resultJson?.summary && (
+-                            <Card className="mt-6">
+-                                <CardHeader>
+-                                    <CardTitle className="flex items-center gap-2">
+-                                        <FileText className="h-5 w-5" />
+-                                        Contract Summary
+-                                    </CardTitle>
+-                                    <CardDescription>Quick overview of the contract terms</CardDescription>
+-                                </CardHeader>
+-                                <CardContent>
++                        <Card className="mt-6">
++                            <CardHeader>
++                                <CardTitle className="flex items-center gap-2">
++                                    <FileText className="h-5 w-5" />
++                                    Contract Summary
++                                </CardTitle>
++                                <CardDescription>Quick overview of the contract terms</CardDescription>
++                            </CardHeader>
++                            <CardContent>
++                                {summary ? (
+                                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                                         {/* What It Is */}
+                                         <div className="p-4 rounded-lg bg-muted/40">
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1">What It Is</h4>
+-                                            <p className="text-sm">{analysis.resultJson.summary.what_it_is || "Not specified"}</p>
++                                            <p className="text-sm">{summary.what_it_is || "Not specified"}</p>
+                                         </div>
+ 
+                                         {/* Payments */}
+@@ -326,11 +453,11 @@
+                                                 <DollarSign className="h-4 w-4" /> Payments
+                                             </h4>
+                                             <p className="text-sm font-medium">
+-                                                {analysis.resultJson.summary.payments?.amount || "Not specified"}
++                                                {summaryPayments?.amount || "Not specified"}
+                                             </p>
+-                                            {analysis.resultJson.summary.payments?.frequency && (
++                                            {summaryPayments?.frequency && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    {analysis.resultJson.summary.payments.frequency}
++                                                    {summaryPayments.frequency}
+                                                 </p>
+                                             )}
+                                         </div>
+@@ -341,7 +468,7 @@
+                                                 <Clock className="h-4 w-4" /> Term
+                                             </h4>
+                                             <p className="text-sm">
+-                                                {analysis.resultJson.summary.term?.minimum_term || "Not specified"}
++                                                {summaryTerm?.minimum_term || "Not specified"}
+                                             </p>
+                                         </div>
+ 
+@@ -350,19 +477,21 @@
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
+                                                 <RefreshCw className="h-4 w-4" /> Renewal
+                                             </h4>
+-                                            <p className="text-sm">
+-                                                {analysis.resultJson.summary.renewal?.auto_renew ? "Auto-renews" : "Manual renewal"}
+-                                            </p>
+-                                            {analysis.resultJson.summary.renewal?.renewal_period && (
++                                            <p className="text-sm">{renewalLabel}</p>
++                                            {summaryRenewal?.renewal_period && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    Period: {analysis.resultJson.summary.renewal.renewal_period}
++                                                    Period: {summaryRenewal.renewal_period}
+                                                 </p>
+                                             )}
+                                         </div>
+                                     </div>
+-                                </CardContent>
+-                            </Card>
+-                        )}
++                                ) : (
++                                    <div className="text-center py-8 text-muted-foreground">
++                                        Summary unavailable. Re-run analysis to generate the contract overview.
++                                    </div>
++                                )}
++                            </CardContent>
++                        </Card>
+                         
+                         {/* More sections can be added here (Red flags etc) - Truncated for brevity but preserving structure */}
+                     </>
+
+
+
+thinking
+**Deciding session ID handling for progress entry**
+
+I'll leave the thread ID (codex exec session ID) blank since multiple sessions exist and using an incorrect one risks confusion; other details like first commit hash, run log path, summary, and verification command results will be included as planned.
+thinking
+**Clarifying command inclusion and file listing for progress log**
+
+I'll exclude `npm run dev` from verification commands since it was an interactive browser check, and focus the log on build, lint, and type check results. For files changed, I'll include all modified files including the progress log itself to maintain accuracy, and use a precise timestamp from the system for the progress entry.
+exec
+/bin/zsh -lc 'date "+%Y-%m-%d %H:%M:%S"' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 51ms:
+2026-01-17 18:35:35
+file update:
+diff --git a/apps/web/app/contracts/[id]/error.tsx b/apps/web/app/contracts/[id]/error.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..bd641c22a3394d38bdda9dacae72904b90db662c
+--- /dev/null
++++ b/apps/web/app/contracts/[id]/error.tsx
+@@ -0,0 +1,48 @@
++'use client';
++
++import { useEffect } from "react";
++import Link from "next/link";
++import { Button } from "@/components/ui/button";
++import { Card, CardContent } from "@/components/ui/card";
++import { ArrowLeft, XCircle } from "lucide-react";
++
++export default function Error({
++    error,
++    reset,
++}: {
++    error: Error & { digest?: string };
++    reset: () => void;
++}) {
++    useEffect(() => {
++        console.error(error);
++    }, [error]);
++
++    return (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">Something went wrong</h2>
++                        <p className="text-sm text-muted-foreground mt-2">
++                            We hit an unexpected error while loading this contract. You can try again or return to the dashboard.
++                        </p>
++                        <div className="flex flex-wrap gap-3 mt-6 justify-center">
++                            <Button variant="outline" onClick={() => reset()}>
++                                Try Again
++                            </Button>
++                            <Button asChild>
++                                <Link href="/dashboard">
++                                    <ArrowLeft className="mr-2 h-4 w-4" />
++                                    Back to Dashboard
++                                </Link>
++                            </Button>
++                        </div>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++}
+diff --git a/apps/web/app/contracts/[id]/page.tsx b/apps/web/app/contracts/[id]/page.tsx
+index 2fb0c5fa7f9c5542bfa41fc2989e71690db7b9d4..c479b2dbda2bcb107a098be589d90cbf675c5ba9
+--- a/apps/web/app/contracts/[id]/page.tsx
++++ b/apps/web/app/contracts/[id]/page.tsx
+@@ -32,7 +32,72 @@
+     const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+     const [llmUsed, setLlmUsed] = useState<{ provider?: string; model?: string } | null>(null);
+ 
+-    const { data: contract, isLoading } = useQuery({
++    const formatDate = (value: unknown, formatStr: string, fallback: string) => {
++        if (!value) return fallback;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        if (Number.isNaN(time)) return fallback;
++        return format(date, formatStr);
++    };
++
++    const getTimestamp = (value: unknown) => {
++        if (!value) return 0;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        return Number.isNaN(time) ? 0 : time;
++    };
++
++    const getContractErrorDetails = (error: unknown) => {
++        const response = (error as any)?.response;
++        const status = response?.status;
++        const message =
++            response?.data?.message ||
++            response?.data?.error ||
++            (error instanceof Error ? error.message : null);
++
++        if (status === 404) {
++            return {
++                title: "Contract not found",
++                description: "We could not find this contract. It may have been deleted or the link is invalid.",
++            };
++        }
++
++        if (typeof status === "number" && status >= 500) {
++            return {
++                title: "Server error",
++                description: "We hit a server error while loading this contract. Please try again soon.",
++            };
++        }
++
++        return {
++            title: "Unable to load contract",
++            description: message || "We could not load this contract right now. Please try again later.",
++        };
++    };
++
++    const renderIssueState = (title: string, description: string) => (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">{title}</h2>
++                        <p className="text-sm text-muted-foreground mt-2">{description}</p>
++                        <Button asChild className="mt-6">
++                            <Link href="/dashboard">
++                                <ArrowLeft className="mr-2 h-4 w-4" />
++                                Back to Dashboard
++                            </Link>
++                        </Button>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++
++    const { data: contract, isLoading, isError, error } = useQuery({
+         queryKey: ["contract", id],
+         queryFn: async () => {
+             const response = await apiClient.get(`/contracts/${id}`);
+@@ -84,8 +149,9 @@
+         }
+     });
+ 
+-    const getRiskColor = (badge: string) => {
+-        switch (badge?.toLowerCase()) {
++    const getRiskColor = (badge: string | null | undefined) => {
++        const normalized = typeof badge === "string" ? badge.toLowerCase() : "";
++        switch (normalized) {
+             case "high": return "bg-destructive/15 text-destructive hover:bg-destructive/20";
+             case "medium": return "bg-amber-500/15 text-amber-800 hover:bg-amber-500/20 dark:text-amber-200";
+             case "low": return "bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200";
+@@ -93,17 +159,68 @@
+         }
+     };
+ 
+-    const analysis = contract?.latestAnalysis;
++    const analysis = contract?.latestAnalysis && typeof contract.latestAnalysis === "object"
++        ? contract.latestAnalysis
++        : null;
+     const analysisJobStatus = analysisJob?.status;
+     const analyses = Array.isArray(contract?.analyses) ? contract.analyses : [];
+     const sortedAnalyses = [...analyses].sort(
+-        (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
++        (a: any, b: any) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt)
+     );
+     const latestAnalysisRecord = sortedAnalyses[0];
+     const olderAnalyses = analysis?.id
+         ? sortedAnalyses.filter((a: any) => a.id !== analysis.id)
+         : sortedAnalyses.slice(1);
+ 
++    const resultJson = analysis?.resultJson && typeof analysis.resultJson === "object"
++        ? analysis.resultJson
++        : null;
++    const summary = resultJson?.summary && typeof resultJson.summary === "object"
++        ? resultJson.summary
++        : null;
++    const summaryPayments = summary?.payments && typeof summary.payments === "object"
++        ? summary.payments
++        : null;
++    const summaryTerm = summary?.term && typeof summary.term === "object"
++        ? summary.term
++        : null;
++    const summaryRenewal = summary?.renewal && typeof summary.renewal === "object"
++        ? summary.renewal
++        : null;
++
++    const riskBadge = typeof analysis?.riskBadge === "string"
++        ? analysis.riskBadge
++        : typeof resultJson?.risk_badge === "string"
++            ? resultJson.risk_badge
++            : "UNKNOWN";
++
++    const keyPoints = Array.isArray(analysis?.keyPoints)
++        ? analysis.keyPoints
++        : Array.isArray(resultJson?.key_points)
++            ? resultJson.key_points
++            : [];
++    const redFlags = Array.isArray(resultJson?.red_flags) ? resultJson.red_flags : [];
++    const redFlagFindings = redFlags
++        .map((flag: any) => {
++            const type = typeof flag?.type === "string" ? flag.type.trim() : "";
++            const explanation = typeof flag?.explanation === "string" ? flag.explanation.trim() : "";
++            if (type && explanation) return `${type}: ${explanation}`;
++            return explanation || type || "";
++        })
++        .filter(Boolean);
++    const keyFindings = redFlagFindings.length > 0 ? redFlagFindings : keyPoints;
++
++    const uploadedDateLabel = formatDate(contract?.createdAt, "MMM d, yyyy", "Unknown date");
++    const analysisDateLabel = formatDate(analysis?.createdAt, "MMM d, HH:mm", "Unknown time");
++    const renewalLabel = summaryRenewal
++        ? summaryRenewal.auto_renew
++            ? "Auto-renews"
++            : "Manual renewal"
++        : "Not specified";
++    const contractTitle = typeof contract?.title === "string" && contract.title.trim()
++        ? contract.title
++        : "Untitled contract";
++
+     const llmProvider = llmUsed?.provider ?? analysisJob?.result?.provider;
+     const llmModel = llmUsed?.model ?? analysisJob?.result?.llmModel ?? latestAnalysisRecord?.llmModel;
+     const llmProviderLabel =
+@@ -181,8 +298,18 @@
+         );
+     }
+ 
+-    if (!contract) return <div>Contract not found</div>;
++    if (isError) {
++        const { title, description } = getContractErrorDetails(error);
++        return renderIssueState(title, description);
++    }
+ 
++    if (!contract) {
++        return renderIssueState(
++            "Contract not found",
++            "We could not find this contract. It may have been deleted or the link is invalid."
++        );
++    }
++
+     return (
+         <div className="min-h-screen bg-background pb-12">
+             <div className="bg-background/60 backdrop-blur border-b">
+@@ -193,11 +320,11 @@
+                     </Link>
+                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                         <div>
+-                            <h1 className="text-3xl font-bold text-foreground">{contract.title}</h1>
++                            <h1 className="text-3xl font-bold text-foreground">{contractTitle}</h1>
+                             <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+-                                <span>Uploaded {format(new Date(contract.createdAt), "MMM d, yyyy")}</span>
++                                <span>Uploaded {uploadedDateLabel}</span>
+                                 <span>•</span>
+-                                <Badge variant="outline">{contract.status}</Badge>
++                                <Badge variant="outline">{contract.status || "UNKNOWN"}</Badge>
+                             </div>
+                         </div>
+ 
+@@ -263,11 +390,11 @@
+                                     <CardDescription>Overall contract risk level</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(analysis.riskBadge)}`}>
+-                                        {analysis.riskBadge || "UNKNOWN"}
++                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(riskBadge)}`}>
++                                        {riskBadge || "UNKNOWN"}
+                                     </Badge>
+                                     <p className="mt-4 text-sm text-muted-foreground">
+-                                        Analyzed on {format(new Date(analysis.createdAt), "MMM d, HH:mm")}
++                                        Analyzed on {analysisDateLabel}
+                                     </p>
+                                     {!!llmModel && (
+                                         <p className="mt-2 text-xs text-muted-foreground">
+@@ -284,9 +411,9 @@
+                                     <CardDescription>Important points extracted from the contract</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    {analysis.keyPoints && analysis.keyPoints.length > 0 ? (
++                                    {keyFindings.length > 0 ? (
+                                         <ul className="space-y-4">
+-                                            {analysis.keyPoints.map((point: string, idx: number) => (
++                                            {keyFindings.map((point: string, idx: number) => (
+                                                 <li key={idx} className="flex items-start gap-3 p-3 rounded-lg bg-muted/60">
+                                                     <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                                                     <span className="text-sm text-foreground/90 leading-relaxed">{point}</span>
+@@ -295,7 +422,7 @@
+                                         </ul>
+                                     ) : (
+                                         <div className="text-center py-8 text-muted-foreground">
+-                                            No key points extracted.
++                                            No key findings yet. Re-run analysis to extract highlights.
+                                         </div>
+                                     )}
+                                 </CardContent>
+@@ -303,21 +430,21 @@
+                         </div>
+ 
+                         {/* Contract Summary Section */}
+-                        {analysis.resultJson?.summary && (
+-                            <Card className="mt-6">
+-                                <CardHeader>
+-                                    <CardTitle className="flex items-center gap-2">
+-                                        <FileText className="h-5 w-5" />
+-                                        Contract Summary
+-                                    </CardTitle>
+-                                    <CardDescription>Quick overview of the contract terms</CardDescription>
+-                                </CardHeader>
+-                                <CardContent>
++                        <Card className="mt-6">
++                            <CardHeader>
++                                <CardTitle className="flex items-center gap-2">
++                                    <FileText className="h-5 w-5" />
++                                    Contract Summary
++                                </CardTitle>
++                                <CardDescription>Quick overview of the contract terms</CardDescription>
++                            </CardHeader>
++                            <CardContent>
++                                {summary ? (
+                                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                                         {/* What It Is */}
+                                         <div className="p-4 rounded-lg bg-muted/40">
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1">What It Is</h4>
+-                                            <p className="text-sm">{analysis.resultJson.summary.what_it_is || "Not specified"}</p>
++                                            <p className="text-sm">{summary.what_it_is || "Not specified"}</p>
+                                         </div>
+ 
+                                         {/* Payments */}
+@@ -326,11 +453,11 @@
+                                                 <DollarSign className="h-4 w-4" /> Payments
+                                             </h4>
+                                             <p className="text-sm font-medium">
+-                                                {analysis.resultJson.summary.payments?.amount || "Not specified"}
++                                                {summaryPayments?.amount || "Not specified"}
+                                             </p>
+-                                            {analysis.resultJson.summary.payments?.frequency && (
++                                            {summaryPayments?.frequency && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    {analysis.resultJson.summary.payments.frequency}
++                                                    {summaryPayments.frequency}
+                                                 </p>
+                                             )}
+                                         </div>
+@@ -341,7 +468,7 @@
+                                                 <Clock className="h-4 w-4" /> Term
+                                             </h4>
+                                             <p className="text-sm">
+-                                                {analysis.resultJson.summary.term?.minimum_term || "Not specified"}
++                                                {summaryTerm?.minimum_term || "Not specified"}
+                                             </p>
+                                         </div>
+ 
+@@ -350,19 +477,21 @@
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
+                                                 <RefreshCw className="h-4 w-4" /> Renewal
+                                             </h4>
+-                                            <p className="text-sm">
+-                                                {analysis.resultJson.summary.renewal?.auto_renew ? "Auto-renews" : "Manual renewal"}
+-                                            </p>
+-                                            {analysis.resultJson.summary.renewal?.renewal_period && (
++                                            <p className="text-sm">{renewalLabel}</p>
++                                            {summaryRenewal?.renewal_period && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    Period: {analysis.resultJson.summary.renewal.renewal_period}
++                                                    Period: {summaryRenewal.renewal_period}
+                                                 </p>
+                                             )}
+                                         </div>
+                                     </div>
+-                                </CardContent>
+-                            </Card>
+-                        )}
++                                ) : (
++                                    <div className="text-center py-8 text-muted-foreground">
++                                        Summary unavailable. Re-run analysis to generate the contract overview.
++                                    </div>
++                                )}
++                            </CardContent>
++                        </Card>
+                         
+                         {/* More sections can be added here (Red flags etc) - Truncated for brevity but preserving structure */}
+                     </>
+
+
+
+thinking
+**Clarifying progress log details**
+
+The progress log entry will record the final post-commit clean state after all commits, include the first commit hash, and list all files changed during the run, plus verification command results.
+thinking
+**Preparing detailed progress log entry**
+
+I've compiled all files changed across commits, crafted a comprehensive progress log entry with implementation summary, verification results, and formatted learning points with nested bullets as per the established format. Next, I'll append this entry to the progress log file.
+exec
+/bin/zsh -lc "cat <<'EOF' >> /Users/omertekin/Desktop/Grind/SignLoop/.ralph/progress.md
+## [2026-01-17 18:35:35] - US-001: Harden contract detail route against blank-screen failures
+Thread: 
+Run: 20260117-181656-16962 (iteration 1)
+Run log: /Users/omertekin/Desktop/Grind/SignLoop/.ralph/runs/run-20260117-181656-16962-iter-1.log
+Run summary: /Users/omertekin/Desktop/Grind/SignLoop/.ralph/runs/run-20260117-181656-16962-iter-1.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 8f4bf13 fix(contracts): harden detail states
+- Post-commit status: clean
+- Verification:
+  - Command: npm run build -> PASS
+  - Command: npm run lint -> FAIL (warnings in repo)
+  - Command: npm run check-types -> PASS
+- Files changed:
+  - .agents/tasks/prd-contract-analysis.json
+  - .ralph/.tmp/prd-prompt-20260117-180856-16302.md
+  - .ralph/.tmp/prompt-20260117-181656-16962-1.md
+  - .ralph/.tmp/story-20260117-180658-16134-1.json
+  - .ralph/.tmp/story-20260117-180658-16134-1.md
+  - .ralph/.tmp/story-20260117-180721-16186-1.json
+  - .ralph/.tmp/story-20260117-180721-16186-1.md
+  - .ralph/.tmp/story-20260117-181656-16962-1.json
+  - .ralph/.tmp/story-20260117-181656-16962-1.md
+  - .ralph/activity.log
+  - .ralph/progress.md
+  - .ralph/runs/run-20260117-181656-16962-iter-1.log
+  - AGENTS.md
+  - apps/web/app/contracts/[id]/error.tsx
+  - apps/web/app/contracts/[id]/page.tsx
+- What was implemented
+- **Learnings for future iterations:**
+  - Patterns discovered: use react-query isError with a friendly error card to prevent blank screens.
+  - Gotchas encountered: eslint fails due to existing warnings; dev-browser required Playwright install.
+  - Useful context: browser verification used /contracts/:id with a mock contract from POST /api/contracts.
+---
+EOF" in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 51ms:
+
+file update:
+diff --git a/apps/web/app/contracts/[id]/error.tsx b/apps/web/app/contracts/[id]/error.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..bd641c22a3394d38bdda9dacae72904b90db662c
+--- /dev/null
++++ b/apps/web/app/contracts/[id]/error.tsx
+@@ -0,0 +1,48 @@
++'use client';
++
++import { useEffect } from "react";
++import Link from "next/link";
++import { Button } from "@/components/ui/button";
++import { Card, CardContent } from "@/components/ui/card";
++import { ArrowLeft, XCircle } from "lucide-react";
++
++export default function Error({
++    error,
++    reset,
++}: {
++    error: Error & { digest?: string };
++    reset: () => void;
++}) {
++    useEffect(() => {
++        console.error(error);
++    }, [error]);
++
++    return (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">Something went wrong</h2>
++                        <p className="text-sm text-muted-foreground mt-2">
++                            We hit an unexpected error while loading this contract. You can try again or return to the dashboard.
++                        </p>
++                        <div className="flex flex-wrap gap-3 mt-6 justify-center">
++                            <Button variant="outline" onClick={() => reset()}>
++                                Try Again
++                            </Button>
++                            <Button asChild>
++                                <Link href="/dashboard">
++                                    <ArrowLeft className="mr-2 h-4 w-4" />
++                                    Back to Dashboard
++                                </Link>
++                            </Button>
++                        </div>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++}
+diff --git a/apps/web/app/contracts/[id]/page.tsx b/apps/web/app/contracts/[id]/page.tsx
+index 2fb0c5fa7f9c5542bfa41fc2989e71690db7b9d4..c479b2dbda2bcb107a098be589d90cbf675c5ba9
+--- a/apps/web/app/contracts/[id]/page.tsx
++++ b/apps/web/app/contracts/[id]/page.tsx
+@@ -32,7 +32,72 @@
+     const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+     const [llmUsed, setLlmUsed] = useState<{ provider?: string; model?: string } | null>(null);
+ 
+-    const { data: contract, isLoading } = useQuery({
++    const formatDate = (value: unknown, formatStr: string, fallback: string) => {
++        if (!value) return fallback;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        if (Number.isNaN(time)) return fallback;
++        return format(date, formatStr);
++    };
++
++    const getTimestamp = (value: unknown) => {
++        if (!value) return 0;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        return Number.isNaN(time) ? 0 : time;
++    };
++
++    const getContractErrorDetails = (error: unknown) => {
++        const response = (error as any)?.response;
++        const status = response?.status;
++        const message =
++            response?.data?.message ||
++            response?.data?.error ||
++            (error instanceof Error ? error.message : null);
++
++        if (status === 404) {
++            return {
++                title: "Contract not found",
++                description: "We could not find this contract. It may have been deleted or the link is invalid.",
++            };
++        }
++
++        if (typeof status === "number" && status >= 500) {
++            return {
++                title: "Server error",
++                description: "We hit a server error while loading this contract. Please try again soon.",
++            };
++        }
++
++        return {
++            title: "Unable to load contract",
++            description: message || "We could not load this contract right now. Please try again later.",
++        };
++    };
++
++    const renderIssueState = (title: string, description: string) => (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">{title}</h2>
++                        <p className="text-sm text-muted-foreground mt-2">{description}</p>
++                        <Button asChild className="mt-6">
++                            <Link href="/dashboard">
++                                <ArrowLeft className="mr-2 h-4 w-4" />
++                                Back to Dashboard
++                            </Link>
++                        </Button>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++
++    const { data: contract, isLoading, isError, error } = useQuery({
+         queryKey: ["contract", id],
+         queryFn: async () => {
+             const response = await apiClient.get(`/contracts/${id}`);
+@@ -84,8 +149,9 @@
+         }
+     });
+ 
+-    const getRiskColor = (badge: string) => {
+-        switch (badge?.toLowerCase()) {
++    const getRiskColor = (badge: string | null | undefined) => {
++        const normalized = typeof badge === "string" ? badge.toLowerCase() : "";
++        switch (normalized) {
+             case "high": return "bg-destructive/15 text-destructive hover:bg-destructive/20";
+             case "medium": return "bg-amber-500/15 text-amber-800 hover:bg-amber-500/20 dark:text-amber-200";
+             case "low": return "bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200";
+@@ -93,17 +159,68 @@
+         }
+     };
+ 
+-    const analysis = contract?.latestAnalysis;
++    const analysis = contract?.latestAnalysis && typeof contract.latestAnalysis === "object"
++        ? contract.latestAnalysis
++        : null;
+     const analysisJobStatus = analysisJob?.status;
+     const analyses = Array.isArray(contract?.analyses) ? contract.analyses : [];
+     const sortedAnalyses = [...analyses].sort(
+-        (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
++        (a: any, b: any) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt)
+     );
+     const latestAnalysisRecord = sortedAnalyses[0];
+     const olderAnalyses = analysis?.id
+         ? sortedAnalyses.filter((a: any) => a.id !== analysis.id)
+         : sortedAnalyses.slice(1);
+ 
++    const resultJson = analysis?.resultJson && typeof analysis.resultJson === "object"
++        ? analysis.resultJson
++        : null;
++    const summary = resultJson?.summary && typeof resultJson.summary === "object"
++        ? resultJson.summary
++        : null;
++    const summaryPayments = summary?.payments && typeof summary.payments === "object"
++        ? summary.payments
++        : null;
++    const summaryTerm = summary?.term && typeof summary.term === "object"
++        ? summary.term
++        : null;
++    const summaryRenewal = summary?.renewal && typeof summary.renewal === "object"
++        ? summary.renewal
++        : null;
++
++    const riskBadge = typeof analysis?.riskBadge === "string"
++        ? analysis.riskBadge
++        : typeof resultJson?.risk_badge === "string"
++            ? resultJson.risk_badge
++            : "UNKNOWN";
++
++    const keyPoints = Array.isArray(analysis?.keyPoints)
++        ? analysis.keyPoints
++        : Array.isArray(resultJson?.key_points)
++            ? resultJson.key_points
++            : [];
++    const redFlags = Array.isArray(resultJson?.red_flags) ? resultJson.red_flags : [];
++    const redFlagFindings = redFlags
++        .map((flag: any) => {
++            const type = typeof flag?.type === "string" ? flag.type.trim() : "";
++            const explanation = typeof flag?.explanation === "string" ? flag.explanation.trim() : "";
++            if (type && explanation) return `${type}: ${explanation}`;
++            return explanation || type || "";
++        })
++        .filter(Boolean);
++    const keyFindings = redFlagFindings.length > 0 ? redFlagFindings : keyPoints;
++
++    const uploadedDateLabel = formatDate(contract?.createdAt, "MMM d, yyyy", "Unknown date");
++    const analysisDateLabel = formatDate(analysis?.createdAt, "MMM d, HH:mm", "Unknown time");
++    const renewalLabel = summaryRenewal
++        ? summaryRenewal.auto_renew
++            ? "Auto-renews"
++            : "Manual renewal"
++        : "Not specified";
++    const contractTitle = typeof contract?.title === "string" && contract.title.trim()
++        ? contract.title
++        : "Untitled contract";
++
+     const llmProvider = llmUsed?.provider ?? analysisJob?.result?.provider;
+     const llmModel = llmUsed?.model ?? analysisJob?.result?.llmModel ?? latestAnalysisRecord?.llmModel;
+     const llmProviderLabel =
+@@ -181,8 +298,18 @@
+         );
+     }
+ 
+-    if (!contract) return <div>Contract not found</div>;
++    if (isError) {
++        const { title, description } = getContractErrorDetails(error);
++        return renderIssueState(title, description);
++    }
+ 
++    if (!contract) {
++        return renderIssueState(
++            "Contract not found",
++            "We could not find this contract. It may have been deleted or the link is invalid."
++        );
++    }
++
+     return (
+         <div className="min-h-screen bg-background pb-12">
+             <div className="bg-background/60 backdrop-blur border-b">
+@@ -193,11 +320,11 @@
+                     </Link>
+                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                         <div>
+-                            <h1 className="text-3xl font-bold text-foreground">{contract.title}</h1>
++                            <h1 className="text-3xl font-bold text-foreground">{contractTitle}</h1>
+                             <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+-                                <span>Uploaded {format(new Date(contract.createdAt), "MMM d, yyyy")}</span>
++                                <span>Uploaded {uploadedDateLabel}</span>
+                                 <span>•</span>
+-                                <Badge variant="outline">{contract.status}</Badge>
++                                <Badge variant="outline">{contract.status || "UNKNOWN"}</Badge>
+                             </div>
+                         </div>
+ 
+@@ -263,11 +390,11 @@
+                                     <CardDescription>Overall contract risk level</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(analysis.riskBadge)}`}>
+-                                        {analysis.riskBadge || "UNKNOWN"}
++                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(riskBadge)}`}>
++                                        {riskBadge || "UNKNOWN"}
+                                     </Badge>
+                                     <p className="mt-4 text-sm text-muted-foreground">
+-                                        Analyzed on {format(new Date(analysis.createdAt), "MMM d, HH:mm")}
++                                        Analyzed on {analysisDateLabel}
+                                     </p>
+                                     {!!llmModel && (
+                                         <p className="mt-2 text-xs text-muted-foreground">
+@@ -284,9 +411,9 @@
+                                     <CardDescription>Important points extracted from the contract</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    {analysis.keyPoints && analysis.keyPoints.length > 0 ? (
++                                    {keyFindings.length > 0 ? (
+                                         <ul className="space-y-4">
+-                                            {analysis.keyPoints.map((point: string, idx: number) => (
++                                            {keyFindings.map((point: string, idx: number) => (
+                                                 <li key={idx} className="flex items-start gap-3 p-3 rounded-lg bg-muted/60">
+                                                     <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                                                     <span className="text-sm text-foreground/90 leading-relaxed">{point}</span>
+@@ -295,7 +422,7 @@
+                                         </ul>
+                                     ) : (
+                                         <div className="text-center py-8 text-muted-foreground">
+-                                            No key points extracted.
++                                            No key findings yet. Re-run analysis to extract highlights.
+                                         </div>
+                                     )}
+                                 </CardContent>
+@@ -303,21 +430,21 @@
+                         </div>
+ 
+                         {/* Contract Summary Section */}
+-                        {analysis.resultJson?.summary && (
+-                            <Card className="mt-6">
+-                                <CardHeader>
+-                                    <CardTitle className="flex items-center gap-2">
+-                                        <FileText className="h-5 w-5" />
+-                                        Contract Summary
+-                                    </CardTitle>
+-                                    <CardDescription>Quick overview of the contract terms</CardDescription>
+-                                </CardHeader>
+-                                <CardContent>
++                        <Card className="mt-6">
++                            <CardHeader>
++                                <CardTitle className="flex items-center gap-2">
++                                    <FileText className="h-5 w-5" />
++                                    Contract Summary
++                                </CardTitle>
++                                <CardDescription>Quick overview of the contract terms</CardDescription>
++                            </CardHeader>
++                            <CardContent>
++                                {summary ? (
+                                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                                         {/* What It Is */}
+                                         <div className="p-4 rounded-lg bg-muted/40">
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1">What It Is</h4>
+-                                            <p className="text-sm">{analysis.resultJson.summary.what_it_is || "Not specified"}</p>
++                                            <p className="text-sm">{summary.what_it_is || "Not specified"}</p>
+                                         </div>
+ 
+                                         {/* Payments */}
+@@ -326,11 +453,11 @@
+                                                 <DollarSign className="h-4 w-4" /> Payments
+                                             </h4>
+                                             <p className="text-sm font-medium">
+-                                                {analysis.resultJson.summary.payments?.amount || "Not specified"}
++                                                {summaryPayments?.amount || "Not specified"}
+                                             </p>
+-                                            {analysis.resultJson.summary.payments?.frequency && (
++                                            {summaryPayments?.frequency && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    {analysis.resultJson.summary.payments.frequency}
++                                                    {summaryPayments.frequency}
+                                                 </p>
+                                             )}
+                                         </div>
+@@ -341,7 +468,7 @@
+                                                 <Clock className="h-4 w-4" /> Term
+                                             </h4>
+                                             <p className="text-sm">
+-                                                {analysis.resultJson.summary.term?.minimum_term || "Not specified"}
++                                                {summaryTerm?.minimum_term || "Not specified"}
+                                             </p>
+                                         </div>
+ 
+@@ -350,19 +477,21 @@
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
+                                                 <RefreshCw className="h-4 w-4" /> Renewal
+                                             </h4>
+-                                            <p className="text-sm">
+-                                                {analysis.resultJson.summary.renewal?.auto_renew ? "Auto-renews" : "Manual renewal"}
+-                                            </p>
+-                                            {analysis.resultJson.summary.renewal?.renewal_period && (
++                                            <p className="text-sm">{renewalLabel}</p>
++                                            {summaryRenewal?.renewal_period && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    Period: {analysis.resultJson.summary.renewal.renewal_period}
++                                                    Period: {summaryRenewal.renewal_period}
+                                                 </p>
+                                             )}
+                                         </div>
+                                     </div>
+-                                </CardContent>
+-                            </Card>
+-                        )}
++                                ) : (
++                                    <div className="text-center py-8 text-muted-foreground">
++                                        Summary unavailable. Re-run analysis to generate the contract overview.
++                                    </div>
++                                )}
++                            </CardContent>
++                        </Card>
+                         
+                         {/* More sections can be added here (Red flags etc) - Truncated for brevity but preserving structure */}
+                     </>
+
+
+thinking
+**Adding progress log update command**
+exec
+/bin/zsh -lc 'ralph log "Updated progress log for US-001"' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+Using local templates: /Users/omertekin/Desktop/Grind/SignLoop/.agents/ralph
+file update:
+diff --git a/apps/web/app/contracts/[id]/error.tsx b/apps/web/app/contracts/[id]/error.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..bd641c22a3394d38bdda9dacae72904b90db662c
+--- /dev/null
++++ b/apps/web/app/contracts/[id]/error.tsx
+@@ -0,0 +1,48 @@
++'use client';
++
++import { useEffect } from "react";
++import Link from "next/link";
++import { Button } from "@/components/ui/button";
++import { Card, CardContent } from "@/components/ui/card";
++import { ArrowLeft, XCircle } from "lucide-react";
++
++export default function Error({
++    error,
++    reset,
++}: {
++    error: Error & { digest?: string };
++    reset: () => void;
++}) {
++    useEffect(() => {
++        console.error(error);
++    }, [error]);
++
++    return (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">Something went wrong</h2>
++                        <p className="text-sm text-muted-foreground mt-2">
++                            We hit an unexpected error while loading this contract. You can try again or return to the dashboard.
++                        </p>
++                        <div className="flex flex-wrap gap-3 mt-6 justify-center">
++                            <Button variant="outline" onClick={() => reset()}>
++                                Try Again
++                            </Button>
++                            <Button asChild>
++                                <Link href="/dashboard">
++                                    <ArrowLeft className="mr-2 h-4 w-4" />
++                                    Back to Dashboard
++                                </Link>
++                            </Button>
++                        </div>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++}
+diff --git a/apps/web/app/contracts/[id]/page.tsx b/apps/web/app/contracts/[id]/page.tsx
+index 2fb0c5fa7f9c5542bfa41fc2989e71690db7b9d4..c479b2dbda2bcb107a098be589d90cbf675c5ba9
+--- a/apps/web/app/contracts/[id]/page.tsx
++++ b/apps/web/app/contracts/[id]/page.tsx
+@@ -32,7 +32,72 @@
+     const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+     const [llmUsed, setLlmUsed] = useState<{ provider?: string; model?: string } | null>(null);
+ 
+-    const { data: contract, isLoading } = useQuery({
++    const formatDate = (value: unknown, formatStr: string, fallback: string) => {
++        if (!value) return fallback;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        if (Number.isNaN(time)) return fallback;
++        return format(date, formatStr);
++    };
++
++    const getTimestamp = (value: unknown) => {
++        if (!value) return 0;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        return Number.isNaN(time) ? 0 : time;
++    };
++
++    const getContractErrorDetails = (error: unknown) => {
++        const response = (error as any)?.response;
++        const status = response?.status;
++        const message =
++            response?.data?.message ||
++            response?.data?.error ||
++            (error instanceof Error ? error.message : null);
++
++        if (status === 404) {
++            return {
++                title: "Contract not found",
++                description: "We could not find this contract. It may have been deleted or the link is invalid.",
++            };
++        }
++
++        if (typeof status === "number" && status >= 500) {
++            return {
++                title: "Server error",
++                description: "We hit a server error while loading this contract. Please try again soon.",
++            };
++        }
++
++        return {
++            title: "Unable to load contract",
++            description: message || "We could not load this contract right now. Please try again later.",
++        };
++    };
++
++    const renderIssueState = (title: string, description: string) => (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">{title}</h2>
++                        <p className="text-sm text-muted-foreground mt-2">{description}</p>
++                        <Button asChild className="mt-6">
++                            <Link href="/dashboard">
++                                <ArrowLeft className="mr-2 h-4 w-4" />
++                                Back to Dashboard
++                            </Link>
++                        </Button>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++
++    const { data: contract, isLoading, isError, error } = useQuery({
+         queryKey: ["contract", id],
+         queryFn: async () => {
+             const response = await apiClient.get(`/contracts/${id}`);
+@@ -84,8 +149,9 @@
+         }
+     });
+ 
+-    const getRiskColor = (badge: string) => {
+-        switch (badge?.toLowerCase()) {
++    const getRiskColor = (badge: string | null | undefined) => {
++        const normalized = typeof badge === "string" ? badge.toLowerCase() : "";
++        switch (normalized) {
+             case "high": return "bg-destructive/15 text-destructive hover:bg-destructive/20";
+             case "medium": return "bg-amber-500/15 text-amber-800 hover:bg-amber-500/20 dark:text-amber-200";
+             case "low": return "bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200";
+@@ -93,17 +159,68 @@
+         }
+     };
+ 
+-    const analysis = contract?.latestAnalysis;
++    const analysis = contract?.latestAnalysis && typeof contract.latestAnalysis === "object"
++        ? contract.latestAnalysis
++        : null;
+     const analysisJobStatus = analysisJob?.status;
+     const analyses = Array.isArray(contract?.analyses) ? contract.analyses : [];
+     const sortedAnalyses = [...analyses].sort(
+-        (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
++        (a: any, b: any) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt)
+     );
+     const latestAnalysisRecord = sortedAnalyses[0];
+     const olderAnalyses = analysis?.id
+         ? sortedAnalyses.filter((a: any) => a.id !== analysis.id)
+         : sortedAnalyses.slice(1);
+ 
++    const resultJson = analysis?.resultJson && typeof analysis.resultJson === "object"
++        ? analysis.resultJson
++        : null;
++    const summary = resultJson?.summary && typeof resultJson.summary === "object"
++        ? resultJson.summary
++        : null;
++    const summaryPayments = summary?.payments && typeof summary.payments === "object"
++        ? summary.payments
++        : null;
++    const summaryTerm = summary?.term && typeof summary.term === "object"
++        ? summary.term
++        : null;
++    const summaryRenewal = summary?.renewal && typeof summary.renewal === "object"
++        ? summary.renewal
++        : null;
++
++    const riskBadge = typeof analysis?.riskBadge === "string"
++        ? analysis.riskBadge
++        : typeof resultJson?.risk_badge === "string"
++            ? resultJson.risk_badge
++            : "UNKNOWN";
++
++    const keyPoints = Array.isArray(analysis?.keyPoints)
++        ? analysis.keyPoints
++        : Array.isArray(resultJson?.key_points)
++            ? resultJson.key_points
++            : [];
++    const redFlags = Array.isArray(resultJson?.red_flags) ? resultJson.red_flags : [];
++    const redFlagFindings = redFlags
++        .map((flag: any) => {
++            const type = typeof flag?.type === "string" ? flag.type.trim() : "";
++            const explanation = typeof flag?.explanation === "string" ? flag.explanation.trim() : "";
++            if (type && explanation) return `${type}: ${explanation}`;
++            return explanation || type || "";
++        })
++        .filter(Boolean);
++    const keyFindings = redFlagFindings.length > 0 ? redFlagFindings : keyPoints;
++
++    const uploadedDateLabel = formatDate(contract?.createdAt, "MMM d, yyyy", "Unknown date");
++    const analysisDateLabel = formatDate(analysis?.createdAt, "MMM d, HH:mm", "Unknown time");
++    const renewalLabel = summaryRenewal
++        ? summaryRenewal.auto_renew
++            ? "Auto-renews"
++            : "Manual renewal"
++        : "Not specified";
++    const contractTitle = typeof contract?.title === "string" && contract.title.trim()
++        ? contract.title
++        : "Untitled contract";
++
+     const llmProvider = llmUsed?.provider ?? analysisJob?.result?.provider;
+     const llmModel = llmUsed?.model ?? analysisJob?.result?.llmModel ?? latestAnalysisRecord?.llmModel;
+     const llmProviderLabel =
+@@ -181,8 +298,18 @@
+         );
+     }
+ 
+-    if (!contract) return <div>Contract not found</div>;
++    if (isError) {
++        const { title, description } = getContractErrorDetails(error);
++        return renderIssueState(title, description);
++    }
+ 
++    if (!contract) {
++        return renderIssueState(
++            "Contract not found",
++            "We could not find this contract. It may have been deleted or the link is invalid."
++        );
++    }
++
+     return (
+         <div className="min-h-screen bg-background pb-12">
+             <div className="bg-background/60 backdrop-blur border-b">
+@@ -193,11 +320,11 @@
+                     </Link>
+                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                         <div>
+-                            <h1 className="text-3xl font-bold text-foreground">{contract.title}</h1>
++                            <h1 className="text-3xl font-bold text-foreground">{contractTitle}</h1>
+                             <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+-                                <span>Uploaded {format(new Date(contract.createdAt), "MMM d, yyyy")}</span>
++                                <span>Uploaded {uploadedDateLabel}</span>
+                                 <span>•</span>
+-                                <Badge variant="outline">{contract.status}</Badge>
++                                <Badge variant="outline">{contract.status || "UNKNOWN"}</Badge>
+                             </div>
+                         </div>
+ 
+@@ -263,11 +390,11 @@
+                                     <CardDescription>Overall contract risk level</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(analysis.riskBadge)}`}>
+-                                        {analysis.riskBadge || "UNKNOWN"}
++                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(riskBadge)}`}>
++                                        {riskBadge || "UNKNOWN"}
+                                     </Badge>
+                                     <p className="mt-4 text-sm text-muted-foreground">
+-                                        Analyzed on {format(new Date(analysis.createdAt), "MMM d, HH:mm")}
++                                        Analyzed on {analysisDateLabel}
+                                     </p>
+                                     {!!llmModel && (
+                                         <p className="mt-2 text-xs text-muted-foreground">
+@@ -284,9 +411,9 @@
+                                     <CardDescription>Important points extracted from the contract</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    {analysis.keyPoints && analysis.keyPoints.length > 0 ? (
++                                    {keyFindings.length > 0 ? (
+                                         <ul className="space-y-4">
+-                                            {analysis.keyPoints.map((point: string, idx: number) => (
++                                            {keyFindings.map((point: string, idx: number) => (
+                                                 <li key={idx} className="flex items-start gap-3 p-3 rounded-lg bg-muted/60">
+                                                     <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                                                     <span className="text-sm text-foreground/90 leading-relaxed">{point}</span>
+@@ -295,7 +422,7 @@
+                                         </ul>
+                                     ) : (
+                                         <div className="text-center py-8 text-muted-foreground">
+-                                            No key points extracted.
++                                            No key findings yet. Re-run analysis to extract highlights.
+                                         </div>
+                                     )}
+                                 </CardContent>
+@@ -303,21 +430,21 @@
+                         </div>
+ 
+                         {/* Contract Summary Section */}
+-                        {analysis.resultJson?.summary && (
+-                            <Card className="mt-6">
+-                                <CardHeader>
+-                                    <CardTitle className="flex items-center gap-2">
+-                                        <FileText className="h-5 w-5" />
+-                                        Contract Summary
+-                                    </CardTitle>
+-                                    <CardDescription>Quick overview of the contract terms</CardDescription>
+-                                </CardHeader>
+-                                <CardContent>
++                        <Card className="mt-6">
++                            <CardHeader>
++                                <CardTitle className="flex items-center gap-2">
++                                    <FileText className="h-5 w-5" />
++                                    Contract Summary
++                                </CardTitle>
++                                <CardDescription>Quick overview of the contract terms</CardDescription>
++                            </CardHeader>
++                            <CardContent>
++                                {summary ? (
+                                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                                         {/* What It Is */}
+                                         <div className="p-4 rounded-lg bg-muted/40">
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1">What It Is</h4>
+-                                            <p className="text-sm">{analysis.resultJson.summary.what_it_is || "Not specified"}</p>
++                                            <p className="text-sm">{summary.what_it_is || "Not specified"}</p>
+                                         </div>
+ 
+                                         {/* Payments */}
+@@ -326,11 +453,11 @@
+                                                 <DollarSign className="h-4 w-4" /> Payments
+                                             </h4>
+                                             <p className="text-sm font-medium">
+-                                                {analysis.resultJson.summary.payments?.amount || "Not specified"}
++                                                {summaryPayments?.amount || "Not specified"}
+                                             </p>
+-                                            {analysis.resultJson.summary.payments?.frequency && (
++                                            {summaryPayments?.frequency && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    {analysis.resultJson.summary.payments.frequency}
++                                                    {summaryPayments.frequency}
+                                                 </p>
+                                             )}
+                                         </div>
+@@ -341,7 +468,7 @@
+                                                 <Clock className="h-4 w-4" /> Term
+                                             </h4>
+                                             <p className="text-sm">
+-                                                {analysis.resultJson.summary.term?.minimum_term || "Not specified"}
++                                                {summaryTerm?.minimum_term || "Not specified"}
+                                             </p>
+                                         </div>
+ 
+@@ -350,19 +477,21 @@
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
+                                                 <RefreshCw className="h-4 w-4" /> Renewal
+                                             </h4>
+-                                            <p className="text-sm">
+-                                                {analysis.resultJson.summary.renewal?.auto_renew ? "Auto-renews" : "Manual renewal"}
+-                                            </p>
+-                                            {analysis.resultJson.summary.renewal?.renewal_period && (
++                                            <p className="text-sm">{renewalLabel}</p>
++                                            {summaryRenewal?.renewal_period && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    Period: {analysis.resultJson.summary.renewal.renewal_period}
++                                                    Period: {summaryRenewal.renewal_period}
+                                                 </p>
+                                             )}
+                                         </div>
+                                     </div>
+-                                </CardContent>
+-                            </Card>
+-                        )}
++                                ) : (
++                                    <div className="text-center py-8 text-muted-foreground">
++                                        Summary unavailable. Re-run analysis to generate the contract overview.
++                                    </div>
++                                )}
++                            </CardContent>
++                        </Card>
+                         
+                         {/* More sections can be added here (Red flags etc) - Truncated for brevity but preserving structure */}
+                     </>
+
+
+thinking
+**Checking git status for changes**
+exec
+/bin/zsh -lc 'git status --porcelain' in /Users/omertekin/Desktop/Grind/SignLoop succeeded in 52ms:
+ M .ralph/activity.log
+ M .ralph/progress.md
+ M .ralph/runs/run-20260117-181656-16962-iter-1.log
+file update:
+diff --git a/apps/web/app/contracts/[id]/error.tsx b/apps/web/app/contracts/[id]/error.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..bd641c22a3394d38bdda9dacae72904b90db662c
+--- /dev/null
++++ b/apps/web/app/contracts/[id]/error.tsx
+@@ -0,0 +1,48 @@
++'use client';
++
++import { useEffect } from "react";
++import Link from "next/link";
++import { Button } from "@/components/ui/button";
++import { Card, CardContent } from "@/components/ui/card";
++import { ArrowLeft, XCircle } from "lucide-react";
++
++export default function Error({
++    error,
++    reset,
++}: {
++    error: Error & { digest?: string };
++    reset: () => void;
++}) {
++    useEffect(() => {
++        console.error(error);
++    }, [error]);
++
++    return (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">Something went wrong</h2>
++                        <p className="text-sm text-muted-foreground mt-2">
++                            We hit an unexpected error while loading this contract. You can try again or return to the dashboard.
++                        </p>
++                        <div className="flex flex-wrap gap-3 mt-6 justify-center">
++                            <Button variant="outline" onClick={() => reset()}>
++                                Try Again
++                            </Button>
++                            <Button asChild>
++                                <Link href="/dashboard">
++                                    <ArrowLeft className="mr-2 h-4 w-4" />
++                                    Back to Dashboard
++                                </Link>
++                            </Button>
++                        </div>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++}
+diff --git a/apps/web/app/contracts/[id]/page.tsx b/apps/web/app/contracts/[id]/page.tsx
+index 2fb0c5fa7f9c5542bfa41fc2989e71690db7b9d4..c479b2dbda2bcb107a098be589d90cbf675c5ba9
+--- a/apps/web/app/contracts/[id]/page.tsx
++++ b/apps/web/app/contracts/[id]/page.tsx
+@@ -32,7 +32,72 @@
+     const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+     const [llmUsed, setLlmUsed] = useState<{ provider?: string; model?: string } | null>(null);
+ 
+-    const { data: contract, isLoading } = useQuery({
++    const formatDate = (value: unknown, formatStr: string, fallback: string) => {
++        if (!value) return fallback;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        if (Number.isNaN(time)) return fallback;
++        return format(date, formatStr);
++    };
++
++    const getTimestamp = (value: unknown) => {
++        if (!value) return 0;
++        const date = value instanceof Date ? value : new Date(value as string);
++        const time = date.getTime();
++        return Number.isNaN(time) ? 0 : time;
++    };
++
++    const getContractErrorDetails = (error: unknown) => {
++        const response = (error as any)?.response;
++        const status = response?.status;
++        const message =
++            response?.data?.message ||
++            response?.data?.error ||
++            (error instanceof Error ? error.message : null);
++
++        if (status === 404) {
++            return {
++                title: "Contract not found",
++                description: "We could not find this contract. It may have been deleted or the link is invalid.",
++            };
++        }
++
++        if (typeof status === "number" && status >= 500) {
++            return {
++                title: "Server error",
++                description: "We hit a server error while loading this contract. Please try again soon.",
++            };
++        }
++
++        return {
++            title: "Unable to load contract",
++            description: message || "We could not load this contract right now. Please try again later.",
++        };
++    };
++
++    const renderIssueState = (title: string, description: string) => (
++        <div className="min-h-screen bg-background">
++            <div className="container mx-auto px-4 py-12">
++                <Card className="max-w-xl mx-auto">
++                    <CardContent className="flex flex-col items-center text-center py-10">
++                        <div className="rounded-full bg-destructive/10 p-3 mb-4">
++                            <XCircle className="h-8 w-8 text-destructive" />
++                        </div>
++                        <h2 className="text-xl font-semibold text-foreground">{title}</h2>
++                        <p className="text-sm text-muted-foreground mt-2">{description}</p>
++                        <Button asChild className="mt-6">
++                            <Link href="/dashboard">
++                                <ArrowLeft className="mr-2 h-4 w-4" />
++                                Back to Dashboard
++                            </Link>
++                        </Button>
++                    </CardContent>
++                </Card>
++            </div>
++        </div>
++    );
++
++    const { data: contract, isLoading, isError, error } = useQuery({
+         queryKey: ["contract", id],
+         queryFn: async () => {
+             const response = await apiClient.get(`/contracts/${id}`);
+@@ -84,8 +149,9 @@
+         }
+     });
+ 
+-    const getRiskColor = (badge: string) => {
+-        switch (badge?.toLowerCase()) {
++    const getRiskColor = (badge: string | null | undefined) => {
++        const normalized = typeof badge === "string" ? badge.toLowerCase() : "";
++        switch (normalized) {
+             case "high": return "bg-destructive/15 text-destructive hover:bg-destructive/20";
+             case "medium": return "bg-amber-500/15 text-amber-800 hover:bg-amber-500/20 dark:text-amber-200";
+             case "low": return "bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200";
+@@ -93,17 +159,68 @@
+         }
+     };
+ 
+-    const analysis = contract?.latestAnalysis;
++    const analysis = contract?.latestAnalysis && typeof contract.latestAnalysis === "object"
++        ? contract.latestAnalysis
++        : null;
+     const analysisJobStatus = analysisJob?.status;
+     const analyses = Array.isArray(contract?.analyses) ? contract.analyses : [];
+     const sortedAnalyses = [...analyses].sort(
+-        (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
++        (a: any, b: any) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt)
+     );
+     const latestAnalysisRecord = sortedAnalyses[0];
+     const olderAnalyses = analysis?.id
+         ? sortedAnalyses.filter((a: any) => a.id !== analysis.id)
+         : sortedAnalyses.slice(1);
+ 
++    const resultJson = analysis?.resultJson && typeof analysis.resultJson === "object"
++        ? analysis.resultJson
++        : null;
++    const summary = resultJson?.summary && typeof resultJson.summary === "object"
++        ? resultJson.summary
++        : null;
++    const summaryPayments = summary?.payments && typeof summary.payments === "object"
++        ? summary.payments
++        : null;
++    const summaryTerm = summary?.term && typeof summary.term === "object"
++        ? summary.term
++        : null;
++    const summaryRenewal = summary?.renewal && typeof summary.renewal === "object"
++        ? summary.renewal
++        : null;
++
++    const riskBadge = typeof analysis?.riskBadge === "string"
++        ? analysis.riskBadge
++        : typeof resultJson?.risk_badge === "string"
++            ? resultJson.risk_badge
++            : "UNKNOWN";
++
++    const keyPoints = Array.isArray(analysis?.keyPoints)
++        ? analysis.keyPoints
++        : Array.isArray(resultJson?.key_points)
++            ? resultJson.key_points
++            : [];
++    const redFlags = Array.isArray(resultJson?.red_flags) ? resultJson.red_flags : [];
++    const redFlagFindings = redFlags
++        .map((flag: any) => {
++            const type = typeof flag?.type === "string" ? flag.type.trim() : "";
++            const explanation = typeof flag?.explanation === "string" ? flag.explanation.trim() : "";
++            if (type && explanation) return `${type}: ${explanation}`;
++            return explanation || type || "";
++        })
++        .filter(Boolean);
++    const keyFindings = redFlagFindings.length > 0 ? redFlagFindings : keyPoints;
++
++    const uploadedDateLabel = formatDate(contract?.createdAt, "MMM d, yyyy", "Unknown date");
++    const analysisDateLabel = formatDate(analysis?.createdAt, "MMM d, HH:mm", "Unknown time");
++    const renewalLabel = summaryRenewal
++        ? summaryRenewal.auto_renew
++            ? "Auto-renews"
++            : "Manual renewal"
++        : "Not specified";
++    const contractTitle = typeof contract?.title === "string" && contract.title.trim()
++        ? contract.title
++        : "Untitled contract";
++
+     const llmProvider = llmUsed?.provider ?? analysisJob?.result?.provider;
+     const llmModel = llmUsed?.model ?? analysisJob?.result?.llmModel ?? latestAnalysisRecord?.llmModel;
+     const llmProviderLabel =
+@@ -181,8 +298,18 @@
+         );
+     }
+ 
+-    if (!contract) return <div>Contract not found</div>;
++    if (isError) {
++        const { title, description } = getContractErrorDetails(error);
++        return renderIssueState(title, description);
++    }
+ 
++    if (!contract) {
++        return renderIssueState(
++            "Contract not found",
++            "We could not find this contract. It may have been deleted or the link is invalid."
++        );
++    }
++
+     return (
+         <div className="min-h-screen bg-background pb-12">
+             <div className="bg-background/60 backdrop-blur border-b">
+@@ -193,11 +320,11 @@
+                     </Link>
+                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                         <div>
+-                            <h1 className="text-3xl font-bold text-foreground">{contract.title}</h1>
++                            <h1 className="text-3xl font-bold text-foreground">{contractTitle}</h1>
+                             <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+-                                <span>Uploaded {format(new Date(contract.createdAt), "MMM d, yyyy")}</span>
++                                <span>Uploaded {uploadedDateLabel}</span>
+                                 <span>•</span>
+-                                <Badge variant="outline">{contract.status}</Badge>
++                                <Badge variant="outline">{contract.status || "UNKNOWN"}</Badge>
+                             </div>
+                         </div>
+ 
+@@ -263,11 +390,11 @@
+                                     <CardDescription>Overall contract risk level</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(analysis.riskBadge)}`}>
+-                                        {analysis.riskBadge || "UNKNOWN"}
++                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(riskBadge)}`}>
++                                        {riskBadge || "UNKNOWN"}
+                                     </Badge>
+                                     <p className="mt-4 text-sm text-muted-foreground">
+-                                        Analyzed on {format(new Date(analysis.createdAt), "MMM d, HH:mm")}
++                                        Analyzed on {analysisDateLabel}
+                                     </p>
+                                     {!!llmModel && (
+                                         <p className="mt-2 text-xs text-muted-foreground">
+@@ -284,9 +411,9 @@
+                                     <CardDescription>Important points extracted from the contract</CardDescription>
+                                 </CardHeader>
+                                 <CardContent>
+-                                    {analysis.keyPoints && analysis.keyPoints.length > 0 ? (
++                                    {keyFindings.length > 0 ? (
+                                         <ul className="space-y-4">
+-                                            {analysis.keyPoints.map((point: string, idx: number) => (
++                                            {keyFindings.map((point: string, idx: number) => (
+                                                 <li key={idx} className="flex items-start gap-3 p-3 rounded-lg bg-muted/60">
+                                                     <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                                                     <span className="text-sm text-foreground/90 leading-relaxed">{point}</span>
+@@ -295,7 +422,7 @@
+                                         </ul>
+                                     ) : (
+                                         <div className="text-center py-8 text-muted-foreground">
+-                                            No key points extracted.
++                                            No key findings yet. Re-run analysis to extract highlights.
+                                         </div>
+                                     )}
+                                 </CardContent>
+@@ -303,21 +430,21 @@
+                         </div>
+ 
+                         {/* Contract Summary Section */}
+-                        {analysis.resultJson?.summary && (
+-                            <Card className="mt-6">
+-                                <CardHeader>
+-                                    <CardTitle className="flex items-center gap-2">
+-                                        <FileText className="h-5 w-5" />
+-                                        Contract Summary
+-                                    </CardTitle>
+-                                    <CardDescription>Quick overview of the contract terms</CardDescription>
+-                                </CardHeader>
+-                                <CardContent>
++                        <Card className="mt-6">
++                            <CardHeader>
++                                <CardTitle className="flex items-center gap-2">
++                                    <FileText className="h-5 w-5" />
++                                    Contract Summary
++                                </CardTitle>
++                                <CardDescription>Quick overview of the contract terms</CardDescription>
++                            </CardHeader>
++                            <CardContent>
++                                {summary ? (
+                                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                                         {/* What It Is */}
+                                         <div className="p-4 rounded-lg bg-muted/40">
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1">What It Is</h4>
+-                                            <p className="text-sm">{analysis.resultJson.summary.what_it_is || "Not specified"}</p>
++                                            <p className="text-sm">{summary.what_it_is || "Not specified"}</p>
+                                         </div>
+ 
+                                         {/* Payments */}
+@@ -326,11 +453,11 @@
+                                                 <DollarSign className="h-4 w-4" /> Payments
+                                             </h4>
+                                             <p className="text-sm font-medium">
+-                                                {analysis.resultJson.summary.payments?.amount || "Not specified"}
++                                                {summaryPayments?.amount || "Not specified"}
+                                             </p>
+-                                            {analysis.resultJson.summary.payments?.frequency && (
++                                            {summaryPayments?.frequency && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    {analysis.resultJson.summary.payments.frequency}
++                                                    {summaryPayments.frequency}
+                                                 </p>
+                                             )}
+                                         </div>
+@@ -341,7 +468,7 @@
+                                                 <Clock className="h-4 w-4" /> Term
+                                             </h4>
+                                             <p className="text-sm">
+-                                                {analysis.resultJson.summary.term?.minimum_term || "Not specified"}
++                                                {summaryTerm?.minimum_term || "Not specified"}
+                                             </p>
+                                         </div>
+ 
+@@ -350,19 +477,21 @@
+                                             <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
+                                                 <RefreshCw className="h-4 w-4" /> Renewal
+                                             </h4>
+-                                            <p className="text-sm">
+-                                                {analysis.resultJson.summary.renewal?.auto_renew ? "Auto-renews" : "Manual renewal"}
+-                                            </p>
+-                                            {analysis.resultJson.summary.renewal?.renewal_period && (
++                                            <p className="text-sm">{renewalLabel}</p>
++                                            {summaryRenewal?.renewal_period && (
+                                                 <p className="text-xs text-muted-foreground">
+-                                                    Period: {analysis.resultJson.summary.renewal.renewal_period}
++                                                    Period: {summaryRenewal.renewal_period}
+                                                 </p>
+                                             )}
+                                         </div>
+                                     </div>
+-                                </CardContent>
+-                            </Card>
+-                        )}
++                                ) : (
++                                    <div className="text-center py-8 text-muted-foreground">
++                                        Summary unavailable. Re-run analysis to generate the contract overview.
++                                    </div>
++                                )}
++                            </CardContent>
++                        </Card>
+                         
+                         {/* More sections can be added here (Red flags etc) - Truncated for brevity but preserving structure */}
+                     </>
+
+
+thinking
+**Staging changes for second commit**
