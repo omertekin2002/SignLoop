@@ -1,5 +1,4 @@
-// @ts-expect-error - pdf-parse types don't support ESM imports properly
-import pdfParse from 'pdf-parse';
+import { extractText } from 'unpdf';
 import Tesseract from 'tesseract.js';
 
 const MIN_TEXT_DENSITY = 50; // Minimum characters per page for non-scanned PDF
@@ -33,29 +32,31 @@ export function validateMimeType(mimeType: string): void {
 }
 
 /**
- * Extract text from a PDF buffer using pdf-parse.
+ * Extract text from a PDF buffer using unpdf.
  * If the PDF appears to be scanned (low text density), returns a fallback message.
  */
 export async function extractTextFromPdf(buffer: Buffer): Promise<ExtractionResult> {
     try {
-        const pdfData = await pdfParse(buffer);
-        const text = pdfData.text?.trim() || '';
+        // Convert Buffer to Uint8Array for unpdf
+        const uint8Array = new Uint8Array(buffer);
+        const { text, totalPages } = await extractText(uint8Array, { mergePages: true });
+        const extractedText = (text as string)?.trim() || '';
 
         // Check if it's a scanned PDF (low text density)
-        const pageCount = pdfData.numpages || 1;
-        const avgCharsPerPage = text.length / pageCount;
+        const pageCount = totalPages || 1;
+        const avgCharsPerPage = extractedText.length / pageCount;
 
-        if (avgCharsPerPage < MIN_TEXT_DENSITY && text.length < 500) {
+        if (avgCharsPerPage < MIN_TEXT_DENSITY && extractedText.length < 500) {
             // Likely scanned, OCR would be needed for better extraction
             return {
-                text: text || '[OCR required - scanned PDF detected]',
+                text: extractedText || '[OCR required - scanned PDF detected]',
                 method: 'pdf_ocr_fallback',
                 confidence: 0,
             };
         }
 
         return {
-            text,
+            text: extractedText,
             method: 'pdf_parse',
             confidence: 100,
         };
