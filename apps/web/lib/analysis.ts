@@ -94,7 +94,7 @@ export async function analyzeText(text: string, metadata?: any): Promise<{ resul
         ${text.substring(0, 15000)} ... (truncated if too long)
         `;
 
-    const model = process.env.OPENROUTER_MODEL || 'xiaomi/mimo-v2-flash:free';
+    const model = process.env.OPENROUTER_MODEL || 'deepseek/deepseek-r1-0528:free';
     const completion = await openai.chat.completions.create({
         messages: [{ role: 'user', content: prompt }],
         model: model,

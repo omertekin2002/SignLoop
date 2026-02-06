@@ -5,7 +5,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (id === 'done') {
         return NextResponse.json({
             status: 'SUCCEEDED',
-            result: { provider: 'openrouter', llmModel: 'xiaomi/mimo-v2-flash:free' }
+            result: { provider: 'openrouter', llmModel: 'deepseek/deepseek-r1-0528:free' }
         });
     }
     return NextResponse.json({ status: 'FAILED', error: 'Job not found' });
