@@ -280,30 +280,161 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
     };
 }
 
-function parseStrictJson<T>(content: string): T {
-    const trimmed = content.trim();
-    let parsed: unknown;
+function stripCodeFences(value: string): string {
+    return value
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+}
 
-    try {
-        parsed = JSON.parse(trimmed);
-    } catch {
-        const withoutFences = trimmed
-            .replace(/^```(?:json)?\s*/i, '')
-            .replace(/\s*```$/i, '')
-            .trim();
-        try {
-            parsed = JSON.parse(withoutFences);
-        } catch {
-            const firstBrace = withoutFences.indexOf('{');
-            const lastBrace = withoutFences.lastIndexOf('}');
-            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                const slice = withoutFences.slice(firstBrace, lastBrace + 1);
-                parsed = JSON.parse(slice);
-            } else {
-                throw new Error('Failed to parse JSON from model response');
+function removeTrailingCommas(value: string): string {
+    return value.replace(/,\s*([}\]])/g, '$1');
+}
+
+function extractBalancedJsonObject(value: string): string | null {
+    const start = value.indexOf('{');
+    if (start === -1) return null;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < value.length; i += 1) {
+        const ch = value[i];
+
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch === '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        if (ch === '"') {
+            inString = true;
+            continue;
+        }
+        if (ch === '{') {
+            depth += 1;
+            continue;
+        }
+        if (ch === '}') {
+            depth -= 1;
+            if (depth === 0) {
+                return value.slice(start, i + 1);
             }
         }
     }
+
+    return null;
+}
+
+function parseModelJson(content: string): unknown {
+    const trimmed = content.trim();
+    const withoutFences = stripCodeFences(trimmed);
+    const balancedCandidate = extractBalancedJsonObject(withoutFences);
+    const candidates = [
+        trimmed,
+        withoutFences,
+        balancedCandidate ?? '',
+        removeTrailingCommas(withoutFences),
+        balancedCandidate ? removeTrailingCommas(balancedCandidate) : '',
+    ].filter((candidate): candidate is string => Boolean(candidate));
+
+    const uniqueCandidates = Array.from(new Set(candidates));
+    let lastError: Error | null = null;
+
+    for (const candidate of uniqueCandidates) {
+        try {
+            return JSON.parse(candidate);
+        } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+        }
+    }
+
+    throw new Error(`Failed to parse JSON from model response: ${lastError?.message ?? 'Unknown parse error'}`);
+}
+
+function isLikelyUnsupportedJsonModeError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /(response_format|json_object|json mode|unsupported|not support)/i.test(message);
+}
+
+async function createChatCompletionPreferringJson(
+    openai: OpenAI,
+    model: string,
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+    temperature = 0,
+) {
+    try {
+        return await openai.chat.completions.create({
+            messages,
+            model,
+            temperature,
+            response_format: { type: 'json_object' },
+        });
+    } catch (error) {
+        if (!isLikelyUnsupportedJsonModeError(error)) {
+            throw error;
+        }
+
+        console.warn('Model/provider rejected response_format=json_object, retrying without it');
+        return await openai.chat.completions.create({
+            messages,
+            model,
+            temperature,
+        });
+    }
+}
+
+async function repairJsonWithModel(openai: OpenAI, model: string, malformedContent: string): Promise<string> {
+    const repairPrompt = `
+You are a JSON repair tool.
+Return ONLY a valid JSON object.
+Do not include markdown or explanations.
+
+Required top-level keys:
+["risk_badge","key_points","summary","red_flags","normal_in_region","next_actions","key_dates","obligations","parties","disclaimer"]
+
+Enum constraints:
+- risk_badge: LOW | MEDIUM | HIGH
+- normal_in_region[].label: typical | unusual
+- key_dates[].type: RENEWAL | NOTICE_CUTOFF | PRICE_REVIEW | OTHER
+
+Type constraints:
+- severity, confidence, and notice_period_days must be numbers.
+- nullable text fields should be null if unknown.
+
+Repair this malformed JSON-like input:
+${malformedContent.slice(0, 12000)}
+    `;
+
+    const completion = await createChatCompletionPreferringJson(
+        openai,
+        model,
+        [
+            { role: 'system', content: 'You fix malformed JSON and output only valid JSON.' },
+            { role: 'user', content: repairPrompt },
+        ],
+        0,
+    );
+
+    const repairedContent = completion.choices[0]?.message?.content;
+    if (!repairedContent) {
+        throw new Error('Empty response from AI during JSON repair');
+    }
+    return repairedContent;
+}
+
+function parseStrictJson<T>(content: string): T {
+    const parsed = parseModelJson(content);
 
     const strictResult = AnalysisResultSchema.safeParse(parsed);
     if (strictResult.success) {
@@ -416,20 +547,41 @@ ${text.substring(0, 15000)} ... (truncated if too long)
         `;
 
     const model = process.env.OPENROUTER_MODEL || 'z-ai/glm-4.5-air:free';
-    const completion = await openai.chat.completions.create({
-        messages: [
+    const completion = await createChatCompletionPreferringJson(
+        openai,
+        model,
+        [
             { role: 'system', content: 'Return only valid JSON with the exact required keys.' },
-            { role: 'user', content: prompt }
+            { role: 'user', content: prompt },
         ],
-        model: model,
-        temperature: 0,
-    });
+        0,
+    );
 
     const content = completion.choices[0]?.message?.content;
     if (!content) {
         throw new Error('Empty response from AI');
     }
 
-    const result = parseStrictJson<AnalysisResult>(content);
+    let result: AnalysisResult;
+    try {
+        result = parseStrictJson<AnalysisResult>(content);
+    } catch (initialError) {
+        const initialMessage = initialError instanceof Error ? initialError.message : 'Unknown parse/validation error';
+        console.warn('Primary analysis response failed parse/validation; attempting repair pass', {
+            model,
+            initialMessage,
+        });
+
+        const repairedContent = await repairJsonWithModel(openai, model, content);
+        try {
+            result = parseStrictJson<AnalysisResult>(repairedContent);
+        } catch (repairError) {
+            const repairMessage = repairError instanceof Error ? repairError.message : 'Unknown repair parse/validation error';
+            throw new Error(
+                `LLM response invalid after repair attempt. Initial error: ${initialMessage}. Repair error: ${repairMessage}`
+            );
+        }
+    }
+
     return { result, provider: 'openrouter', model };
 }
