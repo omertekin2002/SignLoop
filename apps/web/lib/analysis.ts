@@ -433,7 +433,7 @@ ${malformedContent.slice(0, 12000)}
     return repairedContent;
 }
 
-function parseStrictJson<T>(content: string): T {
+export function parseStrictJson<T>(content: string): T {
     const parsed = parseModelJson(content);
 
     const strictResult = AnalysisResultSchema.safeParse(parsed);
