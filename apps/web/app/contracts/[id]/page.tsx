@@ -104,10 +104,7 @@ const ContractDetails = () => {
             return response.data;
         },
         enabled: !!id,
-        refetchInterval: (query) => {
-            // Poll if analysis is running (mock logic)
-            return 5000;
-        }
+        refetchInterval: () => 5000,
     });
 
     const { data: analysisJob } = useQuery({
@@ -209,6 +206,19 @@ const ContractDetails = () => {
         })
         .filter(Boolean);
     const keyFindings = redFlagFindings.length > 0 ? redFlagFindings : keyPoints;
+    const summaryCancellation = summary?.cancellation && typeof summary.cancellation === "object"
+        ? summary.cancellation
+        : null;
+    const keyDates = Array.isArray(resultJson?.key_dates) ? resultJson.key_dates : [];
+    const nextActions = resultJson?.next_actions && typeof resultJson.next_actions === "object"
+        ? resultJson.next_actions
+        : null;
+    const questionsToAsk = Array.isArray(nextActions?.questions_to_ask)
+        ? nextActions.questions_to_ask
+        : [];
+    const emailTemplates = Array.isArray(nextActions?.email_templates)
+        ? nextActions.email_templates
+        : [];
 
     const uploadedDateLabel = formatDate(contract?.createdAt, "MMM d, yyyy", "Unknown date");
     const analysisDateLabel = formatDate(analysis?.createdAt, "MMM d, HH:mm", "Unknown time");
@@ -232,19 +242,34 @@ const ContractDetails = () => {
 
     const deleteAnalysisMutation = useMutation({
         mutationFn: async (analysisId: string) => {
-            // Mock delete API or implement it
-            // await apiClient.delete(`/contracts/${id}/analysis/${analysisId}`);
-            toast.success("Analysis deleted (mock)");
+            await apiClient.delete(`/contracts/${id}/analysis/${analysisId}`);
         },
         onSuccess: () => {
+            toast.success("Analysis deleted");
             queryClient.invalidateQueries({ queryKey: ["contract", id] });
+            queryClient.invalidateQueries({ queryKey: ["contracts"] });
+        },
+        onError: (error: any) => {
+            toast.error(error.response?.data?.message || "Failed to delete analysis");
         },
     });
 
     const deleteOlderAnalysesMutation = useMutation({
         mutationFn: async (analysisIds: string[]) => {
-             toast.success("Older analyses deleted (mock)");
+            await Promise.all(
+                analysisIds.map((analysisId) =>
+                    apiClient.delete(`/contracts/${id}/analysis/${analysisId}`)
+                )
+            );
         },
+        onSuccess: () => {
+            toast.success("Older analyses deleted");
+            queryClient.invalidateQueries({ queryKey: ["contract", id] });
+            queryClient.invalidateQueries({ queryKey: ["contracts"] });
+        },
+        onError: (error: any) => {
+            toast.error(error.response?.data?.message || "Failed to delete older analyses");
+        }
     });
 
     const deleteContractMutation = useMutation({
@@ -492,8 +517,199 @@ const ContractDetails = () => {
                                 )}
                             </CardContent>
                         </Card>
-                        
-                        {/* More sections can be added here (Red flags etc) - Truncated for brevity but preserving structure */}
+
+                        {/* Cancellation Terms */}
+                        {summaryCancellation && (
+                            <Card className="mt-6">
+                                <CardHeader>
+                                    <CardTitle className="flex items-center gap-2">
+                                        <XCircle className="h-5 w-5" />
+                                        Cancellation Terms
+                                    </CardTitle>
+                                    <CardDescription>How this agreement can be ended</CardDescription>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="grid gap-4 md:grid-cols-3">
+                                        <div className="p-4 rounded-lg bg-muted/40">
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">How to cancel</h4>
+                                            <p className="text-sm">{summaryCancellation.how || "Not specified"}</p>
+                                        </div>
+                                        <div className="p-4 rounded-lg bg-muted/40">
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Notice period</h4>
+                                            <p className="text-sm">
+                                                {typeof summaryCancellation.notice_period_days === "number"
+                                                    ? `${summaryCancellation.notice_period_days} days`
+                                                    : "Not specified"}
+                                            </p>
+                                        </div>
+                                        <div className="p-4 rounded-lg bg-muted/40">
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Penalties</h4>
+                                            {Array.isArray(summaryCancellation.penalties) && summaryCancellation.penalties.length > 0 ? (
+                                                <ul className="text-sm list-disc list-inside space-y-1">
+                                                    {summaryCancellation.penalties.map((penalty: string, idx: number) => (
+                                                        <li key={idx}>{penalty}</li>
+                                                    ))}
+                                                </ul>
+                                            ) : (
+                                                <p className="text-sm">None listed</p>
+                                            )}
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        )}
+
+                        {/* Red Flags */}
+                        {redFlags.length > 0 && (
+                            <Card className="mt-6 border-l-4 border-l-destructive">
+                                <CardHeader>
+                                    <CardTitle className="flex items-center gap-2 text-destructive">
+                                        <Shield className="h-5 w-5" />
+                                        Red Flags ({redFlags.length})
+                                    </CardTitle>
+                                    <CardDescription>Potential issues identified in the contract</CardDescription>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="space-y-4">
+                                        {redFlags.map((flag: any, idx: number) => {
+                                            const type = typeof flag?.type === "string" ? flag.type : "Risk";
+                                            const explanation = typeof flag?.explanation === "string" ? flag.explanation : "";
+                                            const confidence =
+                                                typeof flag?.confidence === "number" ? `${flag.confidence}%` : "Unknown";
+                                            const severity =
+                                                typeof flag?.severity === "number" && Number.isFinite(flag.severity)
+                                                    ? Math.max(0, Math.min(10, flag.severity))
+                                                    : 0;
+                                            const where = typeof flag?.where === "string" ? flag.where : "";
+
+                                            return (
+                                                <div key={idx} className="p-4 rounded-lg border bg-card">
+                                                    <div className="flex items-start justify-between gap-4">
+                                                        <div className="flex-1">
+                                                            <div className="flex items-center gap-2 mb-2">
+                                                                <Badge variant="outline" className="text-xs">
+                                                                    {type}
+                                                                </Badge>
+                                                                <span className="text-xs text-muted-foreground">
+                                                                    Confidence: {confidence}
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-sm">{explanation || "No explanation provided."}</p>
+                                                            {where && (
+                                                                <p className="text-xs text-muted-foreground mt-1">
+                                                                    Found in: {where}
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex flex-col items-end gap-1">
+                                                            <span className="text-xs text-muted-foreground">Severity</span>
+                                                            <div className="flex items-center gap-1">
+                                                                <div className="w-16 h-2 rounded-full bg-muted overflow-hidden">
+                                                                    <div
+                                                                        className={`h-full rounded-full ${severity >= 7 ? "bg-destructive" :
+                                                                            severity >= 4 ? "bg-amber-500" : "bg-emerald-500"
+                                                                            }`}
+                                                                        style={{ width: `${severity * 10}%` }}
+                                                                    />
+                                                                </div>
+                                                                <span className="text-xs font-medium">{severity}/10</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        )}
+
+                        {/* Key Dates */}
+                        {keyDates.length > 0 && (
+                            <Card className="mt-6">
+                                <CardHeader>
+                                    <CardTitle className="flex items-center gap-2">
+                                        <Calendar className="h-5 w-5" />
+                                        Key Dates
+                                    </CardTitle>
+                                    <CardDescription>Important dates to track</CardDescription>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                                        {keyDates.map((date: any, idx: number) => (
+                                            <div key={idx} className="flex items-center gap-3 p-3 rounded-lg border bg-card">
+                                                <div className="rounded-full p-2 bg-primary/10">
+                                                    <Calendar className="h-4 w-4 text-primary" />
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-medium">
+                                                        {typeof date?.type === "string" ? date.type.replace(/_/g, " ") : "DATE"}
+                                                    </p>
+                                                    <p className="text-xs text-muted-foreground">
+                                                        {typeof date?.date === "string" ? date.date : "Unknown"}
+                                                    </p>
+                                                    {typeof date?.derived_from === "string" && date.derived_from && (
+                                                        <p className="text-xs text-muted-foreground italic">From: {date.derived_from}</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        )}
+
+                        {/* Next Actions */}
+                        {(questionsToAsk.length > 0 || emailTemplates.length > 0) && (
+                            <Card className="mt-6">
+                                <CardHeader>
+                                    <CardTitle className="flex items-center gap-2">
+                                        <HelpCircle className="h-5 w-5" />
+                                        Recommended Actions
+                                    </CardTitle>
+                                    <CardDescription>Suggested follow-up based on the analysis</CardDescription>
+                                </CardHeader>
+                                <CardContent>
+                                    {questionsToAsk.length > 0 && (
+                                        <div className="mb-6">
+                                            <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+                                                <HelpCircle className="h-4 w-4 text-primary" />
+                                                Questions to Ask
+                                            </h4>
+                                            <ul className="space-y-2">
+                                                {questionsToAsk.map((question: string, idx: number) => (
+                                                    <li key={idx} className="flex items-start gap-2 text-sm">
+                                                        <span className="text-primary font-medium">{idx + 1}.</span>
+                                                        <span>{question}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+
+                                    {emailTemplates.length > 0 && (
+                                        <div>
+                                            <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+                                                <Mail className="h-4 w-4 text-primary" />
+                                                Email Templates
+                                            </h4>
+                                            <div className="space-y-3">
+                                                {emailTemplates.map((template: any, idx: number) => (
+                                                    <div key={idx} className="p-3 rounded-lg border bg-muted/30">
+                                                        <p className="text-sm font-medium mb-1">
+                                                            Subject: {typeof template?.subject === "string" ? template.subject : "Untitled"}
+                                                        </p>
+                                                        <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+                                                            {typeof template?.body === "string" ? template.body : ""}
+                                                        </p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        )}
                     </>
                 ) : (
                     <Card className="bg-muted/40 border-dashed">
@@ -507,6 +723,11 @@ const ContractDetails = () => {
                                     <p className="text-sm text-muted-foreground max-w-sm mt-2">
                                         This can take up to a minute. We’ll refresh automatically when it’s ready.
                                     </p>
+                                    {analysisJobStatus && (
+                                        <p className="mt-3 text-xs text-muted-foreground">
+                                            Status: {analysisJobStatus}
+                                        </p>
+                                    )}
                                 </>
                             ) : (
                                 <>
@@ -522,6 +743,79 @@ const ContractDetails = () => {
                                     </Button>
                                 </>
                             )}
+                        </CardContent>
+                    </Card>
+                )}
+
+                {/* Analysis History */}
+                {olderAnalyses.length > 0 && (
+                    <Card>
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                            <div>
+                                <CardTitle>Analysis History</CardTitle>
+                                <CardDescription>Manage older analyses for this contract</CardDescription>
+                            </div>
+                            <Button
+                                variant="destructive"
+                                size="sm"
+                                disabled={deleteOlderAnalysesMutation.isPending}
+                                onClick={() => {
+                                    const ok = window.confirm(
+                                        `Delete ${olderAnalyses.length} older analysis(es)? This cannot be undone.`
+                                    );
+                                    if (!ok) return;
+                                    deleteOlderAnalysesMutation.mutate(olderAnalyses.map((a: any) => a.id));
+                                }}
+                            >
+                                Delete older analyses
+                            </Button>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="space-y-3">
+                                {olderAnalyses.map((a: any) => (
+                                    <div
+                                        key={a.id}
+                                        className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3"
+                                    >
+                                        <div className="space-y-1">
+                                            <div className="flex items-center gap-2">
+                                                <Badge className={getRiskColor(a.riskBadge)}>
+                                                    {a.riskBadge || "UNKNOWN"}
+                                                </Badge>
+                                                <span className="text-sm text-muted-foreground">
+                                                    {a.createdAt ? format(new Date(a.createdAt), "MMM d, HH:mm") : ""}
+                                                </span>
+                                            </div>
+                                            <div className="text-xs text-muted-foreground">
+                                                {a.resultJson?.key_points?.length
+                                                    ? `${a.resultJson.key_points.length} key point(s)`
+                                                    : "No key points"}
+                                            </div>
+                                            {!!a.llmModel && (
+                                                <div className="text-xs text-muted-foreground">
+                                                    Model: {a.llmModel}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            disabled={deleteAnalysisMutation.isPending}
+                                            onClick={() => {
+                                                const ok = window.confirm(
+                                                    "Delete this analysis? This cannot be undone."
+                                                );
+                                                if (!ok) return;
+                                                deleteAnalysisMutation.mutate(a.id);
+                                            }}
+                                        >
+                                            <Trash2 className="mr-2 h-4 w-4" />
+                                            Delete
+                                        </Button>
+                                    </div>
+                                ))}
+                            </div>
                         </CardContent>
                     </Card>
                 )}

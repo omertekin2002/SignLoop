@@ -1,10 +1,16 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/store';
+import { auth } from "@clerk/nextjs/server";
 import { analyzeText } from '@/lib/analysis';
+import { createAnalysisForContract, getContractByIdForUser } from "@/lib/server-db";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { id } = await params;
-  const contract = db.contracts.find((c) => c.id === id);
+  const contract = await getContractByIdForUser(userId, id);
   
   if (!contract) {
     return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
@@ -15,26 +21,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   try {
-    // Synchronous analysis for prototype
-    const { result, model } = await analyzeText(contract.text);
-    
-    const analysisRecord = {
-      id: crypto.randomUUID(),
+    const { result, provider, model } = await analyzeText(contract.text);
+    await createAnalysisForContract({
+      userId,
       contractId: contract.id,
-      riskBadge: result.risk_badge,
-      resultJson: result,
-      llmModel: model,
-      createdAt: new Date().toISOString(),
-    };
-
-    if (!contract.analyses) contract.analyses = [];
-    contract.analyses.unshift(analysisRecord);
-    contract.latestAnalysis = analysisRecord;
-    contract.status = 'ANALYZED';
+      riskBadge: typeof result.risk_badge === "string" ? result.risk_badge : null,
+      resultJson: result as Record<string, unknown>,
+      llmProvider: provider ?? null,
+      llmModel: model ?? null,
+    });
 
     return NextResponse.json({ message: 'Analysis complete', jobId: 'done' });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Analysis failed";
     console.error('Analysis error:', error);
-    return NextResponse.json({ error: error.message || 'Analysis failed' }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -43,6 +43,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@repo/ui": "*",
     "@tanstack/react-query": "^5.90.18",
+    "@vercel/blob": "^2.1.0",
     "@vercel/postgres": "^0.10.0",
     "axios": "^1.13.2",
     "class-variance-authority": "^0.7.1",

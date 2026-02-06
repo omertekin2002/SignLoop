@@ -1,10 +1,17 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/lib/store';
+import { auth } from "@clerk/nextjs/server";
+import { addUploadedContractFile, getContractByIdForUser, saveContractExtractedText } from "@/lib/server-db";
 import { processFile, validateMimeType } from '@/lib/text-extraction';
+import { getStorageBucketName, uploadObject } from "@/lib/object-storage";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { userId } = await auth();
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { id } = await params;
-  const contract = db.contracts.find((c) => c.id === id);
+  const contract = await getContractByIdForUser(userId, id);
   if (!contract) {
     return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
   }
@@ -22,8 +29,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Validate file type
   try {
     validateMimeType(mimeType);
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Invalid file type";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 
   try {
@@ -41,20 +49,43 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    // Store extracted text in contract
-    contract.text = text;
+    const safeFileName = file.name.replace(/[^\w.-]/g, "_");
+    const storageKey = `contracts/${userId}/${id}/${Date.now()}-${safeFileName}`;
+    const bucket = getStorageBucketName();
+
+    const storedObjectKey = await uploadObject(storageKey, buffer, mimeType);
+    await saveContractExtractedText({
+      userId,
+      contractId: id,
+      text,
+    });
+    await addUploadedContractFile({
+      userId,
+      contractId: id,
+      projectId: contract.projectId,
+      title: contract.title,
+      fileName: file.name,
+      storageKey: storedObjectKey,
+      bucket,
+      contentType: mimeType,
+      sizeBytes: file.size,
+      extractionMethod: method,
+      extractionConfidence: typeof confidence === "number" ? confidence : null,
+    });
 
     return NextResponse.json({
       success: true,
       message: 'File uploaded and text extracted',
+      storageKey: storedObjectKey,
       extractionMethod: method,
       confidence,
       textLength: text.length,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Failed to extract text from file";
     console.error('Text extraction failed:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to extract text from file' },
+      { error: message },
       { status: 500 }
     );
   }

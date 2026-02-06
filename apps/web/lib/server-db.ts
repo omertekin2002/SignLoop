@@ -1,0 +1,978 @@
+import { sql } from "@vercel/postgres";
+
+type JsonObject = Record<string, unknown>;
+
+let schemaReadyPromise: Promise<void> | null = null;
+
+async function ensureSchema(): Promise<void> {
+  if (schemaReadyPromise) {
+    return schemaReadyPromise;
+  }
+
+  schemaReadyPromise = (async () => {
+    await sql`create extension if not exists "pgcrypto"`;
+
+    await sql`
+      create table if not exists projects (
+        id uuid primary key default gen_random_uuid(),
+        user_id text not null,
+        title text not null,
+        description text,
+        status text not null default 'active',
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `;
+
+    await sql`
+      create index if not exists projects_user_id_idx
+      on projects (user_id)
+    `;
+
+    await sql`
+      create table if not exists contracts (
+        id uuid primary key default gen_random_uuid(),
+        user_id text not null,
+        project_id uuid,
+        title text not null default 'Untitled Contract',
+        status text not null default 'DRAFT',
+        text_content text,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `;
+
+    await sql`
+      create index if not exists contracts_user_id_idx
+      on contracts (user_id)
+    `;
+    await sql`
+      create index if not exists contracts_project_id_idx
+      on contracts (project_id)
+    `;
+    await sql`
+      create index if not exists contracts_created_at_idx
+      on contracts (created_at desc)
+    `;
+
+    await sql`
+      create table if not exists analyses (
+        id uuid primary key default gen_random_uuid(),
+        contract_id uuid not null,
+        risk_badge text,
+        result_json jsonb not null,
+        llm_provider text,
+        llm_model text,
+        llm_prompt_tokens integer,
+        llm_completion_tokens integer,
+        processing_time_ms integer,
+        created_at timestamptz not null default now()
+      )
+    `;
+
+    await sql`
+      create index if not exists analyses_contract_id_idx
+      on analyses (contract_id)
+    `;
+    await sql`
+      create index if not exists analyses_created_at_idx
+      on analyses (created_at desc)
+    `;
+
+    await sql`
+      create table if not exists context_documents (
+        id uuid primary key default gen_random_uuid(),
+        project_id uuid not null,
+        title text not null,
+        document_type text not null default 'other',
+        storage_key text,
+        bucket text,
+        original_filename text,
+        content_type text,
+        size_bytes integer,
+        extracted_text text,
+        word_count integer,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `;
+
+    await sql`
+      create index if not exists context_documents_project_id_idx
+      on context_documents (project_id)
+    `;
+    await sql`
+      create index if not exists context_documents_created_at_idx
+      on context_documents (created_at desc)
+    `;
+
+    await sql`
+      create table if not exists contract_files (
+        id uuid primary key default gen_random_uuid(),
+        user_id text not null,
+        project_id text,
+        title text not null default 'Untitled Contract',
+        file_name text not null,
+        blob_path text,
+        content_type text,
+        size_bytes integer,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `;
+
+    await sql`
+      alter table contract_files
+      add column if not exists contract_id uuid
+    `;
+    await sql`
+      alter table contract_files
+      add column if not exists storage_key text
+    `;
+    await sql`
+      alter table contract_files
+      add column if not exists bucket text
+    `;
+    await sql`
+      alter table contract_files
+      add column if not exists extraction_method text
+    `;
+    await sql`
+      alter table contract_files
+      add column if not exists extraction_confidence double precision
+    `;
+
+    await sql`
+      create index if not exists contract_files_user_id_idx
+      on contract_files (user_id)
+    `;
+    await sql`
+      create index if not exists contract_files_project_id_idx
+      on contract_files (project_id)
+    `;
+    await sql`
+      create index if not exists contract_files_contract_id_idx
+      on contract_files (contract_id)
+    `;
+  })().catch((error) => {
+    schemaReadyPromise = null;
+    throw error;
+  });
+
+  return schemaReadyPromise;
+}
+
+export type AnalysisRecord = {
+  id: string;
+  contractId: string;
+  riskBadge: string | null;
+  resultJson: JsonObject;
+  keyPoints: string[];
+  llmProvider: string | null;
+  llmModel: string | null;
+  llmPromptTokens: number | null;
+  llmCompletionTokens: number | null;
+  processingTimeMs: number | null;
+  createdAt: string;
+};
+
+export type ContractSummaryRecord = {
+  id: string;
+  userId: string;
+  projectId: string | null;
+  title: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ContractRecord = ContractSummaryRecord & {
+  text: string | null;
+  analyses: AnalysisRecord[];
+  latestAnalysis: AnalysisRecord | null;
+};
+
+export type ProjectSummaryRecord = {
+  id: string;
+  userId: string;
+  title: string;
+  description: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  contracts: Array<{
+    id: string;
+    title: string;
+    status: string;
+    createdAt: string;
+  }>;
+  contextDocuments: Array<{ id: string }>;
+};
+
+export type ProjectDetailRecord = {
+  id: string;
+  userId: string;
+  title: string;
+  description: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  contracts: Array<{
+    id: string;
+    title: string;
+    status: string;
+    createdAt: string;
+    analyses: Array<{ id: string; riskBadge: string | null }>;
+  }>;
+  contextDocuments: Array<{
+    id: string;
+    title: string;
+    documentType: string;
+    originalFilename: string | null;
+    fileSize: number | null;
+    wordCount: number | null;
+    createdAt: string;
+  }>;
+};
+
+type UploadedContractFileInput = {
+  userId: string;
+  contractId: string;
+  projectId: string | null;
+  title: string;
+  fileName: string;
+  storageKey: string;
+  bucket: string;
+  contentType: string;
+  sizeBytes: number;
+  extractionMethod: string;
+  extractionConfidence: number | null;
+};
+
+type NewAnalysisInput = {
+  userId: string;
+  contractId: string;
+  riskBadge: string | null;
+  resultJson: JsonObject;
+  llmProvider: string | null;
+  llmModel: string | null;
+  llmPromptTokens?: number | null;
+  llmCompletionTokens?: number | null;
+  processingTimeMs?: number | null;
+};
+
+type NewContextDocumentInput = {
+  userId: string;
+  projectId: string;
+  title: string;
+  documentType: string;
+  storageKey: string;
+  bucket: string;
+  originalFilename: string;
+  contentType: string;
+  sizeBytes: number;
+  extractedText: string;
+  wordCount: number;
+};
+
+function parseJsonObject(value: unknown): JsonObject {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === "object") {
+        return parsed as JsonObject;
+      }
+      return {};
+    } catch {
+      return {};
+    }
+  }
+
+  if (typeof value === "object") {
+    return value as JsonObject;
+  }
+
+  return {};
+}
+
+function mapAnalysisRow(row: {
+  id: string;
+  contractId: string;
+  riskBadge: string | null;
+  resultJson: unknown;
+  llmProvider: string | null;
+  llmModel: string | null;
+  llmPromptTokens: number | null;
+  llmCompletionTokens: number | null;
+  processingTimeMs: number | null;
+  createdAt: string;
+}): AnalysisRecord {
+  const resultJson = parseJsonObject(row.resultJson);
+  const rawKeyPoints = resultJson.key_points;
+  const keyPoints = Array.isArray(rawKeyPoints)
+    ? rawKeyPoints.filter((item): item is string => typeof item === "string")
+    : [];
+
+  return {
+    id: row.id,
+    contractId: row.contractId,
+    riskBadge: row.riskBadge,
+    resultJson,
+    keyPoints,
+    llmProvider: row.llmProvider,
+    llmModel: row.llmModel,
+    llmPromptTokens: row.llmPromptTokens,
+    llmCompletionTokens: row.llmCompletionTokens,
+    processingTimeMs: row.processingTimeMs,
+    createdAt: row.createdAt,
+  };
+}
+
+export async function listContractsByUserId(userId: string): Promise<ContractSummaryRecord[]> {
+  await ensureSchema();
+
+  const { rows } = await sql<ContractSummaryRecord>`
+    select
+      id,
+      user_id as "userId",
+      project_id as "projectId",
+      title,
+      status,
+      created_at as "createdAt",
+      updated_at as "updatedAt"
+    from contracts
+    where user_id = ${userId}
+    order by created_at desc
+  `;
+
+  return rows;
+}
+
+export async function createContractForUser(input: {
+  userId: string;
+  title: string;
+  projectId?: string | null;
+}): Promise<ContractSummaryRecord> {
+  await ensureSchema();
+
+  const validatedProjectId: string | null = input.projectId ?? null;
+
+  if (validatedProjectId) {
+    const { rows: projectRows } = await sql<{ id: string }>`
+      select id
+      from projects
+      where id = ${validatedProjectId}
+        and user_id = ${input.userId}
+      limit 1
+    `;
+
+    if (!projectRows[0]) {
+      throw new Error("Project not found");
+    }
+  }
+
+  const { rows } = await sql<ContractSummaryRecord>`
+    insert into contracts (
+      user_id,
+      project_id,
+      title,
+      status
+    )
+    values (
+      ${input.userId},
+      ${validatedProjectId},
+      ${input.title},
+      'DRAFT'
+    )
+    returning
+      id,
+      user_id as "userId",
+      project_id as "projectId",
+      title,
+      status,
+      created_at as "createdAt",
+      updated_at as "updatedAt"
+  `;
+
+  const created = rows[0];
+  if (!created) {
+    throw new Error("Failed to create contract");
+  }
+
+  return created;
+}
+
+export async function getContractByIdForUser(
+  userId: string,
+  contractId: string,
+): Promise<ContractRecord | null> {
+  await ensureSchema();
+
+  const { rows: contractRows } = await sql<ContractSummaryRecord & { text: string | null }>`
+    select
+      id,
+      user_id as "userId",
+      project_id as "projectId",
+      title,
+      status,
+      text_content as "text",
+      created_at as "createdAt",
+      updated_at as "updatedAt"
+    from contracts
+    where id = ${contractId}
+      and user_id = ${userId}
+    limit 1
+  `;
+
+  const contract = contractRows[0];
+  if (!contract) {
+    return null;
+  }
+
+  const { rows: analysisRows } = await sql<{
+    id: string;
+    contractId: string;
+    riskBadge: string | null;
+    resultJson: unknown;
+    llmProvider: string | null;
+    llmModel: string | null;
+    llmPromptTokens: number | null;
+    llmCompletionTokens: number | null;
+    processingTimeMs: number | null;
+    createdAt: string;
+  }>`
+    select
+      id,
+      contract_id as "contractId",
+      risk_badge as "riskBadge",
+      result_json as "resultJson",
+      llm_provider as "llmProvider",
+      llm_model as "llmModel",
+      llm_prompt_tokens as "llmPromptTokens",
+      llm_completion_tokens as "llmCompletionTokens",
+      processing_time_ms as "processingTimeMs",
+      created_at as "createdAt"
+    from analyses
+    where contract_id = ${contractId}
+    order by created_at desc
+  `;
+
+  const analyses = analysisRows.map(mapAnalysisRow);
+  const latestAnalysis = analyses[0] ?? null;
+
+  return {
+    ...contract,
+    analyses,
+    latestAnalysis,
+  };
+}
+
+export async function saveContractExtractedText(input: {
+  userId: string;
+  contractId: string;
+  text: string;
+}): Promise<boolean> {
+  await ensureSchema();
+
+  const { rowCount } = await sql`
+    update contracts
+    set
+      text_content = ${input.text},
+      status = 'DRAFT',
+      updated_at = now()
+    where id = ${input.contractId}
+      and user_id = ${input.userId}
+  `;
+
+  return (rowCount ?? 0) > 0;
+}
+
+export async function addUploadedContractFile(input: UploadedContractFileInput): Promise<void> {
+  await ensureSchema();
+
+  await sql`
+    insert into contract_files (
+      user_id,
+      project_id,
+      contract_id,
+      title,
+      file_name,
+      blob_path,
+      storage_key,
+      bucket,
+      content_type,
+      size_bytes,
+      extraction_method,
+      extraction_confidence
+    )
+    values (
+      ${input.userId},
+      ${input.projectId},
+      ${input.contractId},
+      ${input.title},
+      ${input.fileName},
+      ${input.storageKey},
+      ${input.storageKey},
+      ${input.bucket},
+      ${input.contentType},
+      ${input.sizeBytes},
+      ${input.extractionMethod},
+      ${input.extractionConfidence}
+    )
+  `;
+}
+
+export async function createAnalysisForContract(input: NewAnalysisInput): Promise<void> {
+  await ensureSchema();
+
+  const { rows: contractRows } = await sql<{ id: string }>`
+    select id
+    from contracts
+    where id = ${input.contractId}
+      and user_id = ${input.userId}
+    limit 1
+  `;
+
+  if (!contractRows[0]) {
+    throw new Error("Contract not found");
+  }
+
+  await sql`
+    insert into analyses (
+      contract_id,
+      risk_badge,
+      result_json,
+      llm_provider,
+      llm_model,
+      llm_prompt_tokens,
+      llm_completion_tokens,
+      processing_time_ms
+    )
+    values (
+      ${input.contractId},
+      ${input.riskBadge},
+      ${JSON.stringify(input.resultJson)},
+      ${input.llmProvider},
+      ${input.llmModel},
+      ${input.llmPromptTokens ?? null},
+      ${input.llmCompletionTokens ?? null},
+      ${input.processingTimeMs ?? null}
+    )
+  `;
+
+  await sql`
+    update contracts
+    set
+      status = 'ANALYZED',
+      updated_at = now()
+    where id = ${input.contractId}
+      and user_id = ${input.userId}
+  `;
+}
+
+export async function deleteAnalysisForContract(input: {
+  userId: string;
+  contractId: string;
+  analysisId: string;
+}): Promise<boolean> {
+  await ensureSchema();
+
+  const { rows } = await sql<{ id: string }>`
+    delete from analyses
+    using contracts
+    where analyses.id = ${input.analysisId}
+      and analyses.contract_id = ${input.contractId}
+      and contracts.id = analyses.contract_id
+      and contracts.user_id = ${input.userId}
+    returning analyses.id
+  `;
+
+  return !!rows[0];
+}
+
+export async function deleteContractForUser(input: {
+  userId: string;
+  contractId: string;
+}): Promise<{ deleted: boolean; storageKeys: string[] }> {
+  await ensureSchema();
+
+  const { rows: contractRows } = await sql<{ id: string }>`
+    select id
+    from contracts
+    where id = ${input.contractId}
+      and user_id = ${input.userId}
+    limit 1
+  `;
+
+  if (!contractRows[0]) {
+    return { deleted: false, storageKeys: [] };
+  }
+
+  const { rows: fileRows } = await sql<{ storageKey: string | null }>`
+    select coalesce(storage_key, blob_path) as "storageKey"
+    from contract_files
+    where contract_id = ${input.contractId}
+  `;
+
+  await sql`
+    delete from analyses
+    where contract_id = ${input.contractId}
+  `;
+
+  await sql`
+    delete from contract_files
+    where contract_id = ${input.contractId}
+  `;
+
+  await sql`
+    delete from contracts
+    where id = ${input.contractId}
+      and user_id = ${input.userId}
+  `;
+
+  return {
+    deleted: true,
+    storageKeys: fileRows
+      .map((row) => row.storageKey)
+      .filter((value): value is string => Boolean(value)),
+  };
+}
+
+export async function createProjectForUser(input: {
+  userId: string;
+  title: string;
+  description?: string | null;
+}): Promise<ProjectSummaryRecord> {
+  await ensureSchema();
+
+  const { rows } = await sql<ProjectSummaryRecord>`
+    insert into projects (
+      user_id,
+      title,
+      description,
+      status
+    )
+    values (
+      ${input.userId},
+      ${input.title},
+      ${input.description ?? null},
+      'active'
+    )
+    returning
+      id,
+      user_id as "userId",
+      title,
+      description,
+      status,
+      created_at as "createdAt",
+      updated_at as "updatedAt"
+  `;
+
+  const created = rows[0];
+  if (!created) {
+    throw new Error("Failed to create project");
+  }
+
+  return {
+    ...created,
+    contracts: [],
+    contextDocuments: [],
+  };
+}
+
+export async function listProjectsByUserId(userId: string): Promise<ProjectSummaryRecord[]> {
+  await ensureSchema();
+
+  const { rows: projectRows } = await sql<
+    Omit<ProjectSummaryRecord, "contracts" | "contextDocuments">
+  >`
+    select
+      id,
+      user_id as "userId",
+      title,
+      description,
+      status,
+      created_at as "createdAt",
+      updated_at as "updatedAt"
+    from projects
+    where user_id = ${userId}
+    order by created_at desc
+  `;
+
+  return Promise.all(
+    projectRows.map(async (project) => {
+      const { rows: contracts } = await sql<{
+        id: string;
+        title: string;
+        status: string;
+        createdAt: string;
+      }>`
+        select
+          id,
+          title,
+          status,
+          created_at as "createdAt"
+        from contracts
+        where project_id = ${project.id}
+        order by created_at desc
+      `;
+
+      const { rows: contextDocuments } = await sql<{ id: string }>`
+        select id
+        from context_documents
+        where project_id = ${project.id}
+        order by created_at desc
+      `;
+
+      return {
+        ...project,
+        contracts,
+        contextDocuments,
+      };
+    }),
+  );
+}
+
+async function isProjectOwnedByUser(userId: string, projectId: string): Promise<boolean> {
+  await ensureSchema();
+
+  const { rows } = await sql<{ id: string }>`
+    select id
+    from projects
+    where id = ${projectId}
+      and user_id = ${userId}
+    limit 1
+  `;
+
+  return !!rows[0];
+}
+
+export async function getProjectByIdForUser(
+  userId: string,
+  projectId: string,
+): Promise<ProjectDetailRecord | null> {
+  await ensureSchema();
+
+  const { rows: projectRows } = await sql<{
+    id: string;
+    userId: string;
+    title: string;
+    description: string | null;
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+  }>`
+    select
+      id,
+      user_id as "userId",
+      title,
+      description,
+      status,
+      created_at as "createdAt",
+      updated_at as "updatedAt"
+    from projects
+    where id = ${projectId}
+      and user_id = ${userId}
+    limit 1
+  `;
+
+  const project = projectRows[0];
+  if (!project) {
+    return null;
+  }
+
+  const { rows: contractRows } = await sql<{
+    id: string;
+    title: string;
+    status: string;
+    createdAt: string;
+  }>`
+    select
+      id,
+      title,
+      status,
+      created_at as "createdAt"
+    from contracts
+    where project_id = ${projectId}
+      and user_id = ${userId}
+    order by created_at desc
+  `;
+
+  const contracts = await Promise.all(
+    contractRows.map(async (contract) => {
+      const { rows: analyses } = await sql<{ id: string; riskBadge: string | null }>`
+        select
+          id,
+          risk_badge as "riskBadge"
+        from analyses
+        where contract_id = ${contract.id}
+        order by created_at desc
+      `;
+
+      return {
+        ...contract,
+        analyses,
+      };
+    }),
+  );
+
+  const { rows: contextDocuments } = await sql<{
+    id: string;
+    title: string;
+    documentType: string;
+    originalFilename: string | null;
+    fileSize: number | null;
+    wordCount: number | null;
+    createdAt: string;
+  }>`
+    select
+      id,
+      title,
+      document_type as "documentType",
+      original_filename as "originalFilename",
+      size_bytes as "fileSize",
+      word_count as "wordCount",
+      created_at as "createdAt"
+    from context_documents
+    where project_id = ${projectId}
+    order by created_at asc
+  `;
+
+  return {
+    ...project,
+    contracts,
+    contextDocuments,
+  };
+}
+
+export async function addContextDocumentToProject(
+  input: NewContextDocumentInput,
+): Promise<{ id: string }> {
+  await ensureSchema();
+
+  const owned = await isProjectOwnedByUser(input.userId, input.projectId);
+  if (!owned) {
+    throw new Error("Project not found");
+  }
+
+  const { rows } = await sql<{ id: string }>`
+    insert into context_documents (
+      project_id,
+      title,
+      document_type,
+      storage_key,
+      bucket,
+      original_filename,
+      content_type,
+      size_bytes,
+      extracted_text,
+      word_count
+    )
+    values (
+      ${input.projectId},
+      ${input.title},
+      ${input.documentType},
+      ${input.storageKey},
+      ${input.bucket},
+      ${input.originalFilename},
+      ${input.contentType},
+      ${input.sizeBytes},
+      ${input.extractedText},
+      ${input.wordCount}
+    )
+    returning id
+  `;
+
+  const created = rows[0];
+  if (!created) {
+    throw new Error("Failed to create context document");
+  }
+
+  return created;
+}
+
+export async function deleteContextDocumentFromProject(input: {
+  userId: string;
+  projectId: string;
+  documentId: string;
+}): Promise<{ deleted: boolean; storageKey: string | null }> {
+  await ensureSchema();
+
+  const owned = await isProjectOwnedByUser(input.userId, input.projectId);
+  if (!owned) {
+    return { deleted: false, storageKey: null };
+  }
+
+  const { rows } = await sql<{ id: string; storageKey: string | null }>`
+    delete from context_documents
+    where id = ${input.documentId}
+      and project_id = ${input.projectId}
+    returning
+      id,
+      storage_key as "storageKey"
+  `;
+
+  if (!rows[0]) {
+    return { deleted: false, storageKey: null };
+  }
+
+  return {
+    deleted: true,
+    storageKey: rows[0].storageKey,
+  };
+}
+
+export async function deleteProjectForUser(input: {
+  userId: string;
+  projectId: string;
+}): Promise<{ deleted: boolean; storageKeys: string[] }> {
+  await ensureSchema();
+
+  const owned = await isProjectOwnedByUser(input.userId, input.projectId);
+  if (!owned) {
+    return { deleted: false, storageKeys: [] };
+  }
+
+  const storageKeys: string[] = [];
+
+  const { rows: contractRows } = await sql<{ id: string }>`
+    select id
+    from contracts
+    where project_id = ${input.projectId}
+      and user_id = ${input.userId}
+  `;
+
+  for (const contract of contractRows) {
+    const deletedContract = await deleteContractForUser({
+      userId: input.userId,
+      contractId: contract.id,
+    });
+    storageKeys.push(...deletedContract.storageKeys);
+  }
+
+  const { rows: contextRows } = await sql<{ storageKey: string | null }>`
+    select storage_key as "storageKey"
+    from context_documents
+    where project_id = ${input.projectId}
+  `;
+
+  storageKeys.push(
+    ...contextRows
+      .map((row) => row.storageKey)
+      .filter((value): value is string => Boolean(value)),
+  );
+
+  await sql`
+    delete from context_documents
+    where project_id = ${input.projectId}
+  `;
+
+  await sql`
+    delete from projects
+    where id = ${input.projectId}
+      and user_id = ${input.userId}
+  `;
+
+  return { deleted: true, storageKeys };
+}

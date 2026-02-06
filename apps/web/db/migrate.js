@@ -6,7 +6,7 @@ import { createClient } from '@vercel/postgres';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const migrationFiles = ['001_create_contract_files.sql'];
+const migrationFiles = ['001_create_contract_files.sql', '002_create_core_entities.sql'];
 
 const client = createClient();
 await client.connect();

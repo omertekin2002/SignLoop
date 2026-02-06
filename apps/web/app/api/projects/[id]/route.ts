@@ -1,6 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { deleteContractForUser, getContractByIdForUser } from "@/lib/server-db";
+import { deleteProjectForUser, getProjectByIdForUser } from "@/lib/server-db";
 import { deleteObject } from "@/lib/object-storage";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -10,11 +10,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   }
 
   const { id } = await params;
-  const contract = await getContractByIdForUser(userId, id);
-  if (!contract) {
-    return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
+  const project = await getProjectByIdForUser(userId, id);
+
+  if (!project) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
-  return NextResponse.json(contract);
+
+  return NextResponse.json(project);
 }
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -24,10 +26,10 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   }
 
   const { id } = await params;
-  const result = await deleteContractForUser({ userId, contractId: id });
+  const result = await deleteProjectForUser({ userId, projectId: id });
 
   if (!result.deleted) {
-    return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
   await Promise.allSettled(result.storageKeys.map((key) => deleteObject(key)));
