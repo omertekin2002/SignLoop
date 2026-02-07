@@ -122,8 +122,9 @@
   #dynamic-bg {
     position: fixed;
     inset: 0;
-    z-index: 0;
+    z-index: 60;
     pointer-events: none;
+    overflow: hidden;
   }
 
   #dynamic-bg .grid-layer,
@@ -134,23 +135,27 @@
 
   #dynamic-bg .grid-layer {
     background-image:
-      linear-gradient(to right, hsl(var(--border) / 0.28) 1px, transparent 1px),
-      linear-gradient(to bottom, hsl(var(--border) / 0.28) 1px, transparent 1px);
-    background-size: 32px 32px;
-    opacity: 0.35;
+      linear-gradient(to right, hsl(var(--foreground) / 0.12) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--foreground) / 0.12) 1px, transparent 1px);
+    background-size: 40px 40px;
+    opacity: 0.42;
+    mix-blend-mode: multiply;
   }
 
   #dynamic-bg .noise-layer {
-    background-image: radial-gradient(hsl(var(--foreground) / 0.12) 0.5px, transparent 0.5px);
-    background-size: 8px 8px;
-    opacity: 0.18;
+    background-image: radial-gradient(circle at 1px 1px, hsl(var(--foreground) / 0.2) 0.7px, transparent 0.9px);
+    background-size: 6px 6px;
+    opacity: 0.25;
+    mix-blend-mode: multiply;
   }
 
   .dark #dynamic-bg .grid-layer {
-    opacity: 0.22;
+    opacity: 0.2;
+    mix-blend-mode: screen;
   }
 
   .dark #dynamic-bg .noise-layer {
-    opacity: 0.12;
+    opacity: 0.16;
+    mix-blend-mode: screen;
   }
 }
