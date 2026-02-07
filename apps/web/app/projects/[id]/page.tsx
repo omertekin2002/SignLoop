@@ -216,7 +216,7 @@ const ProjectDetails = () => {
 
     if (isLoading) {
         return (
-            <div className="min-h-screen bg-background">
+            <div className="min-h-screen bg-transparent">
                 <div className="container mx-auto px-4 py-8">
                     <Skeleton className="h-8 w-64 mb-4" />
                     <Skeleton className="h-96 w-full" />
@@ -227,7 +227,7 @@ const ProjectDetails = () => {
 
     if (!project) {
         return (
-            <div className="min-h-screen bg-background flex items-center justify-center">
+            <div className="min-h-screen bg-transparent flex items-center justify-center">
                 <div className="text-center">
                     <h2 className="text-lg font-semibold">Project not found</h2>
                     <Link href="/dashboard" className="text-primary hover:underline">
@@ -241,7 +241,7 @@ const ProjectDetails = () => {
     const firstProjectContract = project.contracts[0];
 
     return (
-        <div className="min-h-screen bg-background">
+        <div className="min-h-screen bg-transparent">
             {/* Header */}
             <div className="bg-muted/20 border-b">
                 <div className="container mx-auto px-4 py-6">

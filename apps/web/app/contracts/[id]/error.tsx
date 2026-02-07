@@ -18,7 +18,7 @@ export default function Error({
     }, [error]);
 
     return (
-        <div className="min-h-screen bg-background">
+        <div className="min-h-screen bg-transparent">
             <div className="container mx-auto px-4 py-12">
                 <Card className="max-w-xl mx-auto">
                     <CardContent className="flex flex-col items-center text-center py-10">

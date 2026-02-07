@@ -68,7 +68,7 @@ export default function SettingsPage() {
   const hasChanges = Boolean(effectiveModel && effectiveModel !== initialModel);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-transparent">
       <header className="bg-background/60 backdrop-blur border-b">
         <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-8 flex justify-between items-center">
           <h1 className="text-3xl font-bold tracking-tight text-foreground">Settings</h1>

@@ -14,7 +14,7 @@ export default function Home() {
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-background">
+    <div className="flex flex-col min-h-screen bg-transparent">
       {/* Hero Section */}
       <header className="px-4 lg:px-6 h-14 flex items-center border-b bg-background/60 backdrop-blur sticky top-0 z-50">
         <div className="flex items-center justify-center">
