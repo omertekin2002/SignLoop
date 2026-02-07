@@ -1,135 +1,196 @@
-# Turborepo starter
+# SignLoop
 
-This Turborepo starter is maintained by the Turborepo core team.
+SignLoop is a contract analysis web app built in a Turborepo monorepo.
+It lets users upload contracts, extract text from files, run AI analysis, and review structured risk findings.
 
-## Using this example
+## What the app does
 
-Run the following command:
+- Authenticated user workspace with Clerk.
+- Contract upload (PDF/images/text) with text extraction.
+- AI analysis with OpenRouter models (via OpenAI SDK compatibility).
+- Structured results: risk badge, key findings, red flags, key dates, cancellation terms, and suggested next actions.
+- Project workflow for organizing contracts and related context documents.
+- Persistent storage using Vercel Postgres + Vercel Blob (with local filesystem fallback for dev).
 
-```sh
-npx create-turbo@latest
+## Core workflows
+
+### 1) Standalone contract workflow
+
+1. User creates a contract from Dashboard.
+2. User uploads a file to `/api/contracts/:id/upload`.
+3. Backend stores the file in object storage and extracts text.
+4. Extracted text is saved to the `contracts` table.
+5. User starts analysis from the contract page.
+6. Backend calls OpenRouter and validates/normalizes JSON output.
+7. Analysis is persisted to `analyses` and rendered in `/contracts/:id`.
+
+### 2) Project-based workflow
+
+1. User creates a project from Dashboard.
+2. User uploads context documents to `/api/projects/:id/context`.
+3. User uploads one or more contracts linked to that project.
+4. User opens a contract and runs analysis.
+5. Project page provides organization for contracts + context docs.
+
+Note: context documents are currently stored/indexed and shown in the UI, but the analysis prompt currently runs on the contract text itself.
+
+### 3) Delete/cleanup workflow
+
+- Deleting a contract removes its analyses and uploaded file references.
+- Deleting a project cascades contract/context cleanup for that project.
+- Object storage deletes are attempted for collected storage keys.
+
+## Tech stack
+
+### Frontend
+
+- Next.js `16` (App Router)
+- React `19`
+- TypeScript
+- Tailwind CSS
+- Radix UI + shadcn-style component patterns
+- TanStack Query
+- Sonner toasts
+
+### Backend (inside Next.js route handlers)
+
+- Clerk auth (`@clerk/nextjs`)
+- Vercel Postgres (`@vercel/postgres`)
+- Vercel Blob (`@vercel/blob`)
+- OpenAI SDK talking to OpenRouter
+- Zod schemas for analysis validation
+
+### Document processing
+
+- `unpdf` for PDF text extraction
+- `tesseract.js` OCR fallback for images/scanned content
+
+### Monorepo/tooling
+
+- Turborepo
+- ESLint + TypeScript checks
+- Vitest (targeted regression tests)
+
+## Repository structure
+
+- `apps/web`: main SignLoop product app
+- `apps/docs`: secondary Next.js app (template/docs playground)
+- `packages/ui`: shared UI package
+- `packages/eslint-config`, `packages/typescript-config`: shared configs
+
+## API surface (web app)
+
+Contracts:
+
+- `GET /api/contracts`
+- `POST /api/contracts`
+- `GET /api/contracts/:id`
+- `DELETE /api/contracts/:id`
+- `POST /api/contracts/:id/upload`
+- `POST /api/contracts/:id/analyze`
+- `DELETE /api/contracts/:id/analysis/:analysisId`
+
+Projects:
+
+- `GET /api/projects`
+- `POST /api/projects`
+- `GET /api/projects/:id`
+- `DELETE /api/projects/:id`
+- `GET /api/projects/:id/context`
+- `POST /api/projects/:id/context`
+- `DELETE /api/projects/:id/context/:docId`
+
+Misc:
+
+- `POST /api/analyze` (direct text analyze endpoint)
+- `GET /api/jobs/:id` (status endpoint used by current flow)
+
+## Data model (high level)
+
+Main tables:
+
+- `projects`
+- `contracts`
+- `analyses`
+- `context_documents`
+- `contract_files`
+
+Schema is created in two ways:
+
+- Runtime `ensureSchema()` bootstrap in `apps/web/lib/server-db.ts`
+- SQL migrations in `apps/web/db/migrations`
+
+## Environment variables
+
+Set these for `apps/web` (and in Vercel for deploys):
+
+Required for auth:
+
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+- `CLERK_SECRET_KEY`
+
+Required for AI analysis:
+
+- `OPENROUTER_API_KEY`
+
+Optional AI config:
+
+- `OPENROUTER_MODEL` (default currently `z-ai/glm-4.5-air:free`)
+- `OPENROUTER_BASE_URL` (defaults to OpenRouter URL)
+- `NEXT_PUBLIC_APP_URL` (used as referer header)
+
+Required for database (`@vercel/postgres`):
+
+- `POSTGRES_URL`
+- `POSTGRES_URL_NON_POOLING`
+
+Object storage:
+
+- `BLOB_READ_WRITE_TOKEN` (enables Vercel Blob)
+
+Local storage fallback (dev only if Blob token is missing):
+
+- `LOCAL_STORAGE_PATH` (optional)
+- `LOCAL_STORAGE_BUCKET` (optional)
+
+## Local development
+
+From repo root:
+
+```bash
+npm install
+npm run dev
 ```
 
-## What's inside?
+Web app default dev port: `3000`
+Docs app default dev port: `3001`
 
-This Turborepo includes the following packages/apps:
+## Validation commands
 
-### Apps and Packages
+From repo root:
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build
-yarn dlx turbo build
-pnpm exec turbo build
+```bash
+npm run build
+npm run lint
+npm run check-types
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+Web-only tests:
 
-```
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build --filter=docs
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build --filter=docs
-yarn exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
+```bash
+npm --workspace apps/web run test
 ```
 
-### Develop
+## Deployment notes (Vercel)
 
-To develop all apps and packages, run the following command:
+- Provision/connect Vercel Postgres and Vercel Blob.
+- Ensure env vars above exist in Development/Preview/Production.
+- Redeploy after env changes.
 
-```
-cd my-turborepo
+## Current focus/known behavior
 
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev
-yarn exec turbo dev
-pnpm exec turbo dev
-```
-
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-```
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev --filter=web
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev --filter=web
-yarn exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-```
-
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo login
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo login
-yarn exec turbo login
-pnpm exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-```
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo link
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo link
-yarn exec turbo link
-pnpm exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+- Analysis pipeline is hardened against malformed model output:
+  - strict + lenient schema validation,
+  - normalization/coercion for common LLM formatting issues,
+  - JSON repair retry path.
+- Contract/project flows are database-backed (no in-memory mock data).
