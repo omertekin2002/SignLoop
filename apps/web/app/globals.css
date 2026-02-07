@@ -105,6 +105,7 @@
   body {
     @apply bg-background text-foreground;
     font-family: inherit;
+    min-height: 100vh;
     /* Subtle Claude-like glow */
     background-image:
       radial-gradient(1200px 800px at 15% 0%, hsl(var(--accent) / 0.35), transparent 60%),
@@ -116,5 +117,40 @@
     background-image:
       radial-gradient(1200px 800px at 15% 0%, hsl(var(--accent) / 0.08), transparent 60%),
       radial-gradient(900px 600px at 85% -10%, hsl(var(--secondary) / 0.06), transparent 55%);
+  }
+
+  #dynamic-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  #dynamic-bg .grid-layer,
+  #dynamic-bg .noise-layer {
+    position: absolute;
+    inset: 0;
+  }
+
+  #dynamic-bg .grid-layer {
+    background-image:
+      linear-gradient(to right, hsl(var(--border) / 0.28) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--border) / 0.28) 1px, transparent 1px);
+    background-size: 32px 32px;
+    opacity: 0.35;
+  }
+
+  #dynamic-bg .noise-layer {
+    background-image: radial-gradient(hsl(var(--foreground) / 0.12) 0.5px, transparent 0.5px);
+    background-size: 8px 8px;
+    opacity: 0.18;
+  }
+
+  .dark #dynamic-bg .grid-layer {
+    opacity: 0.22;
+  }
+
+  .dark #dynamic-bg .noise-layer {
+    opacity: 0.12;
   }
 }

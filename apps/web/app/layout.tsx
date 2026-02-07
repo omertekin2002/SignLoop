@@ -25,9 +25,15 @@ export default function RootLayout({
     <ClerkProvider>
       <html lang="en" className={ebGaramond.variable} suppressHydrationWarning>
         <body className="font-sans antialiased">
+          <div id="dynamic-bg" aria-hidden="true">
+            <div className="grid-layer" />
+            <div className="noise-layer" />
+          </div>
           <Providers>
-            {children}
-            <Toaster />
+            <div className="relative z-10">
+              {children}
+              <Toaster />
+            </div>
           </Providers>
         </body>
       </html>
