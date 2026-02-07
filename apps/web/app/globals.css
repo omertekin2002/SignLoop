@@ -50,6 +50,12 @@
     --sidebar-border: 34 20% 82%;
 
     --sidebar-ring: 28 45% 30%;
+
+    /* Global texture controls */
+    --dynamic-bg-grid-opacity: 0.42;
+    --dynamic-bg-noise-opacity: 0.25;
+    --dynamic-bg-grid-size: 40px;
+    --dynamic-bg-noise-size: 6px;
   }
 
   .dark {
@@ -90,6 +96,10 @@
     --sidebar-accent-foreground: 45 35% 92%;
     --sidebar-border: 24 16% 16%;
     --sidebar-ring: 45 35% 70%;
+
+    /* Dark-mode texture controls */
+    --dynamic-bg-grid-opacity: 0.2;
+    --dynamic-bg-noise-opacity: 0.16;
   }
 }
 
@@ -137,25 +147,23 @@
     background-image:
       linear-gradient(to right, hsl(var(--foreground) / 0.12) 1px, transparent 1px),
       linear-gradient(to bottom, hsl(var(--foreground) / 0.12) 1px, transparent 1px);
-    background-size: 40px 40px;
-    opacity: 0.42;
+    background-size: var(--dynamic-bg-grid-size) var(--dynamic-bg-grid-size);
+    opacity: var(--dynamic-bg-grid-opacity);
     mix-blend-mode: multiply;
   }
 
   #dynamic-bg .noise-layer {
     background-image: radial-gradient(circle at 1px 1px, hsl(var(--foreground) / 0.2) 0.7px, transparent 0.9px);
-    background-size: 6px 6px;
-    opacity: 0.25;
+    background-size: var(--dynamic-bg-noise-size) var(--dynamic-bg-noise-size);
+    opacity: var(--dynamic-bg-noise-opacity);
     mix-blend-mode: multiply;
   }
 
   .dark #dynamic-bg .grid-layer {
-    opacity: 0.2;
     mix-blend-mode: screen;
   }
 
   .dark #dynamic-bg .noise-layer {
-    opacity: 0.16;
     mix-blend-mode: screen;
   }
 }
