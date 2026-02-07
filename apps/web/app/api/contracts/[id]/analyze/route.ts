@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { auth } from "@clerk/nextjs/server";
 import { analyzeText } from '@/lib/analysis';
-import { createAnalysisForContract, getContractByIdForUser } from "@/lib/server-db";
+import {
+  createAnalysisForContract,
+  getContractByIdForUser,
+  getUserSettingsByUserId,
+} from "@/lib/server-db";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth();
@@ -21,7 +25,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   try {
-    const { result, provider, model } = await analyzeText(contract.text);
+    const settings = await getUserSettingsByUserId(userId);
+    const { result, provider, model } = await analyzeText(contract.text, undefined, {
+      primaryModel: settings?.primaryModel ?? null,
+    });
     await createAnalysisForContract({
       userId,
       contractId: contract.id,

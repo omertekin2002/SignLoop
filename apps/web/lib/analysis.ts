@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { AnalysisResultSchema, PartialAnalysisResultSchema, AnalysisResult } from '@/lib/schemas';
+import { isAllowedPrimaryModel } from '@/lib/model-settings';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
@@ -547,7 +548,11 @@ export function parseStrictJson<T>(content: string): T {
     throw new Error(`LLM response failed validation: ${firstIssue}`);
 }
 
-export async function analyzeText(text: string, metadata?: any): Promise<{ result: AnalysisResult; provider: string; model: string }> {
+export async function analyzeText(
+    text: string,
+    metadata?: any,
+    options?: { primaryModel?: string | null }
+): Promise<{ result: AnalysisResult; provider: string; model: string }> {
     const prompt = `
 You are an expert legal contract analyst.
 Analyze the contract and return ONLY a valid JSON object.
@@ -594,16 +599,24 @@ Contract Text:
 ${text.substring(0, 15000)} ... (truncated if too long)
         `;
 
+    const candidatePrimaryModel =
+        typeof options?.primaryModel === 'string' && options.primaryModel.trim()
+            ? options.primaryModel.trim()
+            : PRIMARY_LLM_MODEL;
+    const selectedPrimaryModel = isAllowedPrimaryModel(candidatePrimaryModel)
+        ? candidatePrimaryModel
+        : PRIMARY_LLM_MODEL;
+
     try {
         const primaryClient = createOpenAiCompatibleClient(PRIMARY_LLM_BASE_URL, PRIMARY_LLM_API_KEY);
-        const primaryResult = await runAnalysisWithModel(primaryClient, PRIMARY_LLM_MODEL, prompt);
-        return { result: primaryResult, provider: 'ngrok-openai-compatible', model: PRIMARY_LLM_MODEL };
+        const primaryResult = await runAnalysisWithModel(primaryClient, selectedPrimaryModel, prompt);
+        return { result: primaryResult, provider: 'ngrok-openai-compatible', model: selectedPrimaryModel };
     } catch (primaryError) {
         const primaryErrorMessage =
             primaryError instanceof Error ? primaryError.message : String(primaryError);
         console.warn('Primary ngrok LLM call failed, falling back to OpenRouter', {
             baseURL: PRIMARY_LLM_BASE_URL,
-            model: PRIMARY_LLM_MODEL,
+            model: selectedPrimaryModel,
             error: primaryErrorMessage,
         });
 

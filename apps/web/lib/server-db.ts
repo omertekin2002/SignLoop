@@ -1,4 +1,5 @@
 import { sql } from "@vercel/postgres";
+import type { PrimaryModel } from "@/lib/model-settings";
 
 type JsonObject = Record<string, unknown>;
 
@@ -154,6 +155,14 @@ async function ensureSchema(): Promise<void> {
       create index if not exists contract_files_contract_id_idx
       on contract_files (contract_id)
     `;
+
+    await sql`
+      create table if not exists user_settings (
+        user_id text primary key,
+        primary_model text,
+        updated_at timestamptz not null default now()
+      )
+    `;
   })().catch((error) => {
     schemaReadyPromise = null;
     throw error;
@@ -233,6 +242,12 @@ export type ProjectDetailRecord = {
     wordCount: number | null;
     createdAt: string;
   }>;
+};
+
+export type UserSettingsRecord = {
+  userId: string;
+  primaryModel: PrimaryModel | null;
+  updatedAt: string;
 };
 
 type UploadedContractFileInput = {
@@ -975,4 +990,57 @@ export async function deleteProjectForUser(input: {
   `;
 
   return { deleted: true, storageKeys };
+}
+
+export async function getUserSettingsByUserId(
+  userId: string,
+): Promise<UserSettingsRecord | null> {
+  await ensureSchema();
+
+  const { rows } = await sql<UserSettingsRecord>`
+    select
+      user_id as "userId",
+      primary_model as "primaryModel",
+      updated_at as "updatedAt"
+    from user_settings
+    where user_id = ${userId}
+    limit 1
+  `;
+
+  return rows[0] ?? null;
+}
+
+export async function upsertUserPrimaryModel(input: {
+  userId: string;
+  primaryModel: PrimaryModel;
+}): Promise<UserSettingsRecord> {
+  await ensureSchema();
+
+  const { rows } = await sql<UserSettingsRecord>`
+    insert into user_settings (
+      user_id,
+      primary_model,
+      updated_at
+    )
+    values (
+      ${input.userId},
+      ${input.primaryModel},
+      now()
+    )
+    on conflict (user_id)
+    do update set
+      primary_model = excluded.primary_model,
+      updated_at = now()
+    returning
+      user_id as "userId",
+      primary_model as "primaryModel",
+      updated_at as "updatedAt"
+  `;
+
+  const saved = rows[0];
+  if (!saved) {
+    throw new Error("Failed to save user settings");
+  }
+
+  return saved;
 }
