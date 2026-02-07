@@ -139,7 +139,7 @@ Primary analysis provider (OpenAI-compatible endpoint):
 Fallback analysis provider (OpenRouter):
 
 - `OPENROUTER_API_KEY` (required for fallback)
-- `OPENROUTER_MODEL` (default `z-ai/glm-4.5-air:free`)
+- `OPENROUTER_MODEL` (default `openrouter/free`)
 - `OPENROUTER_BASE_URL` (defaults to OpenRouter URL)
 - `NEXT_PUBLIC_APP_URL` (used as referer header)
 
