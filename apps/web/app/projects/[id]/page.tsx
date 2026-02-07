@@ -243,7 +243,7 @@ const ProjectDetails = () => {
     return (
         <div className="min-h-screen bg-transparent">
             {/* Header */}
-            <div className="bg-muted/20 border-b">
+            <div className="bg-background border-b">
                 <div className="container mx-auto px-4 py-6">
                     <div className="flex items-center gap-2 mb-4">
                         <Link
