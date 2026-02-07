@@ -3,6 +3,11 @@ import { AnalysisResultSchema, PartialAnalysisResultSchema, AnalysisResult } fro
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'z-ai/glm-4.5-air:free';
+const PRIMARY_LLM_BASE_URL =
+    process.env.PRIMARY_LLM_BASE_URL || 'https://efficient-sightlessly-ouida.ngrok-free.dev/v1';
+const PRIMARY_LLM_MODEL = process.env.PRIMARY_LLM_MODEL || 'gemini-3-flash';
+const PRIMARY_LLM_API_KEY = process.env.PRIMARY_LLM_API_KEY;
 const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const APP_NAME = 'SignLoop';
 
@@ -367,6 +372,19 @@ function isLikelyUnsupportedJsonModeError(error: unknown): boolean {
     return /(response_format|json_object|json mode|unsupported|not support)/i.test(message);
 }
 
+function createOpenAiCompatibleClient(baseURL: string, apiKey?: string): OpenAI {
+    const resolvedApiKey = apiKey?.trim() || 'not-required';
+
+    return new OpenAI({
+        apiKey: resolvedApiKey,
+        baseURL,
+        defaultHeaders: {
+            'HTTP-Referer': SITE_URL,
+            'X-Title': APP_NAME,
+        },
+    });
+}
+
 async function createChatCompletionPreferringJson(
     openai: OpenAI,
     model: string,
@@ -433,6 +451,49 @@ ${malformedContent.slice(0, 12000)}
     return repairedContent;
 }
 
+async function runAnalysisWithModel(
+    openai: OpenAI,
+    model: string,
+    prompt: string,
+): Promise<AnalysisResult> {
+    const completion = await createChatCompletionPreferringJson(
+        openai,
+        model,
+        [
+            { role: 'system', content: 'Return only valid JSON with the exact required keys.' },
+            { role: 'user', content: prompt },
+        ],
+        0,
+    );
+
+    const content = completion.choices[0]?.message?.content;
+    if (!content) {
+        throw new Error('Empty response from AI');
+    }
+
+    try {
+        return parseStrictJson<AnalysisResult>(content);
+    } catch (initialError) {
+        const initialMessage =
+            initialError instanceof Error ? initialError.message : 'Unknown parse/validation error';
+        console.warn('Primary analysis response failed parse/validation; attempting repair pass', {
+            model,
+            initialMessage,
+        });
+
+        const repairedContent = await repairJsonWithModel(openai, model, content);
+        try {
+            return parseStrictJson<AnalysisResult>(repairedContent);
+        } catch (repairError) {
+            const repairMessage =
+                repairError instanceof Error ? repairError.message : 'Unknown repair parse/validation error';
+            throw new Error(
+                `LLM response invalid after repair attempt. Initial error: ${initialMessage}. Repair error: ${repairMessage}`
+            );
+        }
+    }
+}
+
 export function parseStrictJson<T>(content: string): T {
     const parsed = parseModelJson(content);
 
@@ -487,19 +548,6 @@ export function parseStrictJson<T>(content: string): T {
 }
 
 export async function analyzeText(text: string, metadata?: any): Promise<{ result: AnalysisResult; provider: string; model: string }> {
-    if (!OPENROUTER_API_KEY) {
-        throw new Error('OpenRouter API Key not configured');
-    }
-
-    const openai = new OpenAI({
-        apiKey: OPENROUTER_API_KEY,
-        baseURL: OPENROUTER_BASE_URL,
-        defaultHeaders: {
-            'HTTP-Referer': SITE_URL,
-            'X-Title': APP_NAME,
-        },
-    });
-
     const prompt = `
 You are an expert legal contract analyst.
 Analyze the contract and return ONLY a valid JSON object.
@@ -546,42 +594,35 @@ Contract Text:
 ${text.substring(0, 15000)} ... (truncated if too long)
         `;
 
-    const model = process.env.OPENROUTER_MODEL || 'z-ai/glm-4.5-air:free';
-    const completion = await createChatCompletionPreferringJson(
-        openai,
-        model,
-        [
-            { role: 'system', content: 'Return only valid JSON with the exact required keys.' },
-            { role: 'user', content: prompt },
-        ],
-        0,
-    );
-
-    const content = completion.choices[0]?.message?.content;
-    if (!content) {
-        throw new Error('Empty response from AI');
-    }
-
-    let result: AnalysisResult;
     try {
-        result = parseStrictJson<AnalysisResult>(content);
-    } catch (initialError) {
-        const initialMessage = initialError instanceof Error ? initialError.message : 'Unknown parse/validation error';
-        console.warn('Primary analysis response failed parse/validation; attempting repair pass', {
-            model,
-            initialMessage,
+        const primaryClient = createOpenAiCompatibleClient(PRIMARY_LLM_BASE_URL, PRIMARY_LLM_API_KEY);
+        const primaryResult = await runAnalysisWithModel(primaryClient, PRIMARY_LLM_MODEL, prompt);
+        return { result: primaryResult, provider: 'ngrok-openai-compatible', model: PRIMARY_LLM_MODEL };
+    } catch (primaryError) {
+        const primaryErrorMessage =
+            primaryError instanceof Error ? primaryError.message : String(primaryError);
+        console.warn('Primary ngrok LLM call failed, falling back to OpenRouter', {
+            baseURL: PRIMARY_LLM_BASE_URL,
+            model: PRIMARY_LLM_MODEL,
+            error: primaryErrorMessage,
         });
 
-        const repairedContent = await repairJsonWithModel(openai, model, content);
-        try {
-            result = parseStrictJson<AnalysisResult>(repairedContent);
-        } catch (repairError) {
-            const repairMessage = repairError instanceof Error ? repairError.message : 'Unknown repair parse/validation error';
+        if (!OPENROUTER_API_KEY) {
             throw new Error(
-                `LLM response invalid after repair attempt. Initial error: ${initialMessage}. Repair error: ${repairMessage}`
+                `Primary endpoint failed and OpenRouter fallback is not configured. Primary error: ${primaryErrorMessage}`
+            );
+        }
+
+        try {
+            const fallbackClient = createOpenAiCompatibleClient(OPENROUTER_BASE_URL, OPENROUTER_API_KEY);
+            const fallbackResult = await runAnalysisWithModel(fallbackClient, OPENROUTER_MODEL, prompt);
+            return { result: fallbackResult, provider: 'openrouter', model: OPENROUTER_MODEL };
+        } catch (fallbackError) {
+            const fallbackErrorMessage =
+                fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+            throw new Error(
+                `Primary endpoint failed (${primaryErrorMessage}) and OpenRouter fallback failed (${fallbackErrorMessage})`
             );
         }
     }
-
-    return { result, provider: 'openrouter', model };
 }

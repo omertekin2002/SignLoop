@@ -7,7 +7,7 @@ It lets users upload contracts, extract text from files, run AI analysis, and re
 
 - Authenticated user workspace with Clerk.
 - Contract upload (PDF/images/text) with text extraction.
-- AI analysis with OpenRouter models (via OpenAI SDK compatibility).
+- AI analysis via OpenAI-compatible endpoints (primary ngrok `gemini-3-flash`, fallback OpenRouter).
 - Structured results: risk badge, key findings, red flags, key dates, cancellation terms, and suggested next actions.
 - Project workflow for organizing contracts and related context documents.
 - Persistent storage using Vercel Postgres + Vercel Blob (with local filesystem fallback for dev).
@@ -21,8 +21,9 @@ It lets users upload contracts, extract text from files, run AI analysis, and re
 3. Backend stores the file in object storage and extracts text.
 4. Extracted text is saved to the `contracts` table.
 5. User starts analysis from the contract page.
-6. Backend calls OpenRouter and validates/normalizes JSON output.
-7. Analysis is persisted to `analyses` and rendered in `/contracts/:id`.
+6. Backend calls the primary ngrok model and validates/normalizes JSON output.
+7. If primary fails, backend automatically falls back to OpenRouter.
+8. Analysis is persisted to `analyses` and rendered in `/contracts/:id`.
 
 ### 2) Project-based workflow
 
@@ -57,7 +58,7 @@ Note: context documents are currently stored/indexed and shown in the UI, but th
 - Clerk auth (`@clerk/nextjs`)
 - Vercel Postgres (`@vercel/postgres`)
 - Vercel Blob (`@vercel/blob`)
-- OpenAI SDK talking to OpenRouter
+- OpenAI SDK talking to OpenAI-compatible providers
 - Zod schemas for analysis validation
 
 ### Document processing
@@ -129,13 +130,16 @@ Required for auth:
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
 - `CLERK_SECRET_KEY`
 
-Required for AI analysis:
+Primary analysis provider (OpenAI-compatible endpoint):
 
-- `OPENROUTER_API_KEY`
+- `PRIMARY_LLM_BASE_URL` (defaults to `https://efficient-sightlessly-ouida.ngrok-free.dev/v1`)
+- `PRIMARY_LLM_MODEL` (default `gemini-3-flash`)
+- `PRIMARY_LLM_API_KEY` (optional; only needed if your endpoint requires auth)
 
-Optional AI config:
+Fallback analysis provider (OpenRouter):
 
-- `OPENROUTER_MODEL` (default currently `z-ai/glm-4.5-air:free`)
+- `OPENROUTER_API_KEY` (required for fallback)
+- `OPENROUTER_MODEL` (default `z-ai/glm-4.5-air:free`)
 - `OPENROUTER_BASE_URL` (defaults to OpenRouter URL)
 - `NEXT_PUBLIC_APP_URL` (used as referer header)
 
@@ -193,4 +197,5 @@ npm --workspace apps/web run test
   - strict + lenient schema validation,
   - normalization/coercion for common LLM formatting issues,
   - JSON repair retry path.
+- Analysis defaults to ngrok `gemini-3-flash`, with automatic fallback to OpenRouter if the primary endpoint fails.
 - Contract/project flows are database-backed (no in-memory mock data).
