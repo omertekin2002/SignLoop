@@ -39,14 +39,14 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (data?.primaryModel) {
-      setSelectedModel(data.primaryModel);
+      setSelectedModel((current) => current || data.primaryModel || "");
       return;
     }
     const firstModel = availableModels[0];
-    if (!selectedModel && firstModel) {
-      setSelectedModel(firstModel);
+    if (firstModel) {
+      setSelectedModel((current) => current || firstModel);
     }
-  }, [availableModels, data?.primaryModel, selectedModel]);
+  }, [availableModels, data?.primaryModel]);
 
   const saveMutation = useMutation({
     mutationFn: async (primaryModel: string) => {
