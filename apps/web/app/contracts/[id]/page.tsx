@@ -30,6 +30,7 @@ const ContractDetails = () => {
     const queryClient = useQueryClient();
     const router = useRouter();
     const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+    const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(null);
     const [llmUsed, setLlmUsed] = useState<{ provider?: string; model?: string } | null>(null);
 
     const formatDate = (value: unknown, formatStr: string, fallback: string) => {
@@ -156,18 +157,22 @@ const ContractDetails = () => {
         }
     };
 
-    const analysis = contract?.latestAnalysis && typeof contract.latestAnalysis === "object"
-        ? contract.latestAnalysis
-        : null;
     const analysisJobStatus = analysisJob?.status;
     const analyses = Array.isArray(contract?.analyses) ? contract.analyses : [];
     const sortedAnalyses = [...analyses].sort(
         (a: any, b: any) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt)
     );
-    const latestAnalysisRecord = sortedAnalyses[0];
-    const olderAnalyses = analysis?.id
-        ? sortedAnalyses.filter((a: any) => a.id !== analysis.id)
-        : sortedAnalyses.slice(1);
+    const latestAnalysisRecord = sortedAnalyses[0] ?? null;
+    const selectedAnalysis = selectedAnalysisId
+        ? sortedAnalyses.find((a: any) => a.id === selectedAnalysisId) ?? null
+        : null;
+    const analysis = selectedAnalysis ?? latestAnalysisRecord;
+    const olderAnalyses = sortedAnalyses.slice(1);
+    const isViewingHistoricalAnalysis = Boolean(
+        analysis?.id &&
+        latestAnalysisRecord?.id &&
+        analysis.id !== latestAnalysisRecord.id
+    );
 
     const resultJson = analysis?.resultJson && typeof analysis.resultJson === "object"
         ? analysis.resultJson
@@ -231,8 +236,12 @@ const ContractDetails = () => {
         ? contract.title
         : "Untitled contract";
 
-    const llmProvider = llmUsed?.provider ?? analysisJob?.result?.provider;
-    const llmModel = llmUsed?.model ?? analysisJob?.result?.llmModel ?? latestAnalysisRecord?.llmModel;
+    const llmProvider = isViewingHistoricalAnalysis
+        ? analysis?.llmProvider
+        : llmUsed?.provider ?? analysisJob?.result?.provider ?? analysis?.llmProvider;
+    const llmModel = isViewingHistoricalAnalysis
+        ? analysis?.llmModel
+        : llmUsed?.model ?? analysisJob?.result?.llmModel ?? analysis?.llmModel;
     const llmProviderLabel =
         llmProvider === "openrouter"
             ? "OpenRouter"
@@ -288,8 +297,17 @@ const ContractDetails = () => {
 
     useEffect(() => {
         setAnalysisJobId(null);
+        setSelectedAnalysisId(null);
         setLlmUsed(null);
     }, [id]);
+
+    useEffect(() => {
+        if (!selectedAnalysisId) return;
+        const stillExists = sortedAnalyses.some((item: any) => item.id === selectedAnalysisId);
+        if (!stillExists) {
+            setSelectedAnalysisId(null);
+        }
+    }, [selectedAnalysisId, sortedAnalyses]);
 
     useEffect(() => {
         if (!analysisJobId || !analysisJobStatus) return;
@@ -300,6 +318,7 @@ const ContractDetails = () => {
             if (provider || model) {
                 setLlmUsed({ provider, model });
             }
+            setSelectedAnalysisId(null);
             queryClient.invalidateQueries({ queryKey: ["contract", id] });
             setAnalysisJobId(null);
             return;
@@ -407,6 +426,23 @@ const ContractDetails = () => {
                 {/* Analysis Result Section */}
                 {analysis ? (
                     <>
+                        {isViewingHistoricalAnalysis && (
+                            <Card className="border-amber-500/50 bg-amber-500/5">
+                                <CardContent className="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                                    <p className="text-sm text-foreground/90">
+                                        Viewing historical analysis from {analysisDateLabel}.
+                                    </p>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setSelectedAnalysisId(null)}
+                                    >
+                                        View latest analysis
+                                    </Button>
+                                </CardContent>
+                            </Card>
+                        )}
+
                         <div className="grid gap-6 md:grid-cols-3">
                             {/* Risk Score Card */}
                             <Card className="md:col-span-1 border-l-4 border-l-primary">
@@ -798,21 +834,30 @@ const ContractDetails = () => {
                                             )}
                                         </div>
 
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            disabled={deleteAnalysisMutation.isPending}
-                                            onClick={() => {
-                                                const ok = window.confirm(
-                                                    "Delete this analysis? This cannot be undone."
-                                                );
-                                                if (!ok) return;
-                                                deleteAnalysisMutation.mutate(a.id);
-                                            }}
-                                        >
-                                            <Trash2 className="mr-2 h-4 w-4" />
-                                            Delete
-                                        </Button>
+                                        <div className="flex items-center gap-2">
+                                            <Button
+                                                variant={analysis?.id === a.id ? "secondary" : "outline"}
+                                                size="sm"
+                                                onClick={() => setSelectedAnalysisId(a.id)}
+                                            >
+                                                {analysis?.id === a.id ? "Viewing" : "View"}
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                disabled={deleteAnalysisMutation.isPending}
+                                                onClick={() => {
+                                                    const ok = window.confirm(
+                                                        "Delete this analysis? This cannot be undone."
+                                                    );
+                                                    if (!ok) return;
+                                                    deleteAnalysisMutation.mutate(a.id);
+                                                }}
+                                            >
+                                                <Trash2 className="mr-2 h-4 w-4" />
+                                                Delete
+                                            </Button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
