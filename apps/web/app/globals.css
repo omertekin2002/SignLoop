@@ -4,100 +4,131 @@
 
 @layer base {
   :root {
-    /* Sepia / parchment theme (Claude-like) */
-    --background: 43 43% 96%;
-    --foreground: 28 32% 12%;
+    /* Base palette (ported from the reference site) */
+    --background: 50 42% 97%;
+    --foreground: 60 2% 8%;
 
-    --card: 45 40% 98%;
-    --card-foreground: 28 32% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 60 2% 8%;
 
-    --popover: 45 40% 98%;
-    --popover-foreground: 28 32% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 60 2% 8%;
 
-    --primary: 28 45% 18%;
-    --primary-foreground: 45 50% 97%;
+    --primary: 60 2% 8%;
+    --primary-foreground: 50 42% 97%;
 
-    --secondary: 38 35% 90%;
-    --secondary-foreground: 28 30% 16%;
+    --secondary: 40 35% 92%;
+    --secondary-foreground: 60 2% 8%;
 
-    --muted: 40 28% 93%;
-    --muted-foreground: 28 12% 40%;
+    --muted: 40 30% 93%;
+    --muted-foreground: 48 5% 38%;
 
-    --accent: 36 40% 88%;
-    --accent-foreground: 28 30% 16%;
+    --accent: 16 62% 60%;
+    --accent-foreground: 0 0% 100%;
 
     --destructive: 0 70% 45%;
-    --destructive-foreground: 45 50% 97%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 34 20% 84%;
-    --input: 34 20% 84%;
-    --ring: 28 45% 30%;
+    --border: 46 21% 89%;
+    --input: 46 21% 89%;
+    --ring: 16 62% 60%;
 
-    --radius: 0.75rem;
+    --radius: 0rem;
 
-    --sidebar-background: 40 33% 94%;
+    --sidebar-background: 50 37% 95%;
+    --sidebar-foreground: 60 2% 8%;
+    --sidebar-primary: 60 2% 8%;
+    --sidebar-primary-foreground: 50 42% 97%;
+    --sidebar-accent: 40 35% 92%;
+    --sidebar-accent-foreground: 60 2% 8%;
+    --sidebar-border: 46 21% 86%;
+    --sidebar-ring: 16 62% 60%;
 
-    --sidebar-foreground: 28 20% 20%;
+    /* Surface and chrome styling */
+    --glass-bg: rgba(20, 20, 19, 0.05);
+    --glass-border: rgba(20, 20, 19, 0.2);
+    --card-surface: linear-gradient(130deg, rgba(255, 255, 255, 0.68), rgba(255, 255, 255, 0.36));
+    --card-border-strong: rgba(20, 20, 19, 0.18);
+    --card-shadow: 0 10px 28px rgba(20, 20, 19, 0.1);
+    --card-hover-shadow: 0 18px 38px rgba(20, 20, 19, 0.16);
+    --button-accent-shadow: 0 10px 24px rgba(217, 119, 87, 0.26);
+    --button-accent-shadow-hover: 0 14px 30px rgba(217, 119, 87, 0.34);
 
-    --sidebar-primary: 28 45% 18%;
+    /* Dynamic background palette */
+    --bg-gradient-base: #faf9f5;
+    --bg-gradient-mid: #f3ede1;
+    --bg-gradient-edge: #ece3d1;
+    --bg-glow-1: rgba(217, 119, 87, 0.3);
+    --bg-glow-2: rgba(20, 20, 19, 0.12);
+    --bg-glow-3: rgba(211, 164, 121, 0.33);
+    --bg-grid-line: rgba(20, 20, 19, 0.06);
+    --bg-noise-dot: rgba(20, 20, 19, 0.035);
+    --bg-orb-blend: multiply;
 
-    --sidebar-primary-foreground: 45 50% 97%;
-
-    --sidebar-accent: 38 35% 90%;
-
-    --sidebar-accent-foreground: 28 25% 18%;
-
-    --sidebar-border: 34 20% 82%;
-
-    --sidebar-ring: 28 45% 30%;
-
-    /* Global texture controls */
-    --dynamic-bg-grid-opacity: 0.42;
-    --dynamic-bg-noise-opacity: 0.25;
-    --dynamic-bg-grid-size: 40px;
-    --dynamic-bg-noise-size: 6px;
+    /* Texture controls */
+    --dynamic-bg-grid-opacity: 0.24;
+    --dynamic-bg-noise-opacity: 0.4;
+    --dynamic-bg-grid-size: 80px;
+    --dynamic-bg-noise-size: 3px;
   }
 
   .dark {
-    /* Dark sepia */
-    --background: 24 20% 8%;
-    --foreground: 45 35% 92%;
+    --background: 0 0% 0%;
+    --foreground: 50 42% 97%;
 
-    --card: 24 18% 10%;
-    --card-foreground: 45 35% 92%;
+    --card: 0 0% 12%;
+    --card-foreground: 50 42% 97%;
 
-    --popover: 24 18% 10%;
-    --popover-foreground: 45 35% 92%;
+    --popover: 0 0% 12%;
+    --popover-foreground: 50 42% 97%;
 
-    --primary: 45 35% 92%;
-    --primary-foreground: 24 20% 10%;
+    --primary: 50 42% 97%;
+    --primary-foreground: 0 0% 0%;
 
-    --secondary: 24 16% 14%;
-    --secondary-foreground: 45 35% 92%;
+    --secondary: 0 0% 11%;
+    --secondary-foreground: 50 42% 97%;
 
-    --muted: 24 16% 14%;
-    --muted-foreground: 40 20% 65%;
+    --muted: 0 0% 11%;
+    --muted-foreground: 50 9% 66%;
 
-    --accent: 24 16% 16%;
-    --accent-foreground: 45 35% 92%;
+    --accent: 16 62% 60%;
+    --accent-foreground: 0 0% 100%;
 
     --destructive: 0 55% 32%;
-    --destructive-foreground: 45 35% 92%;
+    --destructive-foreground: 50 42% 97%;
 
-    --border: 24 16% 16%;
-    --input: 24 16% 16%;
-    --ring: 45 35% 70%;
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 16 62% 60%;
 
-    --sidebar-background: 24 18% 10%;
-    --sidebar-foreground: 45 35% 92%;
-    --sidebar-primary: 45 35% 92%;
-    --sidebar-primary-foreground: 24 20% 10%;
-    --sidebar-accent: 24 16% 16%;
-    --sidebar-accent-foreground: 45 35% 92%;
-    --sidebar-border: 24 16% 16%;
-    --sidebar-ring: 45 35% 70%;
+    --sidebar-background: 0 0% 8%;
+    --sidebar-foreground: 50 42% 97%;
+    --sidebar-primary: 50 42% 97%;
+    --sidebar-primary-foreground: 0 0% 0%;
+    --sidebar-accent: 0 0% 11%;
+    --sidebar-accent-foreground: 50 42% 97%;
+    --sidebar-border: 0 0% 20%;
+    --sidebar-ring: 16 62% 60%;
 
-    /* Dark-mode texture controls */
+    --glass-bg: rgba(255, 255, 255, 0.05);
+    --glass-border: rgba(255, 255, 255, 0.2);
+    --card-surface: linear-gradient(130deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03));
+    --card-border-strong: rgba(255, 255, 255, 0.14);
+    --card-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    --card-hover-shadow: 0 18px 40px rgba(0, 0, 0, 0.48);
+    --button-accent-shadow: 0 10px 24px rgba(217, 119, 87, 0.26);
+    --button-accent-shadow-hover: 0 14px 30px rgba(217, 119, 87, 0.34);
+
+    --bg-gradient-base: #020202;
+    --bg-gradient-mid: #090909;
+    --bg-gradient-edge: #141210;
+    --bg-glow-1: rgba(217, 119, 87, 0.22);
+    --bg-glow-2: rgba(250, 249, 245, 0.15);
+    --bg-glow-3: rgba(159, 100, 65, 0.26);
+    --bg-grid-line: rgba(250, 249, 245, 0.08);
+    --bg-noise-dot: rgba(250, 249, 245, 0.03);
+    --bg-orb-blend: screen;
+
     --dynamic-bg-grid-opacity: 0.2;
     --dynamic-bg-noise-opacity: 0.16;
   }
@@ -105,7 +136,7 @@
 
 @layer base {
   html {
-    font-family: "EB Garamond", Garamond, Georgia, serif;
+    font-family: var(--font-inter), "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
 
   * {
@@ -116,54 +147,224 @@
     @apply bg-background text-foreground;
     font-family: inherit;
     min-height: 100vh;
-    /* Subtle Claude-like glow */
-    background-image:
-      radial-gradient(1200px 800px at 15% 0%, hsl(var(--accent) / 0.35), transparent 60%),
-      radial-gradient(900px 600px at 85% -10%, hsl(var(--secondary) / 0.35), transparent 55%);
+    position: relative;
+    isolation: isolate;
+    overflow-x: hidden;
+    background-image: linear-gradient(
+      130deg,
+      var(--bg-gradient-base) 0%,
+      var(--bg-gradient-mid) 48%,
+      var(--bg-gradient-edge) 100%
+    );
     background-attachment: fixed;
   }
 
-  .dark body {
-    background-image:
-      radial-gradient(1200px 800px at 15% 0%, hsl(var(--accent) / 0.08), transparent 60%),
-      radial-gradient(900px 600px at 85% -10%, hsl(var(--secondary) / 0.06), transparent 55%);
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-playfair), "Playfair Display", "Times New Roman", serif;
+    letter-spacing: -0.01em;
   }
 
   #dynamic-bg {
     position: fixed;
-    inset: 0;
+    inset: -22%;
     z-index: 0;
     pointer-events: none;
     overflow: hidden;
   }
 
+  #dynamic-bg .bg-layer,
   #dynamic-bg .grid-layer,
   #dynamic-bg .noise-layer {
     position: absolute;
     inset: 0;
   }
 
+  #dynamic-bg .aurora-layer {
+    background:
+      radial-gradient(circle at 14% 18%, var(--bg-glow-1) 0%, transparent 46%),
+      radial-gradient(circle at 86% 20%, var(--bg-glow-2) 0%, transparent 42%),
+      radial-gradient(circle at 62% 84%, var(--bg-glow-3) 0%, transparent 50%);
+    filter: blur(24px) saturate(112%);
+    opacity: 0.9;
+    animation: auroraDrift 28s ease-in-out infinite alternate;
+  }
+
+  #dynamic-bg .glow-orb {
+    width: 42vw;
+    aspect-ratio: 1 / 1;
+    border-radius: 999px;
+    filter: blur(20px);
+    opacity: 0.56;
+    mix-blend-mode: var(--bg-orb-blend);
+    animation: orbFloat 22s ease-in-out infinite;
+  }
+
+  #dynamic-bg .orb-a {
+    left: 4%;
+    top: 6%;
+    background: radial-gradient(circle at 28% 32%, var(--bg-glow-1) 0%, transparent 72%);
+    animation-delay: -3s;
+  }
+
+  #dynamic-bg .orb-b {
+    width: 36vw;
+    right: 2%;
+    top: 44%;
+    background: radial-gradient(circle at 52% 36%, var(--bg-glow-2) 0%, transparent 70%);
+    animation-duration: 27s;
+  }
+
+  #dynamic-bg .orb-c {
+    width: 50vw;
+    left: 26%;
+    bottom: -12%;
+    background: radial-gradient(circle at 50% 44%, var(--bg-glow-3) 0%, transparent 68%);
+    animation-delay: -9s;
+    animation-duration: 31s;
+  }
+
   #dynamic-bg .grid-layer {
     background-image:
-      linear-gradient(to right, hsl(var(--foreground) / 0.12) 1px, transparent 1px),
-      linear-gradient(to bottom, hsl(var(--foreground) / 0.12) 1px, transparent 1px);
+      linear-gradient(to right, var(--bg-grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--bg-grid-line) 1px, transparent 1px);
     background-size: var(--dynamic-bg-grid-size) var(--dynamic-bg-grid-size);
     opacity: var(--dynamic-bg-grid-opacity);
-    mix-blend-mode: multiply;
+    mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.45) 56%, transparent 95%);
+    animation: gridFloat 42s linear infinite;
   }
 
   #dynamic-bg .noise-layer {
-    background-image: radial-gradient(circle at 1px 1px, hsl(var(--foreground) / 0.2) 0.7px, transparent 0.9px);
+    background-image: radial-gradient(var(--bg-noise-dot) 1px, transparent 1px);
     background-size: var(--dynamic-bg-noise-size) var(--dynamic-bg-noise-size);
     opacity: var(--dynamic-bg-noise-opacity);
-    mix-blend-mode: multiply;
+    mix-blend-mode: soft-light;
   }
 
-  .dark #dynamic-bg .grid-layer {
-    mix-blend-mode: screen;
-  }
-
+  .dark #dynamic-bg .grid-layer,
   .dark #dynamic-bg .noise-layer {
     mix-blend-mode: screen;
   }
+
+  .theme-toggle {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 70;
+    width: 42px;
+    height: 42px;
+    border-radius: 999px;
+    border: 1px solid var(--card-border-strong);
+    background: var(--card-surface);
+    color: hsl(var(--foreground));
+    box-shadow: var(--card-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+  }
+
+  .theme-toggle:hover {
+    transform: translateY(-1px) rotate(10deg);
+    border-color: rgba(217, 119, 87, 0.56);
+    box-shadow: var(--card-hover-shadow);
+    background: linear-gradient(130deg, rgba(217, 119, 87, 0.16), rgba(217, 119, 87, 0.08));
+  }
+
+  .theme-toggle:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
 }
+
+@keyframes auroraDrift {
+  0% {
+    transform: translate3d(-3%, -2%, 0) scale(1);
+  }
+
+  50% {
+    transform: translate3d(4%, 2%, 0) scale(1.08);
+  }
+
+  100% {
+    transform: translate3d(-2%, 5%, 0) scale(1.03);
+  }
+}
+
+@keyframes orbFloat {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  33% {
+    transform: translate3d(7%, -4%, 0) scale(1.08);
+  }
+
+  66% {
+    transform: translate3d(-6%, 6%, 0) scale(0.94);
+  }
+
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes gridFloat {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  100% {
+    transform: translate3d(-80px, -60px, 0);
+  }
+}
+
+@media (max-width: 768px) {
+  #dynamic-bg {
+    inset: -14%;
+  }
+
+  #dynamic-bg .grid-layer {
+    background-size: 56px 56px;
+    opacity: 0.18;
+  }
+
+  #dynamic-bg .glow-orb {
+    width: 58vw;
+    filter: blur(16px);
+    opacity: 0.48;
+  }
+
+  #dynamic-bg .orb-b {
+    width: 54vw;
+    right: -6%;
+  }
+
+  #dynamic-bg .orb-c {
+    width: 72vw;
+    left: 10%;
+    bottom: -20%;
+  }
+
+  .theme-toggle {
+    top: 0.75rem;
+    right: 0.75rem;
+    width: 40px;
+    height: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #dynamic-bg .aurora-layer,
+  #dynamic-bg .glow-orb,
+  #dynamic-bg .grid-layer {
+    animation: none;
+  }
+}
+

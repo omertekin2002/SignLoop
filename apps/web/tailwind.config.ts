@@ -22,9 +22,9 @@ export default {
         sm: ["0.9375rem", { lineHeight: "1.375rem" }],
       },
       fontFamily: {
-        sans: ["var(--font-eb-garamond)", '"EB Garamond"', "Garamond", "Georgia", "serif"],
-        serif: ["var(--font-eb-garamond)", '"EB Garamond"', "Garamond", "Georgia", "serif"],
-        mono: ["var(--font-eb-garamond)", '"EB Garamond"', "Garamond", "Georgia", "serif"],
+        sans: ["var(--font-inter)", '"Inter"', "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "sans-serif"],
+        serif: ["var(--font-playfair)", '"Playfair Display"', '"Times New Roman"', "serif"],
+        mono: ['"Fira Code"', '"SFMono-Regular"', "Menlo", "Monaco", "Consolas", '"Liberation Mono"', '"Courier New"', "monospace"],
       },
       colors: {
         border: "hsl(var(--border))",
