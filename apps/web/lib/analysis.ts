@@ -370,7 +370,7 @@ function parseModelJson(content: string): unknown {
 
 function isLikelyUnsupportedJsonModeError(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error);
-    return /(response_format|json_object|json mode|unsupported|not support)/i.test(message);
+    return /(response_format|text\.format|json_object|json mode|unsupported|not support)/i.test(message);
 }
 
 function createOpenAiCompatibleClient(baseURL: string, apiKey?: string): OpenAI {
@@ -413,7 +413,108 @@ async function createChatCompletionPreferringJson(
     }
 }
 
-async function repairJsonWithModel(openai: OpenAI, model: string, malformedContent: string): Promise<string> {
+function extractResponseOutputText(response: OpenAI.Responses.Response): string | null {
+    const directOutputText =
+        typeof response.output_text === 'string' ? response.output_text.trim() : '';
+    if (directOutputText) {
+        return directOutputText;
+    }
+
+    const chunks: string[] = [];
+    const outputItems = Array.isArray(response.output) ? response.output : [];
+
+    for (const outputItem of outputItems) {
+        if (typeof outputItem !== 'object' || outputItem === null) continue;
+
+        const content = Array.isArray((outputItem as { content?: unknown }).content)
+            ? ((outputItem as { content?: unknown[] }).content ?? [])
+            : [];
+
+        for (const part of content) {
+            if (typeof part !== 'object' || part === null) continue;
+            const candidate = part as { type?: unknown; text?: unknown };
+            if (candidate.type === 'output_text' && typeof candidate.text === 'string') {
+                chunks.push(candidate.text);
+            }
+        }
+    }
+
+    const joined = chunks.join('').trim();
+    return joined.length > 0 ? joined : null;
+}
+
+async function createResponsesPreferringJson(
+    openai: OpenAI,
+    model: string,
+    instructions: string,
+    input: string,
+) {
+    try {
+        return await openai.responses.create({
+            model,
+            instructions,
+            input,
+            text: { format: { type: 'json_object' } },
+        });
+    } catch (error) {
+        if (!isLikelyUnsupportedJsonModeError(error)) {
+            throw error;
+        }
+
+        console.warn('Model/provider rejected text.format=json_object on Responses API, retrying without it');
+        return await openai.responses.create({
+            model,
+            instructions,
+            input,
+        });
+    }
+}
+
+async function repairJsonWithResponsesModel(
+    openai: OpenAI,
+    model: string,
+    malformedContent: string
+): Promise<string> {
+    const repairPrompt = `
+You are a JSON repair tool.
+Return ONLY a valid JSON object.
+Do not include markdown or explanations.
+
+Required top-level keys:
+["risk_badge","key_points","summary","red_flags","normal_in_region","next_actions","key_dates","obligations","parties","disclaimer"]
+
+Enum constraints:
+- risk_badge: LOW | MEDIUM | HIGH
+- normal_in_region[].label: typical | unusual
+- key_dates[].type: RENEWAL | NOTICE_CUTOFF | PRICE_REVIEW | OTHER
+
+Type constraints:
+- severity, confidence, and notice_period_days must be numbers.
+- nullable text fields should be null if unknown.
+
+Repair this malformed JSON-like input:
+${malformedContent.slice(0, 12000)}
+    `;
+
+    const response = await createResponsesPreferringJson(
+        openai,
+        model,
+        'You fix malformed JSON and output only valid JSON.',
+        repairPrompt,
+    );
+
+    const repairedContent = extractResponseOutputText(response);
+    if (!repairedContent) {
+        throw new Error('Empty response from AI during JSON repair');
+    }
+    return repairedContent;
+}
+
+async function repairJsonWithChatCompletionsModel(
+    openai: OpenAI,
+    model: string,
+    malformedContent: string
+): Promise<string> {
     const repairPrompt = `
 You are a JSON repair tool.
 Return ONLY a valid JSON object.
@@ -452,7 +553,47 @@ ${malformedContent.slice(0, 12000)}
     return repairedContent;
 }
 
-async function runAnalysisWithModel(
+async function runAnalysisWithResponsesModel(
+    openai: OpenAI,
+    model: string,
+    prompt: string,
+): Promise<AnalysisResult> {
+    const response = await createResponsesPreferringJson(
+        openai,
+        model,
+        'Return only valid JSON with the exact required keys.',
+        prompt,
+    );
+
+    const content = extractResponseOutputText(response);
+    if (!content) {
+        throw new Error('Empty response from AI');
+    }
+
+    try {
+        return parseStrictJson<AnalysisResult>(content);
+    } catch (initialError) {
+        const initialMessage =
+            initialError instanceof Error ? initialError.message : 'Unknown parse/validation error';
+        console.warn('Primary analysis response failed parse/validation; attempting repair pass', {
+            model,
+            initialMessage,
+        });
+
+        const repairedContent = await repairJsonWithResponsesModel(openai, model, content);
+        try {
+            return parseStrictJson<AnalysisResult>(repairedContent);
+        } catch (repairError) {
+            const repairMessage =
+                repairError instanceof Error ? repairError.message : 'Unknown repair parse/validation error';
+            throw new Error(
+                `LLM response invalid after repair attempt. Initial error: ${initialMessage}. Repair error: ${repairMessage}`
+            );
+        }
+    }
+}
+
+async function runAnalysisWithChatCompletionsModel(
     openai: OpenAI,
     model: string,
     prompt: string,
@@ -482,7 +623,7 @@ async function runAnalysisWithModel(
             initialMessage,
         });
 
-        const repairedContent = await repairJsonWithModel(openai, model, content);
+        const repairedContent = await repairJsonWithChatCompletionsModel(openai, model, content);
         try {
             return parseStrictJson<AnalysisResult>(repairedContent);
         } catch (repairError) {
@@ -609,7 +750,7 @@ ${text.substring(0, 15000)} ... (truncated if too long)
 
     try {
         const primaryClient = createOpenAiCompatibleClient(PRIMARY_LLM_BASE_URL, PRIMARY_LLM_API_KEY);
-        const primaryResult = await runAnalysisWithModel(primaryClient, selectedPrimaryModel, prompt);
+        const primaryResult = await runAnalysisWithResponsesModel(primaryClient, selectedPrimaryModel, prompt);
         return { result: primaryResult, provider: 'ngrok-openai-compatible', model: selectedPrimaryModel };
     } catch (primaryError) {
         const primaryErrorMessage =
@@ -628,7 +769,7 @@ ${text.substring(0, 15000)} ... (truncated if too long)
 
         try {
             const fallbackClient = createOpenAiCompatibleClient(OPENROUTER_BASE_URL, OPENROUTER_API_KEY);
-            const fallbackResult = await runAnalysisWithModel(fallbackClient, OPENROUTER_MODEL, prompt);
+            const fallbackResult = await runAnalysisWithChatCompletionsModel(fallbackClient, OPENROUTER_MODEL, prompt);
             return { result: fallbackResult, provider: 'openrouter', model: OPENROUTER_MODEL };
         } catch (fallbackError) {
             const fallbackErrorMessage =
