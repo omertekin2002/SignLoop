@@ -5,11 +5,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useClerk, useUser } from "@clerk/nextjs";
 import { ArrowLeft, Loader2, Settings as SettingsIcon } from "lucide-react";
+import { useTheme } from "next-themes";
 import { apiClient } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 
 type SettingsResponse = {
@@ -20,8 +22,14 @@ type SettingsResponse = {
 export default function SettingsPage() {
   const { user } = useUser();
   const { signOut } = useClerk();
+  const { resolvedTheme, setTheme } = useTheme();
   const queryClient = useQueryClient();
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [themeMounted, setThemeMounted] = useState(false);
+
+  useEffect(() => {
+    setThemeMounted(true);
+  }, []);
 
   const { data, isLoading } = useQuery({
     queryKey: ["settings"],
@@ -78,12 +86,11 @@ export default function SettingsPage() {
             <Button variant="outline" onClick={() => signOut()}>
               Sign out
             </Button>
-            <ThemeToggle />
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
         <Link
           href="/dashboard"
           className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-6"
@@ -155,6 +162,32 @@ export default function SettingsPage() {
                 </div>
               </>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Appearance</CardTitle>
+            <CardDescription>
+              Control the visual theme for SignLoop.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between gap-4 rounded-none border border-[color:var(--card-border-strong)] bg-[var(--card-surface)] px-4 py-3">
+              <div className="space-y-1">
+                <Label htmlFor="dark-mode-toggle">Dark mode</Label>
+                <p className="text-xs text-muted-foreground">
+                  {themeMounted ? `Current theme: ${resolvedTheme === "dark" ? "Dark" : "Light"}` : "Loading theme..."}
+                </p>
+              </div>
+              <Switch
+                id="dark-mode-toggle"
+                checked={themeMounted ? resolvedTheme === "dark" : false}
+                onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")}
+                disabled={!themeMounted}
+                aria-label="Toggle dark mode"
+              />
+            </div>
           </CardContent>
         </Card>
       </main>
