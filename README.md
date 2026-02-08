@@ -7,7 +7,7 @@ It lets users upload contracts, extract text from files, run AI analysis, and re
 
 - Authenticated user workspace with Clerk.
 - Contract upload (PDF/images/text) with text extraction.
-- AI analysis via OpenAI-compatible endpoints (primary ngrok `gemini-3-flash`, fallback OpenRouter).
+- AI analysis via OpenAI-compatible endpoints (primary ngrok `gemini-3-flash`, fallback OpenRouter chain).
 - Structured results: risk badge, key findings, red flags, key dates, cancellation terms, and suggested next actions.
 - Project workflow for organizing contracts and related context documents.
 - Persistent storage using Vercel Postgres + Vercel Blob (with local filesystem fallback for dev).
@@ -22,7 +22,7 @@ It lets users upload contracts, extract text from files, run AI analysis, and re
 4. Extracted text is saved to the `contracts` table.
 5. User starts analysis from the contract page.
 6. Backend calls the primary ngrok model and validates/normalizes JSON output.
-7. If primary fails, backend automatically falls back to OpenRouter.
+7. If primary fails, backend falls back to OpenRouter `openai/gpt-oss-120b:free`, then `openrouter/free` if needed.
 8. Analysis is persisted to `analyses` and rendered in `/contracts/:id`.
 
 ### 2) Project-based workflow
@@ -139,7 +139,8 @@ Primary analysis provider (OpenAI-compatible endpoint):
 Fallback analysis provider (OpenRouter):
 
 - `OPENROUTER_API_KEY` (required for fallback)
-- `OPENROUTER_MODEL` (default `openrouter/free`)
+- `OPENROUTER_MODEL` (default `openai/gpt-oss-120b:free`)
+- `OPENROUTER_BACKUP_MODEL` (default `openrouter/free`)
 - `OPENROUTER_BASE_URL` (defaults to OpenRouter URL)
 - `NEXT_PUBLIC_APP_URL` (used as referer header)
 
@@ -197,5 +198,5 @@ npm --workspace apps/web run test
   - strict + lenient schema validation,
   - normalization/coercion for common LLM formatting issues,
   - JSON repair retry path.
-- Analysis defaults to ngrok `gemini-3-flash`, with automatic fallback to OpenRouter if the primary endpoint fails.
+- Analysis defaults to ngrok `gemini-3-flash`, with automatic OpenRouter fallback chain (`openai/gpt-oss-120b:free` -> `openrouter/free`) if the primary endpoint fails.
 - Contract/project flows are database-backed (no in-memory mock data).

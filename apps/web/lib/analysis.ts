@@ -4,7 +4,8 @@ import { isAllowedPrimaryModel } from '@/lib/model-settings';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openrouter/free';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free';
+const OPENROUTER_BACKUP_MODEL = process.env.OPENROUTER_BACKUP_MODEL || 'openrouter/free';
 const PRIMARY_LLM_BASE_URL =
     process.env.PRIMARY_LLM_BASE_URL || 'https://efficient-sightlessly-ouida.ngrok-free.dev/v1';
 const PRIMARY_LLM_MODEL = process.env.PRIMARY_LLM_MODEL || 'gemini-3-flash';
@@ -386,33 +387,6 @@ function createOpenAiCompatibleClient(baseURL: string, apiKey?: string): OpenAI 
     });
 }
 
-async function createChatCompletionPreferringJson(
-    openai: OpenAI,
-    model: string,
-    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-    temperature = 0,
-) {
-    try {
-        return await openai.chat.completions.create({
-            messages,
-            model,
-            temperature,
-            response_format: { type: 'json_object' },
-        });
-    } catch (error) {
-        if (!isLikelyUnsupportedJsonModeError(error)) {
-            throw error;
-        }
-
-        console.warn('Model/provider rejected response_format=json_object, retrying without it');
-        return await openai.chat.completions.create({
-            messages,
-            model,
-            temperature,
-        });
-    }
-}
-
 function extractResponseOutputText(response: OpenAI.Responses.Response): string | null {
     const directOutputText =
         typeof response.output_text === 'string' ? response.output_text.trim() : '';
@@ -510,49 +484,6 @@ ${malformedContent.slice(0, 12000)}
     return repairedContent;
 }
 
-async function repairJsonWithChatCompletionsModel(
-    openai: OpenAI,
-    model: string,
-    malformedContent: string
-): Promise<string> {
-    const repairPrompt = `
-You are a JSON repair tool.
-Return ONLY a valid JSON object.
-Do not include markdown or explanations.
-
-Required top-level keys:
-["risk_badge","key_points","summary","red_flags","normal_in_region","next_actions","key_dates","obligations","parties","disclaimer"]
-
-Enum constraints:
-- risk_badge: LOW | MEDIUM | HIGH
-- normal_in_region[].label: typical | unusual
-- key_dates[].type: RENEWAL | NOTICE_CUTOFF | PRICE_REVIEW | OTHER
-
-Type constraints:
-- severity, confidence, and notice_period_days must be numbers.
-- nullable text fields should be null if unknown.
-
-Repair this malformed JSON-like input:
-${malformedContent.slice(0, 12000)}
-    `;
-
-    const completion = await createChatCompletionPreferringJson(
-        openai,
-        model,
-        [
-            { role: 'system', content: 'You fix malformed JSON and output only valid JSON.' },
-            { role: 'user', content: repairPrompt },
-        ],
-        0,
-    );
-
-    const repairedContent = completion.choices[0]?.message?.content;
-    if (!repairedContent) {
-        throw new Error('Empty response from AI during JSON repair');
-    }
-    return repairedContent;
-}
-
 async function runAnalysisWithResponsesModel(
     openai: OpenAI,
     model: string,
@@ -581,49 +512,6 @@ async function runAnalysisWithResponsesModel(
         });
 
         const repairedContent = await repairJsonWithResponsesModel(openai, model, content);
-        try {
-            return parseStrictJson<AnalysisResult>(repairedContent);
-        } catch (repairError) {
-            const repairMessage =
-                repairError instanceof Error ? repairError.message : 'Unknown repair parse/validation error';
-            throw new Error(
-                `LLM response invalid after repair attempt. Initial error: ${initialMessage}. Repair error: ${repairMessage}`
-            );
-        }
-    }
-}
-
-async function runAnalysisWithChatCompletionsModel(
-    openai: OpenAI,
-    model: string,
-    prompt: string,
-): Promise<AnalysisResult> {
-    const completion = await createChatCompletionPreferringJson(
-        openai,
-        model,
-        [
-            { role: 'system', content: 'Return only valid JSON with the exact required keys.' },
-            { role: 'user', content: prompt },
-        ],
-        0,
-    );
-
-    const content = completion.choices[0]?.message?.content;
-    if (!content) {
-        throw new Error('Empty response from AI');
-    }
-
-    try {
-        return parseStrictJson<AnalysisResult>(content);
-    } catch (initialError) {
-        const initialMessage =
-            initialError instanceof Error ? initialError.message : 'Unknown parse/validation error';
-        console.warn('Primary analysis response failed parse/validation; attempting repair pass', {
-            model,
-            initialMessage,
-        });
-
-        const repairedContent = await repairJsonWithChatCompletionsModel(openai, model, content);
         try {
             return parseStrictJson<AnalysisResult>(repairedContent);
         } catch (repairError) {
@@ -767,16 +655,41 @@ ${text.substring(0, 15000)} ... (truncated if too long)
             );
         }
 
-        try {
-            const fallbackClient = createOpenAiCompatibleClient(OPENROUTER_BASE_URL, OPENROUTER_API_KEY);
-            const fallbackResult = await runAnalysisWithChatCompletionsModel(fallbackClient, OPENROUTER_MODEL, prompt);
-            return { result: fallbackResult, provider: 'openrouter', model: OPENROUTER_MODEL };
-        } catch (fallbackError) {
-            const fallbackErrorMessage =
-                fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-            throw new Error(
-                `Primary endpoint failed (${primaryErrorMessage}) and OpenRouter fallback failed (${fallbackErrorMessage})`
-            );
+        const fallbackClient = createOpenAiCompatibleClient(OPENROUTER_BASE_URL, OPENROUTER_API_KEY);
+        const fallbackModels = Array.from(
+            new Set(
+                [OPENROUTER_MODEL, OPENROUTER_BACKUP_MODEL]
+                    .map((model) => model.trim())
+                    .filter((model): model is string => model.length > 0)
+            )
+        );
+        const fallbackFailures: string[] = [];
+
+        for (const fallbackModel of fallbackModels) {
+            try {
+                const fallbackResult = await runAnalysisWithResponsesModel(fallbackClient, fallbackModel, prompt);
+                if (fallbackModel !== OPENROUTER_MODEL) {
+                    console.warn('Primary OpenRouter fallback model failed; backup model succeeded', {
+                        primaryFallbackModel: OPENROUTER_MODEL,
+                        backupFallbackModel: fallbackModel,
+                    });
+                }
+                return { result: fallbackResult, provider: 'openrouter', model: fallbackModel };
+            } catch (fallbackError) {
+                const fallbackErrorMessage =
+                    fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+                fallbackFailures.push(`${fallbackModel}: ${fallbackErrorMessage}`);
+                console.warn('OpenRouter fallback model failed', {
+                    model: fallbackModel,
+                    error: fallbackErrorMessage,
+                });
+            }
         }
+
+        throw new Error(
+            `Primary endpoint failed (${primaryErrorMessage}) and OpenRouter fallback failed (${fallbackFailures.join(
+                ' | '
+            )})`
+        );
     }
 }
