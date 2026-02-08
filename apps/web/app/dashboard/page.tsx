@@ -92,12 +92,12 @@ const Dashboard = () => {
                         Dashboard
                     </h1>
                     <div className="flex items-center gap-4">
-                        <Button asChild variant="outline">
-                            <Link href="/settings">Settings</Link>
-                        </Button>
                         <span className="text-sm text-muted-foreground">
                             Welcome, {user?.firstName}
                         </span>
+                        <Button asChild variant="outline">
+                            <Link href="/settings">Settings</Link>
+                        </Button>
                         <Button variant="outline" onClick={() => signOut()}>
                             Sign out
                         </Button>
