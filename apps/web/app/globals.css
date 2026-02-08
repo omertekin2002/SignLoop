@@ -250,37 +250,6 @@
     mix-blend-mode: screen;
   }
 
-  .theme-toggle {
-    position: fixed;
-    top: 1rem;
-    right: 1rem;
-    z-index: 70;
-    width: 42px;
-    height: 42px;
-    border-radius: 999px;
-    border: 1px solid var(--card-border-strong);
-    background: var(--card-surface);
-    color: hsl(var(--foreground));
-    box-shadow: var(--card-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.25);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease;
-  }
-
-  .theme-toggle:hover {
-    transform: translateY(-1px) rotate(10deg);
-    border-color: rgba(217, 119, 87, 0.56);
-    box-shadow: var(--card-hover-shadow);
-    background: linear-gradient(130deg, rgba(217, 119, 87, 0.16), rgba(217, 119, 87, 0.08));
-  }
-
-  .theme-toggle:focus-visible {
-    outline: 2px solid hsl(var(--ring));
-    outline-offset: 2px;
-  }
 }
 
 @keyframes auroraDrift {
@@ -352,12 +321,6 @@
     bottom: -20%;
   }
 
-  .theme-toggle {
-    top: 0.75rem;
-    right: 0.75rem;
-    width: 40px;
-    height: 40px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -367,4 +330,3 @@
     animation: none;
   }
 }
-

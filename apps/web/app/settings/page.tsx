@@ -9,6 +9,7 @@ import { apiClient } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { toast } from "sonner";
 
 type SettingsResponse = {
@@ -77,6 +78,7 @@ export default function SettingsPage() {
             <Button variant="outline" onClick={() => signOut()}>
               Sign out
             </Button>
+            <ThemeToggle />
           </div>
         </div>
       </header>

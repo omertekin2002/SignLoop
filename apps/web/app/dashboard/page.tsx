@@ -23,6 +23,7 @@ import {
 import { Plus, FileText, Calendar, ChevronRight, Trash2, FolderOpen, Book } from "lucide-react";
 import { UploadDialog } from "@/components/upload-dialog";
 import { NewProjectDialog } from "@/components/new-project-dialog";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { format } from "date-fns";
 
 interface Contract {
@@ -101,6 +102,7 @@ const Dashboard = () => {
                         <Button variant="outline" onClick={() => signOut()}>
                             Sign out
                         </Button>
+                        <ThemeToggle />
                     </div>
                 </div>
             </header>

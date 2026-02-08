@@ -3,7 +3,6 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { Inter, Playfair_Display } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import Providers from "@/components/providers";
-import { ThemeToggle } from "@/components/theme-toggle";
 import "./globals.css";
 
 const inter = Inter({
@@ -43,7 +42,6 @@ export default function RootLayout({
           <Providers>
             <div className="relative z-10">
               {children}
-              <ThemeToggle />
               <Toaster />
             </div>
           </Providers>
