@@ -78,7 +78,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
                 <DialogHeader>
                     <DialogTitle>Upload Contract</DialogTitle>
                     <DialogDescription>
-                        Upload a PDF or image of your contract to start analysis.
+                        Upload a PDF, Word document, image, or text file to start analysis.
                     </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
@@ -109,7 +109,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
                                 <div className="text-center">
                                     <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                                     <p className="text-sm font-medium">Click to select file</p>
-                                    <p className="text-xs text-muted-foreground">PDF or Images up to 10MB</p>
+                                    <p className="text-xs text-muted-foreground">PDF, DOC, DOCX, TXT, or images up to 10MB</p>
                                 </div>
                             )}
                             <input

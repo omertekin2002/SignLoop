@@ -353,13 +353,13 @@ const ProjectDetails = () => {
                                                 <div>
                                                     <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                                                     <p className="text-sm">Click to select contract file</p>
-                                                    <p className="text-xs text-muted-foreground">PDF or images</p>
+                                                    <p className="text-xs text-muted-foreground">PDF, DOC, DOCX, TXT, or images</p>
                                                 </div>
                                             )}
                                             <input
                                                 ref={contractFileRef}
                                                 type="file"
-                                                accept=".pdf,image/*"
+                                                accept=".pdf,.txt,.doc,.docx,image/*"
                                                 className="hidden"
                                                 onChange={handleContractFileChange}
                                             />

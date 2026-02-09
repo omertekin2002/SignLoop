@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { addContextDocumentToProject, getProjectByIdForUser } from "@/lib/server-db";
 import { getStorageBucketName, uploadObject } from "@/lib/object-storage";
-import { processFile } from "@/lib/text-extraction";
+import { processFile, validateMimeType } from "@/lib/text-extraction";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { userId } = await auth();
@@ -44,7 +44,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       ? documentTypeValue.trim()
       : "other";
 
-  const contentType = file.type || "application/octet-stream";
+  const rawMimeType = file.type || "application/octet-stream";
+  let contentType: string;
+  try {
+    contentType = validateMimeType(rawMimeType, file.name);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Invalid file type";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
@@ -53,20 +61,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   let extractionConfidence: number | null = null;
 
   try {
-    if (contentType === "text/plain") {
-      extractedText = buffer.toString("utf-8");
-      extractionMethod = "text";
-      extractionConfidence = 100;
-    } else if (contentType === "application/pdf" || contentType.startsWith("image/")) {
-      const extracted = await processFile(buffer, contentType);
-      extractedText = extracted.text;
-      extractionMethod = extracted.method;
-      extractionConfidence = typeof extracted.confidence === "number" ? extracted.confidence : null;
-    } else {
-      extractedText = buffer.toString("utf-8");
-      extractionMethod = "best_effort_text";
-      extractionConfidence = null;
-    }
+    const extracted = await processFile(buffer, contentType, file.name);
+    extractedText = extracted.text;
+    extractionMethod = extracted.method;
+    extractionConfidence = typeof extracted.confidence === "number" ? extracted.confidence : null;
   } catch {
     extractedText = "";
     extractionMethod = null;

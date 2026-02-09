@@ -24,11 +24,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
   }
 
-  const mimeType = file.type || 'application/octet-stream';
+  const rawMimeType = file.type || 'application/octet-stream';
+  let mimeType: string;
 
   // Validate file type
   try {
-    validateMimeType(mimeType);
+    mimeType = validateMimeType(rawMimeType, file.name);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Invalid file type";
     return NextResponse.json({ error: message }, { status: 400 });
@@ -40,7 +41,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const buffer = Buffer.from(arrayBuffer);
 
     // Extract text from file
-    const { text, method, confidence } = await processFile(buffer, mimeType);
+    const { text, method, confidence } = await processFile(buffer, mimeType, file.name);
 
     if (!text || text.length === 0) {
       return NextResponse.json(
