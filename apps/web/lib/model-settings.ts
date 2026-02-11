@@ -1,5 +1,5 @@
 export const PRIMARY_MODEL_OPTIONS = [
-  "claude-opus-4-5-thinking",
+  "claude-opus-4-6-thinking",
   "claude-sonnet-4-5",
   "claude-sonnet-4-5-thinking",
   "gemini-2.5-flash",
@@ -19,4 +19,3 @@ const primaryModelSet = new Set<string>(PRIMARY_MODEL_OPTIONS);
 export function isAllowedPrimaryModel(value: string): value is PrimaryModel {
   return primaryModelSet.has(value);
 }
-

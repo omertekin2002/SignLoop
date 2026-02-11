@@ -1,0 +1,47 @@
+SIGNLOOP APP SUMMARY
+
+WHAT IT IS
+SignLoop is a Next.js web app for AI-assisted contract review.
+Users upload contracts, extract text, run structured risk analysis, and review
+findings.
+
+WHO IT IS FOR
+- Primary user: people reviewing business contracts and triaging risk before signing.
+- Exact persona/job title: Not found in repo.
+
+WHAT IT DOES
+- Provides an authenticated workspace (Clerk sign-in, dashboard, settings).
+- Uploads contracts (PDF, image, txt, doc, docx) with server-side MIME validation.
+- Extracts text using unpdf/Word parsing, with OCR support via Tesseract for images.
+- Runs AI analysis and stores structured output (risk badge, key points, red flags,
+  key dates, next actions).
+- Organizes work by projects with linked contracts and context documents.
+- Persists data in Postgres and stores files in Vercel Blob (local filesystem fallback
+  in dev).
+- Allows primary model selection; analysis pipeline includes JSON
+  normalization/validation and provider fallback.
+
+HOW IT WORKS (ARCHITECTURE)
+- UI: Next.js App Router pages in apps/web/app with React Query data fetching.
+- Auth: Clerk middleware protects non-public routes and API endpoints.
+- API: Next.js route handlers under apps/web/app/api for contracts, projects, uploads,
+  analysis, jobs, and settings.
+- Processing: lib/text-extraction.ts handles PDF/image/text/Word extraction;
+  lib/analysis.ts calls LLM providers and validates JSON with Zod schemas.
+- Data: lib/server-db.ts manages Postgres tables (projects, contracts, analyses,
+  context_documents, contract_files, user_settings).
+- Storage: lib/object-storage.ts writes to Vercel Blob when token exists, otherwise
+  local disk.
+- Main flow: create contract -> upload file -> extract/save text -> analyze -> persist
+  analysis -> render in /contracts/[id].
+- Current limitation: project context documents are stored/listed, but analysis
+  currently runs on contract text only.
+
+HOW TO RUN (MINIMAL)
+- From repo root: npm install
+- Configure required environment variables listed in README.md
+- Start the workspace: npm run dev
+- Open the web app: http://localhost:3000
+
+MISSING SETUP ARTIFACTS
+- Example env template (.env.example or similar): Not found in repo.
