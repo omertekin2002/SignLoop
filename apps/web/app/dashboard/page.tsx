@@ -20,9 +20,10 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, FileText, Calendar, ChevronRight, Trash2, FolderOpen, Book } from "lucide-react";
+import { Plus, FileText, Calendar, ChevronRight, Trash2, FolderOpen, Book, MessagesSquare } from "lucide-react";
 import { UploadDialog } from "@/components/upload-dialog";
 import { NewProjectDialog } from "@/components/new-project-dialog";
+import { ChatPanel } from "@/components/chat-panel";
 import { format } from "date-fns";
 
 interface Contract {
@@ -116,6 +117,10 @@ const Dashboard = () => {
                                 <FolderOpen className="h-4 w-4" />
                                 Projects
                             </TabsTrigger>
+                            <TabsTrigger value="chat" className="gap-2">
+                                <MessagesSquare className="h-4 w-4" />
+                                Chat
+                            </TabsTrigger>
                         </TabsList>
                         <div className="flex gap-2">
                             {activeTab === "contracts" ? (
@@ -125,14 +130,14 @@ const Dashboard = () => {
                                         New Contract
                                     </Button>
                                 </UploadDialog>
-                            ) : (
+                            ) : activeTab === "projects" ? (
                                 <NewProjectDialog>
                                     <Button>
                                         <Plus className="mr-2 h-4 w-4" />
                                         New Project
                                     </Button>
                                 </NewProjectDialog>
-                            )}
+                            ) : null}
                         </div>
                     </div>
 
@@ -278,6 +283,11 @@ const Dashboard = () => {
                                 ))}
                             </div>
                         )}
+                    </TabsContent>
+
+                    {/* Chat Tab */}
+                    <TabsContent value="chat">
+                        <ChatPanel />
                     </TabsContent>
                 </Tabs>
             </main>
