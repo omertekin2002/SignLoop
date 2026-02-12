@@ -3,6 +3,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { Inter, Playfair_Display } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import Providers from "@/components/providers";
+import { PrivacyNotice } from "@/components/privacy-notice";
 import "./globals.css";
 
 const inter = Inter({
@@ -42,6 +43,7 @@ export default function RootLayout({
           <Providers>
             <div className="relative z-10">
               {children}
+              <PrivacyNotice />
               <Toaster />
             </div>
           </Providers>
