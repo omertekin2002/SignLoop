@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { generateChatReply, type ChatMessage, type ChatRole } from '@/lib/chat';
-import { getUserSettingsByUserId } from '@/lib/server-db';
+import {
+  appendChatMessagesToThread,
+  getUserSettingsByUserId,
+} from '@/lib/server-db';
 
 const MAX_MESSAGES = 30;
 const MAX_MESSAGE_LENGTH = 4000;
@@ -18,6 +21,7 @@ Guidelines:
 `.trim();
 
 type RequestPayload = {
+  threadId?: unknown;
   messages?: unknown;
 };
 
@@ -69,11 +73,19 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
+    const threadId =
+      isObject(body) && typeof body.threadId === "string" ? body.threadId.trim() : "";
+    if (!threadId) {
+      return NextResponse.json({ error: "threadId is required." }, { status: 400 });
+    }
+
     const parsedMessages = parseChatMessages(body);
     const conversationMessages = parsedMessages.filter((message) => message.role !== "system");
 
-    const hasUserMessage = conversationMessages.some((message) => message.role === "user");
-    if (!hasUserMessage) {
+    const latestUserMessage = [...conversationMessages]
+      .reverse()
+      .find((message) => message.role === "user");
+    if (!latestUserMessage) {
       return NextResponse.json(
         { error: "Chat requires at least one user message." },
         { status: 400 }
@@ -85,6 +97,22 @@ export async function POST(req: Request) {
       [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...conversationMessages],
       { primaryModel: settings?.primaryModel ?? null }
     );
+
+    try {
+      await appendChatMessagesToThread({
+        userId,
+        threadId,
+        messages: [
+          { role: "user", content: latestUserMessage.content },
+          { role: "assistant", content: message },
+        ],
+      });
+    } catch (persistError) {
+      const persistMessage =
+        persistError instanceof Error ? persistError.message : "Failed to persist chat";
+      const status = persistMessage.includes("not found") ? 404 : 500;
+      return NextResponse.json({ error: persistMessage }, { status });
+    }
 
     return NextResponse.json({
       message,

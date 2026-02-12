@@ -10,6 +10,7 @@ const migrationFiles = [
   '001_create_contract_files.sql',
   '002_create_core_entities.sql',
   '003_create_user_settings.sql',
+  '004_create_chat_entities.sql',
 ];
 
 const client = createClient();

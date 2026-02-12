@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
@@ -10,10 +11,18 @@ import {
   useLocalRuntime,
   type ChatModelAdapter,
   type ThreadMessage,
+  type ThreadMessageLike,
 } from "@assistant-ui/react";
-import { MessageSquareText, Send, Square } from "lucide-react";
+import {
+  Loader2,
+  MessageSquareText,
+  Plus,
+  Send,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 type ChatApiMessage = {
@@ -25,6 +34,27 @@ type ChatApiSuccess = {
   message: string;
   provider?: string;
   model?: string;
+};
+
+type ChatThreadSummary = {
+  id: string;
+  title: string;
+  updatedAt: string;
+  lastMessagePreview: string | null;
+  messageCount: number;
+};
+
+type ChatThreadMessage = {
+  id: string;
+  role: "system" | "user" | "assistant";
+  content: string;
+  createdAt: string;
+};
+
+type ChatThreadDetail = {
+  id: string;
+  title: string;
+  messages: ChatThreadMessage[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -111,6 +141,31 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
   };
 }
 
+function toRuntimeMessages(messages: ChatThreadMessage[]): ThreadMessageLike[] {
+  return messages.map((message) => ({
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    createdAt: new Date(message.createdAt),
+  }));
+}
+
+function formatThreadDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  if (sameDay) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  return date.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+  });
+}
+
 const UserTextPart = () => (
   <MessagePartPrimitive.Text component="p" className="whitespace-pre-wrap text-sm leading-6 text-primary-foreground" />
 );
@@ -141,20 +196,129 @@ const ChatMessage = () => {
           </MessagePrimitive.Error>
         </div>
       </MessagePrimitive.If>
-
-      <MessagePrimitive.If system>
-        <div className="mx-auto max-w-2xl text-center text-xs text-muted-foreground">
-          <MessagePrimitive.Content components={{ Text: AssistantTextPart }} />
-        </div>
-      </MessagePrimitive.If>
     </MessagePrimitive.Root>
   );
 };
 
 export function ChatPanel() {
+  const queryClient = useQueryClient();
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const hydratedSignatureRef = useRef<string | null>(null);
+
+  const threadsQuery = useQuery({
+    queryKey: ["chat-threads"],
+    queryFn: async () => {
+      const response = await fetch("/api/chat/threads");
+      const payload = (await response.json().catch(() => null)) as
+        | { data?: ChatThreadSummary[]; error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to fetch chat threads.");
+      }
+
+      return payload?.data || [];
+    },
+  });
+
+  const createThreadMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/chat/threads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { data?: ChatThreadSummary; error?: string }
+        | null;
+
+      if (!response.ok || !payload?.data) {
+        throw new Error(payload?.error || "Failed to create chat thread.");
+      }
+
+      return payload.data;
+    },
+    onSuccess: (created) => {
+      setActiveThreadId(created.id);
+      queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+    },
+  });
+
+  const deleteThreadMutation = useMutation({
+    mutationFn: async (threadId: string) => {
+      const response = await fetch(`/api/chat/threads/${threadId}`, {
+        method: "DELETE",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { success?: boolean; error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to delete chat thread.");
+      }
+    },
+    onSuccess: (_result, deletedThreadId) => {
+      queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+      queryClient.removeQueries({ queryKey: ["chat-thread", deletedThreadId] });
+
+      if (activeThreadId === deletedThreadId) {
+        setActiveThreadId(null);
+        hydratedSignatureRef.current = null;
+      }
+    },
+  });
+
+  const activeThreadQuery = useQuery({
+    queryKey: ["chat-thread", activeThreadId],
+    enabled: Boolean(activeThreadId),
+    queryFn: async () => {
+      const response = await fetch(`/api/chat/threads/${activeThreadId}`);
+      const payload = (await response.json().catch(() => null)) as
+        | { data?: ChatThreadDetail; error?: string }
+        | null;
+
+      if (!response.ok || !payload?.data) {
+        throw new Error(payload?.error || "Failed to fetch chat thread.");
+      }
+
+      return payload.data;
+    },
+  });
+
+  useEffect(() => {
+    const threads = threadsQuery.data;
+    if (!threads || threadsQuery.isLoading) return;
+
+    if (!threads.length) {
+      if (!createThreadMutation.isPending && !activeThreadId) {
+        createThreadMutation.mutate();
+      }
+      return;
+    }
+
+    if (!activeThreadId) {
+      setActiveThreadId(threads[0]!.id);
+      return;
+    }
+
+    const stillExists = threads.some((thread) => thread.id === activeThreadId);
+    if (!stillExists) {
+      setActiveThreadId(threads[0]!.id);
+    }
+  }, [
+    activeThreadId,
+    createThreadMutation,
+    threadsQuery.data,
+    threadsQuery.isLoading,
+  ]);
+
   const chatModel = useMemo<ChatModelAdapter>(
     () => ({
       run: async ({ messages, abortSignal }) => {
+        if (!activeThreadId) {
+          throw new Error("Select or create a chat first.");
+        }
+
         const payloadMessages = toApiMessages(messages);
 
         const response = await fetch("/api/chat", {
@@ -162,7 +326,10 @@ export function ChatPanel() {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ messages: payloadMessages }),
+          body: JSON.stringify({
+            threadId: activeThreadId,
+            messages: payloadMessages,
+          }),
           signal: abortSignal,
         });
 
@@ -181,6 +348,9 @@ export function ChatPanel() {
           throw new Error(parseError(parsedPayload, response.status));
         }
 
+        queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+        queryClient.invalidateQueries({ queryKey: ["chat-thread", activeThreadId] });
+
         const parsedSuccess = parseSuccess(parsedPayload);
         return {
           content: [{ type: "text", text: parsedSuccess.message }] as const,
@@ -193,64 +363,179 @@ export function ChatPanel() {
         };
       },
     }),
-    []
+    [activeThreadId, queryClient]
   );
 
   const runtime = useLocalRuntime(chatModel);
 
+  useEffect(() => {
+    if (!activeThreadId) return;
+
+    if (activeThreadQuery.isLoading) {
+      runtime.thread.reset([]);
+      hydratedSignatureRef.current = `${activeThreadId}:loading`;
+      return;
+    }
+
+    const thread = activeThreadQuery.data;
+    if (!thread) return;
+
+    const lastMessage = thread.messages[thread.messages.length - 1];
+    const signature = `${thread.id}:${thread.messages.length}:${lastMessage?.id ?? "none"}`;
+    if (hydratedSignatureRef.current === signature) {
+      return;
+    }
+
+    runtime.thread.reset(toRuntimeMessages(thread.messages));
+    hydratedSignatureRef.current = signature;
+  }, [
+    activeThreadId,
+    activeThreadQuery.data,
+    activeThreadQuery.isLoading,
+    runtime,
+  ]);
+
+  const threads = threadsQuery.data || [];
+
   return (
     <Card className="border border-border bg-card/80 shadow-sm backdrop-blur-sm">
-      <CardHeader className="border-b border-border">
-        <CardTitle className="text-xl">Chat Assistant</CardTitle>
-      </CardHeader>
       <CardContent className="p-0">
-        <AssistantRuntimeProvider runtime={runtime}>
-          <ThreadPrimitive.Root className="flex h-[68vh] flex-col">
-            <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto p-4">
-              <ThreadPrimitive.Empty>
-                <div className="mx-auto flex max-w-xl flex-col items-center gap-3 py-16 text-center text-muted-foreground">
-                  <MessageSquareText className="h-8 w-8" />
-                  <p className="text-sm">
-                    Ask about clauses, obligations, dates, or negotiation points. The assistant uses your current
-                    model settings and OpenRouter fallback chain.
-                  </p>
+        <div className="flex h-[72vh] min-h-[560px]">
+          <aside className="w-[300px] shrink-0 border-r border-border bg-background/45">
+            <div className="flex items-center justify-between border-b border-border px-3 py-3">
+              <h3 className="text-sm font-semibold text-foreground">Chats</h3>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8"
+                onClick={() => createThreadMutation.mutate()}
+                disabled={createThreadMutation.isPending}
+              >
+                {createThreadMutation.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Plus className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            </div>
+
+            <div className="h-[calc(72vh-56px)] overflow-y-auto p-2">
+              {threadsQuery.isLoading ? (
+                <div className="px-2 py-4 text-xs text-muted-foreground">Loading chats...</div>
+              ) : threads.length === 0 ? (
+                <div className="px-2 py-4 text-xs text-muted-foreground">
+                  No chats yet. Create one to start.
                 </div>
-              </ThreadPrimitive.Empty>
+              ) : (
+                <div className="space-y-2">
+                  {threads.map((thread) => {
+                    const isActive = thread.id === activeThreadId;
+                    const isDeleting =
+                      deleteThreadMutation.isPending && deleteThreadMutation.variables === thread.id;
 
-              <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
-            </ThreadPrimitive.Viewport>
+                    return (
+                      <button
+                        key={thread.id}
+                        type="button"
+                        onClick={() => setActiveThreadId(thread.id)}
+                        className={cn(
+                          "w-full border px-3 py-2 text-left transition-colors",
+                          isActive
+                            ? "border-ring bg-muted/80"
+                            : "border-border bg-card/60 hover:bg-muted/45"
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-foreground">{thread.title}</p>
+                            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                              {thread.lastMessagePreview || "No messages yet"}
+                            </p>
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              {thread.messageCount} message{thread.messageCount === 1 ? "" : "s"}{" "}
+                              {thread.updatedAt ? `• ${formatThreadDate(thread.updatedAt)}` : ""}
+                            </p>
+                          </div>
 
-            <ComposerPrimitive.Root className="border-t border-border bg-background/70 p-3">
-              <div className="flex items-end gap-2">
-                <ComposerPrimitive.Input
-                  className={cn(
-                    "min-h-[52px] w-full resize-none border border-input bg-card px-3 py-2 text-sm text-foreground outline-none ring-0",
-                    "placeholder:text-muted-foreground focus-visible:border-ring"
-                  )}
-                  placeholder="Type your question..."
-                  submitMode="enter"
-                  rows={1}
-                />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0"
+                            title="Delete chat"
+                            disabled={isDeleting}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              deleteThreadMutation.mutate(thread.id);
+                            }}
+                          >
+                            {isDeleting ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                            )}
+                          </Button>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </aside>
 
-                <ThreadPrimitive.If running={false}>
-                  <ComposerPrimitive.Send asChild>
-                    <Button type="button" size="icon" className="h-11 w-11 shrink-0">
-                      <Send className="h-4 w-4" />
-                    </Button>
-                  </ComposerPrimitive.Send>
-                </ThreadPrimitive.If>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <AssistantRuntimeProvider runtime={runtime}>
+              <ThreadPrimitive.Root className="flex h-full flex-col">
+                <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto p-4">
+                  <ThreadPrimitive.Empty>
+                    <div className="mx-auto flex max-w-xl flex-col items-center gap-3 py-16 text-center text-muted-foreground">
+                      <MessageSquareText className="h-8 w-8" />
+                      <p className="text-sm">
+                        Ask about clauses, obligations, dates, or negotiation points. Chats are saved and tied to your
+                        account.
+                      </p>
+                    </div>
+                  </ThreadPrimitive.Empty>
 
-                <ThreadPrimitive.If running>
-                  <ComposerPrimitive.Cancel asChild>
-                    <Button type="button" variant="outline" size="icon" className="h-11 w-11 shrink-0">
-                      <Square className="h-4 w-4" />
-                    </Button>
-                  </ComposerPrimitive.Cancel>
-                </ThreadPrimitive.If>
-              </div>
-            </ComposerPrimitive.Root>
-          </ThreadPrimitive.Root>
-        </AssistantRuntimeProvider>
+                  <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
+                </ThreadPrimitive.Viewport>
+
+                <ComposerPrimitive.Root className="border-t border-border bg-background/70 p-3">
+                  <div className="flex items-end gap-2">
+                    <ComposerPrimitive.Input
+                      className={cn(
+                        "min-h-[52px] w-full resize-none border border-input bg-card px-3 py-2 text-sm text-foreground outline-none ring-0",
+                        "placeholder:text-muted-foreground focus-visible:border-ring"
+                      )}
+                      placeholder="Type your question..."
+                      submitMode="enter"
+                      rows={1}
+                    />
+
+                    <ThreadPrimitive.If running={false}>
+                      <ComposerPrimitive.Send asChild>
+                        <Button type="button" size="icon" className="h-11 w-11 shrink-0">
+                          <Send className="h-4 w-4" />
+                        </Button>
+                      </ComposerPrimitive.Send>
+                    </ThreadPrimitive.If>
+
+                    <ThreadPrimitive.If running>
+                      <ComposerPrimitive.Cancel asChild>
+                        <Button type="button" variant="outline" size="icon" className="h-11 w-11 shrink-0">
+                          <Square className="h-4 w-4" />
+                        </Button>
+                      </ComposerPrimitive.Cancel>
+                    </ThreadPrimitive.If>
+                  </div>
+                </ComposerPrimitive.Root>
+              </ThreadPrimitive.Root>
+            </AssistantRuntimeProvider>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

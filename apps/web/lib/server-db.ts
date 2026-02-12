@@ -163,6 +163,50 @@ async function ensureSchema(): Promise<void> {
         updated_at timestamptz not null default now()
       )
     `;
+
+    await sql`
+      create table if not exists chat_threads (
+        id uuid primary key default gen_random_uuid(),
+        user_id text not null,
+        title text not null default 'New chat',
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `;
+
+    await sql`
+      create index if not exists chat_threads_user_id_idx
+      on chat_threads (user_id)
+    `;
+    await sql`
+      create index if not exists chat_threads_updated_at_idx
+      on chat_threads (updated_at desc)
+    `;
+
+    await sql`
+      create table if not exists chat_messages (
+        id uuid primary key default gen_random_uuid(),
+        thread_id uuid not null,
+        role text not null,
+        content text not null,
+        position integer not null default 0,
+        metadata_json jsonb,
+        created_at timestamptz not null default now()
+      )
+    `;
+
+    await sql`
+      create index if not exists chat_messages_thread_id_idx
+      on chat_messages (thread_id)
+    `;
+    await sql`
+      create index if not exists chat_messages_thread_position_idx
+      on chat_messages (thread_id, position)
+    `;
+    await sql`
+      create index if not exists chat_messages_thread_created_at_idx
+      on chat_messages (thread_id, created_at)
+    `;
   })().catch((error) => {
     schemaReadyPromise = null;
     throw error;
@@ -248,6 +292,37 @@ export type UserSettingsRecord = {
   userId: string;
   primaryModel: PrimaryModel | null;
   updatedAt: string;
+};
+
+export type ChatMessageRole = "system" | "user" | "assistant";
+
+export type ChatMessageRecord = {
+  id: string;
+  threadId: string;
+  role: ChatMessageRole;
+  content: string;
+  position: number;
+  createdAt: string;
+};
+
+export type ChatThreadSummaryRecord = {
+  id: string;
+  userId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessagePreview: string | null;
+  lastMessageAt: string | null;
+  messageCount: number;
+};
+
+export type ChatThreadDetailRecord = {
+  id: string;
+  userId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ChatMessageRecord[];
 };
 
 type UploadedContractFileInput = {
@@ -1043,4 +1118,289 @@ export async function upsertUserPrimaryModel(input: {
   }
 
   return saved;
+}
+
+function mapChatMessageRow(row: {
+  id: string;
+  threadId: string;
+  role: string;
+  content: string;
+  position: number;
+  createdAt: string;
+}): ChatMessageRecord {
+  const role: ChatMessageRole =
+    row.role === "system" || row.role === "assistant" ? row.role : "user";
+
+  return {
+    id: row.id,
+    threadId: row.threadId,
+    role,
+    content: row.content,
+    position: row.position,
+    createdAt: row.createdAt,
+  };
+}
+
+async function isChatThreadOwnedByUser(userId: string, threadId: string): Promise<boolean> {
+  await ensureSchema();
+
+  const { rows } = await sql<{ id: string }>`
+    select id
+    from chat_threads
+    where id = ${threadId}
+      and user_id = ${userId}
+    limit 1
+  `;
+
+  return !!rows[0];
+}
+
+export async function createChatThreadForUser(input: {
+  userId: string;
+  title?: string | null;
+}): Promise<ChatThreadSummaryRecord> {
+  await ensureSchema();
+
+  const title = input.title?.trim() || "New chat";
+
+  const { rows } = await sql<ChatThreadSummaryRecord>`
+    insert into chat_threads (
+      user_id,
+      title
+    )
+    values (
+      ${input.userId},
+      ${title}
+    )
+    returning
+      id,
+      user_id as "userId",
+      title,
+      created_at as "createdAt",
+      updated_at as "updatedAt",
+      null::text as "lastMessagePreview",
+      null::timestamptz as "lastMessageAt",
+      0::integer as "messageCount"
+  `;
+
+  const created = rows[0];
+  if (!created) {
+    throw new Error("Failed to create chat thread");
+  }
+
+  return created;
+}
+
+export async function listChatThreadsByUserId(userId: string): Promise<ChatThreadSummaryRecord[]> {
+  await ensureSchema();
+
+  const { rows } = await sql<ChatThreadSummaryRecord>`
+    select
+      t.id,
+      t.user_id as "userId",
+      t.title,
+      t.created_at as "createdAt",
+      t.updated_at as "updatedAt",
+      case
+        when lm.content is null then null
+        when char_length(lm.content) > 120 then substring(lm.content from 1 for 117) || '...'
+        else lm.content
+      end as "lastMessagePreview",
+      lm.created_at as "lastMessageAt",
+      coalesce(mc.message_count, 0)::integer as "messageCount"
+    from chat_threads t
+    left join lateral (
+      select
+        content,
+        created_at
+      from chat_messages
+      where thread_id = t.id
+      order by position desc, created_at desc
+      limit 1
+    ) lm on true
+    left join lateral (
+      select count(*)::integer as message_count
+      from chat_messages
+      where thread_id = t.id
+    ) mc on true
+    where t.user_id = ${userId}
+    order by coalesce(lm.created_at, t.updated_at) desc
+  `;
+
+  return rows;
+}
+
+export async function getChatThreadByIdForUser(
+  userId: string,
+  threadId: string
+): Promise<ChatThreadDetailRecord | null> {
+  await ensureSchema();
+
+  const { rows: threadRows } = await sql<{
+    id: string;
+    userId: string;
+    title: string;
+    createdAt: string;
+    updatedAt: string;
+  }>`
+    select
+      id,
+      user_id as "userId",
+      title,
+      created_at as "createdAt",
+      updated_at as "updatedAt"
+    from chat_threads
+    where id = ${threadId}
+      and user_id = ${userId}
+    limit 1
+  `;
+
+  const thread = threadRows[0];
+  if (!thread) {
+    return null;
+  }
+
+  const { rows: messageRows } = await sql<{
+    id: string;
+    threadId: string;
+    role: string;
+    content: string;
+    position: number;
+    createdAt: string;
+  }>`
+    select
+      id,
+      thread_id as "threadId",
+      role,
+      content,
+      position,
+      created_at as "createdAt"
+    from chat_messages
+    where thread_id = ${threadId}
+    order by position asc, created_at asc
+  `;
+
+  return {
+    ...thread,
+    messages: messageRows.map(mapChatMessageRow),
+  };
+}
+
+export async function getLastChatMessageForThread(input: {
+  userId: string;
+  threadId: string;
+}): Promise<ChatMessageRecord | null> {
+  await ensureSchema();
+
+  const owned = await isChatThreadOwnedByUser(input.userId, input.threadId);
+  if (!owned) {
+    return null;
+  }
+
+  const { rows } = await sql<{
+    id: string;
+    threadId: string;
+    role: string;
+    content: string;
+    position: number;
+    createdAt: string;
+  }>`
+    select
+      id,
+      thread_id as "threadId",
+      role,
+      content,
+      position,
+      created_at as "createdAt"
+    from chat_messages
+    where thread_id = ${input.threadId}
+    order by position desc, created_at desc
+    limit 1
+  `;
+
+  const row = rows[0];
+  return row ? mapChatMessageRow(row) : null;
+}
+
+export async function appendChatMessagesToThread(input: {
+  userId: string;
+  threadId: string;
+  messages: Array<{ role: ChatMessageRole; content: string }>;
+}): Promise<void> {
+  await ensureSchema();
+
+  const owned = await isChatThreadOwnedByUser(input.userId, input.threadId);
+  if (!owned) {
+    throw new Error("Chat thread not found");
+  }
+
+  const cleanedMessages = input.messages
+    .map((message) => ({
+      role: message.role,
+      content: message.content.trim(),
+    }))
+    .filter((message) => message.content.length > 0);
+
+  if (!cleanedMessages.length) {
+    return;
+  }
+
+  const { rows } = await sql<{ basePosition: number }>`
+    select coalesce(max(position), 0)::integer as "basePosition"
+    from chat_messages
+    where thread_id = ${input.threadId}
+  `;
+
+  const basePosition = rows[0]?.basePosition ?? 0;
+
+  for (const [idx, message] of cleanedMessages.entries()) {
+    await sql`
+      insert into chat_messages (
+        thread_id,
+        role,
+        content,
+        position,
+        metadata_json
+      )
+      values (
+        ${input.threadId},
+        ${message.role},
+        ${message.content},
+        ${basePosition + idx + 1},
+        null
+      )
+    `;
+  }
+
+  await sql`
+    update chat_threads
+    set updated_at = now()
+    where id = ${input.threadId}
+      and user_id = ${input.userId}
+  `;
+}
+
+export async function deleteChatThreadForUser(input: {
+  userId: string;
+  threadId: string;
+}): Promise<boolean> {
+  await ensureSchema();
+
+  const owned = await isChatThreadOwnedByUser(input.userId, input.threadId);
+  if (!owned) {
+    return false;
+  }
+
+  await sql`
+    delete from chat_messages
+    where thread_id = ${input.threadId}
+  `;
+
+  await sql`
+    delete from chat_threads
+    where id = ${input.threadId}
+      and user_id = ${input.userId}
+  `;
+
+  return true;
 }
