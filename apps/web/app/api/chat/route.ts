@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { generateChatReply, type ChatMessage, type ChatRole } from '@/lib/chat';
 import {
+  DEFAULT_PERSONALITY_MODE,
+  isAllowedPersonalityMode,
+} from '@/lib/personality-settings';
+import {
   appendChatMessagesToThread,
   getUserSettingsByUserId,
 } from '@/lib/server-db';
@@ -93,8 +97,17 @@ export async function POST(req: Request) {
     }
 
     const settings = await getUserSettingsByUserId(userId);
+    const personality =
+      settings?.personality && isAllowedPersonalityMode(settings.personality)
+        ? settings.personality
+        : DEFAULT_PERSONALITY_MODE;
+    const promptMessages: ChatMessage[] =
+      personality === "bare-llm"
+        ? conversationMessages
+        : [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...conversationMessages];
+
     const { message, provider, model } = await generateChatReply(
-      [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...conversationMessages],
+      promptMessages,
       { primaryModel: settings?.primaryModel ?? null }
     );
 

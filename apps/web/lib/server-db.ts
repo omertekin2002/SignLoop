@@ -1,5 +1,6 @@
 import { sql } from "@vercel/postgres";
 import type { PrimaryModel } from "@/lib/model-settings";
+import type { PersonalityMode } from "@/lib/personality-settings";
 
 type JsonObject = Record<string, unknown>;
 
@@ -160,8 +161,14 @@ async function ensureSchema(): Promise<void> {
       create table if not exists user_settings (
         user_id text primary key,
         primary_model text,
+        personality text,
         updated_at timestamptz not null default now()
       )
+    `;
+
+    await sql`
+      alter table user_settings
+      add column if not exists personality text
     `;
 
     await sql`
@@ -291,6 +298,7 @@ export type ProjectDetailRecord = {
 export type UserSettingsRecord = {
   userId: string;
   primaryModel: PrimaryModel | null;
+  personality: PersonalityMode | null;
   updatedAt: string;
 };
 
@@ -1076,6 +1084,7 @@ export async function getUserSettingsByUserId(
     select
       user_id as "userId",
       primary_model as "primaryModel",
+      personality as "personality",
       updated_at as "updatedAt"
     from user_settings
     where user_id = ${userId}
@@ -1095,11 +1104,13 @@ export async function upsertUserPrimaryModel(input: {
     insert into user_settings (
       user_id,
       primary_model,
+      personality,
       updated_at
     )
     values (
       ${input.userId},
       ${input.primaryModel},
+      null,
       now()
     )
     on conflict (user_id)
@@ -1109,6 +1120,45 @@ export async function upsertUserPrimaryModel(input: {
     returning
       user_id as "userId",
       primary_model as "primaryModel",
+      personality as "personality",
+      updated_at as "updatedAt"
+  `;
+
+  const saved = rows[0];
+  if (!saved) {
+    throw new Error("Failed to save user settings");
+  }
+
+  return saved;
+}
+
+export async function upsertUserPersonality(input: {
+  userId: string;
+  personality: PersonalityMode;
+}): Promise<UserSettingsRecord> {
+  await ensureSchema();
+
+  const { rows } = await sql<UserSettingsRecord>`
+    insert into user_settings (
+      user_id,
+      primary_model,
+      personality,
+      updated_at
+    )
+    values (
+      ${input.userId},
+      null,
+      ${input.personality},
+      now()
+    )
+    on conflict (user_id)
+    do update set
+      personality = excluded.personality,
+      updated_at = now()
+    returning
+      user_id as "userId",
+      primary_model as "primaryModel",
+      personality as "personality",
       updated_at as "updatedAt"
   `;
 

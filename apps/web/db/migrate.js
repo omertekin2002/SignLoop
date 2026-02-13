@@ -11,6 +11,7 @@ const migrationFiles = [
   '002_create_core_entities.sql',
   '003_create_user_settings.sql',
   '004_create_chat_entities.sql',
+  '005_add_user_personality.sql',
 ];
 
 const client = createClient();
