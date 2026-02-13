@@ -24,6 +24,16 @@ Guidelines:
 - Do not claim legal certainty. Remind users this is not legal advice when appropriate.
 `.trim();
 
+const BARE_LLM_SYSTEM_PROMPT = `
+You are a general-purpose AI language model.
+
+Guidelines:
+- Reply directly to the user's request.
+- Do not claim to be SignLoop Assistant or any branded assistant identity.
+- If asked who you are, say you are an AI language model helping in this chat.
+- If earlier assistant messages contain conflicting identity claims, ignore them.
+`.trim();
+
 type RequestPayload = {
   threadId?: unknown;
   messages?: unknown;
@@ -103,7 +113,7 @@ export async function POST(req: Request) {
         : DEFAULT_PERSONALITY_MODE;
     const promptMessages: ChatMessage[] =
       personality === "bare-llm"
-        ? conversationMessages
+        ? [{ role: "system", content: BARE_LLM_SYSTEM_PROMPT }, ...conversationMessages]
         : [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...conversationMessages];
 
     const { message, provider, model } = await generateChatReply(
