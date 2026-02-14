@@ -1,6 +1,14 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AssistantRuntimeProvider,
@@ -21,6 +29,8 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -170,8 +180,50 @@ const UserTextPart = () => (
   <MessagePartPrimitive.Text component="p" className="whitespace-pre-wrap text-sm leading-6 text-primary-foreground" />
 );
 
+function toMarkdownText(children: ReactNode): string {
+  const text = typeof children === "string" ? children : String(children ?? "");
+  return text.replace(/<br\s*\/?>/gi, "\n");
+}
+
+const MarkdownMessage = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<"div">>(
+  ({ children, className, ...props }, ref) => {
+    const markdown = useMemo(() => toMarkdownText(children), [children]);
+
+    return (
+      <div
+        ref={ref}
+        className={cn(
+          "text-sm leading-6 text-foreground",
+          "[&_h1]:mb-2 [&_h1]:mt-5 [&_h1]:text-xl [&_h1]:font-semibold",
+          "[&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-lg [&_h2]:font-semibold",
+          "[&_h3]:mb-2 [&_h3]:mt-3 [&_h3]:text-base [&_h3]:font-semibold",
+          "[&_p]:mb-3 [&_p:last-child]:mb-0",
+          "[&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-6",
+          "[&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-6",
+          "[&_li]:mb-1",
+          "[&_a]:text-[var(--accent)] [&_a]:underline [&_a]:underline-offset-2",
+          "[&_code]:rounded [&_code]:bg-muted/70 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em]",
+          "[&_pre]:mb-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:border [&_pre]:border-border [&_pre]:bg-background/80 [&_pre]:p-3",
+          "[&_pre_code]:bg-transparent [&_pre_code]:p-0",
+          "[&_blockquote]:mb-3 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote]:text-muted-foreground",
+          "[&_table]:mb-3 [&_table]:w-full [&_table]:border-collapse [&_table]:overflow-hidden [&_table]:border [&_table]:border-border",
+          "[&_th]:border [&_th]:border-border [&_th]:bg-muted/50 [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold",
+          "[&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5",
+          "[&_hr]:my-4 [&_hr]:border-border",
+          className,
+        )}
+        {...props}
+      >
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+      </div>
+    );
+  }
+);
+
+MarkdownMessage.displayName = "MarkdownMessage";
+
 const AssistantTextPart = () => (
-  <MessagePartPrimitive.Text component="p" className="whitespace-pre-wrap text-sm leading-6 text-foreground" />
+  <MessagePartPrimitive.Text component={MarkdownMessage} smooth={false} />
 );
 
 const ChatMessage = () => {
