@@ -177,7 +177,7 @@ function formatThreadDate(value: string): string {
 }
 
 const UserTextPart = () => (
-  <MessagePartPrimitive.Text component="p" className="whitespace-pre-wrap text-sm leading-6 text-primary-foreground" />
+  <MessagePartPrimitive.Text component="p" className="whitespace-pre-wrap text-sm leading-6 text-foreground" />
 );
 
 function toMarkdownText(children: ReactNode): string {
