@@ -96,13 +96,7 @@ const Dashboard = () => {
         <div className="app-page">
             <header className="app-header">
                 <div className="app-header-inner">
-                    <div className="space-y-1">
-                        <p className="kicker">Legal Workbench</p>
-                        <h1 className="app-title">Dashboard</h1>
-                        <p className="app-subtitle">
-                            Review contracts, manage context-rich projects, and chat with your selected model.
-                        </p>
-                    </div>
+                    <h1 className="app-title">Dashboard</h1>
                     <div className="flex items-center gap-3">
                         <Button asChild variant="outline">
                             <Link href="/settings">Settings</Link>

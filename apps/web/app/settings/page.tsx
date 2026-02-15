@@ -142,10 +142,7 @@ export default function SettingsPage() {
     <div className="app-page">
       <header className="app-header">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-4 py-6 sm:px-6 lg:px-8">
-          <div className="space-y-1">
-            <p className="kicker">Preferences</p>
-            <h1 className="app-title">Settings</h1>
-          </div>
+          <h1 className="app-title">Settings</h1>
           <div className="flex items-center gap-3">
             <span className="hidden text-sm text-muted-foreground sm:block">Welcome, {user?.firstName}</span>
             <Button variant="outline" onClick={() => signOut()}>
