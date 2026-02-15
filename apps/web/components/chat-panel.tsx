@@ -230,13 +230,13 @@ const ChatMessage = () => {
   return (
     <MessagePrimitive.Root className="mb-4">
       <MessagePrimitive.If user>
-        <div className="ml-auto max-w-3xl border border-border bg-primary px-4 py-3 shadow-sm">
+        <div className="ml-auto max-w-3xl border border-[hsl(var(--accent)/0.55)] bg-[hsl(var(--accent)/0.18)] px-4 py-3 shadow-[0_8px_18px_rgba(0,0,0,0.08)]">
           <MessagePrimitive.Content components={{ Text: UserTextPart }} />
         </div>
       </MessagePrimitive.If>
 
       <MessagePrimitive.If assistant>
-        <div className="mr-auto max-w-3xl border border-border bg-card/90 px-4 py-3 shadow-sm backdrop-blur-sm">
+        <div className="mr-auto max-w-3xl border border-[var(--surface-stroke)] bg-[var(--surface-elevated)] px-4 py-3 shadow-[var(--card-shadow)]">
           <MessagePrimitive.Content
             components={{
               Text: AssistantTextPart,
@@ -450,11 +450,11 @@ export function ChatPanel() {
   const threads = threadsQuery.data || [];
 
   return (
-    <Card className="border border-border bg-card/80 shadow-sm backdrop-blur-sm">
+    <Card className="overflow-hidden border-[var(--surface-stroke)] bg-[var(--surface-base)] shadow-[var(--card-hover-shadow)]">
       <CardContent className="p-0">
         <div className="flex h-[72vh] min-h-[560px]">
-          <aside className="w-[300px] shrink-0 border-r border-border bg-background/45">
-            <div className="flex items-center justify-between border-b border-border px-3 py-3">
+          <aside className="w-[300px] shrink-0 border-r border-[var(--surface-stroke)] bg-[var(--surface-base)]">
+            <div className="flex items-center justify-between border-b border-[var(--surface-stroke)] px-3 py-3">
               <h3 className="text-sm font-semibold text-foreground">Chats</h3>
               <Button
                 type="button"
@@ -472,7 +472,7 @@ export function ChatPanel() {
               </Button>
             </div>
 
-            <div className="h-[calc(72vh-56px)] overflow-y-auto p-2">
+            <div className="h-[calc(72vh-56px)] overflow-y-auto p-2.5">
               {threadsQuery.isLoading ? (
                 <div className="px-2 py-4 text-xs text-muted-foreground">Loading chats...</div>
               ) : threads.length === 0 ? (
@@ -494,8 +494,8 @@ export function ChatPanel() {
                         className={cn(
                           "w-full border px-3 py-2 text-left transition-colors",
                           isActive
-                            ? "border-ring bg-muted/80"
-                            : "border-border bg-card/60 hover:bg-muted/45"
+                            ? "border-[hsl(var(--accent)/0.55)] bg-[hsl(var(--accent)/0.14)]"
+                            : "border-[var(--surface-stroke-soft)] bg-[var(--surface-elevated)] hover:border-[var(--surface-stroke)] hover:bg-[var(--surface-base)]"
                         )}
                       >
                         <div className="flex items-start justify-between gap-2">
@@ -538,7 +538,7 @@ export function ChatPanel() {
             </div>
           </aside>
 
-          <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex min-w-0 flex-1 flex-col bg-[var(--surface-elevated)]">
             <AssistantRuntimeProvider runtime={runtime}>
               <ThreadPrimitive.Root className="flex h-full flex-col">
                 <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto p-4">
@@ -555,12 +555,12 @@ export function ChatPanel() {
                   <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
                 </ThreadPrimitive.Viewport>
 
-                <ComposerPrimitive.Root className="border-t border-border bg-background/70 p-3">
+                <ComposerPrimitive.Root className="border-t border-[var(--surface-stroke)] bg-[var(--surface-base)] p-3">
                   <div className="flex items-end gap-2">
                     <ComposerPrimitive.Input
                       className={cn(
-                        "min-h-[52px] w-full resize-none border border-input bg-card px-3 py-2 text-sm text-foreground outline-none ring-0",
-                        "placeholder:text-muted-foreground focus-visible:border-ring"
+                        "min-h-[52px] w-full resize-none border border-[var(--surface-stroke)] bg-[var(--surface-inset)] px-3 py-2 text-sm text-foreground outline-none ring-0",
+                        "placeholder:text-muted-foreground focus-visible:border-[hsl(var(--accent)/0.6)]"
                       )}
                       placeholder="Type your question..."
                       submitMode="enter"

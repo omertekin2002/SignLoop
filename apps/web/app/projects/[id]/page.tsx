@@ -217,7 +217,7 @@ const ProjectDetails = () => {
     if (isLoading) {
         return (
             <div className="min-h-screen bg-transparent">
-                <div className="container mx-auto px-4 py-8">
+                <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
                     <Skeleton className="h-8 w-64 mb-4" />
                     <Skeleton className="h-96 w-full" />
                 </div>
@@ -241,10 +241,10 @@ const ProjectDetails = () => {
     const firstProjectContract = project.contracts[0];
 
     return (
-        <div className="min-h-screen bg-transparent">
+        <div className="app-page">
             {/* Header */}
-            <div className="bg-background border-b">
-                <div className="container mx-auto px-4 py-6">
+            <div className="app-header">
+                <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
                     <div className="flex items-center gap-2 mb-4">
                         <Link
                             href="/dashboard"
@@ -279,7 +279,7 @@ const ProjectDetails = () => {
             </div>
 
             {/* Main Content */}
-            <div className="container mx-auto px-4 py-8">
+            <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
                 <div className="grid gap-6 lg:grid-cols-2">
                     {/* Left: Contract Section */}
                     <div>
@@ -301,7 +301,7 @@ const ProjectDetails = () => {
                                             <Link
                                                 key={contract.id}
                                                 href={`/contracts/${contract.id}`}
-                                                className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors"
+                                                className="flex items-center justify-between border border-[var(--surface-stroke-soft)] bg-[var(--surface-elevated)] p-3 transition-colors hover:border-[var(--surface-stroke)] hover:bg-[var(--surface-base)]"
                                             >
                                                 <div className="flex items-center gap-3">
                                                     <FileText className="h-5 w-5 text-primary" />
@@ -326,7 +326,7 @@ const ProjectDetails = () => {
                                 )}
 
                                 {/* Upload New Contract */}
-                                <div className="border-2 border-dashed rounded-lg p-4">
+                                <div className="border border-dashed border-[var(--surface-stroke)] bg-[var(--surface-base)] p-4">
                                     <div className="space-y-3">
                                         <div>
                                             <Label htmlFor="contract-name">Contract Name</Label>
@@ -338,7 +338,7 @@ const ProjectDetails = () => {
                                             />
                                         </div>
                                         <div
-                                            className="p-4 rounded-lg bg-muted/50 text-center cursor-pointer hover:bg-muted transition-colors"
+                                            className="cursor-pointer border border-[var(--surface-stroke-soft)] bg-[var(--surface-inset)] p-4 text-center transition-colors hover:border-[var(--surface-stroke)] hover:bg-[var(--surface-base)]"
                                             onClick={() => contractFileRef.current?.click()}
                                         >
                                             {selectedContractFile ? (
@@ -406,7 +406,7 @@ const ProjectDetails = () => {
                                         {project.contextDocuments.map((doc) => (
                                             <div
                                                 key={doc.id}
-                                                className="flex items-center justify-between p-3 rounded-lg border bg-card"
+                                                className="flex items-center justify-between border border-[var(--surface-stroke-soft)] bg-[var(--surface-elevated)] p-3"
                                             >
                                                 <div className="flex items-center gap-3">
                                                     {getDocTypeIcon(doc.documentType)}
@@ -431,7 +431,7 @@ const ProjectDetails = () => {
                                 )}
 
                                 {/* Upload New Context */}
-                                <div className="border-2 border-dashed rounded-lg p-4">
+                                <div className="border border-dashed border-[var(--surface-stroke)] bg-[var(--surface-base)] p-4">
                                     <div className="space-y-3">
                                         <div className="grid grid-cols-2 gap-2">
                                             <div>
@@ -459,7 +459,7 @@ const ProjectDetails = () => {
                                             </div>
                                         </div>
                                         <div
-                                            className="p-4 rounded-lg bg-muted/50 text-center cursor-pointer hover:bg-muted transition-colors"
+                                            className="cursor-pointer border border-[var(--surface-stroke-soft)] bg-[var(--surface-inset)] p-4 text-center transition-colors hover:border-[var(--surface-stroke)] hover:bg-[var(--surface-base)]"
                                             onClick={() => contextFileRef.current?.click()}
                                         >
                                             {selectedContextFile ? (

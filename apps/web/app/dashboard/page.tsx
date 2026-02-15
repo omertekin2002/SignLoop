@@ -76,7 +76,7 @@ const Dashboard = () => {
             setContractToDelete(null);
             queryClient.invalidateQueries({ queryKey: ["contracts"] });
         },
-        onError: (error: any) => {
+        onError: (error: unknown) => {
             console.error(error);
             setContractToDelete(null);
         }
@@ -84,31 +84,71 @@ const Dashboard = () => {
 
     // Filter standalone contracts (not part of a project)
     const standaloneContracts = contracts?.filter(c => !c.projectId) || [];
+    const analyzedStandaloneCount = standaloneContracts.filter(
+        (contract) => contract.status?.toUpperCase() === "ANALYZED"
+    ).length;
+    const totalContextDocs = (projects || []).reduce(
+        (sum, project) => sum + (project.contextDocuments?.length || 0),
+        0
+    );
 
     return (
-        <div className="min-h-screen bg-transparent">
-            <header className="bg-background/60 backdrop-blur border-b">
-                <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 flex justify-between items-center">
-                    <h1 className="text-3xl font-bold tracking-tight text-foreground">
-                        Dashboard
-                    </h1>
-                    <div className="flex items-center gap-4">
-                        <span className="text-sm text-muted-foreground">
-                            Welcome, {user?.firstName}
-                        </span>
+        <div className="app-page">
+            <header className="app-header">
+                <div className="app-header-inner">
+                    <div className="space-y-1">
+                        <p className="kicker">Legal Workbench</p>
+                        <h1 className="app-title">Dashboard</h1>
+                        <p className="app-subtitle">
+                            Review contracts, manage context-rich projects, and chat with your selected model.
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-3">
                         <Button asChild variant="outline">
                             <Link href="/settings">Settings</Link>
                         </Button>
+                        <p className="hidden text-sm text-muted-foreground md:block">
+                            Welcome, {user?.firstName}
+                        </p>
                         <Button variant="outline" onClick={() => signOut()}>
                             Sign out
                         </Button>
                     </div>
                 </div>
             </header>
-            <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+            <main className="app-main">
+                <section className="mb-6 grid gap-3 md:grid-cols-3">
+                    <Card className="bg-[var(--surface-elevated)]">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm">Standalone Contracts</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <p className="text-3xl font-semibold">{standaloneContracts.length}</p>
+                            <p className="text-xs text-muted-foreground">Direct uploads not tied to projects</p>
+                        </CardContent>
+                    </Card>
+                    <Card className="bg-[var(--surface-elevated)]">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm">Analyzed Files</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <p className="text-3xl font-semibold">{analyzedStandaloneCount}</p>
+                            <p className="text-xs text-muted-foreground">Standalone contracts with completed analysis</p>
+                        </CardContent>
+                    </Card>
+                    <Card className="bg-[var(--surface-elevated)]">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm">Context Library</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <p className="text-3xl font-semibold">{totalContextDocs}</p>
+                            <p className="text-xs text-muted-foreground">Reference documents across all projects</p>
+                        </CardContent>
+                    </Card>
+                </section>
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                    <div className="flex justify-between items-center mb-6">
-                        <TabsList>
+                    <div className="chrome-pane mb-6 flex flex-col justify-between gap-3 px-3 py-3 sm:flex-row sm:items-center">
+                        <TabsList className="h-auto bg-transparent p-0">
                             <TabsTrigger value="contracts" className="gap-2">
                                 <FileText className="h-4 w-4" />
                                 Contracts
@@ -122,7 +162,7 @@ const Dashboard = () => {
                                 Chat
                             </TabsTrigger>
                         </TabsList>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 self-end sm:self-auto">
                             {activeTab === "contracts" ? (
                                 <UploadDialog>
                                     <Button>
@@ -150,7 +190,7 @@ const Dashboard = () => {
                                 ))}
                             </div>
                         ) : standaloneContracts.length === 0 ? (
-                            <div className="text-center py-12 bg-card rounded-lg shadow border border-dashed border-border">
+                            <div className="chrome-pane text-center py-12">
                                 <FileText className="mx-auto h-12 w-12 text-muted-foreground" />
                                 <h3 className="mt-2 text-sm font-semibold text-foreground">No contracts</h3>
                                 <p className="mt-1 text-sm text-muted-foreground">
@@ -175,7 +215,7 @@ const Dashboard = () => {
                             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                                 {standaloneContracts.map((contract) => (
                                     <Link key={contract.id} href={`/contracts/${contract.id}`}>
-                                        <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
+                                        <Card className="cursor-pointer h-full">
                                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                                 <CardTitle className="text-sm font-medium">
                                                     {contract.title}
@@ -227,7 +267,7 @@ const Dashboard = () => {
                                 ))}
                             </div>
                         ) : !projects || projects.length === 0 ? (
-                            <div className="text-center py-12 bg-card rounded-lg shadow border border-dashed border-border">
+                            <div className="chrome-pane text-center py-12">
                                 <FolderOpen className="mx-auto h-12 w-12 text-muted-foreground" />
                                 <h3 className="mt-2 text-sm font-semibold text-foreground">No projects</h3>
                                 <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">
@@ -247,7 +287,7 @@ const Dashboard = () => {
                             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                                 {projects.map((project) => (
                                     <Link key={project.id} href={`/projects/${project.id}`}>
-                                        <Card className="hover:shadow-md transition-shadow cursor-pointer h-full border-l-4 border-l-primary">
+                                        <Card className="cursor-pointer h-full border-l-2 border-l-[hsl(var(--accent)/0.8)]">
                                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                                 <CardTitle className="text-sm font-medium">
                                                     {project.title}

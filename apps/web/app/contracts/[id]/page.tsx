@@ -78,7 +78,7 @@ const ContractDetails = () => {
 
     const renderIssueState = (title: string, description: string) => (
         <div className="min-h-screen bg-transparent">
-            <div className="container mx-auto px-4 py-12">
+            <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
                 <Card className="max-w-xl mx-auto">
                     <CardContent className="flex flex-col items-center text-center py-10">
                         <div className="rounded-full bg-destructive/10 p-3 mb-4">
@@ -332,7 +332,7 @@ const ContractDetails = () => {
 
     if (isLoading) {
         return (
-            <div className="container mx-auto px-4 py-8">
+            <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
                 <Skeleton className="h-8 w-48 mb-6" />
                 <Card>
                     <CardHeader><Skeleton className="h-6 w-32" /></CardHeader>
@@ -355,9 +355,9 @@ const ContractDetails = () => {
     }
 
     return (
-        <div className="min-h-screen bg-transparent pb-12">
-            <div className="bg-background/60 backdrop-blur border-b">
-                <div className="container mx-auto px-4 py-6">
+        <div className="app-page pb-12">
+            <div className="app-header">
+                <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
                     <Link href="/dashboard" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors">
                         <ArrowLeft className="mr-2 h-4 w-4" />
                         Back to Dashboard
@@ -422,7 +422,7 @@ const ContractDetails = () => {
                 </div>
             </div>
 
-            <div className="container mx-auto px-4 py-8 space-y-6">
+            <div className="mx-auto max-w-7xl px-4 py-8 space-y-6 sm:px-6 lg:px-8">
                 {/* Analysis Result Section */}
                 {analysis ? (
                     <>

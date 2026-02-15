@@ -139,12 +139,15 @@ export default function SettingsPage() {
   );
 
   return (
-    <div className="min-h-screen bg-transparent">
-      <header className="bg-background/60 backdrop-blur border-b">
-        <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-8 flex justify-between items-center">
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Settings</h1>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-muted-foreground">Welcome, {user?.firstName}</span>
+    <div className="app-page">
+      <header className="app-header">
+        <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-4 py-6 sm:px-6 lg:px-8">
+          <div className="space-y-1">
+            <p className="kicker">Preferences</p>
+            <h1 className="app-title">Settings</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="hidden text-sm text-muted-foreground sm:block">Welcome, {user?.firstName}</span>
             <Button variant="outline" onClick={() => signOut()}>
               Sign out
             </Button>
@@ -297,7 +300,7 @@ export default function SettingsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center justify-between gap-4 rounded-none border border-[color:var(--card-border-strong)] bg-[var(--card-surface)] px-4 py-3">
+            <div className="flex items-center justify-between gap-4 border border-[var(--surface-stroke)] bg-[var(--surface-elevated)] px-4 py-3">
               <div className="space-y-1">
                 <Label htmlFor="dark-mode-toggle">Dark mode</Label>
                 <p className="text-xs text-muted-foreground">
