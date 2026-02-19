@@ -230,13 +230,13 @@ const ChatMessage = () => {
   return (
     <MessagePrimitive.Root className="mb-4">
       <MessagePrimitive.If user>
-        <div className="ml-auto max-w-3xl border border-[hsl(var(--accent)/0.55)] bg-[hsl(var(--accent)/0.18)] px-4 py-3 shadow-[0_8px_18px_rgba(0,0,0,0.08)]">
+        <div className="ml-auto max-w-3xl rounded-[var(--radius)] border border-[hsl(var(--accent)/0.5)] bg-[hsl(var(--accent)/0.18)] px-4 py-3 shadow-[0_12px_24px_-18px_rgba(0,0,0,0.55)]">
           <MessagePrimitive.Content components={{ Text: UserTextPart }} />
         </div>
       </MessagePrimitive.If>
 
       <MessagePrimitive.If assistant>
-        <div className="mr-auto max-w-3xl border border-[var(--surface-stroke)] bg-[var(--surface-elevated)] px-4 py-3 shadow-[var(--card-shadow)]">
+        <div className="mr-auto max-w-3xl rounded-[var(--radius)] border border-[var(--surface-stroke)] bg-[var(--surface-elevated)] px-4 py-3 shadow-[var(--card-shadow)]">
           <MessagePrimitive.Content
             components={{
               Text: AssistantTextPart,
@@ -453,7 +453,7 @@ export function ChatPanel() {
     <Card className="overflow-hidden border-[var(--surface-stroke)] bg-[var(--surface-base)] shadow-[var(--card-hover-shadow)]">
       <CardContent className="p-0">
         <div className="flex h-[72vh] min-h-[560px]">
-          <aside className="w-[300px] shrink-0 border-r border-[var(--surface-stroke)] bg-[var(--surface-base)]">
+          <aside className="w-[300px] shrink-0 border-r border-[var(--surface-stroke)] bg-[var(--surface-base)]/95 backdrop-blur-sm">
             <div className="flex items-center justify-between border-b border-[var(--surface-stroke)] px-3 py-3">
               <h3 className="text-sm font-semibold text-foreground">Chats</h3>
               <Button
@@ -492,7 +492,7 @@ export function ChatPanel() {
                         type="button"
                         onClick={() => setActiveThreadId(thread.id)}
                         className={cn(
-                          "w-full border px-3 py-2 text-left transition-colors",
+                          "w-full rounded-[var(--radius)] border px-3 py-2 text-left transition-colors",
                           isActive
                             ? "border-[hsl(var(--accent)/0.55)] bg-[hsl(var(--accent)/0.14)]"
                             : "border-[var(--surface-stroke-soft)] bg-[var(--surface-elevated)] hover:border-[var(--surface-stroke)] hover:bg-[var(--surface-base)]"
@@ -538,7 +538,7 @@ export function ChatPanel() {
             </div>
           </aside>
 
-          <div className="flex min-w-0 flex-1 flex-col bg-[var(--surface-elevated)]">
+          <div className="flex min-w-0 flex-1 flex-col bg-[var(--surface-elevated)]/92">
             <AssistantRuntimeProvider runtime={runtime}>
               <ThreadPrimitive.Root className="flex h-full flex-col">
                 <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto p-4">
@@ -555,11 +555,11 @@ export function ChatPanel() {
                   <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
                 </ThreadPrimitive.Viewport>
 
-                <ComposerPrimitive.Root className="border-t border-[var(--surface-stroke)] bg-[var(--surface-base)] p-3">
+                <ComposerPrimitive.Root className="border-t border-[var(--surface-stroke)] bg-[var(--surface-base)]/95 p-3 backdrop-blur-sm">
                   <div className="flex items-end gap-2">
                     <ComposerPrimitive.Input
                       className={cn(
-                        "min-h-[52px] w-full resize-none border border-[var(--surface-stroke)] bg-[var(--surface-inset)] px-3 py-2 text-sm text-foreground outline-none ring-0",
+                        "min-h-[52px] w-full resize-none rounded-[var(--radius)] border border-[var(--surface-stroke)] bg-[hsl(var(--card))] px-3 py-2 text-sm text-foreground outline-none ring-0",
                         "placeholder:text-muted-foreground focus-visible:border-[hsl(var(--accent)/0.6)]"
                       )}
                       placeholder="Type your question..."

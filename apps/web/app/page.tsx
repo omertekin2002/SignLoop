@@ -2,107 +2,131 @@
 
 import { useUser } from "@clerk/nextjs";
 import Link from "next/link";
+import { ArrowRight, FileText, MessageSquareText, Scale, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, FileText, Shield, Zap } from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+
+const features = [
+  {
+    title: "Clause-aware analysis",
+    description: "Extract obligations, detect red flags, and produce actionable summaries in one pass.",
+    icon: FileText,
+  },
+  {
+    title: "Context-driven review",
+    description: "Attach legal references, prior agreements, and policy docs to ground model reasoning.",
+    icon: Scale,
+  },
+  {
+    title: "Persisted legal chat",
+    description: "Use chat threads for follow-up questions while keeping model and personality controls in settings.",
+    icon: MessageSquareText,
+  },
+];
 
 export default function Home() {
   const { isSignedIn } = useUser();
 
-  if (isSignedIn) {
-     // If signed in, redirect logic is handled by middleware usually, but here we can show a "Go to Dashboard"
-     // Or we can just redirect in useEffect. For now, let's just show the button.
-  }
-
   return (
-    <div className="flex flex-col min-h-screen bg-transparent">
-      {/* Hero Section */}
-      <header className="px-4 lg:px-6 h-14 flex items-center border-b bg-background/60 backdrop-blur sticky top-0 z-50">
-        <div className="flex items-center justify-center">
-          <FileText className="h-6 w-6 mr-2 text-primary" />
-          <span className="font-bold text-xl text-foreground">SignLoop</span>
+    <div className="app-page">
+      <header className="app-header">
+        <div className="app-header-inner">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-[var(--radius)] border border-[var(--surface-stroke)] bg-[var(--surface-elevated)] shadow-[var(--card-shadow)]">
+              <ShieldCheck className="h-5 w-5 text-[hsl(var(--accent))]" />
+            </div>
+            <div>
+              <p className="kicker">SignLoop</p>
+              <p className="text-base font-semibold text-foreground">Legal Workbench</p>
+            </div>
+          </div>
+
+          <nav className="flex items-center gap-2 sm:gap-3">
+            <Button asChild variant="ghost" size="sm">
+              <Link href="#features">Features</Link>
+            </Button>
+            <Button asChild variant="outline" size="sm">
+              <Link href="/dashboard">Dashboard</Link>
+            </Button>
+          </nav>
         </div>
-        <nav className="ml-auto flex gap-4 sm:gap-6">
-          <Link className="text-sm font-medium hover:underline underline-offset-4" href="#features">
-            Features
-          </Link>
-          <Link className="text-sm font-medium hover:underline underline-offset-4" href="/dashboard">
-            Dashboard
-          </Link>
-        </nav>
       </header>
-      <main className="flex-1">
-        <section className="w-full py-12 md:py-24 lg:py-32 xl:py-48 relative overflow-hidden">
-             {/* Background decoration from globals.css will handle the glow */}
-          <div className="container px-4 md:px-6 relative z-10">
-            <div className="flex flex-col items-center space-y-4 text-center">
-              <div className="space-y-2">
-                <h1 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl lg:text-6xl/none font-serif">
-                  Understand Contracts in Seconds
-                </h1>
-                <p className="mx-auto max-w-[700px] text-muted-foreground md:text-xl font-sans">
-                  AI-powered legal analysis to spot risks, summarize terms, and sign with confidence.
-                </p>
-              </div>
-              <div className="space-x-4">
+
+      <main className="app-main space-y-8 pb-12">
+        <section className="chrome-pane relative overflow-hidden rounded-[calc(var(--radius)+0.16rem)] p-8 md:p-12">
+          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_18%_22%,hsl(var(--accent)/0.2),transparent_44%),radial-gradient(circle_at_82%_16%,hsl(var(--primary)/0.18),transparent_42%)]" />
+          <div className="relative max-w-3xl space-y-5">
+            <p className="kicker">Contract Intelligence</p>
+            <h1 className="text-4xl leading-tight text-foreground md:text-6xl">
+              Review contracts with precision, not guesswork.
+            </h1>
+            <p className="max-w-2xl text-base text-muted-foreground md:text-lg">
+              SignLoop combines document ingestion, structured analysis workflows, model routing, and chat into one legal workspace.
+            </p>
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <Button asChild size="lg" className="px-8">
                 <Link href={isSignedIn ? "/dashboard" : "/sign-in"}>
-                  <Button size="lg" className="h-11 px-8">
-                    {isSignedIn ? "Go to Dashboard" : "Get Started"} <ArrowRight className="ml-2 h-4 w-4" />
-                  </Button>
+                  {isSignedIn ? "Open Dashboard" : "Get Started"}
+                  <ArrowRight className="h-4 w-4" />
                 </Link>
-                <Link href="#features">
-                  <Button variant="outline" size="lg" className="h-11 px-8">
-                    Learn more
-                  </Button>
-                </Link>
-              </div>
+              </Button>
+              <Button asChild variant="outline" size="lg" className="px-8">
+                <Link href="#features">Explore Features</Link>
+              </Button>
             </div>
           </div>
         </section>
-        
-        <section id="features" className="w-full py-12 md:py-24 lg:py-32 bg-card/50 backdrop-blur-sm border-t border-border">
-          <div className="container px-4 md:px-6">
-            <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="flex flex-col items-center space-y-4 text-center">
-                <div className="p-4 bg-primary/10 rounded-full">
-                  <Zap className="h-6 w-6 text-primary" />
-                </div>
-                <h2 className="text-xl font-bold font-serif">Instant Summaries</h2>
-                <p className="text-muted-foreground font-sans">
-                  Get plain English summaries of complex legal terms immediately.
-                </p>
-              </div>
-              <div className="flex flex-col items-center space-y-4 text-center">
-                <div className="p-4 bg-destructive/10 rounded-full">
-                  <Shield className="h-6 w-6 text-destructive" />
-                </div>
-                <h2 className="text-xl font-bold font-serif">Risk Detection</h2>
-                <p className="text-muted-foreground font-sans">
-                  Automatically flag high-risk clauses and unusual terms.
-                </p>
-              </div>
-              <div className="flex flex-col items-center space-y-4 text-center">
-                <div className="p-4 bg-accent rounded-full">
-                  <FileText className="h-6 w-6 text-accent-foreground" />
-                </div>
-                <h2 className="text-xl font-bold font-serif">Context Aware</h2>
-                <p className="text-muted-foreground font-sans">
-                  Upload related documents to get analysis tailored to your project.
-                </p>
-              </div>
-            </div>
-          </div>
+
+        <section id="features" className="grid gap-4 md:grid-cols-3">
+          {features.map((feature) => {
+            const Icon = feature.icon;
+            return (
+              <Card key={feature.title}>
+                <CardHeader className="space-y-3">
+                  <div className="grid h-10 w-10 place-items-center rounded-[var(--radius)] border border-[var(--surface-stroke)] bg-[var(--surface-elevated)]">
+                    <Icon className="h-5 w-5 text-[hsl(var(--accent))]" />
+                  </div>
+                  <CardTitle className="text-xl">{feature.title}</CardTitle>
+                  <CardDescription>{feature.description}</CardDescription>
+                </CardHeader>
+              </Card>
+            );
+          })}
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-[1.4fr_1fr]">
+          <Card>
+            <CardHeader>
+              <CardTitle>Workflow at a glance</CardTitle>
+              <CardDescription>Built for legal review loops, not one-off prompts.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm text-foreground/90">
+              <p>1. Upload contracts into standalone review or context-rich projects.</p>
+              <p>2. Run structured analysis and retain historical results per contract.</p>
+              <p>3. Switch models/personality from settings without redeploying.</p>
+              <p>4. Continue follow-up in chat with persisted threads.</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Deployment ready</CardTitle>
+              <CardDescription>Runs fully on Vercel-native services.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm text-muted-foreground">
+              <p>Vercel Postgres for app state</p>
+              <p>Vercel Blob for file/object storage</p>
+              <p>Clerk auth + configurable model routing</p>
+            </CardContent>
+          </Card>
         </section>
       </main>
-      <footer className="flex flex-col gap-2 sm:flex-row py-6 w-full shrink-0 items-center px-4 md:px-6 border-t bg-background/80 backdrop-blur-sm">
-        <p className="text-xs text-muted-foreground">© 2026 SignLoop. All rights reserved.</p>
-        <nav className="sm:ml-auto flex gap-4 sm:gap-6">
-          <Link className="text-xs hover:underline underline-offset-4" href="#">
-            Terms of Service
-          </Link>
-          <Link className="text-xs hover:underline underline-offset-4" href="#">
-            Privacy
-          </Link>
-        </nav>
+
+      <footer className="border-t border-[var(--surface-stroke-soft)] bg-[var(--surface-base)] px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-7xl flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <p>© 2026 SignLoop</p>
+          <p>Contract analysis workspace</p>
+        </div>
       </footer>
     </div>
   );

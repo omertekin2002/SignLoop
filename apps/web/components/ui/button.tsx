@@ -5,20 +5,20 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-none border text-[0.78rem] font-semibold uppercase tracking-[0.13em] leading-none ring-offset-background transition-[transform,box-shadow,background-color,border-color,color] duration-200 ease-out enabled:hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:transform-none [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius)] border text-[0.78rem] font-semibold uppercase tracking-[0.12em] leading-none ring-offset-background transition-[transform,box-shadow,background-color,border-color,color,opacity] duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:transform-none [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
         default:
-          "border-transparent bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))] shadow-[var(--button-accent-shadow)] enabled:hover:bg-[hsl(var(--accent)/0.9)] enabled:hover:shadow-[var(--button-accent-shadow-hover)]",
+          "border-transparent bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))] shadow-[var(--button-accent-shadow)] enabled:hover:-translate-y-0.5 enabled:hover:bg-[hsl(var(--accent)/0.9)] enabled:hover:shadow-[var(--button-accent-shadow-hover)]",
         destructive:
-          "border-destructive bg-destructive text-destructive-foreground shadow-[0_8px_20px_rgba(127,29,29,0.2)] enabled:hover:bg-destructive/90 enabled:hover:shadow-[0_12px_24px_rgba(127,29,29,0.3)]",
+          "border-destructive bg-destructive text-destructive-foreground shadow-[0_10px_22px_-12px_rgba(127,29,29,0.75)] enabled:hover:-translate-y-0.5 enabled:hover:bg-destructive/90 enabled:hover:shadow-[0_16px_28px_-14px_rgba(127,29,29,0.85)]",
         outline:
-          "border-[var(--surface-stroke)] bg-[var(--surface-elevated)] text-foreground shadow-[var(--card-shadow)] enabled:hover:border-[hsl(var(--accent)/0.62)] enabled:hover:bg-[hsl(var(--accent)/0.1)]",
+          "border-[var(--surface-stroke)] bg-[var(--surface-elevated)] text-foreground shadow-[0_8px_18px_-12px_rgba(18,24,37,0.45)] enabled:hover:-translate-y-0.5 enabled:hover:border-[hsl(var(--accent)/0.52)] enabled:hover:bg-[hsl(var(--accent)/0.1)]",
         secondary:
-          "border-[var(--surface-stroke-soft)] bg-secondary/75 text-secondary-foreground shadow-[var(--card-shadow)] enabled:hover:border-[var(--surface-stroke)] enabled:hover:bg-secondary",
+          "border-[var(--surface-stroke-soft)] bg-secondary/85 text-secondary-foreground shadow-[0_8px_18px_-12px_rgba(18,24,37,0.38)] enabled:hover:-translate-y-0.5 enabled:hover:border-[var(--surface-stroke)] enabled:hover:bg-secondary",
         ghost:
-          "border-transparent bg-transparent text-foreground shadow-none enabled:hover:bg-[var(--surface-inset)]",
+          "border-transparent bg-transparent text-foreground shadow-none enabled:hover:bg-[var(--surface-inset)] enabled:hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

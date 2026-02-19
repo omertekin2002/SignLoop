@@ -6,7 +6,7 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
   <div
     ref={ref}
     className={cn(
-      "relative overflow-hidden rounded-none border border-[color:var(--card-border-strong)] bg-[var(--card-surface)] text-card-foreground shadow-[var(--card-shadow)] [box-shadow:var(--card-shadow),inset_0_1px_0_rgba(255,255,255,0.07)] transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-[linear-gradient(90deg,transparent,rgba(205,120,80,0.6),transparent)] hover:-translate-y-0.5 hover:border-[color:var(--surface-stroke-strong)] hover:[box-shadow:var(--card-hover-shadow),inset_0_1px_0_rgba(255,255,255,0.1)]",
+      "relative overflow-hidden rounded-[calc(var(--radius)+0.1rem)] border border-[color:var(--card-border-strong)] bg-[var(--card-surface)] text-card-foreground shadow-[var(--card-shadow)] [box-shadow:var(--card-shadow),inset_0_1px_0_rgba(255,255,255,0.08)] transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-[linear-gradient(90deg,transparent,rgba(230,134,93,0.56),transparent)] hover:-translate-y-0.5 hover:border-[color:var(--surface-stroke-strong)] hover:[box-shadow:var(--card-hover-shadow),inset_0_1px_0_rgba(255,255,255,0.14)]",
       className,
     )}
     {...props}

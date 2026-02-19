@@ -22,9 +22,9 @@ export default {
         sm: ["0.9375rem", { lineHeight: "1.375rem" }],
       },
       fontFamily: {
-        sans: ["var(--font-inter)", '"Inter"', "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "sans-serif"],
-        serif: ["var(--font-playfair)", '"Playfair Display"', '"Times New Roman"', "serif"],
-        mono: ['"Fira Code"', '"SFMono-Regular"', "Menlo", "Monaco", "Consolas", '"Liberation Mono"', '"Courier New"', "monospace"],
+        sans: ["var(--font-manrope)", '"Manrope"', "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "sans-serif"],
+        serif: ["var(--font-fraunces)", '"Fraunces"', "Georgia", "serif"],
+        mono: ['"IBM Plex Mono"', '"SFMono-Regular"', "Menlo", "Monaco", "Consolas", '"Liberation Mono"', '"Courier New"', "monospace"],
       },
       colors: {
         border: "hsl(var(--border))",

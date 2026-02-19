@@ -1,21 +1,21 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
-import { Inter, Playfair_Display } from "next/font/google";
+import { Fraunces, Manrope } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import Providers from "@/components/providers";
 import { PrivacyNotice } from "@/components/privacy-notice";
 import "./globals.css";
 
-const inter = Inter({
+const manrope = Manrope({
   subsets: ["latin"],
   display: "swap",
-  variable: "--font-inter",
+  variable: "--font-manrope",
 });
 
-const playfair = Playfair_Display({
+const fraunces = Fraunces({
   subsets: ["latin"],
   display: "swap",
-  variable: "--font-playfair",
+  variable: "--font-fraunces",
 });
 
 export const metadata: Metadata = {
@@ -30,7 +30,7 @@ export default function RootLayout({
 }>) {
   return (
     <ClerkProvider>
-      <html lang="en" className={`${inter.variable} ${playfair.variable}`} suppressHydrationWarning>
+      <html lang="en" className={`${manrope.variable} ${fraunces.variable}`} suppressHydrationWarning>
         <body className="font-sans antialiased">
           <div id="dynamic-bg" aria-hidden="true">
             <div className="bg-layer aurora-layer" />
