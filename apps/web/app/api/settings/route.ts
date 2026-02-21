@@ -24,9 +24,13 @@ export async function GET() {
   }
 
   const settings = await getUserSettingsByUserId(userId);
+  const resolvedPrimaryModel =
+    settings?.primaryModel && isAllowedPrimaryModel(settings.primaryModel)
+      ? settings.primaryModel
+      : null;
 
   return NextResponse.json({
-    primaryModel: settings?.primaryModel ?? null,
+    primaryModel: resolvedPrimaryModel,
     personality:
       settings?.personality && isAllowedPersonalityMode(settings.personality)
         ? settings.personality

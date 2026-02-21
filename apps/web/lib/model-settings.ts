@@ -1,11 +1,10 @@
 export const PRIMARY_MODEL_OPTIONS = [
   "claude-opus-4-6-thinking",
-  "claude-sonnet-4-5",
-  "claude-sonnet-4-5-thinking",
+  "claude-sonnet-4-6",
   "gemini-2.5-flash",
   "gemini-2.5-flash-lite",
   "gemini-3-flash",
-  "gemini-3-pro-high",
+  "gemini-3.1-pro-high",
   "gpt-5",
   "gpt-5.1",
   "gpt-5.2",

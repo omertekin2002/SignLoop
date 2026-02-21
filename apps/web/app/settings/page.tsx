@@ -67,7 +67,7 @@ export default function SettingsPage() {
   );
   const effectiveModel = useMemo(() => {
     if (selectedModel) return selectedModel;
-    if (data?.primaryModel) return data.primaryModel;
+    if (data?.primaryModel && availableModels.includes(data.primaryModel)) return data.primaryModel;
     return availableModels[0] ?? "";
   }, [availableModels, data?.primaryModel, selectedModel]);
   const effectivePersonality = useMemo(() => {
@@ -77,7 +77,7 @@ export default function SettingsPage() {
   }, [availablePersonalities, data?.personality, selectedPersonality]);
 
   useEffect(() => {
-    if (data?.primaryModel) {
+    if (data?.primaryModel && availableModels.includes(data.primaryModel)) {
       setSelectedModel((current) => current || data.primaryModel || "");
       return;
     }
@@ -130,7 +130,10 @@ export default function SettingsPage() {
     },
   });
 
-  const initialModel = data?.primaryModel ?? availableModels[0] ?? "";
+  const initialModel =
+    data?.primaryModel && availableModels.includes(data.primaryModel)
+      ? data.primaryModel
+      : availableModels[0] ?? "";
   const hasModelChanges = Boolean(effectiveModel && effectiveModel !== initialModel);
   const initialPersonality =
     data?.personality ?? availablePersonalities[1] ?? availablePersonalities[0] ?? "signloop-assistant";
