@@ -84,14 +84,6 @@ const Dashboard = () => {
 
     // Filter standalone contracts (not part of a project)
     const standaloneContracts = contracts?.filter(c => !c.projectId) || [];
-    const analyzedStandaloneCount = standaloneContracts.filter(
-        (contract) => contract.status?.toUpperCase() === "ANALYZED"
-    ).length;
-    const totalContextDocs = (projects || []).reduce(
-        (sum, project) => sum + (project.contextDocuments?.length || 0),
-        0
-    );
-
     return (
         <div className="app-page">
             <header className="app-header">
@@ -111,35 +103,6 @@ const Dashboard = () => {
                 </div>
             </header>
             <main className="app-main">
-                <section className="mb-6 grid gap-3 md:grid-cols-3">
-                    <Card className="bg-[var(--surface-elevated)]">
-                        <CardHeader className="pb-2">
-                            <CardTitle className="text-sm">Standalone Contracts</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <p className="text-3xl font-semibold">{standaloneContracts.length}</p>
-                            <p className="text-xs text-muted-foreground">Direct uploads not tied to projects</p>
-                        </CardContent>
-                    </Card>
-                    <Card className="bg-[var(--surface-elevated)]">
-                        <CardHeader className="pb-2">
-                            <CardTitle className="text-sm">Analyzed Files</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <p className="text-3xl font-semibold">{analyzedStandaloneCount}</p>
-                            <p className="text-xs text-muted-foreground">Standalone contracts with completed analysis</p>
-                        </CardContent>
-                    </Card>
-                    <Card className="bg-[var(--surface-elevated)]">
-                        <CardHeader className="pb-2">
-                            <CardTitle className="text-sm">Context Library</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <p className="text-3xl font-semibold">{totalContextDocs}</p>
-                            <p className="text-xs text-muted-foreground">Reference documents across all projects</p>
-                        </CardContent>
-                    </Card>
-                </section>
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
                     <div className="chrome-pane mb-6 flex flex-col justify-between gap-3 px-3 py-3 sm:flex-row sm:items-center">
                         <TabsList className="h-auto bg-transparent p-0">
