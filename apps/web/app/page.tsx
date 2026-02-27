@@ -4,7 +4,7 @@ import { useUser } from "@clerk/nextjs";
 import Link from "next/link";
 import { ArrowRight, FileText, MessageSquareText, Scale, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const features = [
   {
@@ -94,32 +94,6 @@ export default function Home() {
           })}
         </section>
 
-        <section className="grid gap-4 md:grid-cols-[1.4fr_1fr]">
-          <Card>
-            <CardHeader>
-              <CardTitle>Workflow at a glance</CardTitle>
-              <CardDescription>Built for legal review loops, not one-off prompts.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm text-foreground/90">
-              <p>1. Upload contracts into standalone review or context-rich projects.</p>
-              <p>2. Run structured analysis and retain historical results per contract.</p>
-              <p>3. Switch models/personality from settings without redeploying.</p>
-              <p>4. Continue follow-up in chat with persisted threads.</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Deployment ready</CardTitle>
-              <CardDescription>Runs fully on Vercel-native services.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm text-muted-foreground">
-              <p>Vercel Postgres for app state</p>
-              <p>Vercel Blob for file/object storage</p>
-              <p>Clerk auth + configurable model routing</p>
-            </CardContent>
-          </Card>
-        </section>
       </main>
 
       <footer className="border-t border-[var(--surface-stroke-soft)] bg-[var(--surface-base)] px-4 py-6 sm:px-6 lg:px-8">
