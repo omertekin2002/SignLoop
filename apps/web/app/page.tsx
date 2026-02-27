@@ -2,7 +2,7 @@
 
 import { useUser } from "@clerk/nextjs";
 import Link from "next/link";
-import { ArrowRight, FileText, MessageSquareText, Scale, ShieldCheck } from "lucide-react";
+import { ArrowRight, FileText, MessageSquareText, Scale } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -31,15 +31,7 @@ export default function Home() {
     <div className="app-page">
       <header className="app-header">
         <div className="app-header-inner">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-[var(--radius)] border border-[var(--surface-stroke)] bg-[var(--surface-elevated)] shadow-[var(--card-shadow)]">
-              <ShieldCheck className="h-5 w-5 text-[hsl(var(--accent))]" />
-            </div>
-            <div>
-              <p className="kicker">SignLoop</p>
-              <p className="text-base font-semibold text-foreground">Legal Workbench</p>
-            </div>
-          </div>
+          <p className="text-base font-semibold tracking-[0.06em] text-foreground">SignLoop</p>
 
           <nav className="flex items-center gap-2 sm:gap-3">
             <Button asChild variant="ghost" size="sm">
