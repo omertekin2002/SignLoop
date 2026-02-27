@@ -68,8 +68,8 @@
     --bg-grid-line: rgba(17, 17, 17, 0.08);
     --bg-noise-dot: rgba(17, 17, 17, 0.045);
 
-    --dynamic-bg-grid-opacity: 0.7;
-    --dynamic-bg-noise-opacity: 0.36;
+    --dynamic-bg-grid-opacity: 0.52;
+    --dynamic-bg-noise-opacity: 0.14;
     --dynamic-bg-grid-size: 44px;
     --dynamic-bg-noise-size: 3px;
   }
@@ -137,8 +137,8 @@
     --bg-grid-line: rgba(236, 236, 233, 0.12);
     --bg-noise-dot: rgba(236, 236, 233, 0.08);
 
-    --dynamic-bg-grid-opacity: 0.75;
-    --dynamic-bg-noise-opacity: 0.22;
+    --dynamic-bg-grid-opacity: 0.58;
+    --dynamic-bg-noise-opacity: 0.1;
   }
 }
 
@@ -193,11 +193,12 @@
 
   #dynamic-bg .aurora-layer {
     background-image:
-      repeating-linear-gradient(90deg, transparent 0, transparent 46px, var(--bg-grid-line) 46px, var(--bg-grid-line) 47px),
       radial-gradient(circle at 16% 18%, var(--bg-glow-1) 0%, transparent 38%),
-      radial-gradient(circle at 82% 62%, var(--bg-glow-2) 0%, transparent 42%);
-    opacity: 0.54;
-    animation: stripeShift 28s linear infinite;
+      radial-gradient(circle at 82% 62%, var(--bg-glow-2) 0%, transparent 42%),
+      radial-gradient(circle at 48% 88%, var(--bg-glow-3) 0%, transparent 50%);
+    opacity: 0.42;
+    filter: blur(18px);
+    animation: auroraDrift 32s ease-in-out infinite alternate;
   }
 
   #dynamic-bg .glow-orb {
@@ -259,13 +260,13 @@
   }
 }
 
-@keyframes stripeShift {
+@keyframes auroraDrift {
   0% {
-    transform: translate3d(0, 0, 0);
+    transform: translate3d(-2%, -1%, 0) scale(1);
   }
 
   100% {
-    transform: translate3d(-42px, 0, 0);
+    transform: translate3d(2%, 2%, 0) scale(1.04);
   }
 }
 
