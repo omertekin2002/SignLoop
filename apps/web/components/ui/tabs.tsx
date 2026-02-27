@@ -12,7 +12,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-11 items-center justify-center gap-1 rounded-[var(--radius)] border border-[var(--surface-stroke)] bg-[var(--surface-base)] p-1 text-muted-foreground shadow-[0_10px_20px_-16px_rgba(20,26,40,0.6)] backdrop-blur-sm",
+      "inline-flex h-11 items-center justify-center gap-1 rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-muted-foreground shadow-[4px_4px_0_hsl(var(--border))]",
       className,
     )}
     {...props}
@@ -27,7 +27,7 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-[calc(var(--radius)-0.08rem)] border border-transparent px-3.5 py-1.5 text-sm font-semibold ring-offset-background transition-all data-[state=active]:border-[var(--surface-stroke)] data-[state=active]:bg-[var(--surface-elevated)] data-[state=active]:text-foreground data-[state=active]:shadow-[0_10px_24px_-18px_rgba(18,24,37,0.8)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+      "inline-flex items-center justify-center whitespace-nowrap rounded-[calc(var(--radius)-0.08rem)] border border-transparent px-3.5 py-1.5 text-sm font-semibold ring-offset-background transition-all data-[state=active]:border-[hsl(var(--border))] data-[state=active]:bg-[hsl(var(--background))] data-[state=active]:text-foreground data-[state=active]:shadow-[2px_2px_0_hsl(var(--border))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
       className,
     )}
     {...props}

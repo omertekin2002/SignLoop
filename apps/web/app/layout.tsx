@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
-import { Fraunces, Manrope } from "next/font/google";
+import { Fraunces, Space_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import Providers from "@/components/providers";
 import { PrivacyNotice } from "@/components/privacy-notice";
 import "./globals.css";
 
-const manrope = Manrope({
+const spaceMono = Space_Mono({
   subsets: ["latin"],
+  weight: ["400", "700"],
   display: "swap",
-  variable: "--font-manrope",
+  variable: "--font-space-mono",
 });
 
 const fraunces = Fraunces({
@@ -30,7 +31,7 @@ export default function RootLayout({
 }>) {
   return (
     <ClerkProvider>
-      <html lang="en" className={`${manrope.variable} ${fraunces.variable}`} suppressHydrationWarning>
+      <html lang="en" className={`${spaceMono.variable} ${fraunces.variable}`} suppressHydrationWarning>
         <body className="font-sans antialiased">
           <div id="dynamic-bg" aria-hidden="true">
             <div className="bg-layer aurora-layer" />
