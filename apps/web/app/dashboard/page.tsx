@@ -1,327 +1,582 @@
 'use client';
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUser, useClerk } from "@clerk/nextjs";
+import { format } from "date-fns";
+import {
+  Book,
+  Calendar,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  FileText,
+  FolderOpen,
+  LogOut,
+  MessagesSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+  Settings,
+  Trash2,
+} from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, FileText, Calendar, ChevronRight, Trash2, FolderOpen, Book, MessagesSquare } from "lucide-react";
 import { UploadDialog } from "@/components/upload-dialog";
 import { NewProjectDialog } from "@/components/new-project-dialog";
 import { ChatPanel } from "@/components/chat-panel";
-import { format } from "date-fns";
+
+type DashboardTab = "contracts" | "projects" | "chat";
 
 interface Contract {
-    id: string;
-    title: string;
-    status: string;
-    createdAt: string;
-    updatedAt: string;
-    projectId?: string;
+  id: string;
+  title: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  projectId?: string;
 }
 
 interface Project {
-    id: string;
-    title: string;
-    description?: string;
-    status: string;
-    createdAt: string;
-    contracts?: Contract[];
-    contextDocuments?: { id: string }[];
+  id: string;
+  title: string;
+  description?: string;
+  status: string;
+  createdAt: string;
+  contracts?: Contract[];
+  contextDocuments?: { id: string }[];
 }
 
+interface ChatThreadSummary {
+  id: string;
+  title: string;
+  updatedAt: string;
+  lastMessagePreview: string | null;
+  messageCount: number;
+}
+
+type SidebarOpenState = Record<DashboardTab, boolean>;
+
+const tabLabels: Record<DashboardTab, string> = {
+  contracts: "Contracts",
+  projects: "Projects",
+  chat: "Chat",
+};
+
 const Dashboard = () => {
-    const { user } = useUser();
-    const { signOut } = useClerk();
-    const queryClient = useQueryClient();
-    const [contractToDelete, setContractToDelete] = useState<Contract | null>(null);
-    const [activeTab, setActiveTab] = useState("contracts");
+  const { user } = useUser();
+  const { signOut } = useClerk();
+  const queryClient = useQueryClient();
+  const [contractToDelete, setContractToDelete] = useState<Contract | null>(null);
+  const [activeTab, setActiveTab] = useState<DashboardTab>("contracts");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [openSections, setOpenSections] = useState<SidebarOpenState>({
+    contracts: true,
+    projects: false,
+    chat: false,
+  });
+  const [selectedChatThreadId, setSelectedChatThreadId] = useState<string | null>(null);
 
-    const { data: contracts, isLoading: loadingContracts } = useQuery({
-        queryKey: ["contracts"],
-        queryFn: async () => {
-            const response = await apiClient.get<Contract[]>("/contracts");
-            return response.data || [];
-        },
-    });
+  const { data: contracts, isLoading: loadingContracts } = useQuery({
+    queryKey: ["contracts"],
+    queryFn: async () => {
+      const response = await apiClient.get<Contract[]>("/contracts");
+      return response.data || [];
+    },
+  });
 
-    const { data: projects, isLoading: loadingProjects } = useQuery({
-        queryKey: ["projects"],
-        queryFn: async () => {
-            const response = await apiClient.get<{ data: Project[] }>("/projects");
-            return response.data.data || [];
-        },
-    });
+  const { data: projects, isLoading: loadingProjects } = useQuery({
+    queryKey: ["projects"],
+    queryFn: async () => {
+      const response = await apiClient.get<{ data: Project[] }>("/projects");
+      return response.data.data || [];
+    },
+  });
 
-    const deleteContractMutation = useMutation({
-        mutationFn: async (contractId: string) => {
-            await apiClient.delete(`/contracts/${contractId}`);
-        },
-        onSuccess: () => {
-            setContractToDelete(null);
-            queryClient.invalidateQueries({ queryKey: ["contracts"] });
-        },
-        onError: (error: unknown) => {
-            console.error(error);
-            setContractToDelete(null);
-        }
-    });
+  const { data: chatThreads, isLoading: loadingChatThreads } = useQuery({
+    queryKey: ["chat-threads"],
+    queryFn: async () => {
+      const response = await fetch("/api/chat/threads");
+      const payload = (await response.json().catch(() => null)) as
+        | { data?: ChatThreadSummary[]; error?: string }
+        | null;
 
-    // Filter standalone contracts (not part of a project)
-    const standaloneContracts = contracts?.filter(c => !c.projectId) || [];
-    return (
-        <div className="app-page">
-            <header className="app-header">
-                <div className="app-header-inner">
-                    <h1 className="app-title">Dashboard</h1>
-                    <div className="flex items-center gap-3">
-                        <Button asChild variant="outline">
-                            <Link href="/settings">Settings</Link>
-                        </Button>
-                        <p className="hidden text-sm text-muted-foreground md:block">
-                            Welcome, {user?.firstName}
-                        </p>
-                        <Button variant="outline" onClick={() => signOut()}>
-                            Sign out
-                        </Button>
-                    </div>
-                </div>
-            </header>
-            <main className="app-main">
-                <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                    <div className="chrome-pane mb-6 flex flex-col justify-between gap-3 px-3 py-3 sm:flex-row sm:items-center">
-                        <TabsList className="h-auto bg-transparent p-0">
-                            <TabsTrigger value="contracts" className="gap-2">
-                                <FileText className="h-4 w-4" />
-                                Contracts
-                            </TabsTrigger>
-                            <TabsTrigger value="projects" className="gap-2">
-                                <FolderOpen className="h-4 w-4" />
-                                Projects
-                            </TabsTrigger>
-                            <TabsTrigger value="chat" className="gap-2">
-                                <MessagesSquare className="h-4 w-4" />
-                                Chat
-                            </TabsTrigger>
-                        </TabsList>
-                        <div className="flex gap-2 self-end sm:self-auto">
-                            {activeTab === "contracts" ? (
-                                <UploadDialog>
-                                    <Button>
-                                        <Plus className="mr-2 h-4 w-4" />
-                                        New Contract
-                                    </Button>
-                                </UploadDialog>
-                            ) : activeTab === "projects" ? (
-                                <NewProjectDialog>
-                                    <Button>
-                                        <Plus className="mr-2 h-4 w-4" />
-                                        New Project
-                                    </Button>
-                                </NewProjectDialog>
-                            ) : null}
-                        </div>
-                    </div>
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to fetch chat threads.");
+      }
 
-                    {/* Contracts Tab */}
-                    <TabsContent value="contracts">
-                        {loadingContracts ? (
-                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                                {[1, 2, 3].map((i) => (
-                                    <Skeleton key={i} className="h-40 w-full" />
-                                ))}
-                            </div>
-                        ) : standaloneContracts.length === 0 ? (
-                            <div className="chrome-pane text-center py-12">
-                                <FileText className="mx-auto h-12 w-12 text-muted-foreground" />
-                                <h3 className="mt-2 text-sm font-semibold text-foreground">No contracts</h3>
-                                <p className="mt-1 text-sm text-muted-foreground">
-                                    Upload a contract for quick analysis, or create a project for context-aware analysis.
-                                </p>
-                                <div className="mt-6 flex justify-center gap-2">
-                                    <UploadDialog>
-                                        <Button>
-                                            <Plus className="mr-2 h-4 w-4" />
-                                            New Contract
-                                        </Button>
-                                    </UploadDialog>
-                                    <NewProjectDialog>
-                                        <Button variant="outline">
-                                            <FolderOpen className="mr-2 h-4 w-4" />
-                                            New Project
-                                        </Button>
-                                    </NewProjectDialog>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                                {standaloneContracts.map((contract) => (
-                                    <Link key={contract.id} href={`/contracts/${contract.id}`}>
-                                        <Card className="cursor-pointer h-full">
-                                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                                <CardTitle className="text-sm font-medium">
-                                                    {contract.title}
-                                                </CardTitle>
-                                                <div className="flex items-center gap-2">
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-8 w-8"
-                                                        title="Delete contract"
-                                                        onClick={(e) => {
-                                                            e.preventDefault();
-                                                            e.stopPropagation();
-                                                            setContractToDelete(contract);
-                                                        }}
-                                                    >
-                                                        <Trash2 className="h-4 w-4 text-muted-foreground" />
-                                                    </Button>
-                                                    <FileText className="h-4 w-4 text-muted-foreground" />
-                                                </div>
-                                            </CardHeader>
-                                            <CardContent>
-                                                <div className="flex justify-between items-end mt-4">
-                                                    <div className="space-y-1">
-                                                        <div className="flex items-center text-xs text-muted-foreground">
-                                                            <Calendar className="mr-1 h-3 w-3" />
-                                                            {format(new Date(contract.createdAt), "MMM d, yyyy")}
-                                                        </div>
-                                                        <Badge variant="secondary" className="mt-2">
-                                                            {contract.status || "DRAFT"}
-                                                        </Badge>
-                                                    </div>
-                                                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                                                </div>
-                                            </CardContent>
-                                        </Card>
-                                    </Link>
-                                ))}
-                            </div>
-                        )}
-                    </TabsContent>
+      return payload?.data || [];
+    },
+  });
 
-                    {/* Projects Tab */}
-                    <TabsContent value="projects">
-                        {loadingProjects ? (
-                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                                {[1, 2, 3].map((i) => (
-                                    <Skeleton key={i} className="h-40 w-full" />
-                                ))}
-                            </div>
-                        ) : !projects || projects.length === 0 ? (
-                            <div className="chrome-pane text-center py-12">
-                                <FolderOpen className="mx-auto h-12 w-12 text-muted-foreground" />
-                                <h3 className="mt-2 text-sm font-semibold text-foreground">No projects</h3>
-                                <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">
-                                    Projects let you analyze contracts with legal context.
-                                    Upload governing laws, prior contracts, or other reference documents.
-                                </p>
-                                <div className="mt-6">
-                                    <NewProjectDialog>
-                                        <Button>
-                                            <Plus className="mr-2 h-4 w-4" />
-                                            New Project
-                                        </Button>
-                                    </NewProjectDialog>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                                {projects.map((project) => (
-                                    <Link key={project.id} href={`/projects/${project.id}`}>
-                                        <Card className="cursor-pointer h-full border-l-2 border-l-[hsl(var(--accent)/0.8)]">
-                                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                                <CardTitle className="text-sm font-medium">
-                                                    {project.title}
-                                                </CardTitle>
-                                                <FolderOpen className="h-4 w-4 text-primary" />
-                                            </CardHeader>
-                                            <CardContent>
-                                                {project.description && (
-                                                    <p className="text-xs text-muted-foreground line-clamp-2 mb-3">
-                                                        {project.description}
-                                                    </p>
-                                                )}
-                                                <div className="flex gap-2 mb-3">
-                                                    <Badge variant="outline" className="text-xs">
-                                                        <FileText className="mr-1 h-3 w-3" />
-                                                        {project.contracts?.length || 0} contract{(project.contracts?.length || 0) !== 1 ? 's' : ''}
-                                                    </Badge>
-                                                    <Badge variant="outline" className="text-xs">
-                                                        <Book className="mr-1 h-3 w-3" />
-                                                        {project.contextDocuments?.length || 0} context
-                                                    </Badge>
-                                                </div>
-                                                <div className="flex justify-between items-end">
-                                                    <div className="flex items-center text-xs text-muted-foreground">
-                                                        <Calendar className="mr-1 h-3 w-3" />
-                                                        {format(new Date(project.createdAt), "MMM d, yyyy")}
-                                                    </div>
-                                                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                                                </div>
-                                            </CardContent>
-                                        </Card>
-                                    </Link>
-                                ))}
-                            </div>
-                        )}
-                    </TabsContent>
+  useEffect(() => {
+    if (!chatThreads?.length) return;
+    if (selectedChatThreadId) return;
+    setSelectedChatThreadId(chatThreads[0]!.id);
+  }, [chatThreads, selectedChatThreadId]);
 
-                    {/* Chat Tab */}
-                    <TabsContent value="chat">
-                        <ChatPanel />
-                    </TabsContent>
-                </Tabs>
-            </main>
+  const deleteContractMutation = useMutation({
+    mutationFn: async (contractId: string) => {
+      await apiClient.delete(`/contracts/${contractId}`);
+    },
+    onSuccess: () => {
+      setContractToDelete(null);
+      queryClient.invalidateQueries({ queryKey: ["contracts"] });
+    },
+    onError: (error: unknown) => {
+      console.error(error);
+      setContractToDelete(null);
+    },
+  });
 
-            <AlertDialog
-                open={!!contractToDelete}
-                onOpenChange={(open) => {
-                    if (!open) setContractToDelete(null);
-                }}
-            >
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>Delete contract?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            This will permanently delete{" "}
-                            <span className="font-medium">{contractToDelete?.title}</span> and all associated analyses.
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel disabled={deleteContractMutation.isPending}>
-                            Cancel
-                        </AlertDialogCancel>
-                        <AlertDialogAction
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            disabled={deleteContractMutation.isPending || !contractToDelete}
-                            onClick={() => {
-                                if (!contractToDelete) return;
-                                deleteContractMutation.mutate(contractToDelete.id);
-                            }}
+  const standaloneContracts = contracts?.filter((contract) => !contract.projectId) || [];
+
+  const setSectionOpen = (section: DashboardTab, open: boolean) => {
+    setOpenSections((previous) => ({
+      ...previous,
+      [section]: open,
+    }));
+  };
+
+  return (
+    <div className="app-page">
+      <div className="flex min-h-screen">
+        <aside
+          className={cn(
+            "m-4 mr-0 flex shrink-0 flex-col overflow-hidden rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--card-shadow)] transition-[width] duration-200",
+            sidebarOpen ? "w-80" : "w-20",
+          )}
+        >
+          <div className="border-b-2 border-[hsl(var(--border))] p-2.5">
+            <div className={cn("flex items-center", sidebarOpen ? "justify-between gap-2" : "justify-center")}>
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-1.5"
+                onClick={() => setActiveTab("contracts")}
+              >
+                <span className="grid h-6 w-6 place-items-center rounded-[calc(var(--radius)-0.05rem)] border border-[hsl(var(--border))]">
+                  <span className="relative h-4 w-4 rounded-[4px] border-2 border-[hsl(var(--border))]">
+                    <span className="absolute left-1/2 top-0 h-full w-0 border-l-2 border-[hsl(var(--border))] -translate-x-1/2" />
+                  </span>
+                </span>
+                {sidebarOpen ? <span className="text-xs font-semibold uppercase tracking-[0.12em]">SignLoop</span> : null}
+              </button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className={cn("h-9 w-9", !sidebarOpen && "hidden")}
+                onClick={() => setSidebarOpen((previous) => !previous)}
+                aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+              >
+                {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+              </Button>
+            </div>
+
+            {!sidebarOpen ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="mt-2 h-9 w-9"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Expand sidebar"
+              >
+                <PanelLeftOpen className="h-4 w-4" />
+              </Button>
+            ) : null}
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-2">
+            <div className="space-y-2">
+              <Collapsible open={openSections.contracts} onOpenChange={(open) => setSectionOpen("contracts", open)}>
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("contracts")}
+                    className={cn(
+                      "flex w-full items-center rounded-[var(--radius)] border-2 border-[hsl(var(--border))] px-2 py-2 text-left text-sm font-semibold transition-colors",
+                      activeTab === "contracts" ? "bg-[hsl(var(--accent)/0.22)]" : "bg-[hsl(var(--background))]",
+                      !sidebarOpen && "justify-center",
+                    )}
+                  >
+                    <span className={cn("flex items-center gap-2", !sidebarOpen && "justify-center")}>
+                      <FileText className="h-4 w-4" />
+                      {sidebarOpen ? <span>Contracts</span> : null}
+                    </span>
+                    {sidebarOpen ? (
+                      openSections.contracts ? (
+                        <ChevronUp className="ml-auto h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="ml-auto h-4 w-4" />
+                      )
+                    ) : null}
+                  </button>
+                </CollapsibleTrigger>
+                {sidebarOpen ? (
+                  <CollapsibleContent className="mt-1 space-y-1 pl-2">
+                    {loadingContracts ? (
+                      <p className="px-2 py-1 text-xs text-muted-foreground">Loading contracts...</p>
+                    ) : standaloneContracts.length === 0 ? (
+                      <p className="px-2 py-1 text-xs text-muted-foreground">No standalone contracts</p>
+                    ) : (
+                      standaloneContracts.map((contract) => (
+                        <Link
+                          key={contract.id}
+                          href={`/contracts/${contract.id}`}
+                          className="block rounded-[calc(var(--radius)-0.05rem)] border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--background)/0.75)] px-2 py-1.5 text-xs hover:border-[hsl(var(--border))] hover:bg-[hsl(var(--secondary))]"
                         >
-                            {deleteContractMutation.isPending ? "Deleting..." : "Delete"}
-                        </AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
-        </div>
-    );
+                          <p className="truncate font-medium text-foreground">{contract.title}</p>
+                          <p className="mt-0.5 text-[11px] text-muted-foreground">{contract.status || "DRAFT"}</p>
+                        </Link>
+                      ))
+                    )}
+                  </CollapsibleContent>
+                ) : null}
+              </Collapsible>
+
+              <Collapsible open={openSections.projects} onOpenChange={(open) => setSectionOpen("projects", open)}>
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("projects")}
+                    className={cn(
+                      "flex w-full items-center rounded-[var(--radius)] border-2 border-[hsl(var(--border))] px-2 py-2 text-left text-sm font-semibold transition-colors",
+                      activeTab === "projects" ? "bg-[hsl(var(--accent)/0.22)]" : "bg-[hsl(var(--background))]",
+                      !sidebarOpen && "justify-center",
+                    )}
+                  >
+                    <span className={cn("flex items-center gap-2", !sidebarOpen && "justify-center")}>
+                      <FolderOpen className="h-4 w-4" />
+                      {sidebarOpen ? <span>Projects</span> : null}
+                    </span>
+                    {sidebarOpen ? (
+                      openSections.projects ? (
+                        <ChevronUp className="ml-auto h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="ml-auto h-4 w-4" />
+                      )
+                    ) : null}
+                  </button>
+                </CollapsibleTrigger>
+                {sidebarOpen ? (
+                  <CollapsibleContent className="mt-1 space-y-1 pl-2">
+                    {loadingProjects ? (
+                      <p className="px-2 py-1 text-xs text-muted-foreground">Loading projects...</p>
+                    ) : !projects || projects.length === 0 ? (
+                      <p className="px-2 py-1 text-xs text-muted-foreground">No projects yet</p>
+                    ) : (
+                      projects.map((project) => (
+                        <Link
+                          key={project.id}
+                          href={`/projects/${project.id}`}
+                          className="block rounded-[calc(var(--radius)-0.05rem)] border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--background)/0.75)] px-2 py-1.5 text-xs hover:border-[hsl(var(--border))] hover:bg-[hsl(var(--secondary))]"
+                        >
+                          <p className="truncate font-medium text-foreground">{project.title}</p>
+                          <p className="mt-0.5 text-[11px] text-muted-foreground">
+                            {project.contracts?.length || 0} contract{(project.contracts?.length || 0) === 1 ? "" : "s"}
+                          </p>
+                        </Link>
+                      ))
+                    )}
+                  </CollapsibleContent>
+                ) : null}
+              </Collapsible>
+
+              <Collapsible open={openSections.chat} onOpenChange={(open) => setSectionOpen("chat", open)}>
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("chat")}
+                    className={cn(
+                      "flex w-full items-center rounded-[var(--radius)] border-2 border-[hsl(var(--border))] px-2 py-2 text-left text-sm font-semibold transition-colors",
+                      activeTab === "chat" ? "bg-[hsl(var(--accent)/0.22)]" : "bg-[hsl(var(--background))]",
+                      !sidebarOpen && "justify-center",
+                    )}
+                  >
+                    <span className={cn("flex items-center gap-2", !sidebarOpen && "justify-center")}>
+                      <MessagesSquare className="h-4 w-4" />
+                      {sidebarOpen ? <span>Chat</span> : null}
+                    </span>
+                    {sidebarOpen ? (
+                      openSections.chat ? (
+                        <ChevronUp className="ml-auto h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="ml-auto h-4 w-4" />
+                      )
+                    ) : null}
+                  </button>
+                </CollapsibleTrigger>
+                {sidebarOpen ? (
+                  <CollapsibleContent className="mt-1 space-y-1 pl-2">
+                    {loadingChatThreads ? (
+                      <p className="px-2 py-1 text-xs text-muted-foreground">Loading chats...</p>
+                    ) : !chatThreads || chatThreads.length === 0 ? (
+                      <p className="px-2 py-1 text-xs text-muted-foreground">No chats yet</p>
+                    ) : (
+                      chatThreads.map((thread) => (
+                        <button
+                          key={thread.id}
+                          type="button"
+                          onClick={() => {
+                            setActiveTab("chat");
+                            setSelectedChatThreadId(thread.id);
+                          }}
+                          className={cn(
+                            "w-full rounded-[calc(var(--radius)-0.05rem)] border px-2 py-1.5 text-left text-xs",
+                            selectedChatThreadId === thread.id
+                              ? "border-[hsl(var(--accent)/0.65)] bg-[hsl(var(--accent)/0.2)]"
+                              : "border-[hsl(var(--border)/0.35)] bg-[hsl(var(--background)/0.75)] hover:border-[hsl(var(--border))] hover:bg-[hsl(var(--secondary))]",
+                          )}
+                        >
+                          <p className="truncate font-medium text-foreground">{thread.title}</p>
+                          <p className="mt-0.5 text-[11px] text-muted-foreground">
+                            {thread.messageCount} message{thread.messageCount === 1 ? "" : "s"}
+                          </p>
+                        </button>
+                      ))
+                    )}
+                  </CollapsibleContent>
+                ) : null}
+              </Collapsible>
+            </div>
+          </div>
+
+          <div className="border-t-2 border-[hsl(var(--border))] p-2">
+            <div className="space-y-2">
+              <Button asChild variant="outline" className={cn("w-full", sidebarOpen ? "justify-start" : "justify-center px-0")}>
+                <Link href="/settings">
+                  <Settings className="h-4 w-4" />
+                  {sidebarOpen ? <span>Settings</span> : null}
+                </Link>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className={cn("w-full", sidebarOpen ? "justify-start" : "justify-center px-0")}
+                onClick={() => signOut()}
+              >
+                <LogOut className="h-4 w-4" />
+                {sidebarOpen ? <span>Sign out</span> : null}
+              </Button>
+            </div>
+          </div>
+        </aside>
+
+        <main className="min-w-0 flex-1 p-4 sm:p-6">
+          <div className="chrome-pane mb-6 flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <div>
+              <h1 className="app-title text-2xl md:text-3xl">{tabLabels[activeTab]}</h1>
+              <p className="text-xs text-muted-foreground">Welcome, {user?.firstName || "there"}</p>
+            </div>
+            <div className="flex gap-2">
+              {activeTab === "contracts" ? (
+                <UploadDialog>
+                  <Button>
+                    <Plus className="mr-2 h-4 w-4" />
+                    New Contract
+                  </Button>
+                </UploadDialog>
+              ) : activeTab === "projects" ? (
+                <NewProjectDialog>
+                  <Button>
+                    <Plus className="mr-2 h-4 w-4" />
+                    New Project
+                  </Button>
+                </NewProjectDialog>
+              ) : null}
+            </div>
+          </div>
+
+          {activeTab === "contracts" ? (
+            loadingContracts ? (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {[1, 2, 3].map((item) => (
+                  <Skeleton key={item} className="h-40 w-full" />
+                ))}
+              </div>
+            ) : standaloneContracts.length === 0 ? (
+              <div className="chrome-pane py-12 text-center">
+                <FileText className="mx-auto h-12 w-12 text-muted-foreground" />
+                <h3 className="mt-2 text-sm font-semibold text-foreground">No contracts</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Upload a contract for quick analysis, or create a project for context-aware analysis.
+                </p>
+                <div className="mt-6 flex justify-center gap-2">
+                  <UploadDialog>
+                    <Button>
+                      <Plus className="mr-2 h-4 w-4" />
+                      New Contract
+                    </Button>
+                  </UploadDialog>
+                  <NewProjectDialog>
+                    <Button variant="outline">
+                      <FolderOpen className="mr-2 h-4 w-4" />
+                      New Project
+                    </Button>
+                  </NewProjectDialog>
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {standaloneContracts.map((contract) => (
+                  <Link key={contract.id} href={`/contracts/${contract.id}`}>
+                    <Card className="h-full cursor-pointer">
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">{contract.title}</CardTitle>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            title="Delete contract"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setContractToDelete(contract);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 text-muted-foreground" />
+                          </Button>
+                          <FileText className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="mt-4 flex items-end justify-between">
+                          <div className="space-y-1">
+                            <div className="flex items-center text-xs text-muted-foreground">
+                              <Calendar className="mr-1 h-3 w-3" />
+                              {format(new Date(contract.createdAt), "MMM d, yyyy")}
+                            </div>
+                            <Badge variant="secondary" className="mt-2">
+                              {contract.status || "DRAFT"}
+                            </Badge>
+                          </div>
+                          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                ))}
+              </div>
+            )
+          ) : null}
+
+          {activeTab === "projects" ? (
+            loadingProjects ? (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {[1, 2, 3].map((item) => (
+                  <Skeleton key={item} className="h-40 w-full" />
+                ))}
+              </div>
+            ) : !projects || projects.length === 0 ? (
+              <div className="chrome-pane py-12 text-center">
+                <FolderOpen className="mx-auto h-12 w-12 text-muted-foreground" />
+                <h3 className="mt-2 text-sm font-semibold text-foreground">No projects</h3>
+                <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                  Projects let you analyze contracts with legal context. Upload governing laws, prior contracts, or
+                  other reference documents.
+                </p>
+                <div className="mt-6">
+                  <NewProjectDialog>
+                    <Button>
+                      <Plus className="mr-2 h-4 w-4" />
+                      New Project
+                    </Button>
+                  </NewProjectDialog>
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {projects.map((project) => (
+                  <Link key={project.id} href={`/projects/${project.id}`}>
+                    <Card className="h-full cursor-pointer border-l-2 border-l-[hsl(var(--accent)/0.8)]">
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">{project.title}</CardTitle>
+                        <FolderOpen className="h-4 w-4 text-primary" />
+                      </CardHeader>
+                      <CardContent>
+                        {project.description ? (
+                          <p className="mb-3 line-clamp-2 text-xs text-muted-foreground">{project.description}</p>
+                        ) : null}
+                        <div className="mb-3 flex gap-2">
+                          <Badge variant="outline" className="text-xs">
+                            <FileText className="mr-1 h-3 w-3" />
+                            {project.contracts?.length || 0} contract
+                            {(project.contracts?.length || 0) !== 1 ? "s" : ""}
+                          </Badge>
+                          <Badge variant="outline" className="text-xs">
+                            <Book className="mr-1 h-3 w-3" />
+                            {project.contextDocuments?.length || 0} context
+                          </Badge>
+                        </div>
+                        <div className="flex items-end justify-between">
+                          <div className="flex items-center text-xs text-muted-foreground">
+                            <Calendar className="mr-1 h-3 w-3" />
+                            {format(new Date(project.createdAt), "MMM d, yyyy")}
+                          </div>
+                          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                ))}
+              </div>
+            )
+          ) : null}
+
+          {activeTab === "chat" ? <ChatPanel selectedThreadId={selectedChatThreadId} /> : null}
+        </main>
+      </div>
+
+      <AlertDialog
+        open={!!contractToDelete}
+        onOpenChange={(open) => {
+          if (!open) setContractToDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete contract?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete <span className="font-medium">{contractToDelete?.title}</span> and all
+              associated analyses.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteContractMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteContractMutation.isPending || !contractToDelete}
+              onClick={() => {
+                if (!contractToDelete) return;
+                deleteContractMutation.mutate(contractToDelete.id);
+              }}
+            >
+              {deleteContractMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
 };
 
 export default Dashboard;

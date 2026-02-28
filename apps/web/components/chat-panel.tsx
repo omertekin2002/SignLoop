@@ -252,7 +252,11 @@ const ChatMessage = () => {
   );
 };
 
-export function ChatPanel() {
+type ChatPanelProps = {
+  selectedThreadId?: string | null;
+};
+
+export function ChatPanel({ selectedThreadId = null }: ChatPanelProps) {
   const queryClient = useQueryClient();
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const hydratedSignatureRef = useRef<string | null>(null);
@@ -336,6 +340,12 @@ export function ChatPanel() {
       return payload.data;
     },
   });
+
+  useEffect(() => {
+    if (!selectedThreadId) return;
+    if (selectedThreadId === activeThreadId) return;
+    setActiveThreadId(selectedThreadId);
+  }, [selectedThreadId, activeThreadId]);
 
   useEffect(() => {
     const threads = threadsQuery.data;
