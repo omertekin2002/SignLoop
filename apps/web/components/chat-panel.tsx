@@ -405,12 +405,12 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
 
   return (
     <Card className="h-full min-h-0 overflow-hidden border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--card-shadow)] transition-none hover:translate-x-0 hover:translate-y-0 hover:shadow-[var(--card-shadow)]">
-      <CardContent className="h-full min-h-0 p-0">
+      <CardContent className="h-full min-h-0 !p-0">
         <div className="flex h-full min-h-0">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[hsl(var(--card))]">
             <AssistantRuntimeProvider runtime={runtime}>
-              <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col">
-                <ThreadPrimitive.Viewport className="min-h-0 flex-1 overflow-y-auto p-4">
+              <ThreadPrimitive.Root className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto]">
+                <ThreadPrimitive.Viewport className="min-h-0 overflow-y-auto p-4">
                   <ThreadPrimitive.Empty>
                     <div className="mx-auto flex max-w-xl flex-col items-center gap-3 py-16 text-center text-muted-foreground">
                       <MessageSquareText className="h-8 w-8" />

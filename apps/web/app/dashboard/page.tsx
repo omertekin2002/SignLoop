@@ -631,7 +631,7 @@ const Dashboard = () => {
           ) : null}
 
           {activeTab === "chat" ? (
-            <div className="min-h-0 flex-1">
+            <div className="min-h-0 flex-1 overflow-hidden">
               <ChatPanel
                 selectedThreadId={selectedChatThreadId}
                 onThreadSelected={(threadId) => setSelectedChatThreadId(threadId)}
