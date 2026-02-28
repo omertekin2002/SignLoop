@@ -202,10 +202,10 @@ const Dashboard = () => {
 
   return (
     <div className="app-page">
-      <div className="flex min-h-screen">
+      <div className="flex h-screen items-start overflow-hidden">
         <aside
           className={cn(
-            "m-4 mr-0 flex shrink-0 flex-col overflow-hidden rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--card-shadow)] transition-[width] duration-200",
+            "sticky top-4 m-4 mr-0 flex h-[calc(100vh-2rem)] shrink-0 flex-col overflow-hidden rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--card-shadow)] transition-[width] duration-200",
             sidebarOpen ? "w-80" : "w-20",
           )}
         >
@@ -463,7 +463,12 @@ const Dashboard = () => {
           </div>
         </aside>
 
-        <main className="min-w-0 flex flex-1 flex-col p-4 sm:p-6">
+        <main
+          className={cn(
+            "min-w-0 min-h-0 flex flex-1 flex-col p-4 sm:p-6",
+            activeTab === "chat" ? "overflow-hidden" : "overflow-y-auto",
+          )}
+        >
           <div className="chrome-pane mb-6 shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3">
             <div>
               <h1 className="app-title text-2xl md:text-3xl">{tabLabels[activeTab]}</h1>

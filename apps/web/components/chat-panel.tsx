@@ -430,7 +430,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                   <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
                 </ThreadPrimitive.Viewport>
 
-                <ComposerPrimitive.Root className="border-t-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                <ComposerPrimitive.Root className="sticky bottom-0 z-10 border-t-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
                   <div className="flex items-end gap-2">
                     <ComposerPrimitive.Input
                       className={cn(
