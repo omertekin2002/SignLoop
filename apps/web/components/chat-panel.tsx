@@ -404,13 +404,13 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
   ]);
 
   return (
-    <Card className="h-full overflow-hidden border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--card-shadow)] transition-none hover:translate-x-0 hover:translate-y-0 hover:shadow-[var(--card-shadow)]">
-      <CardContent className="h-full p-0">
+    <Card className="h-full min-h-0 overflow-hidden border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--card-shadow)] transition-none hover:translate-x-0 hover:translate-y-0 hover:shadow-[var(--card-shadow)]">
+      <CardContent className="h-full min-h-0 p-0">
         <div className="flex h-full min-h-0">
-          <div className="flex min-w-0 flex-1 flex-col bg-[hsl(var(--card))]">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[hsl(var(--card))]">
             <AssistantRuntimeProvider runtime={runtime}>
-              <ThreadPrimitive.Root className="flex h-full flex-col">
-                <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto p-4">
+              <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col">
+                <ThreadPrimitive.Viewport className="min-h-0 flex-1 overflow-y-auto p-4">
                   <ThreadPrimitive.Empty>
                     <div className="mx-auto flex max-w-xl flex-col items-center gap-3 py-16 text-center text-muted-foreground">
                       <MessageSquareText className="h-8 w-8" />
@@ -430,7 +430,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                   <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
                 </ThreadPrimitive.Viewport>
 
-                <ComposerPrimitive.Root className="sticky bottom-0 z-10 border-t-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                <ComposerPrimitive.Root className="z-10 border-t-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
                   <div className="flex items-end gap-2">
                     <ComposerPrimitive.Input
                       className={cn(
