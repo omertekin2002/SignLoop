@@ -285,9 +285,6 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
 
   useEffect(() => {
     if (!selectedThreadId) {
-      if (activeThreadId !== null) {
-        setActiveThreadId(null);
-      }
       return;
     }
 
