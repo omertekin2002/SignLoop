@@ -13,6 +13,7 @@ import {
   ChevronUp,
   FileText,
   FolderOpen,
+  Loader2,
   LogOut,
   MessagesSquare,
   PanelLeftClose,
@@ -130,6 +131,31 @@ const Dashboard = () => {
     if (selectedChatThreadId) return;
     setSelectedChatThreadId(chatThreads[0]!.id);
   }, [chatThreads, selectedChatThreadId]);
+
+  const createChatMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/chat/threads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { data?: ChatThreadSummary; error?: string }
+        | null;
+
+      if (!response.ok || !payload?.data) {
+        throw new Error(payload?.error || "Failed to create chat thread.");
+      }
+
+      return payload.data;
+    },
+    onSuccess: (thread) => {
+      setSelectedChatThreadId(thread.id);
+      setActiveTab("chat");
+      setOpenSections((previous) => ({ ...previous, chat: true }));
+      queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+    },
+  });
 
   const deleteContractMutation = useMutation({
     mutationFn: async (contractId: string) => {
@@ -298,29 +324,49 @@ const Dashboard = () => {
               </Collapsible>
 
               <Collapsible open={openSections.chat} onOpenChange={(open) => setSectionOpen("chat", open)}>
-                <CollapsibleTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("chat")}
-                    className={cn(
-                      "flex w-full items-center rounded-[var(--radius)] border-2 border-[hsl(var(--border))] px-2 py-2 text-left text-sm font-semibold transition-colors",
-                      activeTab === "chat" ? "bg-[hsl(var(--accent)/0.22)]" : "bg-[hsl(var(--background))]",
-                      !sidebarOpen && "justify-center",
-                    )}
-                  >
-                    <span className={cn("flex items-center gap-2", !sidebarOpen && "justify-center")}>
-                      <MessagesSquare className="h-4 w-4" />
-                      {sidebarOpen ? <span>Chat</span> : null}
-                    </span>
-                    {sidebarOpen ? (
-                      openSections.chat ? (
-                        <ChevronUp className="ml-auto h-4 w-4" />
+                <div className={cn("flex items-center gap-1.5", !sidebarOpen && "justify-center")}>
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("chat")}
+                      className={cn(
+                        "flex items-center rounded-[var(--radius)] border-2 border-[hsl(var(--border))] px-2 py-2 text-left text-sm font-semibold transition-colors",
+                        activeTab === "chat" ? "bg-[hsl(var(--accent)/0.22)]" : "bg-[hsl(var(--background))]",
+                        sidebarOpen ? "flex-1" : "w-full justify-center",
+                      )}
+                    >
+                      <span className={cn("flex items-center gap-2", !sidebarOpen && "justify-center")}>
+                        <MessagesSquare className="h-4 w-4" />
+                        {sidebarOpen ? <span>Chat</span> : null}
+                      </span>
+                      {sidebarOpen ? (
+                        openSections.chat ? (
+                          <ChevronUp className="ml-auto h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="ml-auto h-4 w-4" />
+                        )
+                      ) : null}
+                    </button>
+                  </CollapsibleTrigger>
+                  {sidebarOpen ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9 shrink-0"
+                      onClick={() => createChatMutation.mutate()}
+                      disabled={createChatMutation.isPending}
+                      title="New chat"
+                      aria-label="New chat"
+                    >
+                      {createChatMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
-                        <ChevronDown className="ml-auto h-4 w-4" />
-                      )
-                    ) : null}
-                  </button>
-                </CollapsibleTrigger>
+                        <Plus className="h-4 w-4" />
+                      )}
+                    </Button>
+                  ) : null}
+                </div>
                 {sidebarOpen ? (
                   <CollapsibleContent className="mt-1 space-y-1 pl-2">
                     {loadingChatThreads ? (
