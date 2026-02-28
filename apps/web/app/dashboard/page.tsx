@@ -165,40 +165,40 @@ const Dashboard = () => {
         >
           <div className="border-b-2 border-[hsl(var(--border))] p-2.5">
             <div className={cn("flex items-center", sidebarOpen ? "justify-between gap-2" : "justify-center")}>
-              <button
-                type="button"
-                className="inline-flex items-center gap-2 rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-1.5"
-                onClick={() => setActiveTab("contracts")}
-              >
-                <span className="text-xs font-semibold uppercase tracking-[0.12em]">
-                  {sidebarOpen ? "SignLoop" : "SL"}
-                </span>
-              </button>
+              {sidebarOpen ? (
+                <>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-1.5"
+                    onClick={() => setActiveTab("contracts")}
+                  >
+                    <span className="text-xs font-semibold uppercase tracking-[0.12em]">SignLoop</span>
+                  </button>
 
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className={cn("h-9 w-9", !sidebarOpen && "hidden")}
-                onClick={() => setSidebarOpen((previous) => !previous)}
-                aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-              >
-                {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
-              </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9"
+                    onClick={() => setSidebarOpen(false)}
+                    aria-label="Collapse sidebar"
+                  >
+                    <PanelLeftClose className="h-4 w-4" />
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9"
+                  onClick={() => setSidebarOpen(true)}
+                  aria-label="Expand sidebar"
+                >
+                  <PanelLeftOpen className="h-4 w-4" />
+                </Button>
+              )}
             </div>
-
-            {!sidebarOpen ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="mt-2 h-9 w-9"
-                onClick={() => setSidebarOpen(true)}
-                aria-label="Expand sidebar"
-              >
-                <PanelLeftOpen className="h-4 w-4" />
-              </Button>
-            ) : null}
           </div>
 
           <div className="flex-1 overflow-y-auto p-2">
