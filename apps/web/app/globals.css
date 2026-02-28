@@ -75,13 +75,13 @@
   }
 
   .dark {
-    --background: 0 0% 7%;
+    --background: 0 0% 0%;
     --foreground: 60 8% 92%;
 
-    --card: 0 0% 9%;
+    --card: 0 0% 0%;
     --card-foreground: 60 8% 92%;
 
-    --popover: 0 0% 9%;
+    --popover: 0 0% 0%;
     --popover-foreground: 60 8% 92%;
 
     --primary: 60 8% 92%;
@@ -104,7 +104,7 @@
     --input: 60 8% 92%;
     --ring: 171 100% 50%;
 
-    --sidebar-background: 0 0% 7%;
+    --sidebar-background: 0 0% 0%;
     --sidebar-foreground: 60 8% 92%;
     --sidebar-primary: 60 8% 92%;
     --sidebar-primary-foreground: 0 0% 7%;
@@ -128,17 +128,17 @@
     --button-accent-shadow: 4px 4px 0 hsl(var(--border));
     --button-accent-shadow-hover: 6px 6px 0 var(--accent-secondary);
 
-    --bg-gradient-base: #111111;
-    --bg-gradient-mid: #151515;
-    --bg-gradient-edge: #1a1a1a;
-    --bg-glow-1: rgba(0, 255, 204, 0.13);
-    --bg-glow-2: rgba(255, 0, 255, 0.1);
-    --bg-glow-3: rgba(236, 236, 233, 0.05);
-    --bg-grid-line: rgba(236, 236, 233, 0.12);
-    --bg-noise-dot: rgba(236, 236, 233, 0.08);
+    --bg-gradient-base: #000000;
+    --bg-gradient-mid: #000000;
+    --bg-gradient-edge: #000000;
+    --bg-glow-1: transparent;
+    --bg-glow-2: transparent;
+    --bg-glow-3: transparent;
+    --bg-grid-line: transparent;
+    --bg-noise-dot: transparent;
 
-    --dynamic-bg-grid-opacity: 0.58;
-    --dynamic-bg-noise-opacity: 0.1;
+    --dynamic-bg-grid-opacity: 0;
+    --dynamic-bg-noise-opacity: 0;
   }
 }
 
