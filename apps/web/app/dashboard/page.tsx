@@ -469,29 +469,31 @@ const Dashboard = () => {
             activeTab === "chat" ? "overflow-hidden" : "overflow-y-auto",
           )}
         >
-          <div className="chrome-pane mb-6 shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-            <div>
-              <h1 className="app-title text-2xl md:text-3xl">{tabLabels[activeTab]}</h1>
-              <p className="text-xs text-muted-foreground">Welcome, {user?.firstName || "there"}</p>
+          {activeTab !== "chat" && (
+            <div className="chrome-pane mb-6 shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div>
+                <h1 className="app-title text-2xl md:text-3xl">{tabLabels[activeTab]}</h1>
+                <p className="text-xs text-muted-foreground">Welcome, {user?.firstName || "there"}</p>
+              </div>
+              <div className="flex gap-2">
+                {activeTab === "contracts" ? (
+                  <UploadDialog>
+                    <Button>
+                      <Plus className="mr-2 h-4 w-4" />
+                      New Contract
+                    </Button>
+                  </UploadDialog>
+                ) : activeTab === "projects" ? (
+                  <NewProjectDialog>
+                    <Button>
+                      <Plus className="mr-2 h-4 w-4" />
+                      New Project
+                    </Button>
+                  </NewProjectDialog>
+                ) : null}
+              </div>
             </div>
-            <div className="flex gap-2">
-              {activeTab === "contracts" ? (
-                <UploadDialog>
-                  <Button>
-                    <Plus className="mr-2 h-4 w-4" />
-                    New Contract
-                  </Button>
-                </UploadDialog>
-              ) : activeTab === "projects" ? (
-                <NewProjectDialog>
-                  <Button>
-                    <Plus className="mr-2 h-4 w-4" />
-                    New Project
-                  </Button>
-                </NewProjectDialog>
-              ) : null}
-            </div>
-          </div>
+          )}
 
           {activeTab === "contracts" ? (
             loadingContracts ? (
