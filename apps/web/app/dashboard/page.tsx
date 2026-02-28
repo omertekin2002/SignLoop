@@ -206,7 +206,7 @@ const Dashboard = () => {
         <aside
           className={cn(
             "sticky top-4 m-4 mr-0 flex h-[calc(100vh-2rem)] shrink-0 flex-col overflow-hidden rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--card-shadow)] transition-[width] duration-200",
-            sidebarOpen ? "w-80" : "w-20",
+            sidebarOpen ? "w-80" : "w-14",
           )}
         >
           <div className="border-b-2 border-[hsl(var(--border))] p-2.5">
