@@ -157,37 +157,108 @@ function extractJsonCandidate(text: string): string | null {
     return trimmed.slice(firstBrace, lastBrace + 1).trim();
 }
 
+function normalizeJsonLikeText(text: string): string {
+    return text
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'")
+        .replace(/[‐‑‒–—]/g, '-');
+}
+
+function extractJsonObjects(text: string): string[] {
+    const normalized = normalizeJsonLikeText(text);
+    const objects: string[] = [];
+    let depth = 0;
+    let start = -1;
+    let inString = false;
+    let escaping = false;
+
+    for (let idx = 0; idx < normalized.length; idx += 1) {
+        const char = normalized[idx] ?? '';
+
+        if (inString) {
+            if (escaping) {
+                escaping = false;
+                continue;
+            }
+
+            if (char === '\\') {
+                escaping = true;
+                continue;
+            }
+
+            if (char === '"') {
+                inString = false;
+            }
+
+            continue;
+        }
+
+        if (char === '"') {
+            inString = true;
+            continue;
+        }
+
+        if (char === '{') {
+            if (depth === 0) {
+                start = idx;
+            }
+            depth += 1;
+            continue;
+        }
+
+        if (char === '}') {
+            if (depth <= 0) continue;
+            depth -= 1;
+            if (depth === 0 && start >= 0) {
+                objects.push(normalized.slice(start, idx + 1).trim());
+                start = -1;
+            }
+        }
+    }
+
+    if (!objects.length) {
+        const single = extractJsonCandidate(normalized);
+        if (single) {
+            objects.push(single);
+        }
+    }
+
+    return objects;
+}
+
+function isLikelyPlannerProtocolLeak(text: string): boolean {
+    return /\b"type"\s*:\s*"(web_search|final)"|\bweb_search\b/i.test(text);
+}
+
 function parseSearchPlannerAction(rawText: string): SearchPlannerAction | null {
-    const jsonCandidate = extractJsonCandidate(rawText);
-    if (!jsonCandidate) {
-        return null;
-    }
+    const jsonCandidates = extractJsonObjects(rawText);
+    for (const jsonCandidate of jsonCandidates) {
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(jsonCandidate);
+        } catch {
+            continue;
+        }
 
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(jsonCandidate);
-    } catch {
-        return null;
-    }
+        if (!isRecord(parsed) || typeof parsed.type !== 'string') {
+            continue;
+        }
 
-    if (!isRecord(parsed) || typeof parsed.type !== 'string') {
-        return null;
-    }
+        if (parsed.type === 'final') {
+            const answer = typeof parsed.answer === 'string' ? parsed.answer.trim() : '';
+            if (!answer) continue;
+            return { type: 'final', answer };
+        }
 
-    if (parsed.type === 'final') {
-        const answer = typeof parsed.answer === 'string' ? parsed.answer.trim() : '';
-        if (!answer) return null;
-        return { type: 'final', answer };
-    }
+        if (parsed.type === 'web_search') {
+            const rawQueries = Array.isArray(parsed.queries)
+                ? parsed.queries.filter((item): item is string => typeof item === 'string')
+                : [];
+            if (!rawQueries.length) continue;
 
-    if (parsed.type === 'web_search') {
-        const rawQueries = Array.isArray(parsed.queries)
-            ? parsed.queries.filter((item): item is string => typeof item === 'string')
-            : [];
-        if (!rawQueries.length) return null;
-
-        const reason = typeof parsed.reason === 'string' ? parsed.reason : undefined;
-        return { type: 'web_search', queries: rawQueries, reason };
+            const reason = typeof parsed.reason === 'string' ? parsed.reason : undefined;
+            return { type: 'web_search', queries: rawQueries, reason };
+        }
     }
 
     return null;
@@ -320,6 +391,14 @@ async function runChatWithModelDrivenSearch(
         const action = parseSearchPlannerAction(plannerOutput);
 
         if (!action) {
+            if (isLikelyPlannerProtocolLeak(plannerOutput)) {
+                return {
+                    message:
+                        'I hit a tool-formatting error while planning web searches. Please try again.',
+                    webSearch: buildWebSearchMetadata(attemptedQueries, successfulSearches, sourceMap),
+                };
+            }
+
             return {
                 message: plannerOutput,
                 webSearch: buildWebSearchMetadata(attemptedQueries, successfulSearches, sourceMap),
