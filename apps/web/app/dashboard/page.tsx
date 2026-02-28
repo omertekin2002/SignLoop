@@ -170,12 +170,9 @@ const Dashboard = () => {
                 className="inline-flex items-center gap-2 rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-1.5"
                 onClick={() => setActiveTab("contracts")}
               >
-                <span className="grid h-6 w-6 place-items-center rounded-[calc(var(--radius)-0.05rem)] border border-[hsl(var(--border))]">
-                  <span className="relative h-4 w-4 rounded-[4px] border-2 border-[hsl(var(--border))]">
-                    <span className="absolute left-1/2 top-0 h-full w-0 border-l-2 border-[hsl(var(--border))] -translate-x-1/2" />
-                  </span>
+                <span className="text-xs font-semibold uppercase tracking-[0.12em]">
+                  {sidebarOpen ? "SignLoop" : "SL"}
                 </span>
-                {sidebarOpen ? <span className="text-xs font-semibold uppercase tracking-[0.12em]">SignLoop</span> : null}
               </button>
 
               <Button
