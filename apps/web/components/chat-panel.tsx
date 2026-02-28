@@ -227,9 +227,10 @@ const ChatMessage = () => {
 
 type ChatPanelProps = {
   selectedThreadId?: string | null;
+  onThreadSelected?: (threadId: string | null) => void;
 };
 
-export function ChatPanel({ selectedThreadId = null }: ChatPanelProps) {
+export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPanelProps) {
   const queryClient = useQueryClient();
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const hydratedSignatureRef = useRef<string | null>(null);
@@ -252,16 +253,43 @@ export function ChatPanel({ selectedThreadId = null }: ChatPanelProps) {
   });
 
   useEffect(() => {
-    if (!selectedThreadId) return;
-    if (selectedThreadId === activeThreadId) return;
-    setActiveThreadId(selectedThreadId);
+    if (!selectedThreadId) {
+      if (activeThreadId !== null) {
+        setActiveThreadId(null);
+      }
+      return;
+    }
+
+    if (selectedThreadId !== activeThreadId) {
+      setActiveThreadId(selectedThreadId);
+    }
   }, [selectedThreadId, activeThreadId]);
 
   const chatModel = useMemo<ChatModelAdapter>(
     () => ({
       run: async ({ messages, abortSignal }) => {
-        if (!activeThreadId) {
-          throw new Error("Select or create a chat first.");
+        let threadId = activeThreadId;
+        if (!threadId) {
+          const createThreadResponse = await fetch("/api/chat/threads", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({}),
+            signal: abortSignal,
+          });
+          const createPayload = (await createThreadResponse.json().catch(() => null)) as
+            | { data?: { id?: string }; error?: string }
+            | null;
+
+          if (!createThreadResponse.ok || !createPayload?.data?.id) {
+            throw new Error(createPayload?.error || "Failed to create chat thread.");
+          }
+
+          threadId = createPayload.data.id;
+          setActiveThreadId(threadId);
+          onThreadSelected?.(threadId);
+          queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
         }
 
         const payloadMessages = toApiMessages(messages);
@@ -272,7 +300,7 @@ export function ChatPanel({ selectedThreadId = null }: ChatPanelProps) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            threadId: activeThreadId,
+            threadId,
             messages: payloadMessages,
           }),
           signal: abortSignal,
@@ -294,7 +322,7 @@ export function ChatPanel({ selectedThreadId = null }: ChatPanelProps) {
         }
 
         queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
-        queryClient.invalidateQueries({ queryKey: ["chat-thread", activeThreadId] });
+        queryClient.invalidateQueries({ queryKey: ["chat-thread", threadId] });
 
         const parsedSuccess = parseSuccess(parsedPayload);
         return {
@@ -308,7 +336,7 @@ export function ChatPanel({ selectedThreadId = null }: ChatPanelProps) {
         };
       },
     }),
-    [activeThreadId, queryClient]
+    [activeThreadId, onThreadSelected, queryClient]
   );
 
   const runtime = useLocalRuntime(chatModel);
@@ -378,15 +406,14 @@ export function ChatPanel({ selectedThreadId = null }: ChatPanelProps) {
                         "min-h-[52px] w-full resize-none rounded-[var(--radius)] border border-[var(--surface-stroke)] bg-[hsl(var(--card))] px-3 py-2 text-sm text-foreground outline-none ring-0",
                         "placeholder:text-muted-foreground focus-visible:border-[hsl(var(--accent)/0.6)]",
                       )}
-                      placeholder={activeThreadId ? "Type your question..." : "Create or select a chat to begin..."}
+                      placeholder="Type your question..."
                       submitMode="enter"
                       rows={1}
-                      disabled={!activeThreadId}
                     />
 
                     <ThreadPrimitive.If running={false}>
                       <ComposerPrimitive.Send asChild>
-                        <Button type="button" size="icon" className="h-11 w-11 shrink-0" disabled={!activeThreadId}>
+                        <Button type="button" size="icon" className="h-11 w-11 shrink-0">
                           <Send className="h-4 w-4" />
                         </Button>
                       </ComposerPrimitive.Send>
