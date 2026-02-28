@@ -28,7 +28,7 @@ export default function Home() {
   const { isSignedIn } = useUser();
 
   return (
-    <div className="app-page">
+    <div className="app-page flex flex-col">
       <header className="app-header">
         <div className="app-header-inner">
           <p className="text-base font-semibold tracking-[0.06em] text-foreground">SignLoop</p>
@@ -41,7 +41,7 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="app-main space-y-8 pb-12">
+      <main className="app-main flex-1 space-y-8 pb-12">
         <section className="chrome-pane relative overflow-hidden rounded-[calc(var(--radius)+0.16rem)] p-8 md:p-12">
           <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_18%_22%,hsl(var(--accent)/0.2),transparent_44%),radial-gradient(circle_at_82%_16%,hsl(var(--primary)/0.18),transparent_42%)]" />
           <div className="relative max-w-3xl space-y-5">
