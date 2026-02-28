@@ -269,7 +269,10 @@ export async function searchWeb(query: string, options?: { maxResults?: number; 
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const url = `${WEB_SEARCH_ENDPOINT}${encodeURIComponent(normalizedQuery)}`;
+    // r.jina.ai decodes the forwarded URL once, so we double-encode query components.
+    // Without this, queries containing "&" (e.g. "S&P 500") degrade to just "S".
+    const encodedQueryForProxy = encodeURIComponent(normalizedQuery).replace(/%/g, "%25");
+    const url = `${WEB_SEARCH_ENDPOINT}${encodedQueryForProxy}`;
     const response = await fetch(url, {
       method: "GET",
       signal: controller.signal,
