@@ -202,7 +202,7 @@ const Dashboard = () => {
 
   return (
     <div className="app-page">
-      <div className="flex h-screen items-start overflow-hidden">
+      <div className="flex h-screen items-stretch overflow-hidden">
         <aside
           className={cn(
             "sticky top-4 m-4 mr-0 flex h-[calc(100vh-2rem)] shrink-0 flex-col overflow-hidden rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--card-shadow)] transition-[width] duration-200",
