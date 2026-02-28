@@ -234,13 +234,13 @@ const ChatMessage = () => {
   return (
     <MessagePrimitive.Root className="mb-4">
       <MessagePrimitive.If user>
-        <div className="ml-auto max-w-3xl rounded-[var(--radius)] border border-[hsl(var(--accent)/0.5)] bg-[hsl(var(--accent)/0.18)] px-4 py-3 shadow-[0_12px_24px_-18px_rgba(0,0,0,0.55)]">
+        <div className="ml-auto max-w-3xl rounded-[var(--radius)] border-2 border-[hsl(var(--accent)/0.7)] bg-[hsl(var(--accent)/0.16)] px-4 py-3 shadow-[var(--card-shadow)]">
           <MessagePrimitive.Content components={{ Text: UserTextPart }} />
         </div>
       </MessagePrimitive.If>
 
       <MessagePrimitive.If assistant>
-        <div className="mr-auto max-w-3xl rounded-[var(--radius)] border border-[var(--surface-stroke)] bg-[var(--surface-elevated)] px-4 py-3 shadow-[var(--card-shadow)]">
+        <div className="mr-auto max-w-3xl rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] px-4 py-3 shadow-[var(--card-shadow)]">
           <MessagePrimitive.Content
             components={{
               Text: AssistantTextPart,
@@ -404,10 +404,10 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
   ]);
 
   return (
-    <Card className="h-full overflow-hidden border-[var(--surface-stroke)] bg-[var(--surface-base)] shadow-[var(--card-hover-shadow)]">
+    <Card className="h-full overflow-hidden border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--card-shadow)] transition-none hover:translate-x-0 hover:translate-y-0 hover:shadow-[var(--card-shadow)]">
       <CardContent className="h-full p-0">
         <div className="flex h-full min-h-0">
-          <div className="flex min-w-0 flex-1 flex-col bg-[var(--surface-elevated)]/92">
+          <div className="flex min-w-0 flex-1 flex-col bg-[hsl(var(--card))]">
             <AssistantRuntimeProvider runtime={runtime}>
               <ThreadPrimitive.Root className="flex h-full flex-col">
                 <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto p-4">
@@ -430,12 +430,12 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                   <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
                 </ThreadPrimitive.Viewport>
 
-                <ComposerPrimitive.Root className="border-t border-[var(--surface-stroke)] bg-[var(--surface-base)]/95 p-3 backdrop-blur-sm">
+                <ComposerPrimitive.Root className="border-t-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
                   <div className="flex items-end gap-2">
                     <ComposerPrimitive.Input
                       className={cn(
-                        "min-h-[52px] w-full resize-none rounded-[var(--radius)] border border-[var(--surface-stroke)] bg-[hsl(var(--card))] px-3 py-2 text-sm text-foreground outline-none ring-0",
-                        "placeholder:text-muted-foreground focus-visible:border-[hsl(var(--accent)/0.6)]",
+                        "min-h-[52px] w-full resize-none rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-foreground outline-none ring-0",
+                        "placeholder:text-muted-foreground focus-visible:border-[hsl(var(--accent)/0.75)]",
                       )}
                       placeholder="Type your question..."
                       submitMode="enter"
@@ -444,7 +444,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
 
                     <ThreadPrimitive.If running={false}>
                       <ComposerPrimitive.Send asChild>
-                        <Button type="button" size="icon" className="h-11 w-11 shrink-0">
+                        <Button type="button" variant="outline" size="icon" className="h-11 w-11 shrink-0">
                           <Send className="h-4 w-4" />
                         </Button>
                       </ComposerPrimitive.Send>
