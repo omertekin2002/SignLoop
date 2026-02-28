@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -153,9 +155,33 @@ const UserTextPart = () => (
   <MessagePartPrimitive.Text component="p" className="whitespace-pre-wrap text-sm leading-6 text-foreground" />
 );
 
+function looksLikeMathContent(raw: string): boolean {
+  const text = raw.trim();
+  if (!text) return false;
+  if (/^\d+$/.test(text)) return false;
+
+  return /\\[a-zA-Z]+|[{}^_=]|[+\-*/<>]=?|(?:\d+\s*[a-zA-Z])|(?:[a-zA-Z]\s*\d)/.test(text);
+}
+
+function normalizeMathNotation(raw: string): string {
+  let text = raw;
+
+  // Support LaTeX-style delimiters.
+  text = text.replace(/\\\[((?:.|\n)*?)\\\]/g, (_match, expression) => `\n$$\n${expression.trim()}\n$$\n`);
+  text = text.replace(/\\\(((?:.|\n)*?)\\\)/g, (_match, expression) => `$${expression.trim()}$`);
+
+  // Support bracketed display math often returned by models: [ ... ]
+  text = text.replace(/(^|[\s:])\[([^\]\n]{2,320})\](?=$|[\s,.;:!?])/g, (full, prefix: string, expression: string) => {
+    if (!looksLikeMathContent(expression)) return full;
+    return `${prefix}\n$$\n${expression.trim()}\n$$\n`;
+  });
+
+  return text;
+}
+
 function toMarkdownText(children: ReactNode): string {
   const text = typeof children === "string" ? children : String(children ?? "");
-  return text.replace(/<br\s*\/?>/gi, "\n");
+  return normalizeMathNotation(text.replace(/<br\s*\/?>/gi, "\n"));
 }
 
 const MarkdownMessage = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<"div">>(
@@ -183,11 +209,16 @@ const MarkdownMessage = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<"div
           "[&_th]:border [&_th]:border-border [&_th]:bg-muted/50 [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold",
           "[&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5",
           "[&_hr]:my-4 [&_hr]:border-border",
+          "[&_.katex]:text-foreground [&_.katex]:text-[1.02em]",
+          "[&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto",
+          "[&_.katex-display>.katex]:inline-block [&_.katex-display>.katex]:min-w-full",
           className,
         )}
         {...props}
       >
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+          {markdown}
+        </ReactMarkdown>
       </div>
     );
   }

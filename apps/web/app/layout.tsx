@@ -4,6 +4,7 @@ import { Fraunces, Space_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import Providers from "@/components/providers";
 import { PrivacyNotice } from "@/components/privacy-notice";
+import "katex/dist/katex.min.css";
 import "./globals.css";
 
 const spaceMono = Space_Mono({
