@@ -177,6 +177,8 @@ export async function POST(req: Request) {
       provider,
       model,
       webSearchQuery: webSearch?.query ?? null,
+      webSearchAttempts: webSearch?.attemptedQueries ?? [],
+      webSearchSuccessfulCount: webSearch?.successfulSearches ?? 0,
       webSources: webSearch?.sources ?? [],
     });
   } catch (error: unknown) {

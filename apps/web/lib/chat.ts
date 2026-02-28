@@ -2,8 +2,7 @@ import OpenAI from 'openai';
 import { isAllowedPrimaryModel } from '@/lib/model-settings';
 import {
     buildWebSearchContext,
-    buildWebSearchQuery,
-    searchWeb,
+    searchWebWithRetries,
     shouldUseWebSearchForPrompt,
     type WebSearchSource,
 } from '@/lib/web-search';
@@ -32,6 +31,8 @@ export type ChatReply = {
     model: string;
     webSearch: {
         query: string;
+        attemptedQueries: string[];
+        successfulSearches: number;
         sources: WebSearchSource[];
     } | null;
 };
@@ -92,22 +93,32 @@ function getLatestUserPrompt(messages: readonly ChatMessage[]): string {
 
 async function maybeBuildWebSearchContext(
     messages: readonly ChatMessage[]
-): Promise<{ query: string; sources: WebSearchSource[]; context: string } | null> {
+): Promise<{ query: string; attemptedQueries: string[]; successfulSearches: number; sources: WebSearchSource[]; context: string } | null> {
     const latestUserPrompt = getLatestUserPrompt(messages);
     if (!latestUserPrompt || !shouldUseWebSearchForPrompt(latestUserPrompt)) {
         return null;
     }
 
-    const query = buildWebSearchQuery(latestUserPrompt);
-    const sources = await searchWeb(query);
-    if (!sources.length) {
+    const webSearchRun = await searchWebWithRetries(latestUserPrompt, {
+        maxResults: 6,
+        maxAttempts: 12,
+        targetHighQualityResults: 4,
+    });
+    if (!webSearchRun.sources.length) {
         return null;
     }
 
     return {
-        query,
-        sources,
-        context: buildWebSearchContext(query, sources),
+        query: webSearchRun.query,
+        attemptedQueries: webSearchRun.attemptedQueries,
+        successfulSearches: webSearchRun.successfulSearches,
+        sources: webSearchRun.sources,
+        context: buildWebSearchContext(
+            webSearchRun.query,
+            webSearchRun.sources,
+            webSearchRun.attemptedQueries,
+            webSearchRun.successfulSearches
+        ),
     };
 }
 
@@ -176,7 +187,12 @@ export async function generateChatReply(
             provider: 'ngrok-openai-compatible',
             model: selectedPrimaryModel,
             webSearch: webSearchContext
-                ? { query: webSearchContext.query, sources: webSearchContext.sources }
+                ? {
+                      query: webSearchContext.query,
+                      attemptedQueries: webSearchContext.attemptedQueries,
+                      successfulSearches: webSearchContext.successfulSearches,
+                      sources: webSearchContext.sources,
+                  }
                 : null,
         };
     } catch (primaryError) {
@@ -219,7 +235,12 @@ export async function generateChatReply(
                     provider: 'openrouter',
                     model: fallbackModel,
                     webSearch: webSearchContext
-                        ? { query: webSearchContext.query, sources: webSearchContext.sources }
+                        ? {
+                              query: webSearchContext.query,
+                              attemptedQueries: webSearchContext.attemptedQueries,
+                              successfulSearches: webSearchContext.successfulSearches,
+                              sources: webSearchContext.sources,
+                          }
                         : null,
                 };
             } catch (fallbackError) {
