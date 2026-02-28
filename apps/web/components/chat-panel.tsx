@@ -409,8 +409,8 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
         <div className="flex h-full min-h-0">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[hsl(var(--card))]">
             <AssistantRuntimeProvider runtime={runtime}>
-              <ThreadPrimitive.Root className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto]">
-                <ThreadPrimitive.Viewport className="min-h-0 overflow-y-auto p-4">
+              <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col overflow-hidden">
+                <ThreadPrimitive.Viewport className="h-0 flex-1 overflow-y-auto p-4">
                   <ThreadPrimitive.Empty>
                     <div className="mx-auto flex max-w-xl flex-col items-center gap-3 py-16 text-center text-muted-foreground">
                       <MessageSquareText className="h-8 w-8" />
@@ -430,7 +430,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                   <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
                 </ThreadPrimitive.Viewport>
 
-                <ComposerPrimitive.Root className="z-10 border-t-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                <ComposerPrimitive.Root className="shrink-0 border-t-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
                   <div className="flex items-end gap-2">
                     <ComposerPrimitive.Input
                       className={cn(
