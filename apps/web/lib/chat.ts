@@ -417,9 +417,9 @@ async function runChatWithModelDrivenSearch(
         const remainingQueryBudget = MAX_TOTAL_SEARCH_QUERIES - attemptedQueries.length;
         if (remainingQueryBudget <= 0) {
             plannerMessages.push({
-                role: 'system',
+                role: 'user',
                 content:
-                    'Web search query budget is exhausted. Return {"type":"final","answer":"..."} now.',
+                    'Tool feedback: Web search query budget is exhausted. Return {"type":"final","answer":"..."} now.',
             });
             continue;
         }
@@ -432,9 +432,9 @@ async function runChatWithModelDrivenSearch(
 
         if (!normalizedQueries.length) {
             plannerMessages.push({
-                role: 'system',
+                role: 'user',
                 content:
-                    'No usable new queries were provided (duplicates/empty). Return final JSON or request different queries.',
+                    'Tool feedback: No usable new queries were provided (duplicates/empty). Return final JSON or request different queries.',
             });
             continue;
         }
@@ -458,7 +458,7 @@ async function runChatWithModelDrivenSearch(
         }
 
         plannerMessages.push({
-            role: 'system',
+            role: 'user',
             content: buildToolResultMessage({
                 round,
                 executedQueries: normalizedQueries,
@@ -472,9 +472,9 @@ async function runChatWithModelDrivenSearch(
     }
 
     plannerMessages.push({
-        role: 'system',
+        role: 'user',
         content:
-            'Search loop limit reached. Return {"type":"final","answer":"..."} now. Do not request more searches.',
+            'Tool feedback: Search loop limit reached. Return {"type":"final","answer":"..."} now. Do not request more searches.',
     });
 
     const forcedFinalOutput = await runChatWithResponsesModel(openai, model, plannerMessages);
