@@ -72,6 +72,7 @@ async function runChatWithResponsesModel(
     openai: OpenAI,
     model: string,
     messages: readonly ChatMessage[],
+    options?: { webSearch?: boolean },
 ): Promise<string> {
     const response = await openai.responses.create({
         model,
@@ -79,6 +80,13 @@ async function runChatWithResponsesModel(
             role: message.role,
             content: message.content,
         })),
+        ...(options?.webSearch
+            ? {
+                  tools: [{ type: 'web_search' as const }],
+                  tool_choice: 'auto' as const,
+                  include: ['web_search_call.action.sources' as const],
+              }
+            : {}),
     });
 
     const content = extractResponseOutputText(response);
@@ -87,6 +95,13 @@ async function runChatWithResponsesModel(
     }
 
     return content;
+}
+
+function isUnsupportedWebSearchError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /unsupported tool type:\s*web_search|web_search|tool_choice|invalid.*tools?|unknown tool/i.test(
+        message
+    );
 }
 
 function normalizeModelList(models: string[]): string[] {
@@ -114,10 +129,36 @@ export async function generateChatReply(
     const selectedPrimaryModel = isAllowedPrimaryModel(candidatePrimaryModel)
         ? candidatePrimaryModel
         : PRIMARY_LLM_MODEL;
+    const shouldTryPrimaryWebSearch = true;
 
     try {
         const primaryClient = createOpenAiCompatibleClient(PRIMARY_LLM_BASE_URL, PRIMARY_LLM_API_KEY);
-        const primaryReply = await runChatWithResponsesModel(primaryClient, selectedPrimaryModel, messages);
+        let primaryReply: string;
+
+        try {
+            primaryReply = await runChatWithResponsesModel(primaryClient, selectedPrimaryModel, messages, {
+                webSearch: shouldTryPrimaryWebSearch,
+            });
+        } catch (primaryAttemptError) {
+            if (shouldTryPrimaryWebSearch && isUnsupportedWebSearchError(primaryAttemptError)) {
+                const searchErrorMessage =
+                    primaryAttemptError instanceof Error
+                        ? primaryAttemptError.message
+                        : String(primaryAttemptError);
+                console.warn('Primary chat model rejected web_search; retrying without tools', {
+                    baseURL: PRIMARY_LLM_BASE_URL,
+                    model: selectedPrimaryModel,
+                    error: searchErrorMessage,
+                });
+
+                primaryReply = await runChatWithResponsesModel(primaryClient, selectedPrimaryModel, messages, {
+                    webSearch: false,
+                });
+            } else {
+                throw primaryAttemptError;
+            }
+        }
+
         return {
             message: primaryReply,
             provider: 'ngrok-openai-compatible',
