@@ -157,6 +157,26 @@ const Dashboard = () => {
     },
   });
 
+  const deleteChatMutation = useMutation({
+    mutationFn: async (threadId: string) => {
+      const response = await fetch(`/api/chat/threads/${threadId}`, {
+        method: "DELETE",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { success?: boolean; error?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to delete chat thread.");
+      }
+    },
+    onSuccess: (_result, deletedThreadId) => {
+      queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+      queryClient.removeQueries({ queryKey: ["chat-thread", deletedThreadId] });
+      setSelectedChatThreadId((current) => (current === deletedThreadId ? null : current));
+    },
+  });
+
   const deleteContractMutation = useMutation({
     mutationFn: async (contractId: string) => {
       await apiClient.delete(`/contracts/${contractId}`);
@@ -375,25 +395,45 @@ const Dashboard = () => {
                       <p className="px-2 py-1 text-xs text-muted-foreground">No chats yet</p>
                     ) : (
                       chatThreads.map((thread) => (
-                        <button
+                        <div
                           key={thread.id}
-                          type="button"
-                          onClick={() => {
-                            setActiveTab("chat");
-                            setSelectedChatThreadId(thread.id);
-                          }}
                           className={cn(
-                            "w-full rounded-[calc(var(--radius)-0.05rem)] border px-2 py-1.5 text-left text-xs",
+                            "flex items-start gap-1 rounded-[calc(var(--radius)-0.05rem)] border px-1.5 py-1.5 text-xs",
                             selectedChatThreadId === thread.id
                               ? "border-[hsl(var(--accent)/0.65)] bg-[hsl(var(--accent)/0.2)]"
                               : "border-[hsl(var(--border)/0.35)] bg-[hsl(var(--background)/0.75)] hover:border-[hsl(var(--border))] hover:bg-[hsl(var(--secondary))]",
                           )}
                         >
-                          <p className="truncate font-medium text-foreground">{thread.title}</p>
-                          <p className="mt-0.5 text-[11px] text-muted-foreground">
-                            {thread.messageCount} message{thread.messageCount === 1 ? "" : "s"}
-                          </p>
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveTab("chat");
+                              setSelectedChatThreadId(thread.id);
+                            }}
+                            className="min-w-0 flex-1 text-left"
+                          >
+                            <p className="truncate font-medium text-foreground">{thread.title}</p>
+                            <p className="mt-0.5 text-[11px] text-muted-foreground">
+                              {thread.messageCount} message{thread.messageCount === 1 ? "" : "s"}
+                            </p>
+                          </button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 shrink-0"
+                            onClick={() => deleteChatMutation.mutate(thread.id)}
+                            disabled={deleteChatMutation.isPending}
+                            title="Delete chat"
+                            aria-label="Delete chat"
+                          >
+                            {deleteChatMutation.isPending && deleteChatMutation.variables === thread.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </div>
                       ))
                     )}
                   </CollapsibleContent>
