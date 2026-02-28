@@ -463,8 +463,8 @@ const Dashboard = () => {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 p-4 sm:p-6">
-          <div className="chrome-pane mb-6 flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+        <main className="min-w-0 flex flex-1 flex-col p-4 sm:p-6">
+          <div className="chrome-pane mb-6 shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3">
             <div>
               <h1 className="app-title text-2xl md:text-3xl">{tabLabels[activeTab]}</h1>
               <p className="text-xs text-muted-foreground">Welcome, {user?.firstName || "there"}</p>
@@ -626,10 +626,12 @@ const Dashboard = () => {
           ) : null}
 
           {activeTab === "chat" ? (
-            <ChatPanel
-              selectedThreadId={selectedChatThreadId}
-              onThreadSelected={(threadId) => setSelectedChatThreadId(threadId)}
-            />
+            <div className="min-h-0 flex-1">
+              <ChatPanel
+                selectedThreadId={selectedChatThreadId}
+                onThreadSelected={(threadId) => setSelectedChatThreadId(threadId)}
+              />
+            </div>
           ) : null}
         </main>
       </div>

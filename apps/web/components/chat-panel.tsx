@@ -404,9 +404,9 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
   ]);
 
   return (
-    <Card className="overflow-hidden border-[var(--surface-stroke)] bg-[var(--surface-base)] shadow-[var(--card-hover-shadow)]">
-      <CardContent className="p-0">
-        <div className="flex h-[72vh] min-h-[560px]">
+    <Card className="h-full overflow-hidden border-[var(--surface-stroke)] bg-[var(--surface-base)] shadow-[var(--card-hover-shadow)]">
+      <CardContent className="h-full p-0">
+        <div className="flex h-full min-h-0">
           <div className="flex min-w-0 flex-1 flex-col bg-[var(--surface-elevated)]/92">
             <AssistantRuntimeProvider runtime={runtime}>
               <ThreadPrimitive.Root className="flex h-full flex-col">
