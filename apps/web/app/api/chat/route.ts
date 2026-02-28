@@ -39,6 +39,11 @@ type RequestPayload = {
   messages?: unknown;
 };
 
+type SearchSource = {
+  title: string;
+  url: string;
+};
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -79,6 +84,32 @@ function parseChatMessages(payload: unknown): ChatMessage[] {
   return normalized.slice(-MAX_MESSAGES);
 }
 
+function appendWebSourcesToMessage(
+  message: string,
+  sources: readonly SearchSource[]
+): string {
+  if (!sources.length) {
+    return message;
+  }
+
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return message;
+  }
+
+  const allUrlsAlreadyPresent = sources.every((source) => trimmed.includes(source.url));
+  if (allUrlsAlreadyPresent) {
+    return message;
+  }
+
+  const lines: string[] = ["Sources:"];
+  for (const [index, source] of sources.entries()) {
+    lines.push(`${index + 1}. [${source.title}](${source.url})`);
+  }
+
+  return `${trimmed}\n\n${lines.join("\n")}`;
+}
+
 export async function POST(req: Request) {
   const { userId } = await auth();
   if (!userId) {
@@ -116,9 +147,13 @@ export async function POST(req: Request) {
         ? [{ role: "system", content: BARE_LLM_SYSTEM_PROMPT }, ...conversationMessages]
         : [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...conversationMessages];
 
-    const { message, provider, model } = await generateChatReply(
+    const { message, provider, model, webSearch } = await generateChatReply(
       promptMessages,
       { primaryModel: settings?.primaryModel ?? null }
+    );
+    const assistantMessage = appendWebSourcesToMessage(
+      message,
+      webSearch?.sources ?? []
     );
 
     try {
@@ -127,7 +162,7 @@ export async function POST(req: Request) {
         threadId,
         messages: [
           { role: "user", content: latestUserMessage.content },
-          { role: "assistant", content: message },
+          { role: "assistant", content: assistantMessage },
         ],
       });
     } catch (persistError) {
@@ -138,9 +173,11 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({
-      message,
+      message: assistantMessage,
       provider,
       model,
+      webSearchQuery: webSearch?.query ?? null,
+      webSources: webSearch?.sources ?? [],
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Chat request failed";

@@ -1,5 +1,12 @@
 import OpenAI from 'openai';
 import { isAllowedPrimaryModel } from '@/lib/model-settings';
+import {
+    buildWebSearchContext,
+    buildWebSearchQuery,
+    searchWeb,
+    shouldUseWebSearchForPrompt,
+    type WebSearchSource,
+} from '@/lib/web-search';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
@@ -23,6 +30,10 @@ export type ChatReply = {
     message: string;
     provider: 'ngrok-openai-compatible' | 'openrouter';
     model: string;
+    webSearch: {
+        query: string;
+        sources: WebSearchSource[];
+    } | null;
 };
 
 function createOpenAiCompatibleClient(baseURL: string, apiKey?: string): OpenAI {
@@ -68,11 +79,42 @@ function extractResponseOutputText(response: OpenAI.Responses.Response): string 
     return joined.length > 0 ? joined : null;
 }
 
+function getLatestUserPrompt(messages: readonly ChatMessage[]): string {
+    for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
+        const message = messages[idx];
+        if (message?.role === 'user') {
+            return message.content.trim();
+        }
+    }
+
+    return '';
+}
+
+async function maybeBuildWebSearchContext(
+    messages: readonly ChatMessage[]
+): Promise<{ query: string; sources: WebSearchSource[]; context: string } | null> {
+    const latestUserPrompt = getLatestUserPrompt(messages);
+    if (!latestUserPrompt || !shouldUseWebSearchForPrompt(latestUserPrompt)) {
+        return null;
+    }
+
+    const query = buildWebSearchQuery(latestUserPrompt);
+    const sources = await searchWeb(query);
+    if (!sources.length) {
+        return null;
+    }
+
+    return {
+        query,
+        sources,
+        context: buildWebSearchContext(query, sources),
+    };
+}
+
 async function runChatWithResponsesModel(
     openai: OpenAI,
     model: string,
-    messages: readonly ChatMessage[],
-    options?: { webSearch?: boolean },
+    messages: readonly ChatMessage[]
 ): Promise<string> {
     const response = await openai.responses.create({
         model,
@@ -80,13 +122,6 @@ async function runChatWithResponsesModel(
             role: message.role,
             content: message.content,
         })),
-        ...(options?.webSearch
-            ? {
-                  tools: [{ type: 'web_search' as const }],
-                  tool_choice: 'auto' as const,
-                  include: ['web_search_call.action.sources' as const],
-              }
-            : {}),
     });
 
     const content = extractResponseOutputText(response);
@@ -95,13 +130,6 @@ async function runChatWithResponsesModel(
     }
 
     return content;
-}
-
-function isUnsupportedWebSearchError(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error);
-    return /unsupported tool type:\s*web_search|web_search|tool_choice|invalid.*tools?|unknown tool/i.test(
-        message
-    );
 }
 
 function normalizeModelList(models: string[]): string[] {
@@ -116,11 +144,16 @@ function normalizeModelList(models: string[]): string[] {
 
 export async function generateChatReply(
     messages: readonly ChatMessage[],
-    options?: { primaryModel?: string | null },
+    options?: { primaryModel?: string | null }
 ): Promise<ChatReply> {
     if (!messages.length) {
         throw new Error('No chat messages were provided');
     }
+
+    const webSearchContext = await maybeBuildWebSearchContext(messages);
+    const modelInputMessages = webSearchContext
+        ? [...messages, { role: 'system' as const, content: webSearchContext.context }]
+        : [...messages];
 
     const candidatePrimaryModel =
         typeof options?.primaryModel === 'string' && options.primaryModel.trim()
@@ -129,40 +162,22 @@ export async function generateChatReply(
     const selectedPrimaryModel = isAllowedPrimaryModel(candidatePrimaryModel)
         ? candidatePrimaryModel
         : PRIMARY_LLM_MODEL;
-    const shouldTryPrimaryWebSearch = true;
 
     try {
         const primaryClient = createOpenAiCompatibleClient(PRIMARY_LLM_BASE_URL, PRIMARY_LLM_API_KEY);
-        let primaryReply: string;
-
-        try {
-            primaryReply = await runChatWithResponsesModel(primaryClient, selectedPrimaryModel, messages, {
-                webSearch: shouldTryPrimaryWebSearch,
-            });
-        } catch (primaryAttemptError) {
-            if (shouldTryPrimaryWebSearch && isUnsupportedWebSearchError(primaryAttemptError)) {
-                const searchErrorMessage =
-                    primaryAttemptError instanceof Error
-                        ? primaryAttemptError.message
-                        : String(primaryAttemptError);
-                console.warn('Primary chat model rejected web_search; retrying without tools', {
-                    baseURL: PRIMARY_LLM_BASE_URL,
-                    model: selectedPrimaryModel,
-                    error: searchErrorMessage,
-                });
-
-                primaryReply = await runChatWithResponsesModel(primaryClient, selectedPrimaryModel, messages, {
-                    webSearch: false,
-                });
-            } else {
-                throw primaryAttemptError;
-            }
-        }
+        const primaryReply = await runChatWithResponsesModel(
+            primaryClient,
+            selectedPrimaryModel,
+            modelInputMessages
+        );
 
         return {
             message: primaryReply,
             provider: 'ngrok-openai-compatible',
             model: selectedPrimaryModel,
+            webSearch: webSearchContext
+                ? { query: webSearchContext.query, sources: webSearchContext.sources }
+                : null,
         };
     } catch (primaryError) {
         const primaryErrorMessage =
@@ -189,7 +204,7 @@ export async function generateChatReply(
                 const fallbackReply = await runChatWithResponsesModel(
                     fallbackClient,
                     fallbackModel,
-                    messages
+                    modelInputMessages
                 );
 
                 if (fallbackModel !== OPENROUTER_MODEL) {
@@ -203,6 +218,9 @@ export async function generateChatReply(
                     message: fallbackReply,
                     provider: 'openrouter',
                     model: fallbackModel,
+                    webSearch: webSearchContext
+                        ? { query: webSearchContext.query, sources: webSearchContext.sources }
+                        : null,
                 };
             } catch (fallbackError) {
                 const fallbackErrorMessage =
