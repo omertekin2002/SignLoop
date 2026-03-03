@@ -4,7 +4,6 @@ export const PRIMARY_MODEL_OPTIONS = [
   "gemini-2.5-flash",
   "gemini-2.5-flash-lite",
   "gemini-3-flash",
-  "gemini-3.1-flash-image",
   "gemini-3.1-pro-high",
   "gpt-5",
   "gpt-5.1",

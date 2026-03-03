@@ -104,6 +104,10 @@ function isChatCompletionsImageModel(model: string): boolean {
     return model.toLowerCase().endsWith('/gemini-3.1-flash-image');
 }
 
+function isAllowedRuntimePrimaryModel(value: string): boolean {
+    return isAllowedPrimaryModel(value) || isChatCompletionsImageModel(value);
+}
+
 function isUnsupportedWebSearchError(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error);
     return /unsupported tool type:\s*web_search|web_search|tool_choice|invalid.*tools?|unknown tool/i.test(
@@ -1374,7 +1378,7 @@ export async function generateChatReply(
         typeof options?.primaryModel === 'string' && options.primaryModel.trim()
             ? options.primaryModel.trim()
             : PRIMARY_LLM_MODEL;
-    const selectedPrimaryModel = isAllowedPrimaryModel(candidatePrimaryModel)
+    const selectedPrimaryModel = isAllowedRuntimePrimaryModel(candidatePrimaryModel)
         ? candidatePrimaryModel
         : PRIMARY_LLM_MODEL;
 
