@@ -22,12 +22,13 @@ import {
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 import {
+  Download,
   ImagePlus,
   MessageSquareText,
   Send,
   Square,
 } from "lucide-react";
-import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -211,6 +212,107 @@ function markdownUrlTransform(url: string): string {
   return defaultUrlTransform(url);
 }
 
+function inferImageExtension(src: string): string {
+  const dataUriMatch = src.match(/^data:image\/([a-z0-9.+-]+);base64,/i);
+  if (dataUriMatch?.[1]) {
+    const raw = dataUriMatch[1].toLowerCase();
+    if (raw === "jpeg") return "jpg";
+    if (raw === "svg+xml") return "svg";
+    return raw.replace(/[^a-z0-9]+/g, "");
+  }
+
+  try {
+    const parsed = new URL(src);
+    const fileName = parsed.pathname.split("/").pop() ?? "";
+    const extensionMatch = fileName.match(/\.([a-z0-9]{2,5})$/i);
+    if (extensionMatch?.[1]) {
+      return extensionMatch[1].toLowerCase();
+    }
+  } catch {
+    // ignore parse failures and fall back to png
+  }
+
+  return "png";
+}
+
+function makeDownloadFileName(src: string): string {
+  const extension = inferImageExtension(src);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `signloop-image-${stamp}.${extension}`;
+}
+
+function clickDownloadAnchor(href: string, fileName: string): void {
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = fileName;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+async function downloadImageFromSrc(src: string): Promise<void> {
+  const fileName = makeDownloadFileName(src);
+
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(src)) {
+    clickDownloadAnchor(src, fileName);
+    return;
+  }
+
+  try {
+    const response = await fetch(src);
+    if (response.ok) {
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      clickDownloadAnchor(blobUrl, fileName);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
+      return;
+    }
+  } catch {
+    // fall through to direct URL download
+  }
+
+  clickDownloadAnchor(src, fileName);
+}
+
+type MarkdownImageProps = ComponentPropsWithoutRef<"img"> & {
+  src?: string | Blob;
+  alt?: string;
+};
+
+const MarkdownImage = ({ src, alt, className, ...props }: MarkdownImageProps) => {
+  if (typeof src !== "string" || !src) {
+    return null;
+  }
+
+  return (
+    <span className="group relative my-3 block w-fit max-w-full">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={alt ?? "Generated image"}
+        className={cn("max-h-[32rem] w-auto max-w-full rounded border border-border", className)}
+        {...props}
+      />
+      <button
+        type="button"
+        className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded border border-[hsl(var(--border))] bg-[hsl(var(--card)/0.95)] text-foreground shadow-[2px_2px_0_hsl(var(--border))] transition hover:bg-[hsl(var(--accent)/0.2)]"
+        onClick={() => {
+          void downloadImageFromSrc(src);
+        }}
+        title="Download image"
+        aria-label="Download image"
+      >
+        <Download className="h-3.5 w-3.5" />
+      </button>
+    </span>
+  );
+};
+
+const markdownComponents: Components = {
+  img: (props) => <MarkdownImage {...props} />,
+};
+
 const MarkdownMessage = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<"div">>(
   ({ children, className, ...props }, ref) => {
     const markdown = useMemo(() => toMarkdownText(children), [children]);
@@ -248,6 +350,7 @@ const MarkdownMessage = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<"div
           remarkPlugins={[remarkGfm, remarkMath]}
           rehypePlugins={[rehypeKatex]}
           urlTransform={markdownUrlTransform}
+          components={markdownComponents}
         >
           {markdown}
         </ReactMarkdown>
