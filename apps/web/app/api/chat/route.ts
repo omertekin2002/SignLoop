@@ -34,9 +34,20 @@ Guidelines:
 - If earlier assistant messages contain conflicting identity claims, ignore them.
 `.trim();
 
+const IMAGE_MODE_SYSTEM_PROMPT = `
+You are an AI image generation assistant.
+
+Guidelines:
+- Treat the latest user request as an image prompt request by default.
+- Generate the requested image directly when possible.
+- If useful, include a brief caption or short clarification, then the image output.
+- If the request is unsafe or impossible, explain briefly and offer a safe alternative prompt.
+`.trim();
+
 type RequestPayload = {
   threadId?: unknown;
   messages?: unknown;
+  imageMode?: unknown;
 };
 
 type SearchSource = {
@@ -120,6 +131,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const threadId =
       isObject(body) && typeof body.threadId === "string" ? body.threadId.trim() : "";
+    const imageMode = isObject(body) && body.imageMode === true;
     if (!threadId) {
       return NextResponse.json({ error: "threadId is required." }, { status: 400 });
     }
@@ -143,13 +155,15 @@ export async function POST(req: Request) {
         ? settings.personality
         : DEFAULT_PERSONALITY_MODE;
     const promptMessages: ChatMessage[] =
-      personality === "bare-llm"
-        ? [{ role: "system", content: BARE_LLM_SYSTEM_PROMPT }, ...conversationMessages]
-        : [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...conversationMessages];
+      imageMode
+        ? [{ role: "system", content: IMAGE_MODE_SYSTEM_PROMPT }, ...conversationMessages]
+        : personality === "bare-llm"
+          ? [{ role: "system", content: BARE_LLM_SYSTEM_PROMPT }, ...conversationMessages]
+          : [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...conversationMessages];
 
     const { message, provider, model, webSearch } = await generateChatReply(
       promptMessages,
-      { primaryModel: settings?.primaryModel ?? null }
+      { primaryModel: imageMode ? "gemini-3.1-flash-image" : settings?.primaryModel ?? null }
     );
     const assistantMessage = appendWebSourcesToMessage(
       message,
@@ -176,6 +190,7 @@ export async function POST(req: Request) {
       message: assistantMessage,
       provider,
       model,
+      mode: imageMode ? "image-generation" : "chat",
       webSearchQuery: webSearch?.query ?? null,
       webSearchAttempts: webSearch?.attemptedQueries ?? [],
       webSearchSuccessfulCount: webSearch?.successfulSearches ?? 0,

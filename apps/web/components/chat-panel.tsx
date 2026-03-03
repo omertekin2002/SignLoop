@@ -22,6 +22,7 @@ import {
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 import {
+  ImagePlus,
   MessageSquareText,
   Send,
   Square,
@@ -43,6 +44,7 @@ type ChatApiSuccess = {
   message: string;
   provider?: string;
   model?: string;
+  mode?: string;
 };
 
 type ChatThreadMessage = {
@@ -151,6 +153,7 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
     message,
     provider: typeof payload.provider === "string" ? payload.provider : undefined,
     model: typeof payload.model === "string" ? payload.model : undefined,
+    mode: typeof payload.mode === "string" ? payload.mode : undefined,
   };
 }
 
@@ -277,6 +280,7 @@ type ChatPanelProps = {
 export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPanelProps) {
   const queryClient = useQueryClient();
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [imageMode, setImageMode] = useState(false);
   const hydratedSignatureRef = useRef<string | null>(null);
 
   const activeThreadQuery = useQuery({
@@ -343,6 +347,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
           body: JSON.stringify({
             threadId,
             messages: payloadMessages,
+            imageMode,
           }),
           signal: abortSignal,
         });
@@ -372,12 +377,13 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
             custom: {
               provider: parsedSuccess.provider ?? null,
               model: parsedSuccess.model ?? null,
+              mode: parsedSuccess.mode ?? null,
             },
           },
         };
       },
     }),
-    [activeThreadId, onThreadSelected, queryClient]
+    [activeThreadId, imageMode, onThreadSelected, queryClient]
   );
 
   const runtime = useLocalRuntime(chatModel);
@@ -441,13 +447,33 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                 </ThreadPrimitive.Viewport>
 
                 <ComposerPrimitive.Root className="shrink-0 border-t-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <Button
+                      type="button"
+                      variant={imageMode ? "default" : "outline"}
+                      size="sm"
+                      className="h-8 gap-1.5 px-2.5 text-[0.68rem] normal-case tracking-normal"
+                      onClick={() => setImageMode((current) => !current)}
+                    >
+                      <ImagePlus className="h-3.5 w-3.5" />
+                      {imageMode ? "Image Mode On" : "Image Mode"}
+                    </Button>
+                    <p className="hidden text-xs text-muted-foreground sm:block">
+                      {imageMode
+                        ? "Using gemini-3.1-flash-image for this chat turn."
+                        : "Toggle to generate images from your prompt."}
+                    </p>
+                  </div>
+
                   <div className="flex items-end gap-2">
                     <ComposerPrimitive.Input
                       className={cn(
                         "min-h-[52px] w-full resize-none rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-foreground outline-none ring-0",
                         "placeholder:text-muted-foreground focus-visible:border-[hsl(var(--accent)/0.75)]",
                       )}
-                      placeholder="Type your question..."
+                      placeholder={
+                        imageMode ? "Describe the image you want to generate..." : "Type your question..."
+                      }
                       submitMode="enter"
                       rows={1}
                     />
