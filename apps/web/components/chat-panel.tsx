@@ -62,13 +62,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function compactInlineImageDataUris(text: string): string {
+  return text
+    .replace(
+      /!\[([^\]]*)\]\(\s*data:image\/[a-z0-9.+-]+;base64,[^)]+\)/gi,
+      (_match, alt: string) => `[generated image${alt?.trim() ? `: ${alt.trim()}` : ""}]`,
+    )
+    .replace(
+      /data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]{200,}/gi,
+      "[generated image data]",
+    );
+}
+
 function extractMessageText(message: ThreadMessage): string {
   const chunks: string[] = [];
 
   for (const part of message.content) {
     if (part.type === "text" || part.type === "reasoning") {
       if (part.text.trim()) {
-        chunks.push(part.text.trim());
+        chunks.push(compactInlineImageDataUris(part.text.trim()));
       }
       continue;
     }
@@ -212,6 +224,7 @@ const MarkdownMessage = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<"div
           "[&_.katex]:text-foreground [&_.katex]:text-[1.02em]",
           "[&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto",
           "[&_.katex-display>.katex]:inline-block [&_.katex-display>.katex]:min-w-full",
+          "[&_img]:my-3 [&_img]:max-h-[32rem] [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-border",
           className,
         )}
         {...props}
