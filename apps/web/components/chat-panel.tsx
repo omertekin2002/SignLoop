@@ -27,7 +27,7 @@ import {
   Send,
   Square,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -199,6 +199,18 @@ function toMarkdownText(children: ReactNode): string {
   return normalizeMathNotation(text.replace(/<br\s*\/?>/gi, "\n"));
 }
 
+function markdownUrlTransform(url: string): string {
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(url)) {
+    return url;
+  }
+
+  if (/^blob:/i.test(url)) {
+    return url;
+  }
+
+  return defaultUrlTransform(url);
+}
+
 const MarkdownMessage = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<"div">>(
   ({ children, className, ...props }, ref) => {
     const markdown = useMemo(() => toMarkdownText(children), [children]);
@@ -232,7 +244,11 @@ const MarkdownMessage = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<"div
         )}
         {...props}
       >
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath]}
+          rehypePlugins={[rehypeKatex]}
+          urlTransform={markdownUrlTransform}
+        >
           {markdown}
         </ReactMarkdown>
       </div>
