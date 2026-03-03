@@ -28,9 +28,6 @@ const APP_LAYER_SEARCH_LOOP_DELAY_MS = 3000;
 const MAX_RECENCY_VALIDATION_RETRIES = 1;
 const NATIVE_WEB_SEARCH_MODELS = new Set(['gpt-5', 'gpt-5.1', 'gpt-5.2']);
 
-const DATE_OR_TIME_PROMPT_PATTERN =
-    /\b(what day is it|what(?:'s| is) (?:the )?date|today'?s date|current date|what time is it|current time|time now)\b/i;
-const CLOSE_PRICE_PROMPT_PATTERN = /\b(close|closed|closing|last close|close at)\b/i;
 const RECENCY_PROMPT_PATTERN = /\b(today|now|latest|current|currently|as of)\b/i;
 const YEAR_PATTERN = /\b(19|20)\d{2}\b/g;
 
@@ -39,10 +36,13 @@ You can use an application-level web search tool in this chat.
 
 Return exactly one JSON object and nothing else on every response:
 - To search the web: {"type":"web_search","queries":["query 1","query 2"],"reason":"short reason"}
+- To query market data: {"type":"market_data","symbol":"^spx","date":"2026-02-27","reason":"short reason"}
 - To answer the user: {"type":"final","answer":"your user-facing answer"}
 
 Rules:
 - Use web_search only when current, external, or uncertain facts need verification.
+- Use market_data for index/market close requests (S&P 500, Dow, Nasdaq), especially for specific dates.
+- For market_data dates, use ISO format YYYY-MM-DD. Optional range format: {"type":"market_data","symbol":"^spx","from":"2026-02-01","to":"2026-02-28","limit":5}
 - If no web lookup is needed, return type=final immediately.
 - For web_search, include 1-3 focused queries.
 - After tool results are provided, decide whether more search is needed or return final.
@@ -71,14 +71,18 @@ export type ChatReply = {
 
 type SearchPlannerAction =
     | { type: 'web_search'; queries: string[]; reason?: string }
+    | {
+          type: 'market_data';
+          symbol: string;
+          date?: string;
+          from?: string;
+          to?: string;
+          limit?: number;
+          reason?: string;
+      }
     | { type: 'final'; answer: string };
 
 type ModelDrivenSearchResult = {
-    message: string;
-    webSearch: ChatReply['webSearch'];
-};
-
-type DeterministicChatResult = {
     message: string;
     webSearch: ChatReply['webSearch'];
 };
@@ -115,225 +119,354 @@ function getLatestUserPrompt(messages: readonly ChatMessage[]): string {
     return '';
 }
 
-function isValidIanaTimezone(value: string): boolean {
-    try {
-        Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date());
-        return true;
-    } catch {
-        return false;
-    }
-}
+type MarketDataPoint = {
+    date: string;
+    open: number | null;
+    high: number | null;
+    low: number | null;
+    close: number | null;
+    volume: number | null;
+};
 
-function resolveTimeZoneForPrompt(prompt: string): string {
-    const ianaMatch = prompt.match(/\b(?:in|for)\s+([A-Za-z_]+\/[A-Za-z0-9_+-]+)\b/);
-    const candidate = ianaMatch?.[1]?.trim();
-    if (candidate && isValidIanaTimezone(candidate)) {
-        return candidate;
-    }
-
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-}
-
-function maybeResolveCurrentDateOrTimePrompt(prompt: string): DeterministicChatResult | null {
-    if (!DATE_OR_TIME_PROMPT_PATTERN.test(prompt)) {
-        return null;
-    }
-
-    const timeZone = resolveTimeZoneForPrompt(prompt);
-    const now = new Date();
-    const dateText = new Intl.DateTimeFormat('en-US', {
-        timeZone,
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-    }).format(now);
-    const timeText = new Intl.DateTimeFormat('en-US', {
-        timeZone,
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-    }).format(now);
-
-    const asksTime = /\b(what time is it|current time|time now)\b/i.test(prompt);
-    const asksDate = /\b(what day is it|what(?:'s| is) (?:the )?date|today'?s date|current date)\b/i.test(
-        prompt
-    );
-
-    if (asksTime && asksDate) {
-        return {
-            message: `Current date and time in ${timeZone}: ${dateText}, ${timeText}.`,
-            webSearch: null,
-        };
-    }
-
-    if (asksTime) {
-        return {
-            message: `Current time in ${timeZone}: ${timeText} on ${dateText}.`,
-            webSearch: null,
-        };
-    }
-
-    return {
-        message: `Today is ${dateText} in ${timeZone}.`,
-        webSearch: null,
-    };
-}
-
-type MarketCloseRequest = {
+type MarketSymbolResolution = {
     displayName: string;
     stooqSymbol: string;
 };
 
-function detectMarketCloseRequest(prompt: string): MarketCloseRequest | null {
-    if (!CLOSE_PRICE_PROMPT_PATTERN.test(prompt)) {
+type MarketDataResult = {
+    symbol: MarketSymbolResolution;
+    sourceUrl: string;
+    points: MarketDataPoint[];
+};
+
+type MarketDataToolFeedback = {
+    attemptLabel: string;
+    message: string;
+    success: boolean;
+    sources: WebSearchSource[];
+};
+
+function isValidIsoDate(value: string): boolean {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        return false;
+    }
+
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    if (Number.isNaN(parsed.getTime())) {
+        return false;
+    }
+
+    return parsed.toISOString().slice(0, 10) === value;
+}
+
+function normalizeDateInput(value: string | undefined): string | null {
+    if (!value) {
         return null;
     }
 
-    const normalized = prompt.toLowerCase();
-
-    if (/\b(s&p\s*500|s and p\s*500|sp500|spx|\^gspc|\^spx)\b/.test(normalized)) {
-        return { displayName: 'S&P 500', stooqSymbol: '^spx' };
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return null;
     }
 
-    if (/\b(dow jones|djia|\^dji)\b/.test(normalized)) {
-        return { displayName: 'Dow Jones Industrial Average', stooqSymbol: '^dji' };
-    }
-
-    if (/\b(nasdaq(?: composite)?|ixic|\^ixic)\b/.test(normalized)) {
-        return { displayName: 'NASDAQ Composite', stooqSymbol: '^ixic' };
-    }
-
-    return null;
+    return isValidIsoDate(trimmed) ? trimmed : null;
 }
 
-type MarketCloseSnapshot = {
-    close: number;
-    isoDate: string;
-    sourceUrl: string;
-};
+function toStooqDate(isoDate: string): string {
+    return isoDate.replace(/-/g, '');
+}
 
-function parseStooqDailyCloseCsv(csvLine: string, stooqSymbol: string): MarketCloseSnapshot | null {
-    const columns = csvLine.split(',').map((value) => value.trim());
-    if (columns.length < 7) {
+function parseStooqNumber(value: string | undefined): number | null {
+    if (!value) {
+        return null;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === 'N/D') {
+        return null;
+    }
+
+    const parsed = Number.parseFloat(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseStooqQuoteLine(line: string): MarketDataPoint | null {
+    const columns = line.split(',').map((value) => value.trim());
+    if (columns.length < 8) {
         return null;
     }
 
     const rawDate = columns[1] ?? '';
-    const rawClose = columns[6] ?? '';
-    if (!/^\d{8}$/.test(rawDate) || rawClose === 'N/D') {
+    if (!/^\d{8}$/.test(rawDate)) {
         return null;
     }
 
-    const close = Number.parseFloat(rawClose);
-    if (!Number.isFinite(close)) {
-        return null;
-    }
-
-    const isoDate = `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6, 8)}`;
-    const sourceUrl = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
-
-    return { close, isoDate, sourceUrl };
+    return {
+        date: `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6, 8)}`,
+        open: parseStooqNumber(columns[3]),
+        high: parseStooqNumber(columns[4]),
+        low: parseStooqNumber(columns[5]),
+        close: parseStooqNumber(columns[6]),
+        volume: parseStooqNumber(columns[7]),
+    };
 }
 
-async function fetchMarketCloseFromStooq(stooqSymbol: string): Promise<MarketCloseSnapshot | null> {
+function parseStooqHistoricalCsv(csvText: string): MarketDataPoint[] {
+    const lines = csvText
+        .trim()
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+    if (lines.length <= 1) {
+        return [];
+    }
+
+    const rows: MarketDataPoint[] = [];
+    for (const line of lines.slice(1)) {
+        const columns = line.split(',').map((value) => value.trim());
+        if (columns.length < 6) {
+            continue;
+        }
+
+        const date = columns[0] ?? '';
+        if (!isValidIsoDate(date)) {
+            continue;
+        }
+
+        rows.push({
+            date,
+            open: parseStooqNumber(columns[1]),
+            high: parseStooqNumber(columns[2]),
+            low: parseStooqNumber(columns[3]),
+            close: parseStooqNumber(columns[4]),
+            volume: parseStooqNumber(columns[5]),
+        });
+    }
+
+    return rows;
+}
+
+function normalizeMarketSymbol(symbol: string): MarketSymbolResolution | null {
+    const raw = symbol.trim();
+    if (!raw) {
+        return null;
+    }
+
+    const normalized = raw.toLowerCase();
+    const compact = normalized.replace(/[\s._-]+/g, '');
+
+    if (
+        compact === '^spx' ||
+        compact === '^gspc' ||
+        compact === 'spx' ||
+        compact === 'sp500' ||
+        compact === 's&p500' ||
+        compact === 'sandp500' ||
+        compact === 'snp500'
+    ) {
+        return { displayName: 'S&P 500', stooqSymbol: '^spx' };
+    }
+
+    if (
+        compact === '^dji' ||
+        compact === 'dji' ||
+        compact === 'djia' ||
+        compact === 'dowjones' ||
+        compact === 'dowjonesindustrialaverage'
+    ) {
+        return { displayName: 'Dow Jones Industrial Average', stooqSymbol: '^dji' };
+    }
+
+    if (
+        compact === '^ixic' ||
+        compact === 'ixic' ||
+        compact === 'nasdaq' ||
+        compact === 'nasdaqcomposite'
+    ) {
+        return { displayName: 'NASDAQ Composite', stooqSymbol: '^ixic' };
+    }
+
+    if (!/^\^?[a-z0-9.-]{1,24}$/i.test(raw)) {
+        return null;
+    }
+
+    return {
+        displayName: raw.toUpperCase(),
+        stooqSymbol: raw.toLowerCase(),
+    };
+}
+
+function clampMarketLimit(limit: number | undefined): number {
+    if (!Number.isFinite(limit ?? NaN)) {
+        return 5;
+    }
+
+    const rounded = Math.floor(limit ?? 5);
+    return Math.min(20, Math.max(1, rounded));
+}
+
+async function fetchMarketDataFromStooq(args: {
+    symbol: MarketSymbolResolution;
+    date?: string;
+    from?: string;
+    to?: string;
+    limit?: number;
+}): Promise<MarketDataResult | null> {
+    const limit = clampMarketLimit(args.limit);
+
+    const date = normalizeDateInput(args.date);
+    const from = normalizeDateInput(args.from);
+    const to = normalizeDateInput(args.to);
+
+    if (args.date && !date) {
+        return null;
+    }
+    if (args.from && !from) {
+        return null;
+    }
+    if (args.to && !to) {
+        return null;
+    }
+
     try {
-        const url = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
-        const response = await fetch(url, { method: 'GET' });
+        if (date || from || to) {
+            const startCandidate = date ?? from ?? to ?? '';
+            const endCandidate = date ?? to ?? from ?? '';
+            const [rangeStart, rangeEnd] =
+                startCandidate <= endCandidate
+                    ? [startCandidate, endCandidate]
+                    : [endCandidate, startCandidate];
+            const sourceUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(args.symbol.stooqSymbol)}&i=d&d1=${toStooqDate(rangeStart)}&d2=${toStooqDate(rangeEnd)}`;
+            const response = await fetch(sourceUrl, { method: 'GET' });
+            if (!response.ok) {
+                return null;
+            }
+
+            const csv = await response.text();
+            const points = parseStooqHistoricalCsv(csv)
+                .sort((left, right) => right.date.localeCompare(left.date))
+                .slice(0, limit);
+
+            return {
+                symbol: args.symbol,
+                sourceUrl,
+                points,
+            };
+        }
+
+        const sourceUrl = `https://stooq.com/q/l/?s=${encodeURIComponent(args.symbol.stooqSymbol)}&i=d`;
+        const response = await fetch(sourceUrl, { method: 'GET' });
         if (!response.ok) {
             return null;
         }
 
-        const body = (await response.text()).trim();
-        const firstLine = body.split('\n')[0]?.trim() ?? '';
+        const firstLine = (await response.text()).trim().split('\n')[0]?.trim() ?? '';
         if (!firstLine) {
             return null;
         }
 
-        return parseStooqDailyCloseCsv(firstLine, stooqSymbol);
+        const point = parseStooqQuoteLine(firstLine);
+        return {
+            symbol: args.symbol,
+            sourceUrl,
+            points: point ? [point] : [],
+        };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.warn('Market close fetch failed:', { symbol: stooqSymbol, error: errorMessage });
+        console.warn('Market data fetch failed:', {
+            symbol: args.symbol.stooqSymbol,
+            date: args.date,
+            from: args.from,
+            to: args.to,
+            error: errorMessage,
+        });
         return null;
     }
 }
 
-function formatIsoDateForAnswer(isoDate: string): string {
-    const parts = isoDate.split('-').map((value) => Number.parseInt(value, 10));
-    const year = parts[0];
-    const month = parts[1];
-    const day = parts[2];
+function formatMarketDataPoint(point: MarketDataPoint): string {
+    const fmt = (value: number | null): string => (value === null ? 'N/A' : value.toFixed(2));
+    const vol = point.volume === null ? 'N/A' : Math.round(point.volume).toString();
+    return `date=${point.date} open=${fmt(point.open)} high=${fmt(point.high)} low=${fmt(point.low)} close=${fmt(point.close)} volume=${vol}`;
+}
+
+async function executeMarketDataTool(
+    action: Extract<SearchPlannerAction, { type: 'market_data' }>
+): Promise<MarketDataToolFeedback> {
+    const attemptLabelParts = [`market_data ${action.symbol}`];
+    if (action.date) {
+        attemptLabelParts.push(`date=${action.date}`);
+    } else {
+        if (action.from) attemptLabelParts.push(`from=${action.from}`);
+        if (action.to) attemptLabelParts.push(`to=${action.to}`);
+    }
+    const attemptLabel = attemptLabelParts.join(' ');
+
+    const resolvedSymbol = normalizeMarketSymbol(action.symbol);
+    if (!resolvedSymbol) {
+        return {
+            attemptLabel,
+            success: false,
+            sources: [],
+            message:
+                'Market data tool feedback: invalid symbol. Use known symbols (S&P 500/^spx, Dow/^dji, Nasdaq/^ixic) or a valid Stooq ticker.',
+        };
+    }
+
     if (
-        parts.length !== 3 ||
-        year === undefined ||
-        month === undefined ||
-        day === undefined ||
-        !Number.isFinite(year) ||
-        !Number.isFinite(month) ||
-        !Number.isFinite(day)
+        (action.date && !normalizeDateInput(action.date)) ||
+        (action.from && !normalizeDateInput(action.from)) ||
+        (action.to && !normalizeDateInput(action.to))
     ) {
-        return isoDate;
+        return {
+            attemptLabel,
+            success: false,
+            sources: [],
+            message:
+                'Market data tool feedback: invalid date format. Use ISO date format YYYY-MM-DD for date/from/to.',
+        };
     }
 
-    const asDate = new Date(Date.UTC(year, month - 1, day));
-    return new Intl.DateTimeFormat('en-US', {
-        timeZone: 'UTC',
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-    }).format(asDate);
-}
-
-async function maybeResolveMarketClosePrompt(prompt: string): Promise<DeterministicChatResult | null> {
-    const request = detectMarketCloseRequest(prompt);
-    if (!request) {
-        return null;
+    const result = await fetchMarketDataFromStooq({
+        symbol: resolvedSymbol,
+        date: action.date,
+        from: action.from,
+        to: action.to,
+        limit: action.limit,
+    });
+    if (!result || !result.points.length) {
+        return {
+            attemptLabel,
+            success: false,
+            sources: [],
+            message:
+                `Market data tool results: no rows returned for ${resolvedSymbol.displayName}. ` +
+                'Try a different date, a date range, or a different symbol.',
+        };
     }
 
-    const snapshot = await fetchMarketCloseFromStooq(request.stooqSymbol);
-    if (!snapshot) {
-        return null;
-    }
+    const lines = [
+        `Market data tool results for ${result.symbol.displayName} (${result.symbol.stooqSymbol}):`,
+        `Rows returned: ${result.points.length}`,
+        ...result.points.map((point, index) => `${index + 1}. ${formatMarketDataPoint(point)}`),
+        `Source URL: ${result.sourceUrl}`,
+        'If additional evidence is required, request another tool action.',
+        'If evidence is sufficient, return final JSON with your answer.',
+    ];
 
-    const formattedClose = new Intl.NumberFormat('en-US', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-    }).format(snapshot.close);
-    const formattedDate = formatIsoDateForAnswer(snapshot.isoDate);
-
+    const latest = result.points[0];
     return {
-        message: `The latest available ${request.displayName} close is ${formattedClose} on ${formattedDate} (UTC session date), based on [Stooq](${snapshot.sourceUrl}).`,
-        webSearch: {
-            query: `${request.displayName} latest close`,
-            attemptedQueries: [`stooq ${request.stooqSymbol} daily close`],
-            successfulSearches: 1,
-            sources: [
-                {
-                    title: `Stooq ${request.displayName} daily close`,
-                    url: snapshot.sourceUrl,
-                    snippet: `Close ${formattedClose} on ${snapshot.isoDate}`,
-                },
-            ],
-        },
+        attemptLabel,
+        success: true,
+        message: lines.join('\n'),
+        sources: [
+            {
+                title: `Stooq ${result.symbol.displayName} daily data`,
+                url: result.sourceUrl,
+                snippet: latest ? formatMarketDataPoint(latest) : null,
+            },
+        ],
     };
-}
-
-async function maybeResolveDeterministicPrompt(
-    messages: readonly ChatMessage[]
-): Promise<DeterministicChatResult | null> {
-    const latestUserPrompt = getLatestUserPrompt(messages);
-    if (!latestUserPrompt) {
-        return null;
-    }
-
-    const dateOrTime = maybeResolveCurrentDateOrTimePrompt(latestUserPrompt);
-    if (dateOrTime) {
-        return dateOrTime;
-    }
-
-    return maybeResolveMarketClosePrompt(latestUserPrompt);
 }
 
 function shouldValidateRecencyForPrompt(prompt: string): boolean {
@@ -647,7 +780,9 @@ function extractJsonObjects(text: string): string[] {
 }
 
 function isLikelyPlannerProtocolLeak(text: string): boolean {
-    return /\b"type"\s*:\s*"(web_search|final)"|\bweb_search\b/i.test(text);
+    return /\b"type"\s*:\s*"(web_search|market_data|final)"|\b(web_search|market_data)\b/i.test(
+        text
+    );
 }
 
 function parseSearchPlannerAction(rawText: string): SearchPlannerAction | null {
@@ -678,6 +813,32 @@ function parseSearchPlannerAction(rawText: string): SearchPlannerAction | null {
 
             const reason = typeof parsed.reason === 'string' ? parsed.reason : undefined;
             return { type: 'web_search', queries: rawQueries, reason };
+        }
+
+        if (parsed.type === 'market_data') {
+            const symbol = typeof parsed.symbol === 'string' ? parsed.symbol.trim() : '';
+            if (!symbol) {
+                continue;
+            }
+
+            const reason = typeof parsed.reason === 'string' ? parsed.reason : undefined;
+            const date = typeof parsed.date === 'string' ? parsed.date.trim() : undefined;
+            const from = typeof parsed.from === 'string' ? parsed.from.trim() : undefined;
+            const to = typeof parsed.to === 'string' ? parsed.to.trim() : undefined;
+            const limit =
+                typeof parsed.limit === 'number' && Number.isFinite(parsed.limit)
+                    ? parsed.limit
+                    : undefined;
+
+            return {
+                type: 'market_data',
+                symbol,
+                date: date || undefined,
+                from: from || undefined,
+                to: to || undefined,
+                limit,
+                reason,
+            };
         }
     }
 
@@ -880,7 +1041,26 @@ async function runChatWithModelDrivenSearch(
 
         plannerMessages.push({ role: 'assistant', content: plannerOutput });
 
-        const remainingQueryBudget = MAX_TOTAL_SEARCH_QUERIES - attemptedQueries.length;
+        if (action.type === 'market_data') {
+            const marketFeedback = await executeMarketDataTool(action);
+            attemptedQueries.push(marketFeedback.attemptLabel);
+            if (marketFeedback.success) {
+                successfulSearches += 1;
+            }
+
+            for (const source of marketFeedback.sources) {
+                mergeSource(sourceMap, source);
+            }
+
+            await sleep(APP_LAYER_SEARCH_LOOP_DELAY_MS);
+            plannerMessages.push({
+                role: 'user',
+                content: marketFeedback.message,
+            });
+            continue;
+        }
+
+        const remainingQueryBudget = MAX_TOTAL_SEARCH_QUERIES - attemptedQuerySet.size;
         if (remainingQueryBudget <= 0) {
             plannerMessages.push({
                 role: 'user',
@@ -937,10 +1117,10 @@ async function runChatWithModelDrivenSearch(
                 round,
                 executedQueries: normalizedQueries,
                 queryBlocks,
-                attemptedCount: attemptedQueries.length,
+                attemptedCount: attemptedQuerySet.size,
                 successCount: successfulSearches,
                 uniqueSourceCount: sourceMap.size,
-                remainingQueries: Math.max(0, MAX_TOTAL_SEARCH_QUERIES - attemptedQueries.length),
+                remainingQueries: Math.max(0, MAX_TOTAL_SEARCH_QUERIES - attemptedQuerySet.size),
             }),
         });
     }
@@ -1013,15 +1193,6 @@ export async function generateChatReply(
     const selectedPrimaryModel = isAllowedPrimaryModel(candidatePrimaryModel)
         ? candidatePrimaryModel
         : PRIMARY_LLM_MODEL;
-    const deterministicResult = await maybeResolveDeterministicPrompt(messages);
-    if (deterministicResult) {
-        return {
-            message: deterministicResult.message,
-            provider: 'ngrok-openai-compatible',
-            model: selectedPrimaryModel,
-            webSearch: deterministicResult.webSearch,
-        };
-    }
 
     try {
         const primaryClient = createOpenAiCompatibleClient(PRIMARY_LLM_BASE_URL, PRIMARY_LLM_API_KEY);
