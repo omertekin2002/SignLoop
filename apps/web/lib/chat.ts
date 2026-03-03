@@ -23,7 +23,14 @@ const MAX_SEARCH_QUERIES_PER_ROUND = 3;
 const SEARCH_RESULTS_PER_QUERY = 8;
 const MAX_WEB_SOURCES_IN_METADATA = 8;
 const APP_LAYER_SEARCH_LOOP_DELAY_MS = 3000;
+const MAX_RECENCY_VALIDATION_RETRIES = 1;
 const NATIVE_WEB_SEARCH_MODELS = new Set(['gpt-5', 'gpt-5.1', 'gpt-5.2']);
+
+const DATE_OR_TIME_PROMPT_PATTERN =
+    /\b(what day is it|what(?:'s| is) (?:the )?date|today'?s date|current date|what time is it|current time|time now)\b/i;
+const CLOSE_PRICE_PROMPT_PATTERN = /\b(close|closed|closing|last close|close at)\b/i;
+const RECENCY_PROMPT_PATTERN = /\b(today|now|latest|current|currently|as of)\b/i;
+const YEAR_PATTERN = /\b(19|20)\d{2}\b/g;
 
 const MODEL_DRIVEN_WEB_SEARCH_PROMPT = `
 You can use an application-level web search tool in this chat.
@@ -69,6 +76,11 @@ type ModelDrivenSearchResult = {
     webSearch: ChatReply['webSearch'];
 };
 
+type DeterministicChatResult = {
+    message: string;
+    webSearch: ChatReply['webSearch'];
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
@@ -88,6 +100,262 @@ function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
     });
+}
+
+function getLatestUserPrompt(messages: readonly ChatMessage[]): string {
+    for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
+        const message = messages[idx];
+        if (message?.role === 'user') {
+            return message.content.trim();
+        }
+    }
+
+    return '';
+}
+
+function isValidIanaTimezone(value: string): boolean {
+    try {
+        Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date());
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function resolveTimeZoneForPrompt(prompt: string): string {
+    const ianaMatch = prompt.match(/\b(?:in|for)\s+([A-Za-z_]+\/[A-Za-z0-9_+-]+)\b/);
+    const candidate = ianaMatch?.[1]?.trim();
+    if (candidate && isValidIanaTimezone(candidate)) {
+        return candidate;
+    }
+
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+}
+
+function maybeResolveCurrentDateOrTimePrompt(prompt: string): DeterministicChatResult | null {
+    if (!DATE_OR_TIME_PROMPT_PATTERN.test(prompt)) {
+        return null;
+    }
+
+    const timeZone = resolveTimeZoneForPrompt(prompt);
+    const now = new Date();
+    const dateText = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+    }).format(now);
+    const timeText = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+    }).format(now);
+
+    const asksTime = /\b(what time is it|current time|time now)\b/i.test(prompt);
+    const asksDate = /\b(what day is it|what(?:'s| is) (?:the )?date|today'?s date|current date)\b/i.test(
+        prompt
+    );
+
+    if (asksTime && asksDate) {
+        return {
+            message: `Current date and time in ${timeZone}: ${dateText}, ${timeText}.`,
+            webSearch: null,
+        };
+    }
+
+    if (asksTime) {
+        return {
+            message: `Current time in ${timeZone}: ${timeText} on ${dateText}.`,
+            webSearch: null,
+        };
+    }
+
+    return {
+        message: `Today is ${dateText} in ${timeZone}.`,
+        webSearch: null,
+    };
+}
+
+type MarketCloseRequest = {
+    displayName: string;
+    stooqSymbol: string;
+};
+
+function detectMarketCloseRequest(prompt: string): MarketCloseRequest | null {
+    if (!CLOSE_PRICE_PROMPT_PATTERN.test(prompt)) {
+        return null;
+    }
+
+    const normalized = prompt.toLowerCase();
+
+    if (/\b(s&p\s*500|s and p\s*500|sp500|spx|\^gspc|\^spx)\b/.test(normalized)) {
+        return { displayName: 'S&P 500', stooqSymbol: '^spx' };
+    }
+
+    if (/\b(dow jones|djia|\^dji)\b/.test(normalized)) {
+        return { displayName: 'Dow Jones Industrial Average', stooqSymbol: '^dji' };
+    }
+
+    if (/\b(nasdaq(?: composite)?|ixic|\^ixic)\b/.test(normalized)) {
+        return { displayName: 'NASDAQ Composite', stooqSymbol: '^ixic' };
+    }
+
+    return null;
+}
+
+type MarketCloseSnapshot = {
+    close: number;
+    isoDate: string;
+    sourceUrl: string;
+};
+
+function parseStooqDailyCloseCsv(csvLine: string, stooqSymbol: string): MarketCloseSnapshot | null {
+    const columns = csvLine.split(',').map((value) => value.trim());
+    if (columns.length < 7) {
+        return null;
+    }
+
+    const rawDate = columns[1] ?? '';
+    const rawClose = columns[6] ?? '';
+    if (!/^\d{8}$/.test(rawDate) || rawClose === 'N/D') {
+        return null;
+    }
+
+    const close = Number.parseFloat(rawClose);
+    if (!Number.isFinite(close)) {
+        return null;
+    }
+
+    const isoDate = `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6, 8)}`;
+    const sourceUrl = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
+
+    return { close, isoDate, sourceUrl };
+}
+
+async function fetchMarketCloseFromStooq(stooqSymbol: string): Promise<MarketCloseSnapshot | null> {
+    try {
+        const url = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
+        const response = await fetch(url, { method: 'GET' });
+        if (!response.ok) {
+            return null;
+        }
+
+        const body = (await response.text()).trim();
+        const firstLine = body.split('\n')[0]?.trim() ?? '';
+        if (!firstLine) {
+            return null;
+        }
+
+        return parseStooqDailyCloseCsv(firstLine, stooqSymbol);
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.warn('Market close fetch failed:', { symbol: stooqSymbol, error: errorMessage });
+        return null;
+    }
+}
+
+function formatIsoDateForAnswer(isoDate: string): string {
+    const parts = isoDate.split('-').map((value) => Number.parseInt(value, 10));
+    const year = parts[0];
+    const month = parts[1];
+    const day = parts[2];
+    if (
+        parts.length !== 3 ||
+        year === undefined ||
+        month === undefined ||
+        day === undefined ||
+        !Number.isFinite(year) ||
+        !Number.isFinite(month) ||
+        !Number.isFinite(day)
+    ) {
+        return isoDate;
+    }
+
+    const asDate = new Date(Date.UTC(year, month - 1, day));
+    return new Intl.DateTimeFormat('en-US', {
+        timeZone: 'UTC',
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+    }).format(asDate);
+}
+
+async function maybeResolveMarketClosePrompt(prompt: string): Promise<DeterministicChatResult | null> {
+    const request = detectMarketCloseRequest(prompt);
+    if (!request) {
+        return null;
+    }
+
+    const snapshot = await fetchMarketCloseFromStooq(request.stooqSymbol);
+    if (!snapshot) {
+        return null;
+    }
+
+    const formattedClose = new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    }).format(snapshot.close);
+    const formattedDate = formatIsoDateForAnswer(snapshot.isoDate);
+
+    return {
+        message: `The latest available ${request.displayName} close is ${formattedClose} on ${formattedDate} (UTC session date), based on [Stooq](${snapshot.sourceUrl}).`,
+        webSearch: {
+            query: `${request.displayName} latest close`,
+            attemptedQueries: [`stooq ${request.stooqSymbol} daily close`],
+            successfulSearches: 1,
+            sources: [
+                {
+                    title: `Stooq ${request.displayName} daily close`,
+                    url: snapshot.sourceUrl,
+                    snippet: `Close ${formattedClose} on ${snapshot.isoDate}`,
+                },
+            ],
+        },
+    };
+}
+
+async function maybeResolveDeterministicPrompt(
+    messages: readonly ChatMessage[]
+): Promise<DeterministicChatResult | null> {
+    const latestUserPrompt = getLatestUserPrompt(messages);
+    if (!latestUserPrompt) {
+        return null;
+    }
+
+    const dateOrTime = maybeResolveCurrentDateOrTimePrompt(latestUserPrompt);
+    if (dateOrTime) {
+        return dateOrTime;
+    }
+
+    return maybeResolveMarketClosePrompt(latestUserPrompt);
+}
+
+function shouldValidateRecencyForPrompt(prompt: string): boolean {
+    if (!prompt || !RECENCY_PROMPT_PATTERN.test(prompt)) {
+        return false;
+    }
+
+    return (prompt.match(YEAR_PATTERN) ?? []).length === 0;
+}
+
+function answerLooksStaleForRecencyPrompt(prompt: string, answer: string, now = new Date()): boolean {
+    if (!shouldValidateRecencyForPrompt(prompt)) {
+        return false;
+    }
+
+    const years = (answer.match(YEAR_PATTERN) ?? [])
+        .map((year) => Number.parseInt(year, 10))
+        .filter((year) => Number.isFinite(year));
+    if (!years.length) {
+        return false;
+    }
+
+    const mostRecentYearInAnswer = Math.max(...years);
+    return mostRecentYearInAnswer < now.getUTCFullYear();
 }
 
 function createOpenAiCompatibleClient(baseURL: string, apiKey?: string): OpenAI {
@@ -535,6 +803,8 @@ async function runChatWithModelDrivenSearch(
     const attemptedQuerySet = new Set<string>();
     let successfulSearches = 0;
     const sourceMap = new Map<string, WebSearchSource>();
+    const latestUserPrompt = getLatestUserPrompt(messages);
+    let recencyValidationRetries = 0;
 
     for (let round = 1; round <= MAX_MODEL_SEARCH_ROUNDS; round += 1) {
         const plannerOutput = await runChatWithResponsesModel(openai, model, plannerMessages);
@@ -556,6 +826,29 @@ async function runChatWithModelDrivenSearch(
         }
 
         if (action.type === 'final') {
+            if (
+                recencyValidationRetries < MAX_RECENCY_VALIDATION_RETRIES &&
+                answerLooksStaleForRecencyPrompt(latestUserPrompt, action.answer)
+            ) {
+                recencyValidationRetries += 1;
+                plannerMessages.push({ role: 'assistant', content: plannerOutput });
+
+                const now = new Date();
+                const absoluteToday = new Intl.DateTimeFormat('en-US', {
+                    weekday: 'long',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    timeZone: 'UTC',
+                }).format(now);
+
+                plannerMessages.push({
+                    role: 'user',
+                    content: `Validation check: your final answer appears stale for a current-time question. Today is ${absoluteToday} (UTC). Run additional web_search queries focused on current-date sources, then return final JSON.`,
+                });
+                continue;
+            }
+
             return {
                 message: action.answer,
                 webSearch: buildWebSearchMetadata(attemptedQueries, successfulSearches, sourceMap),
@@ -692,6 +985,15 @@ export async function generateChatReply(
     const selectedPrimaryModel = isAllowedPrimaryModel(candidatePrimaryModel)
         ? candidatePrimaryModel
         : PRIMARY_LLM_MODEL;
+    const deterministicResult = await maybeResolveDeterministicPrompt(messages);
+    if (deterministicResult) {
+        return {
+            message: deterministicResult.message,
+            provider: 'ngrok-openai-compatible',
+            model: selectedPrimaryModel,
+            webSearch: deterministicResult.webSearch,
+        };
+    }
 
     try {
         const primaryClient = createOpenAiCompatibleClient(PRIMARY_LLM_BASE_URL, PRIMARY_LLM_API_KEY);
