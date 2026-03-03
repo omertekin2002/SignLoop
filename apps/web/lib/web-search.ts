@@ -4,6 +4,17 @@ export type WebSearchSource = {
   snippet: string | null;
 };
 
+export type WebSearchEvidence = {
+  source: WebSearchSource;
+  publishedAt: string | null;
+  evidenceSnippet: string | null;
+  trustScore: number;
+  recencyScore: number;
+  factScore: number;
+  relevanceScore: number;
+  totalScore: number;
+};
+
 export type WebSearchRun = {
   query: string;
   attemptedQueries: string[];
@@ -15,8 +26,69 @@ const WEB_SEARCH_ENDPOINT = "https://r.jina.ai/http://duckduckgo.com/html/?q=";
 const DEFAULT_TIMEOUT_MS = 12000;
 const DEFAULT_MAX_RESULTS = 6;
 const DEFAULT_MAX_ATTEMPTS = 12;
+const DEFAULT_PAGE_FETCH_TIMEOUT_MS = 9000;
+const DEFAULT_MAX_SOURCES_TO_FETCH = 3;
+const PAGE_FETCH_PROXY_PREFIX = "https://r.jina.ai/http://";
+const PAGE_FETCH_MAX_CHARS = 18000;
 const MAX_QUERY_LENGTH = 220;
 const MAX_SNIPPET_LENGTH = 320;
+
+const QUERY_TOKEN_STOP_WORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "that",
+  "from",
+  "what",
+  "when",
+  "where",
+  "which",
+  "who",
+  "why",
+  "how",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "to",
+  "of",
+  "in",
+  "on",
+  "at",
+  "a",
+  "an",
+  "as",
+  "it",
+  "by",
+  "or",
+  "if",
+  "today",
+  "latest",
+  "current",
+  "news",
+  "update",
+  "updates",
+]);
+
+const TRUSTED_DOMAIN_SCORES: Array<{ suffix: string; score: number }> = [
+  { suffix: "reuters.com", score: 4 },
+  { suffix: "apnews.com", score: 4 },
+  { suffix: "wsj.com", score: 4 },
+  { suffix: "ft.com", score: 4 },
+  { suffix: "bloomberg.com", score: 4 },
+  { suffix: "spglobal.com", score: 4 },
+  { suffix: "fred.stlouisfed.org", score: 4 },
+  { suffix: "sec.gov", score: 4 },
+  { suffix: "marketwatch.com", score: 3 },
+  { suffix: "cnbc.com", score: 3 },
+  { suffix: "finance.yahoo.com", score: 3 },
+  { suffix: "google.com", score: 3 },
+  { suffix: "stooq.com", score: 3 },
+  { suffix: "nytimes.com", score: 2 },
+  { suffix: "bbc.com", score: 2 },
+];
 
 const WEB_SEARCH_TRIGGER_PATTERN =
   /\b(web_search|search the web|browse the web|look up|lookup|latest|current|today|yesterday|this week|this month|breaking|real[-\s]?time|recent news|latest news|as of)\b/i;
@@ -55,6 +127,220 @@ function decodeDuckDuckGoRedirect(url: string): string | null {
     return decoded;
   } catch {
     return null;
+  }
+}
+
+function extractQueryTokens(query: string): string[] {
+  return normalizeWhitespace(query)
+    .toLowerCase()
+    .split(/[^a-z0-9^.%]+/i)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2 && !QUERY_TOKEN_STOP_WORDS.has(token));
+}
+
+function countQueryTokenMatches(tokens: readonly string[], text: string): number {
+  if (!tokens.length || !text) return 0;
+  const haystack = text.toLowerCase();
+  let matches = 0;
+
+  for (const token of tokens) {
+    if (haystack.includes(token)) {
+      matches += 1;
+    }
+  }
+
+  return matches;
+}
+
+function resolveTrustedDomainScore(url: string): number {
+  const parsed = safeParseUrl(url);
+  if (!parsed) return 0;
+  const hostname = parsed.hostname.toLowerCase();
+
+  for (const entry of TRUSTED_DOMAIN_SCORES) {
+    if (hostname === entry.suffix || hostname.endsWith(`.${entry.suffix}`)) {
+      return entry.score;
+    }
+  }
+
+  return 0;
+}
+
+function toIsoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function parseIsoDateCandidate(year: string, month: string, day: string): Date | null {
+  const y = Number.parseInt(year, 10);
+  const m = Number.parseInt(month, 10);
+  const d = Number.parseInt(day, 10);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+    return null;
+  }
+
+  const candidate = new Date(Date.UTC(y, m - 1, d));
+  if (
+    candidate.getUTCFullYear() !== y ||
+    candidate.getUTCMonth() !== m - 1 ||
+    candidate.getUTCDate() !== d
+  ) {
+    return null;
+  }
+
+  return candidate;
+}
+
+function parseMonthNameDateCandidate(monthName: string, day: string, year: string): Date | null {
+  const monthMap: Record<string, number> = {
+    january: 1,
+    february: 2,
+    march: 3,
+    april: 4,
+    may: 5,
+    june: 6,
+    july: 7,
+    august: 8,
+    september: 9,
+    october: 10,
+    november: 11,
+    december: 12,
+  };
+
+  const month = monthMap[monthName.toLowerCase()];
+  if (!month) return null;
+  return parseIsoDateCandidate(year, String(month), day);
+}
+
+function extractDateCandidates(text: string): Date[] {
+  if (!text) return [];
+  const candidates: Date[] = [];
+
+  const isoDateRegex = /\b(20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b/g;
+  const slashDateRegex = /\b(20\d{2})\/(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\b/g;
+  const monthNameRegex =
+    /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+([0-3]?\d),\s*(20\d{2})\b/gi;
+
+  for (const match of text.matchAll(isoDateRegex)) {
+    const parsed = parseIsoDateCandidate(match[1] ?? "", match[2] ?? "", match[3] ?? "");
+    if (parsed) candidates.push(parsed);
+  }
+
+  for (const match of text.matchAll(slashDateRegex)) {
+    const parsed = parseIsoDateCandidate(match[1] ?? "", match[2] ?? "", match[3] ?? "");
+    if (parsed) candidates.push(parsed);
+  }
+
+  for (const match of text.matchAll(monthNameRegex)) {
+    const parsed = parseMonthNameDateCandidate(match[1] ?? "", match[2] ?? "", match[3] ?? "");
+    if (parsed) candidates.push(parsed);
+  }
+
+  return candidates;
+}
+
+function resolvePublishedAtIsoDate(source: WebSearchSource, pageMarkdown: string | null): string | null {
+  const parsedUrl = safeParseUrl(source.url);
+  const textWindow = [source.title, source.snippet ?? "", pageMarkdown ?? "", parsedUrl?.pathname ?? ""]
+    .join("\n")
+    .slice(0, PAGE_FETCH_MAX_CHARS);
+
+  const candidates = extractDateCandidates(textWindow);
+  if (!candidates.length) {
+    return null;
+  }
+
+  const now = Date.now();
+  const futureToleranceMs = 24 * 60 * 60 * 1000;
+  const validCandidates = candidates.filter((candidate) => candidate.getTime() <= now + futureToleranceMs);
+  if (!validCandidates.length) {
+    return null;
+  }
+
+  const mostRecent = validCandidates.reduce((latest, current) =>
+    current.getTime() > latest.getTime() ? current : latest
+  );
+  return toIsoDate(mostRecent);
+}
+
+function resolveRecencyScore(isoDate: string | null): number {
+  if (!isoDate) return 0;
+
+  const parsed = new Date(`${isoDate}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) return 0;
+
+  const dayDelta = Math.floor((Date.now() - parsed.getTime()) / (24 * 60 * 60 * 1000));
+  if (dayDelta <= 2) return 4;
+  if (dayDelta <= 7) return 3;
+  if (dayDelta <= 30) return 1;
+  if (dayDelta <= 180) return 0;
+  return -1;
+}
+
+function resolveEvidenceSnippet(
+  queryTokens: readonly string[],
+  source: WebSearchSource,
+  pageMarkdown: string | null
+): string | null {
+  const fallback = source.snippet;
+  if (!pageMarkdown) {
+    return fallback;
+  }
+
+  const lines = pageMarkdown
+    .split("\n")
+    .map((line) => normalizeWhitespace(stripMarkdownDecorators(line)))
+    .filter((line) => line.length >= 40 && !/^https?:\/\//i.test(line))
+    .slice(0, 140);
+
+  let bestLine: string | null = null;
+  let bestScore = -Infinity;
+
+  for (const line of lines) {
+    const relevance = countQueryTokenMatches(queryTokens, line);
+    const hasNumber = /\b\d[\d,.%-]*\b/.test(line);
+    const hasDate = /\b(20\d{2}|january|february|march|april|may|june|july|august|september|october|november|december)\b/i.test(
+      line
+    );
+
+    const score = relevance * 2 + (hasNumber ? 2 : 0) + (hasDate ? 1 : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestLine = line;
+    }
+  }
+
+  if (!bestLine) {
+    return fallback;
+  }
+
+  return bestLine.slice(0, MAX_SNIPPET_LENGTH);
+}
+
+async function fetchWebPageMarkdown(url: string, timeoutMs: number): Promise<string | null> {
+  const parsedUrl = safeParseUrl(url);
+  if (!parsedUrl) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${PAGE_FETCH_PROXY_PREFIX}${parsedUrl.toString()}`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const body = await response.text();
+    return body.slice(0, PAGE_FETCH_MAX_CHARS);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -291,6 +577,73 @@ export async function searchWeb(query: string, options?: { maxResults?: number; 
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function enrichAndRankSources(
+  query: string,
+  sources: readonly WebSearchSource[],
+  options?: { maxSourcesToFetch?: number; timeoutMs?: number }
+): Promise<WebSearchEvidence[]> {
+  if (!sources.length) {
+    return [];
+  }
+
+  const maxSourcesToFetch = Math.max(0, options?.maxSourcesToFetch ?? DEFAULT_MAX_SOURCES_TO_FETCH);
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_PAGE_FETCH_TIMEOUT_MS;
+  const queryTokens = extractQueryTokens(query);
+
+  const sourcesToFetch = [...sources].slice(0, maxSourcesToFetch);
+  const fetchedMarkdownByUrl = new Map<string, string | null>();
+
+  const pageFetches = sourcesToFetch.map(async (source) => {
+    const markdown = await fetchWebPageMarkdown(source.url, timeoutMs);
+    fetchedMarkdownByUrl.set(source.url, markdown);
+  });
+  await Promise.allSettled(pageFetches);
+
+  const evidenceRows: WebSearchEvidence[] = sources.map((source) => {
+    const pageMarkdown = fetchedMarkdownByUrl.get(source.url) ?? null;
+    const publishedAt = resolvePublishedAtIsoDate(source, pageMarkdown);
+    const evidenceSnippet = resolveEvidenceSnippet(queryTokens, source, pageMarkdown);
+    const trustScore = resolveTrustedDomainScore(source.url);
+    const recencyScore = resolveRecencyScore(publishedAt);
+    const factScore =
+      evidenceSnippet && /\b\d[\d,.%-]*\b/.test(evidenceSnippet)
+        ? 2
+        : source.snippet && /\b\d[\d,.%-]*\b/.test(source.snippet)
+          ? 1
+          : 0;
+    const relevanceScore = Math.min(
+      4,
+      countQueryTokenMatches(
+        queryTokens,
+        [source.title, source.snippet ?? "", evidenceSnippet ?? ""].join(" ")
+      )
+    );
+    const totalScore =
+      sourceQualityScore(source) + trustScore + recencyScore + factScore + relevanceScore;
+
+    return {
+      source,
+      publishedAt,
+      evidenceSnippet,
+      trustScore,
+      recencyScore,
+      factScore,
+      relevanceScore,
+      totalScore,
+    };
+  });
+
+  return evidenceRows.sort((left, right) => {
+    const scoreDelta = right.totalScore - left.totalScore;
+    if (scoreDelta !== 0) return scoreDelta;
+
+    const recencyDelta = right.recencyScore - left.recencyScore;
+    if (recencyDelta !== 0) return recencyDelta;
+
+    return right.trustScore - left.trustScore;
+  });
 }
 
 export async function searchWebWithRetries(

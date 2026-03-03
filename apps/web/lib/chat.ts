@@ -2,7 +2,9 @@ import OpenAI from 'openai';
 import { isAllowedPrimaryModel } from '@/lib/model-settings';
 import {
     buildWebSearchQuery,
+    enrichAndRankSources,
     searchWeb,
+    type WebSearchEvidence,
     type WebSearchSource,
 } from '@/lib/web-search';
 
@@ -718,20 +720,41 @@ function mergeSource(sourceMap: Map<string, WebSearchSource>, source: WebSearchS
     }
 }
 
-function formatRoundSearchBlock(query: string, sources: readonly WebSearchSource[]): string {
+function toRankedSourcesFromEvidence(evidenceRows: readonly WebSearchEvidence[]): WebSearchSource[] {
+    return evidenceRows.map((row) => {
+        const baseSnippet = row.evidenceSnippet ?? row.source.snippet;
+        const snippetWithDate =
+            row.publishedAt && baseSnippet && !baseSnippet.includes(row.publishedAt)
+                ? `[${row.publishedAt}] ${baseSnippet}`
+                : baseSnippet;
+
+        return {
+            title: row.source.title,
+            url: row.source.url,
+            snippet: snippetWithDate,
+        };
+    });
+}
+
+function formatRoundSearchBlock(query: string, evidenceRows: readonly WebSearchEvidence[]): string {
     const lines = [`Query: ${query}`];
 
-    if (!sources.length) {
+    if (!evidenceRows.length) {
         lines.push('No results returned.');
         return lines.join('\n');
     }
 
-    lines.push('Top results:');
-    for (const [index, source] of sources.slice(0, 4).entries()) {
+    lines.push('Top evidence-ranked results:');
+    for (const [index, row] of evidenceRows.slice(0, 4).entries()) {
+        const source = row.source;
         lines.push(`${index + 1}. ${source.title}`);
         lines.push(`URL: ${source.url}`);
-        if (source.snippet) {
-            lines.push(`Snippet: ${source.snippet}`);
+        lines.push(
+            `Signals: total=${row.totalScore} trust=${row.trustScore} recency=${row.recencyScore}${row.publishedAt ? ` date=${row.publishedAt}` : ''}`
+        );
+        const bestSnippet = row.evidenceSnippet ?? source.snippet;
+        if (bestSnippet) {
+            lines.push(`Evidence: ${bestSnippet}`);
         }
     }
 
@@ -889,15 +912,20 @@ async function runChatWithModelDrivenSearch(
             attemptedQuerySet.add(query.toLowerCase());
 
             const results = await searchWeb(query, { maxResults: SEARCH_RESULTS_PER_QUERY });
-            if (results.length > 0) {
+            const evidenceRows = await enrichAndRankSources(query, results, {
+                maxSourcesToFetch: 3,
+            });
+            const rankedSources = toRankedSourcesFromEvidence(evidenceRows).slice(0, SEARCH_RESULTS_PER_QUERY);
+
+            if (rankedSources.length > 0) {
                 successfulSearches += 1;
             }
 
-            for (const source of results) {
+            for (const source of rankedSources) {
                 mergeSource(sourceMap, source);
             }
 
-            queryBlocks.push(formatRoundSearchBlock(query, results));
+            queryBlocks.push(formatRoundSearchBlock(query, evidenceRows));
         }
 
         // Throttle round-trip cadence before returning tool results to the model.
