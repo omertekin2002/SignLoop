@@ -22,6 +22,7 @@ const MAX_TOTAL_SEARCH_QUERIES = 18;
 const MAX_SEARCH_QUERIES_PER_ROUND = 3;
 const SEARCH_RESULTS_PER_QUERY = 8;
 const MAX_WEB_SOURCES_IN_METADATA = 8;
+const APP_LAYER_SEARCH_LOOP_DELAY_MS = 3000;
 const NATIVE_WEB_SEARCH_MODELS = new Set(['gpt-5', 'gpt-5.1', 'gpt-5.2']);
 
 const MODEL_DRIVEN_WEB_SEARCH_PROMPT = `
@@ -81,6 +82,12 @@ function isUnsupportedWebSearchError(error: unknown): boolean {
     return /unsupported tool type:\s*web_search|web_search|tool_choice|invalid.*tools?|unknown tool/i.test(
         message
     );
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
 }
 
 function createOpenAiCompatibleClient(baseURL: string, apiKey?: string): OpenAI {
@@ -599,6 +606,9 @@ async function runChatWithModelDrivenSearch(
 
             queryBlocks.push(formatRoundSearchBlock(query, results));
         }
+
+        // Throttle round-trip cadence before returning tool results to the model.
+        await sleep(APP_LAYER_SEARCH_LOOP_DELAY_MS);
 
         plannerMessages.push({
             role: 'user',
