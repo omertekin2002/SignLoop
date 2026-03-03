@@ -22,6 +22,7 @@ const MAX_TOTAL_SEARCH_QUERIES = 18;
 const MAX_SEARCH_QUERIES_PER_ROUND = 3;
 const SEARCH_RESULTS_PER_QUERY = 8;
 const MAX_WEB_SOURCES_IN_METADATA = 8;
+const NATIVE_WEB_SEARCH_MODELS = new Set(['gpt-5', 'gpt-5.1', 'gpt-5.2']);
 
 const MODEL_DRIVEN_WEB_SEARCH_PROMPT = `
 You can use an application-level web search tool in this chat.
@@ -71,6 +72,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
 
+function isNativeWebSearchModel(model: string): boolean {
+    return NATIVE_WEB_SEARCH_MODELS.has(model);
+}
+
+function isUnsupportedWebSearchError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /unsupported tool type:\s*web_search|web_search|tool_choice|invalid.*tools?|unknown tool/i.test(
+        message
+    );
+}
+
 function createOpenAiCompatibleClient(baseURL: string, apiKey?: string): OpenAI {
     const resolvedApiKey = apiKey?.trim() || 'not-required';
 
@@ -114,6 +126,110 @@ function extractResponseOutputText(response: OpenAI.Responses.Response): string 
     return joined.length > 0 ? joined : null;
 }
 
+function appendWebSource(
+    sourceMap: Map<string, WebSearchSource>,
+    source: { title: string; url: string; snippet?: string | null }
+): void {
+    const url = source.url.trim();
+    if (!url || !/^https?:\/\//i.test(url)) {
+        return;
+    }
+
+    const title = source.title.trim() || url;
+    const snippet = typeof source.snippet === 'string' && source.snippet.trim()
+        ? source.snippet.trim()
+        : null;
+
+    const existing = sourceMap.get(url);
+    if (!existing || (!existing.snippet && snippet)) {
+        sourceMap.set(url, { title, url, snippet });
+    }
+}
+
+function extractNativeWebSearchMetadata(response: OpenAI.Responses.Response): ChatReply['webSearch'] {
+    const outputItems = Array.isArray(response.output) ? response.output : [];
+    const attemptedQueries: string[] = [];
+    const attemptedQuerySet = new Set<string>();
+    let successfulSearches = 0;
+    const sourceMap = new Map<string, WebSearchSource>();
+
+    for (const outputItem of outputItems) {
+        if (!isRecord(outputItem)) continue;
+
+        if (outputItem.type === 'web_search_call') {
+            if (outputItem.status === 'completed') {
+                successfulSearches += 1;
+            }
+
+            const action = isRecord(outputItem.action) ? outputItem.action : null;
+            if (action && typeof action.query === 'string') {
+                const query = action.query.trim();
+                if (query) {
+                    const key = query.toLowerCase();
+                    if (!attemptedQuerySet.has(key)) {
+                        attemptedQuerySet.add(key);
+                        attemptedQueries.push(query);
+                    }
+                }
+            }
+
+            const rawSources = action && Array.isArray(action.sources) ? action.sources : [];
+            for (const rawSource of rawSources) {
+                if (!isRecord(rawSource)) continue;
+                if (typeof rawSource.url !== 'string') continue;
+
+                appendWebSource(sourceMap, {
+                    title: typeof rawSource.title === 'string' ? rawSource.title : rawSource.url,
+                    url: rawSource.url,
+                    snippet:
+                        typeof rawSource.snippet === 'string'
+                            ? rawSource.snippet
+                            : typeof rawSource.description === 'string'
+                              ? rawSource.description
+                              : null,
+                });
+            }
+        }
+
+        if (outputItem.type !== 'message') {
+            continue;
+        }
+
+        const content = Array.isArray(outputItem.content) ? outputItem.content : [];
+        for (const part of content) {
+            if (!isRecord(part) || part.type !== 'output_text') continue;
+
+            const annotations = Array.isArray(part.annotations) ? part.annotations : [];
+            for (const annotation of annotations) {
+                if (!isRecord(annotation)) continue;
+                if (annotation.type !== 'url_citation') continue;
+                if (typeof annotation.url !== 'string') continue;
+
+                appendWebSource(sourceMap, {
+                    title:
+                        typeof annotation.title === 'string' && annotation.title.trim()
+                            ? annotation.title
+                            : annotation.url,
+                    url: annotation.url,
+                    snippet: null,
+                });
+            }
+        }
+    }
+
+    const sources = Array.from(sourceMap.values()).slice(0, MAX_WEB_SOURCES_IN_METADATA);
+    if (!attemptedQueries.length && !sources.length && successfulSearches === 0) {
+        return null;
+    }
+
+    return {
+        query: attemptedQueries[0] ?? '',
+        attemptedQueries,
+        successfulSearches,
+        sources,
+    };
+}
+
 async function runChatWithResponsesModel(
     openai: OpenAI,
     model: string,
@@ -133,6 +249,33 @@ async function runChatWithResponsesModel(
     }
 
     return content;
+}
+
+async function runChatWithNativeWebSearch(
+    openai: OpenAI,
+    model: string,
+    messages: readonly ChatMessage[]
+): Promise<ModelDrivenSearchResult> {
+    const response = await openai.responses.create({
+        model,
+        input: messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+        })),
+        tools: [{ type: 'web_search' as const }],
+        tool_choice: 'auto',
+        include: ['web_search_call.action.sources'],
+    });
+
+    const content = extractResponseOutputText(response);
+    if (!content) {
+        throw new Error('Empty response from AI');
+    }
+
+    return {
+        message: content,
+        webSearch: extractNativeWebSearchMetadata(response),
+    };
 }
 
 function extractJsonCandidate(text: string): string | null {
@@ -488,6 +631,32 @@ async function runChatWithModelDrivenSearch(
     };
 }
 
+async function runChatWithWebStrategy(
+    openai: OpenAI,
+    model: string,
+    messages: readonly ChatMessage[]
+): Promise<ModelDrivenSearchResult> {
+    if (!isNativeWebSearchModel(model)) {
+        return runChatWithModelDrivenSearch(openai, model, messages);
+    }
+
+    try {
+        return await runChatWithNativeWebSearch(openai, model, messages);
+    } catch (error) {
+        if (!isUnsupportedWebSearchError(error)) {
+            throw error;
+        }
+
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.warn('Model rejected native web_search tool; falling back to app-layer search', {
+            model,
+            error: errorMessage,
+        });
+
+        return runChatWithModelDrivenSearch(openai, model, messages);
+    }
+}
+
 function normalizeModelList(models: string[]): string[] {
     return Array.from(
         new Set(
@@ -516,7 +685,7 @@ export async function generateChatReply(
 
     try {
         const primaryClient = createOpenAiCompatibleClient(PRIMARY_LLM_BASE_URL, PRIMARY_LLM_API_KEY);
-        const primaryResult = await runChatWithModelDrivenSearch(
+        const primaryResult = await runChatWithWebStrategy(
             primaryClient,
             selectedPrimaryModel,
             messages
@@ -550,7 +719,7 @@ export async function generateChatReply(
 
         for (const fallbackModel of fallbackModels) {
             try {
-                const fallbackResult = await runChatWithModelDrivenSearch(
+                const fallbackResult = await runChatWithWebStrategy(
                     fallbackClient,
                     fallbackModel,
                     messages
