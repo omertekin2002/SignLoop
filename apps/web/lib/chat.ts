@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { isAllowedPrimaryModel } from '@/lib/model-settings';
+import { isUsablePrimaryModel } from '@/lib/model-settings';
 import {
     buildWebSearchQuery,
     enrichAndRankSources,
@@ -105,7 +105,7 @@ function isChatCompletionsImageModel(model: string): boolean {
 }
 
 function isAllowedRuntimePrimaryModel(value: string): boolean {
-    return isAllowedPrimaryModel(value) || isChatCompletionsImageModel(value);
+    return isUsablePrimaryModel(value) || isChatCompletionsImageModel(value);
 }
 
 function isUnsupportedWebSearchError(error: unknown): boolean {

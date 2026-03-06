@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { AnalysisResultSchema, PartialAnalysisResultSchema, AnalysisResult } from '@/lib/schemas';
-import { isAllowedPrimaryModel } from '@/lib/model-settings';
+import { isUsablePrimaryModel } from '@/lib/model-settings';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
@@ -632,7 +632,7 @@ ${text.substring(0, 15000)} ... (truncated if too long)
         typeof options?.primaryModel === 'string' && options.primaryModel.trim()
             ? options.primaryModel.trim()
             : PRIMARY_LLM_MODEL;
-    const selectedPrimaryModel = isAllowedPrimaryModel(candidatePrimaryModel)
+    const selectedPrimaryModel = isUsablePrimaryModel(candidatePrimaryModel)
         ? candidatePrimaryModel
         : PRIMARY_LLM_MODEL;
 

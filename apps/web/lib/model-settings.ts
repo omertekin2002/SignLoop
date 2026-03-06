@@ -12,7 +12,7 @@ export const PRIMARY_MODEL_OPTIONS = [
 ] as const;
 export const IMAGE_GENERATION_MODEL = "gemini-3.1-flash-image" as const;
 
-export type PrimaryModel = (typeof PRIMARY_MODEL_OPTIONS)[number];
+export type PrimaryModel = string;
 
 const primaryModelSet = new Set<string>(PRIMARY_MODEL_OPTIONS);
 const PRIMARY_LLM_BASE_URL =
@@ -29,6 +29,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function isImageGenerationModel(value: string): boolean {
   return value.trim() === IMAGE_GENERATION_MODEL;
+}
+
+export function isUsablePrimaryModel(value: string): value is PrimaryModel {
+  return value.trim().length > 0 && !isImageGenerationModel(value);
 }
 
 async function listRemoteModelIds(): Promise<string[]> {
@@ -69,7 +73,7 @@ async function listRemoteModelIds(): Promise<string[]> {
 
 export async function listAvailablePrimaryModels(): Promise<PrimaryModel[]> {
   const remoteModelIds = await listRemoteModelIds();
-  return remoteModelIds.filter((model): model is PrimaryModel => isAllowedPrimaryModel(model));
+  return remoteModelIds.filter((model): model is PrimaryModel => isUsablePrimaryModel(model));
 }
 
 export async function isImageGenerationAvailable(): Promise<boolean> {
@@ -84,7 +88,7 @@ export async function getModelAvailabilitySnapshot(): Promise<{
   const remoteModelIds = await listRemoteModelIds();
 
   return {
-    availablePrimaryModels: remoteModelIds.filter((model): model is PrimaryModel => isAllowedPrimaryModel(model)),
+    availablePrimaryModels: remoteModelIds.filter((model): model is PrimaryModel => isUsablePrimaryModel(model)),
     imageGenerationAvailable: remoteModelIds.some((model) => isImageGenerationModel(model)),
   };
 }

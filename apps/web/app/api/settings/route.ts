@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import {
   getModelAvailabilitySnapshot,
-  isAllowedPrimaryModel,
-  listAvailablePrimaryModels,
   type PrimaryModel,
 } from "@/lib/model-settings";
 import {
@@ -39,7 +37,6 @@ export async function GET() {
 
   const resolvedPrimaryModel =
     settings?.primaryModel &&
-    isAllowedPrimaryModel(settings.primaryModel) &&
     availablePrimaryModels.includes(settings.primaryModel)
       ? settings.primaryModel
       : null;
@@ -80,18 +77,10 @@ export async function PUT(req: Request) {
 
   let model: PrimaryModel | null = null;
   if (modelInput) {
-    if (!isAllowedPrimaryModel(modelInput)) {
-      return NextResponse.json(
-        {
-          error: "Invalid primary model",
-        },
-        { status: 400 },
-      );
-    }
-
     let availablePrimaryModels: PrimaryModel[] = [];
     try {
-      availablePrimaryModels = await listAvailablePrimaryModels();
+      const snapshot = await getModelAvailabilitySnapshot();
+      availablePrimaryModels = snapshot.availablePrimaryModels;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to load available models";
