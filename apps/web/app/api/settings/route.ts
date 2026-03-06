@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import {
+  getModelAvailabilitySnapshot,
   isAllowedPrimaryModel,
   listAvailablePrimaryModels,
   type PrimaryModel,
@@ -25,10 +26,13 @@ export async function GET() {
 
   const settings = await getUserSettingsByUserId(userId);
   let availablePrimaryModels: PrimaryModel[] = [];
+  let imageGenerationAvailable = false;
   let modelsError: string | null = null;
 
   try {
-    availablePrimaryModels = await listAvailablePrimaryModels();
+    const snapshot = await getModelAvailabilitySnapshot();
+    availablePrimaryModels = snapshot.availablePrimaryModels;
+    imageGenerationAvailable = snapshot.imageGenerationAvailable;
   } catch (error) {
     modelsError = error instanceof Error ? error.message : "Failed to load available models";
   }
@@ -47,6 +51,7 @@ export async function GET() {
         ? settings.personality
         : DEFAULT_PERSONALITY_MODE,
     availablePrimaryModels,
+    imageGenerationAvailable,
     modelsError,
     availablePersonalities: PERSONALITY_OPTIONS,
   });

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { generateChatReply, type ChatMessage, type ChatRole } from '@/lib/chat';
+import { isImageGenerationAvailable } from '@/lib/model-settings';
 import {
   DEFAULT_PERSONALITY_MODE,
   isAllowedPersonalityMode,
@@ -134,6 +135,16 @@ export async function POST(req: Request) {
     const imageMode = isObject(body) && body.imageMode === true;
     if (!threadId) {
       return NextResponse.json({ error: "threadId is required." }, { status: 400 });
+    }
+
+    if (imageMode) {
+      const available = await isImageGenerationAvailable().catch(() => false);
+      if (!available) {
+        return NextResponse.json(
+          { error: "Image generation is not currently available." },
+          { status: 503 },
+        );
+      }
     }
 
     const parsedMessages = parseChatMessages(body);

@@ -61,6 +61,10 @@ type ChatThreadDetail = {
   messages: ChatThreadMessage[];
 };
 
+type ChatSettingsAvailability = {
+  imageGenerationAvailable: boolean;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -401,6 +405,24 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [imageMode, setImageMode] = useState(false);
   const hydratedSignatureRef = useRef<string | null>(null);
+  const settingsAvailabilityQuery = useQuery({
+    queryKey: ["settings", "chat-availability"],
+    queryFn: async () => {
+      const response = await fetch("/api/settings");
+      const payload = (await response.json().catch(() => null)) as
+        | (ChatSettingsAvailability & { error?: string })
+        | null;
+
+      if (!response.ok || !payload) {
+        throw new Error(payload?.error || "Failed to load chat model availability.");
+      }
+
+      return payload;
+    },
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+  });
+  const isImageGenerationAvailable = settingsAvailabilityQuery.data?.imageGenerationAvailable === true;
 
   const activeThreadQuery = useQuery({
     queryKey: ["chat-thread", activeThreadId],
@@ -428,6 +450,12 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
       setActiveThreadId(selectedThreadId);
     }
   }, [selectedThreadId, activeThreadId]);
+
+  useEffect(() => {
+    if (!isImageGenerationAvailable && imageMode) {
+      setImageMode(false);
+    }
+  }, [imageMode, isImageGenerationAvailable]);
 
   const chatModel = useMemo<ChatModelAdapter>(
     () => ({
@@ -566,23 +594,25 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                 </ThreadPrimitive.Viewport>
 
                 <ComposerPrimitive.Root className="shrink-0 border-t-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <Button
-                      type="button"
-                      variant={imageMode ? "default" : "outline"}
-                      size="sm"
-                      className="h-8 gap-1.5 px-2.5 text-[0.68rem] normal-case tracking-normal"
-                      onClick={() => setImageMode((current) => !current)}
-                    >
-                      <ImagePlus className="h-3.5 w-3.5" />
-                      {imageMode ? "Image Mode On" : "Image Mode"}
-                    </Button>
-                    <p className="hidden text-xs text-muted-foreground sm:block">
-                      {imageMode
-                        ? "Using gemini-3.1-flash-image for this chat turn."
-                        : "Toggle to generate images from your prompt."}
-                    </p>
-                  </div>
+                  {isImageGenerationAvailable ? (
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <Button
+                        type="button"
+                        variant={imageMode ? "default" : "outline"}
+                        size="sm"
+                        className="h-8 gap-1.5 px-2.5 text-[0.68rem] normal-case tracking-normal"
+                        onClick={() => setImageMode((current) => !current)}
+                      >
+                        <ImagePlus className="h-3.5 w-3.5" />
+                        {imageMode ? "Image Mode On" : "Image Mode"}
+                      </Button>
+                      <p className="hidden text-xs text-muted-foreground sm:block">
+                        {imageMode
+                          ? "Using gemini-3.1-flash-image for this chat turn."
+                          : "Toggle to generate images from your prompt."}
+                      </p>
+                    </div>
+                  ) : null}
 
                   <div className="flex items-end gap-2">
                     <ComposerPrimitive.Input
@@ -591,7 +621,9 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                         "placeholder:text-muted-foreground focus-visible:border-[hsl(var(--accent)/0.75)]",
                       )}
                       placeholder={
-                        imageMode ? "Describe the image you want to generate..." : "Type your question..."
+                        imageMode && isImageGenerationAvailable
+                          ? "Describe the image you want to generate..."
+                          : "Type your question..."
                       }
                       submitMode="enter"
                       rows={1}

@@ -10,6 +10,7 @@ export const PRIMARY_MODEL_OPTIONS = [
   "gpt-5.2",
   "gpt-oss-120b-medium",
 ] as const;
+export const IMAGE_GENERATION_MODEL = "gemini-3.1-flash-image" as const;
 
 export type PrimaryModel = (typeof PRIMARY_MODEL_OPTIONS)[number];
 
@@ -26,7 +27,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export async function listAvailablePrimaryModels(): Promise<PrimaryModel[]> {
+export function isImageGenerationModel(value: string): boolean {
+  return value.trim() === IMAGE_GENERATION_MODEL;
+}
+
+async function listRemoteModelIds(): Promise<string[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MODELS_ENDPOINT_TIMEOUT_MS);
 
@@ -43,22 +48,43 @@ export async function listAvailablePrimaryModels(): Promise<PrimaryModel[]> {
 
     const payload = (await response.json()) as { data?: unknown };
     const rawModels = Array.isArray(payload.data) ? payload.data : [];
-    const availableModels = rawModels
+    const modelIds = rawModels
       .map((entry) => {
         if (!isRecord(entry) || typeof entry.id !== "string") {
           return null;
         }
 
-        const modelId = entry.id.trim();
-        return isAllowedPrimaryModel(modelId) ? modelId : null;
+        return entry.id.trim() || null;
       })
-      .filter((model): model is PrimaryModel => model !== null);
+      .filter((model): model is string => model !== null);
 
-    return Array.from(new Set(availableModels));
+    return Array.from(new Set(modelIds));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to load available models from ngrok: ${message}`);
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function listAvailablePrimaryModels(): Promise<PrimaryModel[]> {
+  const remoteModelIds = await listRemoteModelIds();
+  return remoteModelIds.filter((model): model is PrimaryModel => isAllowedPrimaryModel(model));
+}
+
+export async function isImageGenerationAvailable(): Promise<boolean> {
+  const remoteModelIds = await listRemoteModelIds();
+  return remoteModelIds.some((model) => isImageGenerationModel(model));
+}
+
+export async function getModelAvailabilitySnapshot(): Promise<{
+  availablePrimaryModels: PrimaryModel[];
+  imageGenerationAvailable: boolean;
+}> {
+  const remoteModelIds = await listRemoteModelIds();
+
+  return {
+    availablePrimaryModels: remoteModelIds.filter((model): model is PrimaryModel => isAllowedPrimaryModel(model)),
+    imageGenerationAvailable: remoteModelIds.some((model) => isImageGenerationModel(model)),
+  };
 }
