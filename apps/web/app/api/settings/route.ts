@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import {
-  PRIMARY_MODEL_OPTIONS,
   isAllowedPrimaryModel,
+  listAvailablePrimaryModels,
   type PrimaryModel,
 } from "@/lib/model-settings";
 import {
@@ -24,8 +24,19 @@ export async function GET() {
   }
 
   const settings = await getUserSettingsByUserId(userId);
+  let availablePrimaryModels: PrimaryModel[] = [];
+  let modelsError: string | null = null;
+
+  try {
+    availablePrimaryModels = await listAvailablePrimaryModels();
+  } catch (error) {
+    modelsError = error instanceof Error ? error.message : "Failed to load available models";
+  }
+
   const resolvedPrimaryModel =
-    settings?.primaryModel && isAllowedPrimaryModel(settings.primaryModel)
+    settings?.primaryModel &&
+    isAllowedPrimaryModel(settings.primaryModel) &&
+    availablePrimaryModels.includes(settings.primaryModel)
       ? settings.primaryModel
       : null;
 
@@ -35,7 +46,8 @@ export async function GET() {
       settings?.personality && isAllowedPersonalityMode(settings.personality)
         ? settings.personality
         : DEFAULT_PERSONALITY_MODE,
-    availablePrimaryModels: PRIMARY_MODEL_OPTIONS,
+    availablePrimaryModels,
+    modelsError,
     availablePersonalities: PERSONALITY_OPTIONS,
   });
 }
@@ -67,11 +79,30 @@ export async function PUT(req: Request) {
       return NextResponse.json(
         {
           error: "Invalid primary model",
-          availablePrimaryModels: PRIMARY_MODEL_OPTIONS,
         },
         { status: 400 },
       );
     }
+
+    let availablePrimaryModels: PrimaryModel[] = [];
+    try {
+      availablePrimaryModels = await listAvailablePrimaryModels();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load available models";
+      return NextResponse.json({ error: message }, { status: 503 });
+    }
+
+    if (!availablePrimaryModels.includes(modelInput)) {
+      return NextResponse.json(
+        {
+          error: "Selected primary model is not currently available",
+          availablePrimaryModels,
+        },
+        { status: 409 },
+      );
+    }
+
     model = modelInput;
   }
 
