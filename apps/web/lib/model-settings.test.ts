@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  IMAGE_GENERATION_MODEL,
   PRIMARY_MODEL_OPTIONS,
   isAllowedPrimaryModel,
   isUsablePrimaryModel,
@@ -26,6 +25,6 @@ describe("model settings", () => {
   it("rejects blank and image-only runtime model ids", () => {
     expect(isUsablePrimaryModel("")).toBe(false);
     expect(isUsablePrimaryModel("   ")).toBe(false);
-    expect(isUsablePrimaryModel(IMAGE_GENERATION_MODEL)).toBe(false);
+    expect(isUsablePrimaryModel("gemini-3.1-flash-image")).toBe(false);
   });
 });

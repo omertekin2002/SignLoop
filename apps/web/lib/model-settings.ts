@@ -10,11 +10,11 @@ export const PRIMARY_MODEL_OPTIONS = [
   "gpt-5.2",
   "gpt-oss-120b-medium",
 ] as const;
-export const IMAGE_GENERATION_MODEL = "gemini-3.1-flash-image" as const;
 
 export type PrimaryModel = string;
 
 const primaryModelSet = new Set<string>(PRIMARY_MODEL_OPTIONS);
+const UNSUPPORTED_PRIMARY_MODELS = new Set<string>(["gemini-3.1-flash-image"]);
 const PRIMARY_LLM_BASE_URL =
   process.env.PRIMARY_LLM_BASE_URL || "https://efficient-sightlessly-ouida.ngrok-free.dev/v1";
 const MODELS_ENDPOINT_TIMEOUT_MS = 5000;
@@ -27,12 +27,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export function isImageGenerationModel(value: string): boolean {
-  return value.trim() === IMAGE_GENERATION_MODEL;
-}
-
 export function isUsablePrimaryModel(value: string): value is PrimaryModel {
-  return value.trim().length > 0 && !isImageGenerationModel(value);
+  const normalized = value.trim();
+  return normalized.length > 0 && !UNSUPPORTED_PRIMARY_MODELS.has(normalized);
 }
 
 async function listRemoteModelIds(): Promise<string[]> {
@@ -76,19 +73,12 @@ export async function listAvailablePrimaryModels(): Promise<PrimaryModel[]> {
   return remoteModelIds.filter((model): model is PrimaryModel => isUsablePrimaryModel(model));
 }
 
-export async function isImageGenerationAvailable(): Promise<boolean> {
-  const remoteModelIds = await listRemoteModelIds();
-  return remoteModelIds.some((model) => isImageGenerationModel(model));
-}
-
 export async function getModelAvailabilitySnapshot(): Promise<{
   availablePrimaryModels: PrimaryModel[];
-  imageGenerationAvailable: boolean;
 }> {
   const remoteModelIds = await listRemoteModelIds();
 
   return {
     availablePrimaryModels: remoteModelIds.filter((model): model is PrimaryModel => isUsablePrimaryModel(model)),
-    imageGenerationAvailable: remoteModelIds.some((model) => isImageGenerationModel(model)),
   };
 }

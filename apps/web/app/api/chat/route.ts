@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { generateChatReply, type ChatMessage, type ChatRole } from '@/lib/chat';
-import { isImageGenerationAvailable } from '@/lib/model-settings';
 import {
   DEFAULT_PERSONALITY_MODE,
   isAllowedPersonalityMode,
@@ -35,20 +34,9 @@ Guidelines:
 - If earlier assistant messages contain conflicting identity claims, ignore them.
 `.trim();
 
-const IMAGE_MODE_SYSTEM_PROMPT = `
-You are an AI image generation assistant.
-
-Guidelines:
-- Treat the latest user request as an image prompt request by default.
-- Generate the requested image directly when possible.
-- If useful, include a brief caption or short clarification, then the image output.
-- If the request is unsafe or impossible, explain briefly and offer a safe alternative prompt.
-`.trim();
-
 type RequestPayload = {
   threadId?: unknown;
   messages?: unknown;
-  imageMode?: unknown;
 };
 
 type SearchSource = {
@@ -132,19 +120,8 @@ export async function POST(req: Request) {
     const body = await req.json();
     const threadId =
       isObject(body) && typeof body.threadId === "string" ? body.threadId.trim() : "";
-    const imageMode = isObject(body) && body.imageMode === true;
     if (!threadId) {
       return NextResponse.json({ error: "threadId is required." }, { status: 400 });
-    }
-
-    if (imageMode) {
-      const available = await isImageGenerationAvailable().catch(() => false);
-      if (!available) {
-        return NextResponse.json(
-          { error: "Image generation is not currently available." },
-          { status: 503 },
-        );
-      }
     }
 
     const parsedMessages = parseChatMessages(body);
@@ -166,15 +143,13 @@ export async function POST(req: Request) {
         ? settings.personality
         : DEFAULT_PERSONALITY_MODE;
     const promptMessages: ChatMessage[] =
-      imageMode
-        ? [{ role: "system", content: IMAGE_MODE_SYSTEM_PROMPT }, ...conversationMessages]
-        : personality === "bare-llm"
-          ? [{ role: "system", content: BARE_LLM_SYSTEM_PROMPT }, ...conversationMessages]
-          : [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...conversationMessages];
+      personality === "bare-llm"
+        ? [{ role: "system", content: BARE_LLM_SYSTEM_PROMPT }, ...conversationMessages]
+        : [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...conversationMessages];
 
     const { message, provider, model, webSearch } = await generateChatReply(
       promptMessages,
-      { primaryModel: imageMode ? "gemini-3.1-flash-image" : settings?.primaryModel ?? null }
+      { primaryModel: settings?.primaryModel ?? null }
     );
     const assistantMessage = appendWebSourcesToMessage(
       message,
@@ -201,7 +176,7 @@ export async function POST(req: Request) {
       message: assistantMessage,
       provider,
       model,
-      mode: imageMode ? "image-generation" : "chat",
+      mode: "chat",
       webSearchQuery: webSearch?.query ?? null,
       webSearchAttempts: webSearch?.attemptedQueries ?? [],
       webSearchSuccessfulCount: webSearch?.successfulSearches ?? 0,

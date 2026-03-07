@@ -19,7 +19,6 @@ type SettingsResponse = {
   primaryModel: string | null;
   personality: string;
   availablePrimaryModels: string[];
-  imageGenerationAvailable: boolean;
   modelsError: string | null;
   availablePersonalities: string[];
 };

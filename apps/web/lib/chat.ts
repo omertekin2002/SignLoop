@@ -14,7 +14,6 @@ const APP_NAME = 'SignLoop';
 
 const MAX_WEB_SOURCES_IN_METADATA = 8;
 const NATIVE_WEB_SEARCH_MODELS = new Set(['gpt-5', 'gpt-5.1', 'gpt-5.2']);
-const CHAT_COMPLETIONS_IMAGE_MODELS = new Set(['gemini-3.1-flash-image']);
 
 export type ChatRole = 'system' | 'user' | 'assistant';
 
@@ -54,16 +53,8 @@ function isNativeWebSearchModel(model: string): boolean {
     return NATIVE_WEB_SEARCH_MODELS.has(model);
 }
 
-function isChatCompletionsImageModel(model: string): boolean {
-    if (CHAT_COMPLETIONS_IMAGE_MODELS.has(model)) {
-        return true;
-    }
-
-    return model.toLowerCase().endsWith('/gemini-3.1-flash-image');
-}
-
 function isAllowedRuntimePrimaryModel(value: string): boolean {
-    return isUsablePrimaryModel(value) || isChatCompletionsImageModel(value);
+    return isUsablePrimaryModel(value);
 }
 
 function isUnsupportedWebSearchError(error: unknown): boolean {
@@ -220,177 +211,6 @@ function extractNativeWebSearchMetadata(response: OpenAI.Responses.Response): Ch
     };
 }
 
-function isLikelyBase64ImagePayload(value: string): boolean {
-    const compact = value.replace(/\s+/g, '');
-    if (compact.length < 512 || compact.length % 4 !== 0) {
-        return false;
-    }
-
-    return /^[A-Za-z0-9+/]+={0,2}$/.test(compact);
-}
-
-function normalizeImageCandidate(value: string): string | null {
-    const trimmed = value.trim();
-    if (!trimmed) {
-        return null;
-    }
-
-    if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(trimmed)) {
-        return trimmed;
-    }
-
-    if (/^https?:\/\//i.test(trimmed)) {
-        return trimmed;
-    }
-
-    if (isLikelyBase64ImagePayload(trimmed)) {
-        return `data:image/png;base64,${trimmed.replace(/\s+/g, '')}`;
-    }
-
-    return null;
-}
-
-function pushImageCandidate(
-    value: unknown,
-    imageUrls: string[],
-    imageUrlSet: Set<string>
-): void {
-    if (typeof value !== 'string') {
-        return;
-    }
-
-    const normalized = normalizeImageCandidate(value);
-    if (!normalized || imageUrlSet.has(normalized)) {
-        return;
-    }
-
-    imageUrlSet.add(normalized);
-    imageUrls.push(normalized);
-}
-
-function pushTextCandidate(value: unknown, textChunks: string[]): void {
-    if (typeof value !== 'string') {
-        return;
-    }
-
-    const trimmed = value.trim();
-    if (!trimmed) {
-        return;
-    }
-
-    textChunks.push(trimmed);
-}
-
-function extractCompletionMessageContent(
-    completion: OpenAI.Chat.Completions.ChatCompletion
-): string | null {
-    const firstChoice = completion.choices[0];
-    const message = firstChoice?.message;
-    if (!message) {
-        return null;
-    }
-
-    const textChunks: string[] = [];
-    const imageUrls: string[] = [];
-    const imageUrlSet = new Set<string>();
-
-    const content = (message as { content?: unknown }).content;
-    if (typeof content === 'string') {
-        const maybeImage = normalizeImageCandidate(content);
-        if (maybeImage) {
-            pushImageCandidate(maybeImage, imageUrls, imageUrlSet);
-        } else {
-            pushTextCandidate(content, textChunks);
-        }
-    } else if (Array.isArray(content)) {
-        for (const part of content) {
-            if (!isRecord(part)) {
-                continue;
-            }
-
-            const partType = typeof part.type === 'string' ? part.type : '';
-
-            if (partType === 'text' || partType === 'output_text') {
-                pushTextCandidate(part.text, textChunks);
-            }
-
-            if (partType === 'image_url' || partType === 'output_image' || partType === 'image') {
-                const imageUrlCandidate = isRecord(part.image_url) ? part.image_url.url : part.image_url;
-                pushImageCandidate(imageUrlCandidate, imageUrls, imageUrlSet);
-                pushImageCandidate(part.url, imageUrls, imageUrlSet);
-                pushImageCandidate(part.b64_json, imageUrls, imageUrlSet);
-                pushImageCandidate(part.data, imageUrls, imageUrlSet);
-            }
-
-            pushImageCandidate(part.b64_json, imageUrls, imageUrlSet);
-            pushImageCandidate(part.data, imageUrls, imageUrlSet);
-        }
-    }
-
-    if (isRecord(message)) {
-        pushImageCandidate(message.image, imageUrls, imageUrlSet);
-        pushImageCandidate(message.b64_json, imageUrls, imageUrlSet);
-        pushImageCandidate(message.data, imageUrls, imageUrlSet);
-
-        const messageImageUrlCandidate =
-            isRecord(message.image_url) && typeof message.image_url.url === 'string'
-                ? message.image_url.url
-                : message.image_url;
-        pushImageCandidate(messageImageUrlCandidate, imageUrls, imageUrlSet);
-
-        if (Array.isArray(message.images)) {
-            for (const item of message.images) {
-                if (!isRecord(item)) {
-                    pushImageCandidate(item, imageUrls, imageUrlSet);
-                    continue;
-                }
-
-                pushImageCandidate(item.url, imageUrls, imageUrlSet);
-                pushImageCandidate(item.b64_json, imageUrls, imageUrlSet);
-                const imageUrl = isRecord(item.image_url) ? item.image_url.url : item.image_url;
-                pushImageCandidate(imageUrl, imageUrls, imageUrlSet);
-            }
-        }
-    }
-
-    const text = textChunks.join('\n\n').trim();
-    const markdownImages = imageUrls.map((url, index) => `![Generated image ${index + 1}](${url})`);
-
-    if (text && markdownImages.length > 0) {
-        return `${text}\n\n${markdownImages.join('\n\n')}`;
-    }
-
-    if (markdownImages.length > 0) {
-        return markdownImages.join('\n\n');
-    }
-
-    return text || null;
-}
-
-async function runChatWithImageChatCompletions(
-    openai: OpenAI,
-    model: string,
-    messages: readonly ChatMessage[]
-): Promise<ModelDrivenSearchResult> {
-    const completion = await openai.chat.completions.create({
-        model,
-        messages: messages.map((message) => ({
-            role: message.role,
-            content: message.content,
-        })),
-    });
-
-    const content = extractCompletionMessageContent(completion);
-    if (!content) {
-        throw new Error('Empty response from AI');
-    }
-
-    return {
-        message: content,
-        webSearch: null,
-    };
-}
-
 async function runChatWithResponsesModel(
     openai: OpenAI,
     model: string,
@@ -455,10 +275,6 @@ async function runChatWithWebStrategy(
     model: string,
     messages: readonly ChatMessage[]
 ): Promise<ModelDrivenSearchResult> {
-    if (isChatCompletionsImageModel(model)) {
-        return runChatWithImageChatCompletions(openai, model, messages);
-    }
-
     if (!isNativeWebSearchModel(model)) {
         return runChatWithoutTools(openai, model, messages);
     }
