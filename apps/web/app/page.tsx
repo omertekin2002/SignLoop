@@ -4,8 +4,20 @@ import { useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { NumberTicker } from "@/components/number-ticker";
 import { TypingAnimation } from "@/components/typing-animation";
 import { Button } from "@/components/ui/button";
+
+const stats = [
+  {
+    label: "Contracts Analyzed",
+    value: 150,
+  },
+  {
+    label: "Chat Interactions",
+    value: 2000,
+  },
+] as const;
 
 export default function Home() {
   const { isSignedIn } = useUser();
@@ -56,6 +68,26 @@ export default function Home() {
               </Button>
             </div>
           </div>
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-2">
+          {stats.map((stat, index) => (
+            <article
+              key={stat.label}
+              className="chrome-pane relative overflow-hidden rounded-[calc(var(--radius)+0.16rem)] p-6 md:p-8"
+            >
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,hsl(var(--accent)/0.12),transparent_34%)]" />
+              <div className="relative flex min-h-[200px] flex-col justify-end">
+                <p className="font-[family:var(--font-fraunces)] text-[clamp(3.5rem,10vw,6.75rem)] font-semibold leading-none tracking-[-0.06em] text-foreground">
+                  <NumberTicker delay={index * 140} useGrouping={stat.value < 1000} value={stat.value} />
+                  <span className="text-[hsl(var(--accent))]">+</span>
+                </p>
+                <p className="mt-4 max-w-[12ch] text-sm text-muted-foreground md:text-base">
+                  {stat.label}
+                </p>
+              </div>
+            </article>
+          ))}
         </section>
 
       </main>
