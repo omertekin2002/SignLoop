@@ -27,7 +27,7 @@ export default function Home() {
   const [isHeroTitleComplete, setIsHeroTitleComplete] = useState(false);
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex min-h-screen flex-col bg-transparent">
       <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2">
@@ -102,7 +102,7 @@ export default function Home() {
                 return (
                   <Card
                     key={stat.label}
-                    className="group relative overflow-hidden border-border/50 bg-background/50 p-8 pt-10 backdrop-blur transition-colors hover:bg-muted/50"
+                    className="group relative overflow-hidden glass-card p-8 pt-10 transition-colors hover:bg-background/60"
                   >
                     <div className="relative z-10 flex flex-col items-center text-center space-y-4">
                       <div className="p-3 rounded-full bg-primary/10 text-primary mb-2">
