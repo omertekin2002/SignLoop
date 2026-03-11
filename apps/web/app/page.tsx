@@ -65,7 +65,7 @@ export default function Home() {
                   text="Review contracts with precision. Not guesswork."
                   initialDelay={250}
                   persistCursor={false}
-                  typeSpeed={38}
+                  typeSpeed={55}
                   onComplete={() => setIsHeroTitleComplete(true)}
                 />
               </h1>
@@ -75,7 +75,7 @@ export default function Home() {
                   cursorClassName="text-muted-foreground"
                   initialDelay={180}
                   start={isHeroTitleComplete}
-                  typeSpeed={16}
+                  typeSpeed={40}
                 />
               </div>
             </div>
