@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
-import { Instrument_Serif, Inter } from "next/font/google";
+import { Instrument_Serif, Inter, EB_Garamond } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import Providers from "@/components/providers";
 import { PrivacyNotice } from "@/components/privacy-notice";
@@ -18,6 +18,11 @@ const instrumentSerif = Instrument_Serif({
   variable: "--font-serif",
 });
 
+const ebGaramond = EB_Garamond({
+  subsets: ["latin"],
+  variable: "--font-eb-garamond",
+});
+
 export const metadata: Metadata = {
   title: "SignLoop",
   description: "AI Contract Analysis",
@@ -30,7 +35,7 @@ export default function RootLayout({
 }>) {
   return (
     <ClerkProvider>
-      <html lang="en" className={`${inter.variable} ${instrumentSerif.variable}`} suppressHydrationWarning>
+      <html lang="en" className={`${inter.variable} ${instrumentSerif.variable} ${ebGaramond.variable}`} suppressHydrationWarning>
         <body className="font-sans antialiased bg-background text-foreground dark:selection:bg-white/20 selection:bg-black/10">
           <Providers>
             <div className="relative z-10">
