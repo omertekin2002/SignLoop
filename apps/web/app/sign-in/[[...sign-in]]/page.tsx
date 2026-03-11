@@ -1,5 +1,4 @@
 import { SignIn } from "@clerk/nextjs";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function SignInPage() {
   return (
