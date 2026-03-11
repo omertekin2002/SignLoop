@@ -129,9 +129,18 @@ const Dashboard = () => {
 
   useEffect(() => {
     const candidateThreads = chatThreads?.filter((thread) => thread.id !== recentlyDeletedChatThreadId) || [];
-    if (!candidateThreads.length) return;
-    if (selectedChatThreadId) return;
-    setSelectedChatThreadId(candidateThreads[0]!.id);
+    const hasSelectedCandidate = selectedChatThreadId
+      ? candidateThreads.some((thread) => thread.id === selectedChatThreadId)
+      : false;
+
+    if (hasSelectedCandidate) {
+      return;
+    }
+
+    const fallbackThreadId = candidateThreads[0]?.id ?? null;
+    if (selectedChatThreadId !== fallbackThreadId) {
+      setSelectedChatThreadId(fallbackThreadId);
+    }
   }, [chatThreads, recentlyDeletedChatThreadId, selectedChatThreadId]);
 
   const createChatMutation = useMutation({

@@ -537,13 +537,21 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
 
     const lastMessage = thread.messages[thread.messages.length - 1];
     const signature = `${thread.id}:${thread.messages.length}:${lastMessage?.id ?? "none"}`;
+    const isNewlyCreatedThread = newlyCreatedThreadIdsRef.current.has(thread.id);
+    if (isNewlyCreatedThread && thread.messages.length === 0) {
+      hydratedSignatureRef.current = `${thread.id}:pending`;
+      return;
+    }
+
     if (hydratedSignatureRef.current === signature) {
       return;
     }
 
     runtime.thread.reset(toRuntimeMessages(thread.messages));
     hydratedSignatureRef.current = signature;
-    newlyCreatedThreadIdsRef.current.delete(thread.id);
+    if (isNewlyCreatedThread) {
+      newlyCreatedThreadIdsRef.current.delete(thread.id);
+    }
   }, [
     activeThreadId,
     activeThreadQuery.data,
