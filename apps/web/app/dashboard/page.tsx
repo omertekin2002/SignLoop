@@ -423,7 +423,7 @@ const Dashboard = () => {
                           variant="ghost"
                           size="icon"
                           className={cn(
-                            "h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity",
+                            "h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
                             selectedChatThreadId === thread.id && "opacity-100"
                           )}
                           onClick={() => deleteChatMutation.mutate(thread.id)}

@@ -23,6 +23,7 @@ import {
 } from "@assistant-ui/react";
 import {
   Download,
+  Loader2,
   Send,
   Square,
   Sparkles,
@@ -507,6 +508,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
   );
 
   const runtime = useLocalRuntime(chatModel);
+  const isHydratingThread = Boolean(activeThreadId) && activeThreadQuery.isLoading;
 
   useEffect(() => {
     if (!activeThreadId) {
@@ -541,33 +543,49 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
 
   return (
     <Card className="flex h-full min-h-0 w-full flex-col overflow-hidden border-0 bg-transparent shadow-none sm:border sm:bg-background/50 sm:shadow-sm sm:backdrop-blur-md relative">
-      <CardContent className="flex h-full min-h-0 flex-1 flex-col p-0">
+      <CardContent className="flex h-full min-h-0 flex-1 flex-col p-0 sm:p-0">
         <AssistantRuntimeProvider runtime={runtime}>
           <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col overflow-hidden">
             <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth">
-              <ThreadPrimitive.Empty>
-                <div className="flex h-full flex-col items-center justify-center space-y-4 text-center pb-20">
+              {isHydratingThread ? (
+                <div className="flex h-full flex-col items-center justify-center space-y-4 pb-20 text-center">
                   <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                    <Sparkles className="h-8 w-8" />
+                    <Loader2 className="h-8 w-8 animate-spin" />
                   </div>
                   <div className="space-y-2 max-w-[400px]">
-                    <h2 className="text-xl font-semibold tracking-tight">How can I help you today?</h2>
-                    {activeThreadId ? (
-                      <p className="text-sm text-muted-foreground leading-relaxed">
-                        Start a conversation about reviewing your contracts, spotting clauses, or navigating negotiation points.
-                      </p>
-                    ) : (
-                      <p className="text-sm text-muted-foreground leading-relaxed">
-                        Select an existing chat from the sidebar or click <span className="font-medium text-foreground">New Chat</span> to start.
-                      </p>
-                    )}
+                    <h2 className="text-xl font-semibold tracking-tight">Loading conversation</h2>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      Fetching the existing thread history before chat becomes available.
+                    </p>
                   </div>
                 </div>
-              </ThreadPrimitive.Empty>
+              ) : (
+                <>
+                  <ThreadPrimitive.Empty>
+                    <div className="flex h-full flex-col items-center justify-center space-y-4 text-center pb-20">
+                      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                        <Sparkles className="h-8 w-8" />
+                      </div>
+                      <div className="space-y-2 max-w-[400px]">
+                        <h2 className="text-xl font-semibold tracking-tight">How can I help you today?</h2>
+                        {activeThreadId ? (
+                          <p className="text-sm text-muted-foreground leading-relaxed">
+                            Start a conversation about reviewing your contracts, spotting clauses, or navigating negotiation points.
+                          </p>
+                        ) : (
+                          <p className="text-sm text-muted-foreground leading-relaxed">
+                            Select an existing chat from the sidebar or click <span className="font-medium text-foreground">New Chat</span> to start.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </ThreadPrimitive.Empty>
 
-              <div className="mx-auto w-full max-w-4xl">
-                <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
-              </div>
+                  <div className="mx-auto w-full max-w-4xl">
+                    <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
+                  </div>
+                </>
+              )}
             </ThreadPrimitive.Viewport>
 
             <ComposerPrimitive.Root className="shrink-0 bg-transparent p-4 pt-1 sm:p-6 sm:pt-2">
@@ -577,7 +595,8 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                     "min-h-[44px] max-h-60 w-full resize-none bg-transparent px-3 py-3 text-sm text-foreground outline-none",
                     "placeholder:text-muted-foreground",
                   )}
-                  placeholder="Ask a question about your documents..."
+                  disabled={isHydratingThread}
+                  placeholder={isHydratingThread ? "Loading conversation..." : "Ask a question about your documents..."}
                   submitMode="enter"
                   rows={1}
                 />
@@ -585,7 +604,12 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                 <div className="flex shrink-0 p-1">
                   <ThreadPrimitive.If running={false}>
                     <ComposerPrimitive.Send asChild>
-                      <Button type="button" size="icon" className="h-9 w-9 shrink-0 rounded-xl transition-transform hover:scale-105">
+                      <Button
+                        type="button"
+                        size="icon"
+                        disabled={isHydratingThread}
+                        className="h-9 w-9 shrink-0 rounded-xl transition-transform hover:scale-105"
+                      >
                         <Send className="h-4 w-4" />
                         <span className="sr-only">Send message</span>
                       </Button>
@@ -603,7 +627,9 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                 </div>
               </div>
               <div className="mx-auto mt-2 max-w-4xl text-center text-xs text-muted-foreground/80">
-                AI may produce inaccurate information about laws or guidelines. Keep original records.
+                {isHydratingThread
+                  ? "Conversation history is loading. Sending is disabled until it finishes."
+                  : "AI may produce inaccurate information about laws or guidelines. Keep original records."}
               </div>
             </ComposerPrimitive.Root>
           </ThreadPrimitive.Root>
