@@ -23,9 +23,10 @@ import {
 } from "@assistant-ui/react";
 import {
   Download,
-  MessageSquareText,
   Send,
   Square,
+  Sparkles,
+  Bot
 } from "lucide-react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -167,7 +168,7 @@ function toRuntimeMessages(messages: ChatThreadMessage[]): ThreadMessageLike[] {
 }
 
 const UserTextPart = () => (
-  <MessagePartPrimitive.Text component="p" className="whitespace-pre-wrap text-sm leading-6 text-foreground" />
+  <MessagePartPrimitive.Text component="p" className="whitespace-pre-wrap text-sm leading-relaxed" />
 );
 
 function looksLikeMathContent(raw: string): boolean {
@@ -285,24 +286,24 @@ const MarkdownImage = ({ src, alt, className, ...props }: MarkdownImageProps) =>
   }
 
   return (
-    <span className="group relative my-3 block w-fit max-w-full">
+    <span className="group relative my-4 block w-fit max-w-full">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={src}
         alt={alt ?? "Generated image"}
-        className={cn("max-h-[32rem] w-auto max-w-full rounded border border-border", className)}
+        className={cn("max-h-[32rem] w-auto max-w-full rounded-xl border object-contain shadow-sm", className)}
         {...props}
       />
       <button
         type="button"
-        className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded border border-[hsl(var(--border))] bg-[hsl(var(--card)/0.95)] text-foreground shadow-[2px_2px_0_hsl(var(--border))] transition hover:bg-[hsl(var(--accent)/0.2)]"
+        className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-lg border bg-background/80 text-foreground shadow-sm backdrop-blur transition-all hover:bg-background/100"
         onClick={() => {
           void downloadImageFromSrc(src);
         }}
         title="Download image"
         aria-label="Download image"
       >
-        <Download className="h-3.5 w-3.5" />
+        <Download className="h-4 w-4" />
       </button>
     </span>
   );
@@ -320,27 +321,18 @@ const MarkdownMessage = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<"div
       <div
         ref={ref}
         className={cn(
-          "text-sm leading-6 text-foreground",
-          "[&_h1]:mb-2 [&_h1]:mt-5 [&_h1]:text-xl [&_h1]:font-semibold",
-          "[&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-lg [&_h2]:font-semibold",
-          "[&_h3]:mb-2 [&_h3]:mt-3 [&_h3]:text-base [&_h3]:font-semibold",
-          "[&_p]:mb-3 [&_p:last-child]:mb-0",
-          "[&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-6",
-          "[&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-6",
-          "[&_li]:mb-1",
-          "[&_a]:text-[var(--accent)] [&_a]:underline [&_a]:underline-offset-2",
-          "[&_code]:rounded [&_code]:bg-muted/70 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em]",
-          "[&_pre]:mb-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:border [&_pre]:border-border [&_pre]:bg-background/80 [&_pre]:p-3",
-          "[&_pre_code]:bg-transparent [&_pre_code]:p-0",
-          "[&_blockquote]:mb-3 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_blockquote]:text-muted-foreground",
-          "[&_table]:mb-3 [&_table]:w-full [&_table]:border-collapse [&_table]:overflow-hidden [&_table]:border [&_table]:border-border",
-          "[&_th]:border [&_th]:border-border [&_th]:bg-muted/50 [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold",
-          "[&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5",
-          "[&_hr]:my-4 [&_hr]:border-border",
-          "[&_.katex]:text-foreground [&_.katex]:text-[1.02em]",
-          "[&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto",
-          "[&_.katex-display>.katex]:inline-block [&_.katex-display>.katex]:min-w-full",
-          "[&_img]:my-3 [&_img]:max-h-[32rem] [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-border",
+          "text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none text-foreground",
+          "prose-headings:font-semibold prose-headings:tracking-tight",
+          "prose-h1:text-xl prose-h2:text-lg prose-h3:text-base",
+          "prose-a:text-primary prose-a:underline-offset-4 hover:prose-a:text-primary/80",
+          "prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:bg-muted prose-code:text-muted-foreground prose-code:font-mono prose-code:text-[0.85em]",
+          "prose-pre:bg-muted/50 prose-pre:border prose-pre:rounded-xl prose-pre:p-4 prose-pre:shadow-sm",
+          "prose-blockquote:border-l-4 prose-blockquote:border-primary/50 prose-blockquote:pl-4 prose-blockquote:italic",
+          "prose-table:border-collapse prose-table:w-full",
+          "prose-th:border-b prose-th:px-4 prose-th:py-2 prose-th:text-left",
+          "prose-td:border-b prose-td:border-border/50 prose-td:px-4 prose-td:py-2",
+          "prose-hr:my-8 prose-hr:border-border/50",
+          "[&_.katex-display>.katex]:inline-block [&_.katex-display>.katex]:min-w-full [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto",
           className,
         )}
         {...props}
@@ -366,24 +358,34 @@ const AssistantTextPart = () => (
 
 const ChatMessage = () => {
   return (
-    <MessagePrimitive.Root className="mb-4">
+    <MessagePrimitive.Root className="group relative flex w-full flex-col gap-2 mb-6">
       <MessagePrimitive.If user>
-        <div className="ml-auto max-w-3xl rounded-[var(--radius)] border-2 border-[hsl(var(--accent)/0.7)] bg-[hsl(var(--accent)/0.16)] px-4 py-3 shadow-[var(--card-shadow)]">
-          <MessagePrimitive.Content components={{ Text: UserTextPart }} />
+        <div className="ml-auto relative flex max-w-[85%] items-end gap-2 md:max-w-[75%]">
+          <div className="flex w-full flex-col gap-1 rounded-2xl rounded-br-sm bg-primary px-5 py-3.5 text-primary-foreground shadow-sm">
+            <MessagePrimitive.Content components={{ Text: UserTextPart }} />
+          </div>
         </div>
       </MessagePrimitive.If>
 
       <MessagePrimitive.If assistant>
-        <div className="mr-auto max-w-3xl rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] px-4 py-3 shadow-[var(--card-shadow)]">
-          <MessagePrimitive.Content
-            components={{
-              Text: AssistantTextPart,
-              Reasoning: AssistantTextPart,
-            }}
-          />
-          <MessagePrimitive.Error>
-            <p className="mt-2 text-xs text-destructive">Failed to generate a response. Please try again.</p>
-          </MessagePrimitive.Error>
+        <div className="mr-auto relative flex max-w-[90%] items-start gap-3 md:max-w-[85%]">
+          <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-lg border bg-background shadow-sm">
+            <Bot className="h-4 w-4 text-foreground/80" />
+          </div>
+          <div className="flex w-full flex-col gap-1 rounded-2xl rounded-tl-sm border bg-card px-5 py-4 shadow-sm">
+            <MessagePrimitive.Content
+              components={{
+                Text: AssistantTextPart,
+                Reasoning: AssistantTextPart,
+              }}
+            />
+            <MessagePrimitive.Error>
+              <div className="mt-4 flex items-center gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                <Square className="h-4 w-4" />
+                <p>Failed to generate a response. Please try again.</p>
+              </div>
+            </MessagePrimitive.Error>
+          </div>
         </div>
       </MessagePrimitive.If>
     </MessagePrimitive.Root>
@@ -535,65 +537,74 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
   ]);
 
   return (
-    <Card className="h-full min-h-0 overflow-hidden border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--card-shadow)] transition-none hover:translate-x-0 hover:translate-y-0 hover:shadow-[var(--card-shadow)]">
-      <CardContent className="h-full min-h-0 !p-0">
-        <div className="flex h-full min-h-0">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[hsl(var(--card))]">
-            <AssistantRuntimeProvider runtime={runtime}>
-              <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col overflow-hidden">
-                <ThreadPrimitive.Viewport className="h-0 flex-1 overflow-y-auto p-4">
-                  <ThreadPrimitive.Empty>
-                    <div className="mx-auto flex max-w-xl flex-col items-center gap-3 py-16 text-center text-muted-foreground">
-                      <MessageSquareText className="h-8 w-8" />
-                      {activeThreadId ? (
-                        <p className="text-sm">
-                          Ask about clauses, obligations, dates, or negotiation points. Chats are saved and tied to
-                          your account.
-                        </p>
-                      ) : (
-                        <p className="text-sm">
-                          Select a chat from the sidebar or create a new one to start.
-                        </p>
-                      )}
-                    </div>
-                  </ThreadPrimitive.Empty>
-
-                  <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
-                </ThreadPrimitive.Viewport>
-
-                <ComposerPrimitive.Root className="shrink-0 border-t-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                  <div className="flex items-end gap-2">
-                    <ComposerPrimitive.Input
-                      className={cn(
-                        "min-h-[52px] w-full resize-none rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-foreground outline-none ring-0",
-                        "placeholder:text-muted-foreground focus-visible:border-[hsl(var(--accent)/0.75)]",
-                      )}
-                      placeholder="Type your question..."
-                      submitMode="enter"
-                      rows={1}
-                    />
-
-                    <ThreadPrimitive.If running={false}>
-                      <ComposerPrimitive.Send asChild>
-                        <Button type="button" variant="outline" size="icon" className="h-[52px] w-[52px] shrink-0">
-                          <Send className="h-4 w-4" />
-                        </Button>
-                      </ComposerPrimitive.Send>
-                    </ThreadPrimitive.If>
-
-                    <ThreadPrimitive.If running>
-                      <ComposerPrimitive.Cancel asChild>
-                        <Button type="button" variant="outline" size="icon" className="h-[52px] w-[52px] shrink-0">
-                          <Square className="h-4 w-4" />
-                        </Button>
-                      </ComposerPrimitive.Cancel>
-                    </ThreadPrimitive.If>
+    <Card className="flex h-full min-h-0 w-full flex-col overflow-hidden border-0 bg-transparent shadow-none sm:border sm:bg-background/50 sm:shadow-sm sm:backdrop-blur-md relative">
+      <CardContent className="flex h-full min-h-0 flex-1 flex-col p-0">
+        <AssistantRuntimeProvider runtime={runtime}>
+          <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col overflow-hidden">
+            <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth">
+              <ThreadPrimitive.Empty>
+                <div className="flex h-full flex-col items-center justify-center space-y-4 text-center pb-20">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                    <Sparkles className="h-8 w-8" />
                   </div>
-                </ComposerPrimitive.Root>
-              </ThreadPrimitive.Root>
-            </AssistantRuntimeProvider>
-          </div>
-        </div>
+                  <div className="space-y-2 max-w-[400px]">
+                    <h2 className="text-xl font-semibold tracking-tight">How can I help you today?</h2>
+                    {activeThreadId ? (
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        Start a conversation about reviewing your contracts, spotting clauses, or navigating negotiation points.
+                      </p>
+                    ) : (
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        Select an existing chat from the sidebar or click <span className="font-medium text-foreground">New Chat</span> to start.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </ThreadPrimitive.Empty>
+
+              <div className="mx-auto w-full max-w-4xl">
+                <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
+              </div>
+            </ThreadPrimitive.Viewport>
+
+            <ComposerPrimitive.Root className="shrink-0 bg-transparent p-4 pt-1 sm:p-6 sm:pt-2">
+              <div className="mx-auto flex w-full max-w-4xl items-end gap-2 rounded-2xl border bg-background/80 p-2 shadow-sm backdrop-blur transition-colors focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20">
+                <ComposerPrimitive.Input
+                  className={cn(
+                    "min-h-[44px] max-h-60 w-full resize-none bg-transparent px-3 py-3 text-sm text-foreground outline-none",
+                    "placeholder:text-muted-foreground",
+                  )}
+                  placeholder="Ask a question about your documents..."
+                  submitMode="enter"
+                  rows={1}
+                />
+
+                <div className="flex shrink-0 p-1">
+                  <ThreadPrimitive.If running={false}>
+                    <ComposerPrimitive.Send asChild>
+                      <Button type="button" size="icon" className="h-9 w-9 shrink-0 rounded-xl transition-transform hover:scale-105">
+                        <Send className="h-4 w-4" />
+                        <span className="sr-only">Send message</span>
+                      </Button>
+                    </ComposerPrimitive.Send>
+                  </ThreadPrimitive.If>
+
+                  <ThreadPrimitive.If running>
+                    <ComposerPrimitive.Cancel asChild>
+                      <Button type="button" variant="secondary" size="icon" className="h-9 w-9 shrink-0 rounded-xl">
+                        <Square className="h-4 w-4 fill-current" />
+                        <span className="sr-only">Cancel generation</span>
+                      </Button>
+                    </ComposerPrimitive.Cancel>
+                  </ThreadPrimitive.If>
+                </div>
+              </div>
+              <div className="mx-auto mt-2 max-w-4xl text-center text-xs text-muted-foreground/80">
+                AI may produce inaccurate information about laws or guidelines. Keep original records.
+              </div>
+            </ComposerPrimitive.Root>
+          </ThreadPrimitive.Root>
+        </AssistantRuntimeProvider>
       </CardContent>
     </Card>
   );

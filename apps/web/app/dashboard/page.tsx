@@ -201,281 +201,285 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="app-page">
-      <div className="flex h-screen items-stretch overflow-hidden">
-        <aside
-          className={cn(
-            "sticky top-4 m-4 mr-0 flex h-[calc(100vh-2rem)] shrink-0 flex-col overflow-hidden rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-[var(--card-shadow)] transition-[width] duration-200",
-            sidebarOpen ? "w-80" : "w-14",
-          )}
-        >
-          <div className="border-b-2 border-[hsl(var(--border))] p-2.5">
-            <div className={cn("flex items-center", sidebarOpen ? "justify-between gap-2" : "justify-center")}>
-              {sidebarOpen ? (
-                <>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-2 rounded-[var(--radius)] border-2 border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 py-1.5"
-                    onClick={() => setActiveTab("contracts")}
-                  >
-                    <span className="text-xs font-semibold uppercase tracking-[0.12em]">SignLoop</span>
-                  </button>
+    <div className="flex h-screen w-full bg-background overflow-hidden text-foreground">
+      <aside
+        className={cn(
+          "flex h-screen shrink-0 flex-col border-r bg-muted/20 transition-[width] duration-200",
+          sidebarOpen ? "w-72" : "w-[60px]"
+        )}
+      >
+        <div className="flex h-14 items-center border-b px-3">
+          <div className={cn("flex w-full items-center", sidebarOpen ? "justify-between gap-2" : "justify-center")}>
+            {sidebarOpen ? (
+              <>
+                <div
+                  className="flex items-center gap-2 font-semibold tracking-tight cursor-pointer px-1 text-primary"
+                  onClick={() => setActiveTab("contracts")}
+                >
+                  <span className="text-sm font-bold tracking-wide">SignLoop</span>
+                </div>
 
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="h-9 w-9"
-                    onClick={() => setSidebarOpen(false)}
-                    aria-label="Collapse sidebar"
-                  >
-                    <PanelLeftClose className="h-4 w-4" />
-                  </Button>
-                </>
-              ) : (
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                   size="icon"
-                  className="h-9 w-9"
-                  onClick={() => setSidebarOpen(true)}
-                  aria-label="Expand sidebar"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                  onClick={() => setSidebarOpen(false)}
+                  aria-label="Collapse sidebar"
                 >
-                  <PanelLeftOpen className="h-4 w-4" />
+                  <PanelLeftClose className="h-4 w-4" />
                 </Button>
-              )}
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-2">
-            <div className="space-y-2">
-              <Collapsible open={openSections.contracts} onOpenChange={(open) => setSectionOpen("contracts", open)}>
-                <CollapsibleTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("contracts")}
-                    className={cn(
-                      "flex w-full items-center rounded-[var(--radius)] border-2 border-[hsl(var(--border))] px-2 py-2 text-left text-sm font-semibold transition-colors",
-                      activeTab === "contracts" ? "bg-[hsl(var(--accent)/0.22)]" : "bg-[hsl(var(--background))]",
-                      !sidebarOpen && "justify-center",
-                    )}
-                  >
-                    <span className={cn("flex items-center gap-2", !sidebarOpen && "justify-center")}>
-                      <FileText className="h-4 w-4" />
-                      {sidebarOpen ? <span>Contracts</span> : null}
-                    </span>
-                    {sidebarOpen ? (
-                      openSections.contracts ? (
-                        <ChevronUp className="ml-auto h-4 w-4" />
-                      ) : (
-                        <ChevronDown className="ml-auto h-4 w-4" />
-                      )
-                    ) : null}
-                  </button>
-                </CollapsibleTrigger>
-                {sidebarOpen ? (
-                  <CollapsibleContent className="mt-1 space-y-1 pl-2">
-                    {loadingContracts ? (
-                      <p className="px-2 py-1 text-xs text-muted-foreground">Loading contracts...</p>
-                    ) : standaloneContracts.length === 0 ? (
-                      <p className="px-2 py-1 text-xs text-muted-foreground">No standalone contracts</p>
-                    ) : (
-                      standaloneContracts.map((contract) => (
-                        <Link
-                          key={contract.id}
-                          href={`/contracts/${contract.id}`}
-                          className="block rounded-[calc(var(--radius)-0.05rem)] border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--background)/0.75)] px-2 py-1.5 text-xs hover:border-[hsl(var(--border))] hover:bg-[hsl(var(--secondary))]"
-                        >
-                          <p className="truncate font-medium text-foreground">{contract.title}</p>
-                          <p className="mt-0.5 text-[11px] text-muted-foreground">{contract.status || "DRAFT"}</p>
-                        </Link>
-                      ))
-                    )}
-                  </CollapsibleContent>
-                ) : null}
-              </Collapsible>
-
-              <Collapsible open={openSections.projects} onOpenChange={(open) => setSectionOpen("projects", open)}>
-                <CollapsibleTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("projects")}
-                    className={cn(
-                      "flex w-full items-center rounded-[var(--radius)] border-2 border-[hsl(var(--border))] px-2 py-2 text-left text-sm font-semibold transition-colors",
-                      activeTab === "projects" ? "bg-[hsl(var(--accent)/0.22)]" : "bg-[hsl(var(--background))]",
-                      !sidebarOpen && "justify-center",
-                    )}
-                  >
-                    <span className={cn("flex items-center gap-2", !sidebarOpen && "justify-center")}>
-                      <FolderOpen className="h-4 w-4" />
-                      {sidebarOpen ? <span>Projects</span> : null}
-                    </span>
-                    {sidebarOpen ? (
-                      openSections.projects ? (
-                        <ChevronUp className="ml-auto h-4 w-4" />
-                      ) : (
-                        <ChevronDown className="ml-auto h-4 w-4" />
-                      )
-                    ) : null}
-                  </button>
-                </CollapsibleTrigger>
-                {sidebarOpen ? (
-                  <CollapsibleContent className="mt-1 space-y-1 pl-2">
-                    {loadingProjects ? (
-                      <p className="px-2 py-1 text-xs text-muted-foreground">Loading projects...</p>
-                    ) : !projects || projects.length === 0 ? (
-                      <p className="px-2 py-1 text-xs text-muted-foreground">No projects yet</p>
-                    ) : (
-                      projects.map((project) => (
-                        <Link
-                          key={project.id}
-                          href={`/projects/${project.id}`}
-                          className="block rounded-[calc(var(--radius)-0.05rem)] border border-[hsl(var(--border)/0.35)] bg-[hsl(var(--background)/0.75)] px-2 py-1.5 text-xs hover:border-[hsl(var(--border))] hover:bg-[hsl(var(--secondary))]"
-                        >
-                          <p className="truncate font-medium text-foreground">{project.title}</p>
-                          <p className="mt-0.5 text-[11px] text-muted-foreground">
-                            {project.contracts?.length || 0} contract{(project.contracts?.length || 0) === 1 ? "" : "s"}
-                          </p>
-                        </Link>
-                      ))
-                    )}
-                  </CollapsibleContent>
-                ) : null}
-              </Collapsible>
-
-              <Collapsible open={openSections.chat} onOpenChange={(open) => setSectionOpen("chat", open)}>
-                <div className={cn("flex items-center gap-1.5", !sidebarOpen && "justify-center")}>
-                  <CollapsibleTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("chat")}
-                      className={cn(
-                        "flex items-center rounded-[var(--radius)] border-2 border-[hsl(var(--border))] px-2 py-2 text-left text-sm font-semibold transition-colors",
-                        activeTab === "chat" ? "bg-[hsl(var(--accent)/0.22)]" : "bg-[hsl(var(--background))]",
-                        sidebarOpen ? "flex-1" : "w-full justify-center",
-                      )}
-                    >
-                      <span className={cn("flex items-center gap-2", !sidebarOpen && "justify-center")}>
-                        <MessagesSquare className="h-4 w-4" />
-                        {sidebarOpen ? <span>Chat</span> : null}
-                      </span>
-                      {sidebarOpen ? (
-                        openSections.chat ? (
-                          <ChevronUp className="ml-auto h-4 w-4" />
-                        ) : (
-                          <ChevronDown className="ml-auto h-4 w-4" />
-                        )
-                      ) : null}
-                    </button>
-                  </CollapsibleTrigger>
-                  {sidebarOpen ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="h-9 w-9 shrink-0"
-                      onClick={() => createChatMutation.mutate()}
-                      disabled={createChatMutation.isPending}
-                      title="New chat"
-                      aria-label="New chat"
-                    >
-                      {createChatMutation.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Plus className="h-4 w-4" />
-                      )}
-                    </Button>
-                  ) : null}
-                </div>
-                {sidebarOpen ? (
-                  <CollapsibleContent className="mt-1 space-y-1 pl-2">
-                    {loadingChatThreads ? (
-                      <p className="px-2 py-1 text-xs text-muted-foreground">Loading chats...</p>
-                    ) : !chatThreads || chatThreads.length === 0 ? (
-                      <p className="px-2 py-1 text-xs text-muted-foreground">No chats yet</p>
-                    ) : (
-                      chatThreads.map((thread) => (
-                        <div
-                          key={thread.id}
-                          className={cn(
-                            "flex items-start gap-1 rounded-[calc(var(--radius)-0.05rem)] border px-1.5 py-1.5 text-xs",
-                            selectedChatThreadId === thread.id
-                              ? "border-[hsl(var(--accent)/0.65)] bg-[hsl(var(--accent)/0.2)]"
-                              : "border-[hsl(var(--border)/0.35)] bg-[hsl(var(--background)/0.75)] hover:border-[hsl(var(--border))] hover:bg-[hsl(var(--secondary))]",
-                          )}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActiveTab("chat");
-                              setSelectedChatThreadId(thread.id);
-                            }}
-                            className="min-w-0 flex-1 text-left"
-                          >
-                            <p className="truncate font-medium text-foreground">{thread.title}</p>
-                            <p className="mt-0.5 text-[11px] text-muted-foreground">
-                              {thread.messageCount} message{thread.messageCount === 1 ? "" : "s"}
-                            </p>
-                          </button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 shrink-0"
-                            onClick={() => deleteChatMutation.mutate(thread.id)}
-                            disabled={deleteChatMutation.isPending}
-                            title="Delete chat"
-                            aria-label="Delete chat"
-                          >
-                            {deleteChatMutation.isPending && deleteChatMutation.variables === thread.id ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Trash2 className="h-3.5 w-3.5" />
-                            )}
-                          </Button>
-                        </div>
-                      ))
-                    )}
-                  </CollapsibleContent>
-                ) : null}
-              </Collapsible>
-            </div>
-          </div>
-
-          <div className="border-t-2 border-[hsl(var(--border))] p-2">
-            <div className="space-y-2">
-              <Button asChild variant="outline" className={cn("w-full", sidebarOpen ? "justify-start" : "justify-center px-0")}>
-                <Link href="/settings">
-                  <Settings className="h-4 w-4" />
-                  {sidebarOpen ? <span>Settings</span> : null}
-                </Link>
-              </Button>
+              </>
+            ) : (
               <Button
                 type="button"
-                variant="outline"
-                className={cn("w-full", sidebarOpen ? "justify-start" : "justify-center px-0")}
-                onClick={() => signOut()}
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Expand sidebar"
               >
-                <LogOut className="h-4 w-4" />
-                {sidebarOpen ? <span>Sign out</span> : null}
+                <PanelLeftOpen className="h-4 w-4" />
               </Button>
-            </div>
+            )}
           </div>
-        </aside>
+        </div>
 
-        <main
-          className={cn(
-            "min-w-0 min-h-0 flex flex-1 flex-col p-4 sm:p-6",
-            activeTab === "chat" ? "overflow-hidden" : "overflow-y-auto",
-          )}
-        >
-          {activeTab !== "chat" && (
-            <div className="chrome-pane mb-6 shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-              <div>
-                <h1 className="app-title text-2xl md:text-3xl">{tabLabels[activeTab]}</h1>
-                <p className="text-xs text-muted-foreground">Welcome, {user?.firstName || "there"}</p>
+        <div className="flex-1 overflow-y-auto w-full">
+          <div className="space-y-4 p-2 sm:p-3">
+            <Collapsible open={openSections.contracts} onOpenChange={(open) => setSectionOpen("contracts", open)}>
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("contracts")}
+                  className={cn(
+                    "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
+                    activeTab === "contracts" ? "bg-muted text-primary" : "text-muted-foreground",
+                    !sidebarOpen && "justify-center px-0"
+                  )}
+                >
+                  <span className={cn("flex items-center gap-3", !sidebarOpen && "justify-center")}>
+                    <FileText className="h-4 w-4" />
+                    {sidebarOpen ? <span>Contracts</span> : null}
+                  </span>
+                  {sidebarOpen ? (
+                    openSections.contracts ? (
+                      <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
+                    ) : (
+                      <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
+                    )
+                  ) : null}
+                </button>
+              </CollapsibleTrigger>
+              {sidebarOpen ? (
+                <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
+                  {loadingContracts ? (
+                    <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading contracts...</p>
+                  ) : standaloneContracts.length === 0 ? (
+                    <p className="px-3 py-1.5 text-xs text-muted-foreground">No standalone contracts</p>
+                  ) : (
+                    standaloneContracts.map((contract) => (
+                      <Link
+                        key={contract.id}
+                        href={`/contracts/${contract.id}`}
+                        className="block rounded-md px-3 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                      >
+                        <p className="truncate font-medium">{contract.title}</p>
+                        <p className="mt-0.5 text-[10px] opacity-70">{contract.status || "DRAFT"}</p>
+                      </Link>
+                    ))
+                  )}
+                </CollapsibleContent>
+              ) : null}
+            </Collapsible>
+
+            <Collapsible open={openSections.projects} onOpenChange={(open) => setSectionOpen("projects", open)}>
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("projects")}
+                  className={cn(
+                    "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
+                    activeTab === "projects" ? "bg-muted text-primary" : "text-muted-foreground",
+                    !sidebarOpen && "justify-center px-0"
+                  )}
+                >
+                  <span className={cn("flex items-center gap-3", !sidebarOpen && "justify-center")}>
+                    <FolderOpen className="h-4 w-4" />
+                    {sidebarOpen ? <span>Projects</span> : null}
+                  </span>
+                  {sidebarOpen ? (
+                    openSections.projects ? (
+                      <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
+                    ) : (
+                      <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
+                    )
+                  ) : null}
+                </button>
+              </CollapsibleTrigger>
+              {sidebarOpen ? (
+                <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
+                  {loadingProjects ? (
+                    <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading projects...</p>
+                  ) : !projects || projects.length === 0 ? (
+                    <p className="px-3 py-1.5 text-xs text-muted-foreground">No projects yet</p>
+                  ) : (
+                    projects.map((project) => (
+                      <Link
+                        key={project.id}
+                        href={`/projects/${project.id}`}
+                        className="block rounded-md px-3 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                      >
+                        <p className="truncate font-medium">{project.title}</p>
+                        <p className="mt-0.5 text-[10px] opacity-70">
+                          {project.contracts?.length || 0} contract{(project.contracts?.length || 0) === 1 ? "" : "s"}
+                        </p>
+                      </Link>
+                    ))
+                  )}
+                </CollapsibleContent>
+              ) : null}
+            </Collapsible>
+
+            <Collapsible open={openSections.chat} onOpenChange={(open) => setSectionOpen("chat", open)}>
+              <div className={cn("flex items-center gap-1", !sidebarOpen && "justify-center")}>
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("chat")}
+                    className={cn(
+                      "flex items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
+                      activeTab === "chat" ? "bg-muted text-primary" : "text-muted-foreground",
+                      sidebarOpen ? "flex-1" : "w-full justify-center px-0"
+                    )}
+                  >
+                    <span className={cn("flex items-center gap-3", !sidebarOpen && "justify-center")}>
+                      <MessagesSquare className="h-4 w-4" />
+                      {sidebarOpen ? <span>Chat</span> : null}
+                    </span>
+                    {sidebarOpen ? (
+                      openSections.chat ? (
+                        <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
+                      ) : (
+                        <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
+                      )
+                    ) : null}
+                  </button>
+                </CollapsibleTrigger>
+                {sidebarOpen ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onClick={() => createChatMutation.mutate()}
+                    disabled={createChatMutation.isPending}
+                    title="New chat"
+                    aria-label="New chat"
+                  >
+                    {createChatMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Plus className="h-4 w-4" />
+                    )}
+                  </Button>
+                ) : null}
               </div>
-              <div className="flex gap-2">
+              {sidebarOpen ? (
+                <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
+                  {loadingChatThreads ? (
+                    <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading chats...</p>
+                  ) : !chatThreads || chatThreads.length === 0 ? (
+                    <p className="px-3 py-1.5 text-xs text-muted-foreground">No chats yet</p>
+                  ) : (
+                    chatThreads.map((thread) => (
+                      <div
+                        key={thread.id}
+                        className={cn(
+                          "group flex items-start justify-between rounded-md px-3 py-2 text-xs transition-colors",
+                          selectedChatThreadId === thread.id
+                            ? "bg-accent text-accent-foreground"
+                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab("chat");
+                            setSelectedChatThreadId(thread.id);
+                          }}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <p className="truncate font-medium">{thread.title}</p>
+                          <p className="mt-0.5 text-[10px] opacity-70">
+                            {thread.messageCount} msg{thread.messageCount !== 1 ? "s" : ""}
+                          </p>
+                        </button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className={cn(
+                            "h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity",
+                            selectedChatThreadId === thread.id && "opacity-100"
+                          )}
+                          onClick={() => deleteChatMutation.mutate(thread.id)}
+                          disabled={deleteChatMutation.isPending}
+                          title="Delete chat"
+                          aria-label="Delete chat"
+                        >
+                          {deleteChatMutation.isPending && deleteChatMutation.variables === thread.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                          )}
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </CollapsibleContent>
+              ) : null}
+            </Collapsible>
+          </div>
+        </div>
+
+        <div className="border-t p-3">
+          <div className="space-y-1">
+            <Button asChild variant="ghost" className={cn("w-full text-muted-foreground hover:text-foreground", sidebarOpen ? "justify-start" : "justify-center px-0")}>
+              <Link href="/settings">
+                <Settings className={cn("h-4 w-4", sidebarOpen && "mr-3")} />
+                {sidebarOpen ? <span>Settings</span> : null}
+              </Link>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className={cn("w-full text-muted-foreground hover:text-destructive", sidebarOpen ? "justify-start" : "justify-center px-0")}
+              onClick={() => signOut()}
+            >
+              <LogOut className={cn("h-4 w-4", sidebarOpen && "mr-3")} />
+              {sidebarOpen ? <span>Sign out</span> : null}
+            </Button>
+          </div>
+        </div>
+      </aside>
+
+      <main
+        className={cn(
+          "min-w-0 flex-1 flex flex-col relative",
+          activeTab === "chat" ? "overflow-hidden" : "overflow-y-auto"
+        )}
+      >
+        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.1),rgba(255,255,255,0))] dark:bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.2),rgba(255,255,255,0))]" />
+        
+        <div className={cn("relative z-10 flex flex-1 flex-col p-6 lg:p-10", activeTab === "chat" && "p-0 lg:p-0")}>
+          {activeTab !== "chat" && (
+            <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-6">
+              <div>
+                <h1 className="text-3xl font-bold tracking-tight">{tabLabels[activeTab]}</h1>
+                <p className="mt-1 text-sm text-muted-foreground">Welcome back, {user?.firstName || "there"}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
                 {activeTab === "contracts" ? (
                   <UploadDialog>
                     <Button>
@@ -497,19 +501,21 @@ const Dashboard = () => {
 
           {activeTab === "contracts" ? (
             loadingContracts ? (
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {[1, 2, 3].map((item) => (
-                  <Skeleton key={item} className="h-40 w-full" />
+                  <Skeleton key={item} className="h-44 w-full rounded-xl" />
                 ))}
               </div>
             ) : standaloneContracts.length === 0 ? (
-              <div className="chrome-pane py-12 text-center">
-                <FileText className="mx-auto h-12 w-12 text-muted-foreground" />
-                <h3 className="mt-2 text-sm font-semibold text-foreground">No contracts</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Upload a contract for quick analysis, or create a project for context-aware analysis.
+              <div className="flex min-h-[400px] flex-col items-center justify-center rounded-xl border border-dashed text-center bg-muted/10 mx-auto w-full max-w-2xl px-4">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-4">
+                  <FileText className="h-8 w-8 text-muted-foreground" />
+                </div>
+                <h3 className="text-xl font-semibold text-foreground">No contracts found</h3>
+                <p className="mt-2 text-sm text-muted-foreground max-w-sm">
+                  Upload a contract to begin analyzing it instantly, or create a project for context-aware reviews.
                 </p>
-                <div className="mt-6 flex justify-center gap-2">
+                <div className="mt-8 flex flex-wrap justify-center gap-3">
                   <UploadDialog>
                     <Button>
                       <Plus className="mr-2 h-4 w-4" />
@@ -525,41 +531,38 @@ const Dashboard = () => {
                 </div>
               </div>
             ) : (
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {standaloneContracts.map((contract) => (
                   <Link key={contract.id} href={`/contracts/${contract.id}`}>
-                    <Card className="h-full cursor-pointer">
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">{contract.title}</CardTitle>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            title="Delete contract"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              setContractToDelete(contract);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4 text-muted-foreground" />
-                          </Button>
-                          <FileText className="h-4 w-4 text-muted-foreground" />
-                        </div>
+                    <Card className="group h-full cursor-pointer overflow-hidden border-border/50 bg-background/50 backdrop-blur transition-colors hover:bg-muted/50 hover:border-border">
+                      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-4">
+                        <CardTitle className="text-base font-semibold leading-tight line-clamp-2 pr-4">{contract.title}</CardTitle>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 -mt-2 -mr-2 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive hover:bg-destructive/10"
+                          title="Delete contract"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setContractToDelete(contract);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </CardHeader>
                       <CardContent>
-                        <div className="mt-4 flex items-end justify-between">
-                          <div className="space-y-1">
-                            <div className="flex items-center text-xs text-muted-foreground">
-                              <Calendar className="mr-1 h-3 w-3" />
-                              {format(new Date(contract.createdAt), "MMM d, yyyy")}
-                            </div>
-                            <Badge variant="secondary" className="mt-2">
-                              {contract.status || "DRAFT"}
-                            </Badge>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-4">
+                          <Calendar className="h-3.5 w-3.5" />
+                          {format(new Date(contract.createdAt), "MMMM d, yyyy")}
+                        </div>
+                        <div className="flex items-end justify-between">
+                          <Badge variant="secondary" className="font-medium bg-secondary/50">
+                            {contract.status || "DRAFT"}
+                          </Badge>
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+                            <ChevronRight className="h-4 w-4" />
                           </div>
-                          <ChevronRight className="h-5 w-5 text-muted-foreground" />
                         </div>
                       </CardContent>
                     </Card>
@@ -571,58 +574,61 @@ const Dashboard = () => {
 
           {activeTab === "projects" ? (
             loadingProjects ? (
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {[1, 2, 3].map((item) => (
-                  <Skeleton key={item} className="h-40 w-full" />
+                  <Skeleton key={item} className="h-44 w-full rounded-xl" />
                 ))}
               </div>
             ) : !projects || projects.length === 0 ? (
-              <div className="chrome-pane py-12 text-center">
-                <FolderOpen className="mx-auto h-12 w-12 text-muted-foreground" />
-                <h3 className="mt-2 text-sm font-semibold text-foreground">No projects</h3>
-                <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                  Projects let you analyze contracts with legal context. Upload governing laws, prior contracts, or
-                  other reference documents.
+              <div className="flex min-h-[400px] flex-col items-center justify-center rounded-xl border border-dashed text-center bg-muted/10 mx-auto w-full max-w-2xl px-4">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-4">
+                  <FolderOpen className="h-8 w-8 text-muted-foreground" />
+                </div>
+                <h3 className="text-xl font-semibold text-foreground">No projects yet</h3>
+                <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+                  Projects let you analyze contracts with legal context. Upload governing laws or reference documents.
                 </p>
-                <div className="mt-6">
+                <div className="mt-8">
                   <NewProjectDialog>
                     <Button>
                       <Plus className="mr-2 h-4 w-4" />
-                      New Project
+                      Create your first project
                     </Button>
                   </NewProjectDialog>
                 </div>
               </div>
             ) : (
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {projects.map((project) => (
                   <Link key={project.id} href={`/projects/${project.id}`}>
-                    <Card className="h-full cursor-pointer border-l-2 border-l-[hsl(var(--accent)/0.8)]">
-                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">{project.title}</CardTitle>
-                        <FolderOpen className="h-4 w-4 text-primary" />
+                    <Card className="group h-full cursor-pointer overflow-hidden border-t-2 border-t-primary border-x-border/50 border-b-border/50 bg-background/50 backdrop-blur transition-all hover:bg-muted/50 hover:shadow-sm">
+                      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+                        <CardTitle className="text-base font-semibold leading-tight line-clamp-2">{project.title}</CardTitle>
+                        <FolderOpen className="h-4 w-4 text-primary shrink-0 ml-2" />
                       </CardHeader>
                       <CardContent>
                         {project.description ? (
-                          <p className="mb-3 line-clamp-2 text-xs text-muted-foreground">{project.description}</p>
+                          <p className="mb-4 line-clamp-2 text-sm text-muted-foreground leading-relaxed">{project.description}</p>
                         ) : null}
-                        <div className="mb-3 flex gap-2">
-                          <Badge variant="outline" className="text-xs">
-                            <FileText className="mr-1 h-3 w-3" />
+                        <div className="mb-4 flex flex-wrap gap-2">
+                          <Badge variant="outline" className="text-xs font-medium border-border/60 bg-background">
+                            <FileText className="mr-1.5 h-3 w-3 text-muted-foreground" />
                             {project.contracts?.length || 0} contract
                             {(project.contracts?.length || 0) !== 1 ? "s" : ""}
                           </Badge>
-                          <Badge variant="outline" className="text-xs">
-                            <Book className="mr-1 h-3 w-3" />
+                          <Badge variant="outline" className="text-xs font-medium border-border/60 bg-background">
+                            <Book className="mr-1.5 h-3 w-3 text-muted-foreground" />
                             {project.contextDocuments?.length || 0} context
                           </Badge>
                         </div>
-                        <div className="flex items-end justify-between">
-                          <div className="flex items-center text-xs text-muted-foreground">
-                            <Calendar className="mr-1 h-3 w-3" />
+                        <div className="flex items-end justify-between pt-1">
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <Calendar className="h-3.5 w-3.5" />
                             {format(new Date(project.createdAt), "MMM d, yyyy")}
                           </div>
-                          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+                            <ChevronRight className="h-4 w-4" />
+                          </div>
                         </div>
                       </CardContent>
                     </Card>
@@ -633,15 +639,15 @@ const Dashboard = () => {
           ) : null}
 
           {activeTab === "chat" ? (
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden h-full flex flex-col bg-background/50">
               <ChatPanel
                 selectedThreadId={selectedChatThreadId}
                 onThreadSelected={(threadId) => setSelectedChatThreadId(threadId)}
               />
             </div>
           ) : null}
-        </main>
-      </div>
+        </div>
+      </main>
 
       <AlertDialog
         open={!!contractToDelete}
@@ -653,8 +659,8 @@ const Dashboard = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete contract?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete <span className="font-medium">{contractToDelete?.title}</span> and all
-              associated analyses.
+              This will permanently delete <span className="font-medium text-foreground">{contractToDelete?.title}</span> and all
+              associated analyses. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -667,7 +673,7 @@ const Dashboard = () => {
                 deleteContractMutation.mutate(contractToDelete.id);
               }}
             >
-              {deleteContractMutation.isPending ? "Deleting..." : "Delete"}
+              {deleteContractMutation.isPending ? "Deleting..." : "Delete Contract"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

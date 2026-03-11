@@ -22,9 +22,7 @@ export default {
         sm: ["0.9375rem", { lineHeight: "1.375rem" }],
       },
       fontFamily: {
-        sans: ["var(--font-space-mono)", '"Space Mono"', "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "sans-serif"],
-        serif: ["var(--font-fraunces)", '"Fraunces"', "Georgia", "serif"],
-        mono: ["var(--font-space-mono)", '"Space Mono"', '"SFMono-Regular"', "Menlo", "Monaco", "Consolas", '"Liberation Mono"', '"Courier New"', "monospace"],
+        sans: ["var(--font-sans)", "sans-serif"],
       },
       colors: {
         border: "hsl(var(--border))",

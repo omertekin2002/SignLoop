@@ -3,19 +3,22 @@
 import { useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, FileText, MessagesSquare } from "lucide-react";
 import { NumberTicker } from "@/components/number-ticker";
 import { TypingAnimation } from "@/components/typing-animation";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 
 const stats = [
   {
     label: "Contracts Analyzed",
     value: 150,
+    icon: FileText,
   },
   {
     label: "Chat Interactions",
     value: 2000,
+    icon: MessagesSquare,
   },
 ] as const;
 
@@ -24,77 +27,114 @@ export default function Home() {
   const [isHeroTitleComplete, setIsHeroTitleComplete] = useState(false);
 
   return (
-    <div className="app-page flex flex-col">
-      <header className="app-header">
-        <div className="app-header-inner">
-          <p className="text-base font-semibold tracking-[0.06em] text-foreground">SignLoop</p>
+    <div className="flex min-h-screen flex-col bg-background">
+      <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="container mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-2">
+            <span className="text-lg font-bold tracking-tight">SignLoop</span>
+          </div>
 
           <nav className="flex items-center gap-2 sm:gap-3">
-            <Button asChild variant="outline" size="sm">
+            <Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
               <Link href="/dashboard">Dashboard</Link>
+            </Button>
+            <Button asChild size="sm">
+              <Link href={isSignedIn ? "/dashboard" : "/sign-in"}>
+                {isSignedIn ? "Open App" : "Get Started"}
+              </Link>
             </Button>
           </nav>
         </div>
       </header>
 
-      <main className="app-main flex-1 w-full space-y-8 pb-12">
-        <section className="chrome-pane relative overflow-hidden rounded-[calc(var(--radius)+0.16rem)] p-8 md:p-12">
-          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_18%_22%,hsl(var(--accent)/0.2),transparent_44%),radial-gradient(circle_at_82%_16%,hsl(var(--primary)/0.18),transparent_42%)] dark:hidden" />
-          <div className="relative max-w-3xl space-y-5">
-            <h1 className="min-h-[2.6em] text-4xl leading-tight text-foreground md:min-h-[2.3em] md:text-6xl">
-              <TypingAnimation
-                text="Review contracts with precision, not guesswork."
-                initialDelay={250}
-                persistCursor={false}
-                typeSpeed={38}
-                onComplete={() => setIsHeroTitleComplete(true)}
-              />
-            </h1>
-            <p className="max-w-2xl min-h-[6rem] text-base text-muted-foreground md:min-h-[4rem] md:text-lg">
-              <TypingAnimation
-                text="SignLoop combines document ingestion, structured analysis workflows, model routing, and chat into one legal workspace."
-                cursorClassName="text-muted-foreground"
-                initialDelay={180}
-                start={isHeroTitleComplete}
-                typeSpeed={18}
-              />
-            </p>
-            <div className="flex flex-wrap items-center gap-3 pt-1">
-              <Button asChild size="lg" className="px-8">
+      <main className="flex-1 w-full relative">
+        {/* Subtle Background Elements */}
+        <div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.15),rgba(255,255,255,0))] mix-blend-normal dark:bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.3),rgba(255,255,255,0))]" />
+        
+        <div className="container mx-auto relative z-10 max-w-7xl space-y-24 px-4 py-24 sm:px-6 lg:px-8 lg:py-32">
+          
+          <section className="mx-auto flex max-w-[980px] flex-col items-center gap-8 text-center">
+            <div className="inline-flex items-center rounded-full border border-border/50 bg-background/50 px-3 py-1 text-sm font-medium backdrop-blur transition-colors hover:bg-muted/50">
+              <span className="flex h-2 w-2 rounded-full bg-primary/80 mr-2 animate-pulse" />
+              SignLoop is now in Beta
+            </div>
+
+            <div className="space-y-6">
+              <h1 className="min-h-[2.5em] text-4xl font-extrabold tracking-tight text-foreground sm:text-5xl md:min-h-[2em] md:text-6xl lg:text-7xl">
+                <TypingAnimation
+                  text="Review contracts with precision. Not guesswork."
+                  initialDelay={250}
+                  persistCursor={false}
+                  typeSpeed={38}
+                  onComplete={() => setIsHeroTitleComplete(true)}
+                />
+              </h1>
+              <div className="mx-auto max-w-[700px] min-h-[4rem] text-lg text-muted-foreground sm:text-xl">
+                <TypingAnimation
+                  text="SignLoop combines document ingestion, structured analysis workflows, model routing, and chat into one legal workspace."
+                  cursorClassName="text-muted-foreground"
+                  initialDelay={180}
+                  start={isHeroTitleComplete}
+                  typeSpeed={16}
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-4 sm:flex-row items-center justify-center pt-8">
+              <Button asChild size="lg" className="h-12 px-8 text-base">
                 <Link href={isSignedIn ? "/dashboard" : "/sign-in"}>
-                  {isSignedIn ? "Open Dashboard" : "Get Started"}
-                  <ArrowRight className="h-4 w-4" />
+                  {isSignedIn ? "Open Dashboard" : "Get Started Free"}
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+              <Button asChild size="lg" variant="outline" className="h-12 px-8 text-base">
+                <Link href="#features">
+                  Learn More
                 </Link>
               </Button>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <section className="grid gap-4 md:grid-cols-2">
-          {stats.map((stat, index) => (
-            <article
-              key={stat.label}
-              className="chrome-pane relative overflow-hidden rounded-[calc(var(--radius)+0.16rem)] p-6 md:p-8"
-            >
-              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,hsl(var(--accent)/0.12),transparent_34%)]" />
-              <div className="relative flex min-h-[200px] flex-col justify-end">
-                <p className="font-[family:var(--font-fraunces)] text-[clamp(3.5rem,10vw,6.75rem)] font-semibold leading-none tracking-[-0.06em] text-foreground">
-                  <NumberTicker delay={index * 140} useGrouping={stat.value < 1000} value={stat.value} />
-                  <span className="text-[hsl(var(--accent))]">+</span>
-                </p>
-                <p className="mt-4 max-w-[12ch] text-sm text-muted-foreground md:text-base">
-                  {stat.label}
-                </p>
-              </div>
-            </article>
-          ))}
-        </section>
+          <section id="features" className="mx-auto max-w-5xl">
+            <div className="grid gap-6 md:grid-cols-2">
+              {stats.map((stat, index) => {
+                const Icon = stat.icon;
+                return (
+                  <Card
+                    key={stat.label}
+                    className="group relative overflow-hidden border-border/50 bg-background/50 p-8 pt-10 backdrop-blur transition-colors hover:bg-muted/50"
+                  >
+                    <div className="relative z-10 flex flex-col items-center text-center space-y-4">
+                      <div className="p-3 rounded-full bg-primary/10 text-primary mb-2">
+                        <Icon className="h-6 w-6" />
+                      </div>
+                      <div className="flex items-baseline justify-center gap-1 font-bold tracking-tighter text-5xl sm:text-6xl lg:text-7xl text-foreground">
+                        <NumberTicker 
+                          delay={index * 140} 
+                          useGrouping={stat.value < 1000} 
+                          value={stat.value} 
+                        />
+                        <span className="text-primary">+</span>
+                      </div>
+                      <p className="text-lg font-medium text-muted-foreground">
+                        {stat.label}
+                      </p>
+                    </div>
+                  </Card>
+                )
+              })}
+            </div>
+          </section>
 
+        </div>
       </main>
 
-      <footer className="border-t border-[var(--surface-stroke-soft)] bg-[var(--surface-base)] px-4 py-6 sm:px-6 lg:px-8">
-        <div className="mx-auto flex max-w-7xl flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-          <p>© 2026 SignLoop</p>
+      <footer className="w-full border-t border-border/40 py-6">
+        <div className="container mx-auto flex max-w-7xl flex-col items-center justify-center gap-4 px-4 sm:px-6 md:flex-row md:justify-between lg:px-8">
+          <p className="text-center text-sm leading-loose text-muted-foreground md:text-left">
+            Built by{" "}
+            <span className="font-medium text-foreground">SignLoop</span>. All rights reserved. © 2026.
+          </p>
         </div>
       </footer>
     </div>
