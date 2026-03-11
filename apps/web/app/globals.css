@@ -24,6 +24,11 @@
     --input: 240 5.9% 90%;
     --ring: 240 10% 3.9%;
     --radius: 0.75rem;
+    --surface-base: hsl(var(--background));
+    --surface-elevated: hsl(var(--card));
+    --surface-inset: hsl(var(--muted));
+    --surface-stroke-soft: hsl(var(--border) / 0.6);
+    --surface-stroke: hsl(var(--border));
 
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
@@ -55,6 +60,11 @@
     --border: 240 3.7% 15.9%;
     --input: 240 3.7% 15.9%;
     --ring: 240 4.9% 83.9%;
+    --surface-base: hsl(var(--background));
+    --surface-elevated: hsl(var(--card));
+    --surface-inset: hsl(var(--muted));
+    --surface-stroke-soft: hsl(var(--border) / 0.6);
+    --surface-stroke: hsl(var(--border));
 
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
@@ -101,5 +111,29 @@
 
   .app-subtitle {
     @apply text-sm text-muted-foreground;
+  }
+}
+
+@keyframes typingCursorBlink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.typing-cursor {
+  display: inline-block;
+  min-width: 0.6ch;
+  animation: typingCursorBlink 1s steps(1, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-cursor {
+    animation: none;
   }
 }

@@ -252,6 +252,7 @@ const Dashboard = () => {
                 <button
                   type="button"
                   onClick={() => setActiveTab("contracts")}
+                  aria-label="Contracts"
                   className={cn(
                     "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
                     activeTab === "contracts" ? "bg-muted text-primary" : "text-muted-foreground",
@@ -298,6 +299,7 @@ const Dashboard = () => {
                 <button
                   type="button"
                   onClick={() => setActiveTab("projects")}
+                  aria-label="Projects"
                   className={cn(
                     "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
                     activeTab === "projects" ? "bg-muted text-primary" : "text-muted-foreground",
@@ -347,6 +349,7 @@ const Dashboard = () => {
                   <button
                     type="button"
                     onClick={() => setActiveTab("chat")}
+                    aria-label="Chat"
                     className={cn(
                       "flex items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
                       activeTab === "chat" ? "bg-muted text-primary" : "text-muted-foreground",
@@ -446,7 +449,7 @@ const Dashboard = () => {
         <div className="border-t p-3">
           <div className="space-y-1">
             <Button asChild variant="ghost" className={cn("w-full text-muted-foreground hover:text-foreground", sidebarOpen ? "justify-start" : "justify-center px-0")}>
-              <Link href="/settings">
+              <Link href="/settings" aria-label="Settings">
                 <Settings className={cn("h-4 w-4", sidebarOpen && "mr-3")} />
                 {sidebarOpen ? <span>Settings</span> : null}
               </Link>
@@ -454,6 +457,7 @@ const Dashboard = () => {
             <Button
               type="button"
               variant="ghost"
+              aria-label="Sign out"
               className={cn("w-full text-muted-foreground hover:text-destructive", sidebarOpen ? "justify-start" : "justify-center px-0")}
               onClick={() => signOut()}
             >
@@ -533,26 +537,26 @@ const Dashboard = () => {
             ) : (
               <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {standaloneContracts.map((contract) => (
-                  <Link key={contract.id} href={`/contracts/${contract.id}`}>
-                    <Card className="group h-full cursor-pointer overflow-hidden border-border/50 bg-background/50 backdrop-blur transition-colors hover:bg-muted/50 hover:border-border">
-                      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-4">
-                        <CardTitle className="text-base font-semibold leading-tight line-clamp-2 pr-4">{contract.title}</CardTitle>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 -mt-2 -mr-2 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:text-destructive hover:bg-destructive/10"
-                          title="Delete contract"
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            setContractToDelete(contract);
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                  <Card
+                    key={contract.id}
+                    className="group relative h-full overflow-hidden border-border/50 bg-background/50 backdrop-blur transition-colors hover:bg-muted/50 hover:border-border"
+                  >
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-4 top-4 z-10 h-8 w-8 text-muted-foreground opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                      title="Delete contract"
+                      aria-label={`Delete ${contract.title}`}
+                      onClick={() => setContractToDelete(contract)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                    <Link href={`/contracts/${contract.id}`} className="block h-full">
+                      <CardHeader className="space-y-0 pb-4 pr-12">
+                        <CardTitle className="text-base font-semibold leading-tight line-clamp-2">{contract.title}</CardTitle>
                       </CardHeader>
                       <CardContent>
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-4">
+                        <div className="mb-4 flex items-center gap-1.5 text-xs text-muted-foreground">
                           <Calendar className="h-3.5 w-3.5" />
                           {format(new Date(contract.createdAt), "MMMM d, yyyy")}
                         </div>
@@ -565,8 +569,8 @@ const Dashboard = () => {
                           </div>
                         </div>
                       </CardContent>
-                    </Card>
-                  </Link>
+                    </Link>
+                  </Card>
                 ))}
               </div>
             )
