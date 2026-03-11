@@ -402,6 +402,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
   const queryClient = useQueryClient();
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const hydratedSignatureRef = useRef<string | null>(null);
+  const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
   const activeThreadQuery = useQuery({
     queryKey: ["chat-thread", activeThreadId],
     enabled: Boolean(activeThreadId),
@@ -454,6 +455,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
           }
 
           threadId = createPayload.data.id;
+          newlyCreatedThreadIdsRef.current.add(threadId);
           setActiveThreadId(threadId);
           onThreadSelected?.(threadId);
           queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
@@ -508,7 +510,10 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
   );
 
   const runtime = useLocalRuntime(chatModel);
-  const isHydratingThread = Boolean(activeThreadId) && activeThreadQuery.isLoading;
+  const isHydratingThread =
+    activeThreadId !== null &&
+    activeThreadQuery.isLoading &&
+    !newlyCreatedThreadIdsRef.current.has(activeThreadId);
 
   useEffect(() => {
     if (!activeThreadId) {
@@ -518,6 +523,10 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
     }
 
     if (activeThreadQuery.isLoading) {
+      if (newlyCreatedThreadIdsRef.current.has(activeThreadId)) {
+        return;
+      }
+
       runtime.thread.reset([]);
       hydratedSignatureRef.current = `${activeThreadId}:loading`;
       return;
@@ -534,6 +543,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
 
     runtime.thread.reset(toRuntimeMessages(thread.messages));
     hydratedSignatureRef.current = signature;
+    newlyCreatedThreadIdsRef.current.delete(thread.id);
   }, [
     activeThreadId,
     activeThreadQuery.data,

@@ -93,6 +93,7 @@ const Dashboard = () => {
     chat: false,
   });
   const [selectedChatThreadId, setSelectedChatThreadId] = useState<string | null>(null);
+  const [recentlyDeletedChatThreadId, setRecentlyDeletedChatThreadId] = useState<string | null>(null);
 
   const { data: contracts, isLoading: loadingContracts } = useQuery({
     queryKey: ["contracts"],
@@ -127,10 +128,11 @@ const Dashboard = () => {
   });
 
   useEffect(() => {
-    if (!chatThreads?.length) return;
+    const candidateThreads = chatThreads?.filter((thread) => thread.id !== recentlyDeletedChatThreadId) || [];
+    if (!candidateThreads.length) return;
     if (selectedChatThreadId) return;
-    setSelectedChatThreadId(chatThreads[0]!.id);
-  }, [chatThreads, selectedChatThreadId]);
+    setSelectedChatThreadId(candidateThreads[0]!.id);
+  }, [chatThreads, recentlyDeletedChatThreadId, selectedChatThreadId]);
 
   const createChatMutation = useMutation({
     mutationFn: async () => {
@@ -171,9 +173,11 @@ const Dashboard = () => {
       }
     },
     onSuccess: (_result, deletedThreadId) => {
+      const fallbackThreadId = chatThreads?.find((thread) => thread.id !== deletedThreadId)?.id ?? null;
+      setRecentlyDeletedChatThreadId(deletedThreadId);
       queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
       queryClient.removeQueries({ queryKey: ["chat-thread", deletedThreadId] });
-      setSelectedChatThreadId((current) => (current === deletedThreadId ? null : current));
+      setSelectedChatThreadId((current) => (current === deletedThreadId ? fallbackThreadId : current));
     },
   });
 
@@ -212,12 +216,13 @@ const Dashboard = () => {
           <div className={cn("flex w-full items-center", sidebarOpen ? "justify-between gap-2" : "justify-center")}>
             {sidebarOpen ? (
               <>
-                <div
+                <button
+                  type="button"
                   className="flex items-center gap-2 font-semibold tracking-tight cursor-pointer px-1 text-primary"
                   onClick={() => setActiveTab("contracts")}
                 >
                   <span className="text-sm font-bold tracking-wide">SignLoop</span>
-                </div>
+                </button>
 
                 <Button
                   type="button"
