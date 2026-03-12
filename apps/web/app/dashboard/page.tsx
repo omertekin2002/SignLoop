@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUser, useClerk } from "@clerk/nextjs";
+import type { AxiosError } from "axios";
 import { format } from "date-fns";
 import {
   Book,
   Calendar,
+  Check,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -16,12 +18,14 @@ import {
   Loader2,
   LogOut,
   MessagesSquare,
+  PanelLeft,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Settings,
   Trash2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { apiClient } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -29,6 +33,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -64,6 +74,18 @@ interface Project {
   contextDocuments?: { id: string }[];
 }
 
+type SettingsResponse = {
+  primaryModel: string | null;
+  personality: string;
+  availablePrimaryModels: string[];
+  modelsError: string | null;
+  availablePersonalities: string[];
+};
+
+type SettingsErrorPayload = {
+  error?: string;
+};
+
 interface ChatThreadSummary {
   id: string;
   title: string;
@@ -79,6 +101,75 @@ const tabLabels: Record<DashboardTab, string> = {
   projects: "Projects",
   chat: "Chat",
 };
+
+type ModelSelectorProps = {
+  activeModel: string;
+  availableModels: string[];
+  disabled: boolean;
+  onSelect: (model: string) => void;
+  showBrand?: boolean;
+};
+
+function SignLoopWordmark({ className }: { className?: string }) {
+  return (
+    <span className={cn("font-semibold tracking-tight text-foreground/90", className)}>
+      SignLoop
+    </span>
+  );
+}
+
+function ModelSelector({
+  activeModel,
+  availableModels,
+  disabled,
+  onSelect,
+  showBrand = false,
+}: ModelSelectorProps) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "group flex items-center gap-1.5 rounded-xl px-3 py-2 text-lg font-semibold transition-colors hover:bg-muted/50",
+            !showBrand && "text-base"
+          )}
+        >
+          {showBrand ? <SignLoopWordmark /> : null}
+          <span className="max-w-[180px] truncate font-medium text-muted-foreground">{activeModel}</span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-muted-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="mt-1 w-64 border border-border/50 bg-background/95 backdrop-blur-sm"
+      >
+        {availableModels.length > 0 ? (
+          availableModels.map((model: string) => (
+            <DropdownMenuItem
+              key={model}
+              onClick={() => onSelect(model)}
+              disabled={disabled}
+              className="flex items-center justify-between px-3 py-2 focus:bg-muted/80"
+            >
+              <span className="truncate pr-4">{model}</span>
+              {activeModel === model ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+            </DropdownMenuItem>
+          ))
+        ) : (
+          <DropdownMenuItem disabled className="px-3 py-2">
+            <span className="text-muted-foreground">OpenRouter</span>
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function getSettingsErrorMessage(error: unknown): string {
+  const axiosError = error as AxiosError<SettingsErrorPayload>;
+  return axiosError?.response?.data?.error || "Failed to save settings";
+}
 
 const Dashboard = () => {
   const { user } = useUser();
@@ -124,6 +215,31 @@ const Dashboard = () => {
       }
 
       return payload?.data || [];
+    },
+  });
+
+  const { data: settingsData } = useQuery({
+    queryKey: ["settings"],
+    queryFn: async () => {
+      const response = await apiClient.get<SettingsResponse>("/settings");
+      return response.data;
+    },
+  });
+
+  const availableModels = settingsData?.availablePrimaryModels || [];
+  const activeModel = settingsData?.primaryModel || availableModels[0] || "OpenRouter";
+
+  const updateModelMutation = useMutation({
+    mutationFn: async (primaryModel: string) => {
+      const response = await apiClient.put("/settings", { primaryModel });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
+    },
+    onError: (error: unknown) => {
+      toast.error(getSettingsErrorMessage(error));
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
     },
   });
 
@@ -216,21 +332,23 @@ const Dashboard = () => {
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden text-foreground">
       <aside
+        aria-hidden={!sidebarOpen}
         className={cn(
-          "flex h-screen shrink-0 flex-col border-r bg-muted/20 transition-[width] duration-200",
-          sidebarOpen ? "w-72" : "w-[60px]"
+          "flex h-screen shrink-0 flex-col border-r bg-muted/20 transition-[width] duration-200 overflow-hidden",
+          sidebarOpen ? "w-72" : "w-0 border-r-0"
         )}
       >
-        <div className="flex h-14 items-center border-b px-3">
-          <div className={cn("flex w-full items-center", sidebarOpen ? "justify-between gap-2" : "justify-center")}>
-            {sidebarOpen ? (
-              <>
+        {sidebarOpen ? (
+          <>
+            <div className="flex h-14 items-center border-b px-3">
+              <div className="flex w-full items-center justify-between gap-2">
                 <button
                   type="button"
-                  className="flex items-center gap-2 font-semibold tracking-tight cursor-pointer px-1 text-primary"
+                  className="flex items-center rounded-xl px-2 py-1 text-left transition-colors hover:bg-muted/50"
                   onClick={() => setActiveTab("contracts")}
+                  aria-label="Open contracts"
                 >
-                  <span className="text-sm font-bold tracking-wide">SignLoop</span>
+                  <SignLoopWordmark className="text-lg" />
                 </button>
 
                 <Button
@@ -243,243 +361,217 @@ const Dashboard = () => {
                 >
                   <PanelLeftClose className="h-4 w-4" />
                 </Button>
-              </>
-            ) : (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                onClick={() => setSidebarOpen(true)}
-                aria-label="Expand sidebar"
-              >
-                <PanelLeftOpen className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
-        </div>
+              </div>
+            </div>
 
-        <div className="flex-1 overflow-y-auto w-full">
-          <div className="space-y-4 p-2 sm:p-3">
-            <Collapsible open={openSections.contracts} onOpenChange={(open) => setSectionOpen("contracts", open)}>
-              <CollapsibleTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("contracts")}
-                  aria-label="Contracts"
-                  className={cn(
-                    "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
-                    activeTab === "contracts" ? "bg-muted text-primary" : "text-muted-foreground",
-                    !sidebarOpen && "justify-center px-0"
-                  )}
-                >
-                  <span className={cn("flex items-center gap-3", !sidebarOpen && "justify-center")}>
-                    <FileText className="h-4 w-4" />
-                    {sidebarOpen ? <span>Contracts</span> : null}
-                  </span>
-                  {sidebarOpen ? (
-                    openSections.contracts ? (
-                      <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
-                    ) : (
-                      <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
-                    )
-                  ) : null}
-                </button>
-              </CollapsibleTrigger>
-              {sidebarOpen ? (
-                <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
-                  {loadingContracts ? (
-                    <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading contracts...</p>
-                  ) : standaloneContracts.length === 0 ? (
-                    <p className="px-3 py-1.5 text-xs text-muted-foreground">No standalone contracts</p>
-                  ) : (
-                    standaloneContracts.map((contract) => (
-                      <Link
-                        key={contract.id}
-                        href={`/contracts/${contract.id}`}
-                        className="block rounded-md px-3 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                      >
-                        <p className="truncate font-medium">{contract.title}</p>
-                        <p className="mt-0.5 text-[10px] opacity-70">{contract.status || "DRAFT"}</p>
-                      </Link>
-                    ))
-                  )}
-                </CollapsibleContent>
-              ) : null}
-            </Collapsible>
-
-            <Collapsible open={openSections.projects} onOpenChange={(open) => setSectionOpen("projects", open)}>
-              <CollapsibleTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("projects")}
-                  aria-label="Projects"
-                  className={cn(
-                    "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
-                    activeTab === "projects" ? "bg-muted text-primary" : "text-muted-foreground",
-                    !sidebarOpen && "justify-center px-0"
-                  )}
-                >
-                  <span className={cn("flex items-center gap-3", !sidebarOpen && "justify-center")}>
-                    <FolderOpen className="h-4 w-4" />
-                    {sidebarOpen ? <span>Projects</span> : null}
-                  </span>
-                  {sidebarOpen ? (
-                    openSections.projects ? (
-                      <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
-                    ) : (
-                      <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
-                    )
-                  ) : null}
-                </button>
-              </CollapsibleTrigger>
-              {sidebarOpen ? (
-                <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
-                  {loadingProjects ? (
-                    <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading projects...</p>
-                  ) : !projects || projects.length === 0 ? (
-                    <p className="px-3 py-1.5 text-xs text-muted-foreground">No projects yet</p>
-                  ) : (
-                    projects.map((project) => (
-                      <Link
-                        key={project.id}
-                        href={`/projects/${project.id}`}
-                        className="block rounded-md px-3 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                      >
-                        <p className="truncate font-medium">{project.title}</p>
-                        <p className="mt-0.5 text-[10px] opacity-70">
-                          {project.contracts?.length || 0} contract{(project.contracts?.length || 0) === 1 ? "" : "s"}
-                        </p>
-                      </Link>
-                    ))
-                  )}
-                </CollapsibleContent>
-              ) : null}
-            </Collapsible>
-
-            <Collapsible open={openSections.chat} onOpenChange={(open) => setSectionOpen("chat", open)}>
-              <div className={cn("flex items-center gap-1", !sidebarOpen && "justify-center")}>
-                <CollapsibleTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("chat")}
-                    aria-label="Chat"
-                    className={cn(
-                      "flex items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
-                      activeTab === "chat" ? "bg-muted text-primary" : "text-muted-foreground",
-                      sidebarOpen ? "flex-1" : "w-full justify-center px-0"
-                    )}
-                  >
-                    <span className={cn("flex items-center gap-3", !sidebarOpen && "justify-center")}>
-                      <MessagesSquare className="h-4 w-4" />
-                      {sidebarOpen ? <span>Chat</span> : null}
-                    </span>
-                    {sidebarOpen ? (
-                      openSections.chat ? (
+            <div className="flex-1 overflow-y-auto w-72">
+              <div className="space-y-4 p-2 sm:p-3">
+                <Collapsible open={openSections.contracts} onOpenChange={(open) => setSectionOpen("contracts", open)}>
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("contracts")}
+                      aria-label="Contracts"
+                      className={cn(
+                        "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
+                        activeTab === "contracts" ? "bg-muted text-primary" : "text-muted-foreground"
+                      )}
+                    >
+                      <span className="flex items-center gap-3">
+                        <FileText className="h-4 w-4" />
+                        <span>Contracts</span>
+                      </span>
+                      {openSections.contracts ? (
                         <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
                       ) : (
                         <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
-                      )
-                    ) : null}
-                  </button>
-                </CollapsibleTrigger>
-                {sidebarOpen ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onClick={() => createChatMutation.mutate()}
-                    disabled={createChatMutation.isPending}
-                    title="New chat"
-                    aria-label="New chat"
-                  >
-                    {createChatMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      )}
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="mt-1 ml-3.5 mb-2 space-y-1 border-l pl-[1.65rem]">
+                    {loadingContracts ? (
+                      <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading contracts...</p>
+                    ) : standaloneContracts.length === 0 ? (
+                      <p className="px-3 py-1.5 text-xs text-muted-foreground">No standalone contracts</p>
                     ) : (
-                      <Plus className="h-4 w-4" />
+                      standaloneContracts.map((contract) => (
+                        <Link
+                          key={contract.id}
+                          href={`/contracts/${contract.id}`}
+                          className="block rounded-md px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        >
+                          <p className="truncate font-medium">{contract.title}</p>
+                          <p className="mt-0.5 text-[10px] opacity-70">{contract.status || "DRAFT"}</p>
+                        </Link>
+                      ))
                     )}
-                  </Button>
-                ) : null}
-              </div>
-              {sidebarOpen ? (
-                <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
-                  {loadingChatThreads ? (
-                    <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading chats...</p>
-                  ) : !chatThreads || chatThreads.length === 0 ? (
-                    <p className="px-3 py-1.5 text-xs text-muted-foreground">No chats yet</p>
-                  ) : (
-                    chatThreads.map((thread) => (
-                      <div
-                        key={thread.id}
+                  </CollapsibleContent>
+                </Collapsible>
+
+                <Collapsible open={openSections.projects} onOpenChange={(open) => setSectionOpen("projects", open)}>
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("projects")}
+                      aria-label="Projects"
+                      className={cn(
+                        "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
+                        activeTab === "projects" ? "bg-muted text-primary" : "text-muted-foreground"
+                      )}
+                    >
+                      <span className="flex items-center gap-3">
+                        <FolderOpen className="h-4 w-4" />
+                        <span>Projects</span>
+                      </span>
+                      {openSections.projects ? (
+                        <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
+                      ) : (
+                        <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
+                      )}
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="mt-1 ml-3.5 mb-2 space-y-1 border-l pl-[1.65rem]">
+                    {loadingProjects ? (
+                      <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading projects...</p>
+                    ) : !projects || projects.length === 0 ? (
+                      <p className="px-3 py-1.5 text-xs text-muted-foreground">No projects yet</p>
+                    ) : (
+                      projects.map((project) => (
+                        <Link
+                          key={project.id}
+                          href={`/projects/${project.id}`}
+                          className="block rounded-md px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        >
+                          <p className="truncate font-medium">{project.title}</p>
+                          <p className="mt-0.5 text-[10px] opacity-70">
+                            {project.contracts?.length || 0} contract{(project.contracts?.length || 0) === 1 ? "" : "s"}
+                          </p>
+                        </Link>
+                      ))
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
+
+                <Collapsible open={openSections.chat} onOpenChange={(open) => setSectionOpen("chat", open)}>
+                  <div className="flex items-center gap-1">
+                    <CollapsibleTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab("chat")}
+                        aria-label="Chat"
                         className={cn(
-                          "group flex items-start justify-between rounded-md px-3 py-2 text-xs transition-colors",
-                          selectedChatThreadId === thread.id
-                            ? "bg-accent text-accent-foreground"
-                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          "flex flex-1 items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
+                          activeTab === "chat" ? "bg-muted text-primary" : "text-muted-foreground"
                         )}
                       >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveTab("chat");
-                            setSelectedChatThreadId(thread.id);
-                          }}
-                          className="min-w-0 flex-1 text-left"
-                        >
-                          <p className="truncate font-medium">{thread.title}</p>
-                          <p className="mt-0.5 text-[10px] opacity-70">
-                            {thread.messageCount} msg{thread.messageCount !== 1 ? "s" : ""}
-                          </p>
-                        </button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
+                        <span className="flex items-center gap-3">
+                          <MessagesSquare className="h-4 w-4" />
+                          <span>Chat</span>
+                        </span>
+                        {openSections.chat ? (
+                          <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
+                        ) : (
+                          <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
+                        )}
+                      </button>
+                    </CollapsibleTrigger>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      onClick={() => createChatMutation.mutate()}
+                      disabled={createChatMutation.isPending}
+                      title="New chat"
+                      aria-label="New chat"
+                    >
+                      {createChatMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Plus className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                  <CollapsibleContent className="mt-1 ml-3.5 mb-2 space-y-1 border-l pl-[1.65rem]">
+                    {loadingChatThreads ? (
+                      <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading chats...</p>
+                    ) : !chatThreads || chatThreads.length === 0 ? (
+                      <p className="px-3 py-1.5 text-xs text-muted-foreground">No chats yet</p>
+                    ) : (
+                      chatThreads.map((thread) => (
+                        <div
+                          key={thread.id}
                           className={cn(
-                            "h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
-                            selectedChatThreadId === thread.id && "opacity-100"
+                            "group flex items-start justify-between rounded-md px-3 py-2 text-xs transition-colors",
+                            selectedChatThreadId === thread.id
+                              ? "bg-accent text-accent-foreground"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground"
                           )}
-                          onClick={() => deleteChatMutation.mutate(thread.id)}
-                          disabled={deleteChatMutation.isPending}
-                          title="Delete chat"
-                          aria-label="Delete chat"
                         >
-                          {deleteChatMutation.isPending && deleteChatMutation.variables === thread.id ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-                          )}
-                        </Button>
-                      </div>
-                    ))
-                  )}
-                </CollapsibleContent>
-              ) : null}
-            </Collapsible>
-          </div>
-        </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveTab("chat");
+                              setSelectedChatThreadId(thread.id);
+                            }}
+                            className="min-w-0 flex-1 text-left"
+                          >
+                            <p className="truncate font-medium">{thread.title}</p>
+                            <p className="mt-0.5 text-[10px] opacity-70">
+                              {thread.messageCount} msg{thread.messageCount !== 1 ? "s" : ""}
+                            </p>
+                          </button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              "h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+                              selectedChatThreadId === thread.id && "opacity-100"
+                            )}
+                            onClick={() => deleteChatMutation.mutate(thread.id)}
+                            disabled={
+                              deleteChatMutation.isPending && deleteChatMutation.variables === thread.id
+                            }
+                            title="Delete chat"
+                            aria-label="Delete chat"
+                          >
+                            {deleteChatMutation.isPending && deleteChatMutation.variables === thread.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                            )}
+                          </Button>
+                        </div>
+                      ))
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
+              </div>
+            </div>
 
-        <div className="border-t p-3">
-          <div className="space-y-1">
-            <Button asChild variant="ghost" className={cn("w-full text-muted-foreground hover:text-foreground", sidebarOpen ? "justify-start" : "justify-center px-0")}>
-              <Link href="/settings" aria-label="Settings">
-                <Settings className={cn("h-4 w-4", sidebarOpen && "mr-3")} />
-                {sidebarOpen ? <span>Settings</span> : null}
-              </Link>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              aria-label="Sign out"
-              className={cn("w-full text-muted-foreground hover:text-destructive", sidebarOpen ? "justify-start" : "justify-center px-0")}
-              onClick={() => signOut()}
-            >
-              <LogOut className={cn("h-4 w-4", sidebarOpen && "mr-3")} />
-              {sidebarOpen ? <span>Sign out</span> : null}
-            </Button>
-          </div>
-        </div>
+            <div className="border-t p-3">
+              <div className="space-y-1">
+                <Button asChild variant="ghost" className="w-full justify-start text-muted-foreground hover:text-foreground">
+                  <Link href="/settings" aria-label="Settings">
+                    <Settings className="mr-3 h-4 w-4" />
+                    <span>Settings</span>
+                  </Link>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  aria-label="Sign out"
+                  className="w-full justify-start text-muted-foreground hover:text-destructive"
+                  onClick={() => signOut()}
+                >
+                  <LogOut className="mr-3 h-4 w-4" />
+                  <span>Sign out</span>
+                </Button>
+              </div>
+            </div>
+          </>
+        ) : null}
       </aside>
 
       <main
@@ -489,10 +581,51 @@ const Dashboard = () => {
         )}
       >
         <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.1),rgba(255,255,255,0))] dark:bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.2),rgba(255,255,255,0))]" />
-        
-        <div className={cn("relative z-10 flex flex-1 min-h-0 flex-col p-6 lg:p-10", activeTab === "chat" && "p-0 lg:p-0")}>
+
+        <header className="relative z-20 flex h-14 shrink-0 items-center px-2 gap-0.5">
+          {!sidebarOpen && (
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-10 w-10 text-muted-foreground hover:text-foreground hover:bg-muted"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open sidebar"
+              >
+                <PanelLeft className="h-5 w-5" />
+              </Button>
+              {activeTab === "chat" && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10 text-muted-foreground hover:text-foreground hover:bg-muted"
+                  onClick={() => createChatMutation.mutate()}
+                  title="New chat"
+                >
+                  <Plus className="h-5 w-5" />
+                </Button>
+              )}
+            </div>
+          )}
+          
+          <div className="flex items-center">
+            {activeTab === "chat" && (
+              <ModelSelector
+                activeModel={activeModel}
+                availableModels={availableModels}
+                disabled={updateModelMutation.isPending}
+                onSelect={(model) => updateModelMutation.mutate(model)}
+                showBrand={!sidebarOpen}
+              />
+            )}
+          </div>
+        </header>
+
+        <div className={cn("relative z-10 flex flex-1 min-h-0 flex-col", activeTab === "chat" ? "p-0" : "p-6 pt-0 lg:p-10 lg:pt-0")}>
           {activeTab !== "chat" && (
-            <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-6">
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-6 pt-2">
               <div>
                 <h1 className="text-3xl font-bold tracking-tight">{tabLabels[activeTab]}</h1>
                 <p className="mt-1 text-sm text-muted-foreground">Welcome back, {user?.firstName || "there"}</p>

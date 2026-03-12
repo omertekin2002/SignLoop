@@ -62,7 +62,6 @@ export default function SettingsPage() {
     () => data?.availablePrimaryModels ?? [],
     [data?.availablePrimaryModels],
   );
-  const modelsError = data?.modelsError ?? null;
   const availablePersonalities = useMemo(
     () => data?.availablePersonalities ?? [],
     [data?.availablePersonalities],
@@ -182,10 +181,9 @@ export default function SettingsPage() {
               <div className="text-sm text-muted-foreground">Loading settings...</div>
             ) : availableModels.length === 0 ? (
               <div className="space-y-1">
-                <div className="text-sm text-destructive">No models are currently available.</div>
-                {modelsError ? (
-                  <div className="text-xs text-muted-foreground">{modelsError}</div>
-                ) : null}
+                <div className="text-sm text-muted-foreground">
+                  SignLoop will use the fallback model for now.
+                </div>
               </div>
             ) : (
               <>
@@ -205,11 +203,6 @@ export default function SettingsPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {modelsError ? (
-                    <p className="text-xs text-muted-foreground">
-                      Live model refresh issue: {modelsError}
-                    </p>
-                  ) : null}
                 </div>
 
                 <div className="flex gap-2">
