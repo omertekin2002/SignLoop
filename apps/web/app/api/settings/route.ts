@@ -16,6 +16,8 @@ import {
   upsertUserPrimaryModel,
 } from "@/lib/server-db";
 
+const MODEL_AVAILABILITY_MESSAGE = "Model selection is temporarily unavailable.";
+
 export async function GET() {
   const { userId } = await auth();
   if (!userId) {
@@ -30,7 +32,8 @@ export async function GET() {
     const snapshot = await getModelAvailabilitySnapshot();
     availablePrimaryModels = snapshot.availablePrimaryModels;
   } catch (error) {
-    modelsError = error instanceof Error ? error.message : "Failed to load available models";
+    console.error("Failed to load available models", error);
+    modelsError = MODEL_AVAILABILITY_MESSAGE;
   }
 
   const resolvedPrimaryModel =
@@ -79,9 +82,8 @@ export async function PUT(req: Request) {
       const snapshot = await getModelAvailabilitySnapshot();
       availablePrimaryModels = snapshot.availablePrimaryModels;
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to load available models";
-      return NextResponse.json({ error: message }, { status: 503 });
+      console.error("Failed to refresh available models", error);
+      return NextResponse.json({ error: MODEL_AVAILABILITY_MESSAGE }, { status: 503 });
     }
 
     if (!availablePrimaryModels.includes(modelInput)) {

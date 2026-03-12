@@ -227,7 +227,6 @@ const Dashboard = () => {
   });
 
   const availableModels = settingsData?.availablePrimaryModels || [];
-  const modelsError = settingsData?.modelsError ?? null;
   const activeModel = settingsData?.primaryModel || availableModels[0] || "OpenRouter";
 
   const updateModelMutation = useMutation({
@@ -623,12 +622,6 @@ const Dashboard = () => {
             )}
           </div>
         </header>
-
-        {modelsError ? (
-          <div className="relative z-20 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
-            Live model availability issue: {modelsError}
-          </div>
-        ) : null}
 
         <div className={cn("relative z-10 flex flex-1 min-h-0 flex-col", activeTab === "chat" ? "p-0" : "p-6 pt-0 lg:p-10 lg:pt-0")}>
           {activeTab !== "chat" && (
