@@ -369,8 +369,8 @@ const ChatMessage = () => {
       </MessagePrimitive.If>
 
       <MessagePrimitive.If assistant>
-        <div className="mr-auto relative flex w-full items-start gap-3">
-          <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-lg border bg-background shadow-sm">
+        <div className="mr-auto relative flex w-full flex-col gap-2">
+          <div className="flex h-8 w-8 select-none items-center justify-center rounded-lg border bg-background shadow-sm">
             <Bot className="h-4 w-4 text-foreground/80" />
           </div>
           <div className="flex w-full flex-col gap-1 rounded-2xl rounded-tl-sm border bg-card px-5 py-4 shadow-sm">
