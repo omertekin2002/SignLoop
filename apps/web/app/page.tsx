@@ -105,7 +105,8 @@ export default function Home() {
                 return (
                   <Card
                     key={stat.label}
-                    className={cn("group relative overflow-hidden glass-card !bg-transparent !border-0 !shadow-none p-8 pt-10 transition-colors opacity-0", isHeroTitleComplete && "animate-fade-in-up")}
+                    variant="glass"
+                    className={cn("group relative overflow-hidden p-8 pt-10 transition-colors opacity-0", isHeroTitleComplete && "animate-fade-in-up")}
                     style={{ animationDelay: index === 0 ? "0.3s" : "0.4s" }}
                   >
                     <div className="relative z-10 flex flex-col items-center text-center space-y-4">
