@@ -93,6 +93,73 @@ const tabLabels: Record<DashboardTab, string> = {
   chat: "Chat",
 };
 
+type ModelSelectorProps = {
+  activeModel: string;
+  availableModels: string[];
+  disabled: boolean;
+  onSelect: (model: string) => void;
+  showBrand?: boolean;
+};
+
+function SignLoopWordmark({ className }: { className?: string }) {
+  return (
+    <span className={cn("font-semibold tracking-tight text-foreground/90", className)}>
+      SignLoop
+    </span>
+  );
+}
+
+function ModelSelector({
+  activeModel,
+  availableModels,
+  disabled,
+  onSelect,
+  showBrand = false,
+}: ModelSelectorProps) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "group flex items-center gap-1.5 rounded-xl px-3 py-2 text-lg font-semibold transition-colors hover:bg-muted/50",
+            !showBrand && "text-base"
+          )}
+        >
+          {showBrand ? <SignLoopWordmark /> : null}
+          <span className="max-w-[180px] truncate font-medium text-muted-foreground">{activeModel}</span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-muted-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="mt-1 w-64 border border-border/50 bg-background/95 backdrop-blur-sm"
+      >
+        {availableModels.length > 0 ? (
+          availableModels.map((model: string) => (
+            <DropdownMenuItem
+              key={model}
+              onClick={() => onSelect(model)}
+              disabled={disabled}
+              className="flex items-center justify-between px-3 py-2 focus:bg-muted/80"
+            >
+              <span className="truncate pr-4">{model}</span>
+              {activeModel === model ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+            </DropdownMenuItem>
+          ))
+        ) : (
+          <DropdownMenuItem disabled className="px-3 py-2">
+            <div className="flex flex-1 items-center justify-between text-muted-foreground">
+              <span>OpenRouter</span>
+              <Check className="h-4 w-4" />
+            </div>
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 const Dashboard = () => {
   const { user } = useUser();
   const { signOut } = useClerk();
@@ -259,10 +326,11 @@ const Dashboard = () => {
           <div className="flex w-full items-center justify-between gap-2">
             <button
               type="button"
-              className="flex items-center gap-2 font-semibold tracking-tight cursor-pointer px-1 text-primary"
+              className="flex items-center rounded-xl px-2 py-1 text-left transition-colors hover:bg-muted/50"
               onClick={() => setActiveTab("contracts")}
+              aria-label="Open contracts"
             >
-              <span className="text-sm font-bold tracking-wide">SignLoop</span>
+              <SignLoopWordmark className="text-lg" />
             </button>
 
             <Button
@@ -525,37 +593,13 @@ const Dashboard = () => {
           
           <div className="flex items-center">
             {activeTab === "chat" && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <div className="flex cursor-pointer items-center gap-1.5 rounded-xl px-3 py-2 text-lg font-semibold transition-colors hover:bg-muted/50 group">
-                    <span className="text-foreground/90">SignLoop</span>
-                    <span className="text-muted-foreground font-medium truncate max-w-[150px]">{activeModel}</span>
-                    <ChevronDown className="h-4 w-4 text-muted-foreground/50 shrink-0 group-hover:text-muted-foreground transition-colors" />
-                  </div>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-64 mt-1 border border-border/50 bg-background/95 backdrop-blur-sm">
-                  {availableModels.length > 0 ? (
-                    availableModels.map((model: string) => (
-                      <DropdownMenuItem 
-                        key={model} 
-                        onClick={() => updateModelMutation.mutate(model)}
-                        disabled={updateModelMutation.isPending}
-                        className="flex items-center justify-between py-2 px-3 focus:bg-muted/80"
-                      >
-                        <span className="truncate pr-4">{model}</span>
-                        {activeModel === model && <Check className="h-4 w-4 shrink-0 text-primary" />}
-                      </DropdownMenuItem>
-                    ))
-                  ) : (
-                    <DropdownMenuItem disabled className="py-2 px-3">
-                      <div className="flex flex-1 items-center justify-between text-muted-foreground">
-                        <span>OpenRouter</span>
-                        <Check className="h-4 w-4" />
-                      </div>
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <ModelSelector
+                activeModel={activeModel}
+                availableModels={availableModels}
+                disabled={updateModelMutation.isPending}
+                onSelect={(model) => updateModelMutation.mutate(model)}
+                showBrand={!sidebarOpen}
+              />
             )}
           </div>
         </header>
