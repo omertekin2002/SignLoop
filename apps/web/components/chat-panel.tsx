@@ -560,7 +560,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
   ]);
 
   return (
-    <Card className="flex h-full min-h-0 w-full flex-col overflow-hidden border-0 bg-transparent shadow-none sm:border sm:bg-background/50 sm:shadow-sm sm:backdrop-blur-md relative">
+    <Card className="relative flex h-full min-h-0 w-full flex-col overflow-hidden rounded-none border-0 bg-transparent shadow-none sm:border sm:bg-background/50 sm:shadow-sm sm:backdrop-blur-md">
       <CardContent className="flex h-full min-h-0 flex-1 flex-col p-0 sm:p-0">
         <AssistantRuntimeProvider runtime={runtime}>
           <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col overflow-hidden">
