@@ -29,7 +29,7 @@ export default function Home() {
 
   return (
     <div
-      className="flex min-h-screen flex-col"
+      className="light flex min-h-screen flex-col"
       style={{
         backgroundImage: "url('/background-landscape.png')",
         backgroundSize: 'cover',
@@ -60,7 +60,7 @@ export default function Home() {
 
       <main className="flex-1 w-full relative">
         {/* Subtle Background Elements */}
-        <div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.15),rgba(255,255,255,0))] mix-blend-normal dark:bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.3),rgba(255,255,255,0))]" />
+        <div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.15),rgba(255,255,255,0))] mix-blend-normal" />
 
         <div className="container mx-auto relative z-10 max-w-7xl space-y-24 px-4 py-24 sm:px-6 lg:px-8 lg:py-32">
 
@@ -71,14 +71,14 @@ export default function Home() {
             </div>
 
             <div className="space-y-6">
-              <h1 className="min-h-[2.5em] text-4xl font-normal tracking-tight bg-gradient-to-br from-indigo-950 to-slate-700 dark:from-indigo-100 dark:to-slate-300 bg-clip-text text-transparent sm:text-5xl md:min-h-[2em] md:text-6xl lg:text-7xl font-[family-name:var(--font-eb-garamond)] whitespace-pre-wrap leading-normal">
+              <h1 className="min-h-[2.5em] text-4xl font-normal tracking-tight bg-gradient-to-br from-indigo-950 to-slate-700 bg-clip-text text-transparent sm:text-5xl md:min-h-[2em] md:text-6xl lg:text-7xl font-[family-name:var(--font-eb-garamond)] whitespace-pre-wrap leading-normal">
                 <TypingAnimation
                   text={"Review contracts with precision.\nNot guesswork."}
                   initialDelay={250}
                   typeSpeed={40}
                   persistCursor={false}
                   onComplete={() => setIsHeroTitleComplete(true)}
-                  className="bg-gradient-to-br from-indigo-950 to-slate-700 dark:from-indigo-100 dark:to-slate-300 bg-clip-text text-transparent drop-shadow-sm whitespace-pre-wrap inline-block pb-4"
+                  className="bg-gradient-to-br from-indigo-950 to-slate-700 bg-clip-text text-transparent drop-shadow-sm whitespace-pre-wrap inline-block pb-4"
                 />
               </h1>
               <div className={cn("mx-auto max-w-[700px] min-h-[4rem] text-lg text-muted-foreground sm:text-xl opacity-0", isHeroTitleComplete && "animate-fade-in-up")} style={{ animationDelay: "0.1s" }}>
@@ -110,7 +110,7 @@ export default function Home() {
                     style={{ animationDelay: index === 0 ? "0.3s" : "0.4s" }}
                   >
                     <div className="relative z-10 flex flex-col items-center text-center space-y-4">
-                      <div className="flex items-baseline justify-center gap-1 font-medium tracking-tighter text-5xl sm:text-6xl lg:text-7xl bg-gradient-to-r from-rose-100 to-orange-200 dark:from-rose-100/90 dark:to-orange-200/90 bg-clip-text text-transparent">
+                      <div className="flex items-baseline justify-center gap-1 font-medium tracking-tighter text-5xl sm:text-6xl lg:text-7xl bg-gradient-to-r from-rose-100 to-orange-200 bg-clip-text text-transparent">
                         <NumberTicker
                           start={isHeroTitleComplete}
                           delay={index * 140}
