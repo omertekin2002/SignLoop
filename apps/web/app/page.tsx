@@ -90,7 +90,7 @@ export default function Home() {
 
             <div className="flex flex-col gap-4 sm:flex-row items-center justify-center pt-8">
               <Button asChild size="lg" className={cn("h-12 px-8 text-base border-t border-white/20 text-white hover:opacity-90 opacity-0", isHeroTitleComplete && "animate-fade-in-up")} style={{ animationDelay: "0.2s", backgroundColor: "#162044" }}>
-                <Link href={isSignedIn ? "/dashboard" : "/sign-in"}>
+                <Link href={isSignedIn ? "/dashboard" : "/sign-in"} tabIndex={isHeroTitleComplete ? 0 : -1} aria-hidden={!isHeroTitleComplete}>
                   {isSignedIn ? "Open Dashboard" : "Get Started Free"}
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
