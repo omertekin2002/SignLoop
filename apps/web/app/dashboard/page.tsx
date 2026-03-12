@@ -8,6 +8,7 @@ import { format } from "date-fns";
 import {
   Book,
   Calendar,
+  Check,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -16,6 +17,7 @@ import {
   Loader2,
   LogOut,
   MessagesSquare,
+  PanelLeft,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -29,6 +31,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -63,6 +71,11 @@ interface Project {
   contracts?: Contract[];
   contextDocuments?: { id: string }[];
 }
+
+type SettingsResponse = {
+  primaryModel: string | null;
+  availablePrimaryModels: string[];
+};
 
 interface ChatThreadSummary {
   id: string;
@@ -124,6 +137,27 @@ const Dashboard = () => {
       }
 
       return payload?.data || [];
+    },
+  });
+
+  const { data: settingsData } = useQuery({
+    queryKey: ["settings"],
+    queryFn: async () => {
+      const response = await apiClient.get<SettingsResponse>("/settings");
+      return response.data;
+    },
+  });
+
+  const availableModels = settingsData?.availablePrimaryModels || [];
+  const activeModel = settingsData?.primaryModel || availableModels[0] || "OpenRouter";
+
+  const updateModelMutation = useMutation({
+    mutationFn: async (primaryModel: string) => {
+      const response = await apiClient.put("/settings", { primaryModel });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
     },
   });
 
@@ -269,23 +303,23 @@ const Dashboard = () => {
                 </button>
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
-                  {loadingContracts ? (
-                    <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading contracts...</p>
-                  ) : standaloneContracts.length === 0 ? (
-                    <p className="px-3 py-1.5 text-xs text-muted-foreground">No standalone contracts</p>
-                  ) : (
-                    standaloneContracts.map((contract) => (
-                      <Link
-                        key={contract.id}
-                        href={`/contracts/${contract.id}`}
-                        className="block rounded-md px-3 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                      >
-                        <p className="truncate font-medium">{contract.title}</p>
-                        <p className="mt-0.5 text-[10px] opacity-70">{contract.status || "DRAFT"}</p>
-                      </Link>
-                    ))
-                  )}
-                </CollapsibleContent>
+                {loadingContracts ? (
+                  <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading contracts...</p>
+                ) : standaloneContracts.length === 0 ? (
+                  <p className="px-3 py-1.5 text-xs text-muted-foreground">No standalone contracts</p>
+                ) : (
+                  standaloneContracts.map((contract) => (
+                    <Link
+                      key={contract.id}
+                      href={`/contracts/${contract.id}`}
+                      className="block rounded-md px-3 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    >
+                      <p className="truncate font-medium">{contract.title}</p>
+                      <p className="mt-0.5 text-[10px] opacity-70">{contract.status || "DRAFT"}</p>
+                    </Link>
+                  ))
+                )}
+              </CollapsibleContent>
 
             </Collapsible>
 
@@ -312,25 +346,25 @@ const Dashboard = () => {
                 </button>
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
-                  {loadingProjects ? (
-                    <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading projects...</p>
-                  ) : !projects || projects.length === 0 ? (
-                    <p className="px-3 py-1.5 text-xs text-muted-foreground">No projects yet</p>
-                  ) : (
-                    projects.map((project) => (
-                      <Link
-                        key={project.id}
-                        href={`/projects/${project.id}`}
-                        className="block rounded-md px-3 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                      >
-                        <p className="truncate font-medium">{project.title}</p>
-                        <p className="mt-0.5 text-[10px] opacity-70">
-                          {project.contracts?.length || 0} contract{(project.contracts?.length || 0) === 1 ? "" : "s"}
-                        </p>
-                      </Link>
-                    ))
-                  )}
-                </CollapsibleContent>
+                {loadingProjects ? (
+                  <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading projects...</p>
+                ) : !projects || projects.length === 0 ? (
+                  <p className="px-3 py-1.5 text-xs text-muted-foreground">No projects yet</p>
+                ) : (
+                  projects.map((project) => (
+                    <Link
+                      key={project.id}
+                      href={`/projects/${project.id}`}
+                      className="block rounded-md px-3 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    >
+                      <p className="truncate font-medium">{project.title}</p>
+                      <p className="mt-0.5 text-[10px] opacity-70">
+                        {project.contracts?.length || 0} contract{(project.contracts?.length || 0) === 1 ? "" : "s"}
+                      </p>
+                    </Link>
+                  ))
+                )}
+              </CollapsibleContent>
 
             </Collapsible>
 
@@ -375,57 +409,57 @@ const Dashboard = () => {
                 </Button>
               </div>
               <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
-                  {loadingChatThreads ? (
-                    <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading chats...</p>
-                  ) : !chatThreads || chatThreads.length === 0 ? (
-                    <p className="px-3 py-1.5 text-xs text-muted-foreground">No chats yet</p>
-                  ) : (
-                    chatThreads.map((thread) => (
-                      <div
-                        key={thread.id}
-                        className={cn(
-                          "group flex items-start justify-between rounded-md px-3 py-2 text-xs transition-colors",
-                          selectedChatThreadId === thread.id
-                            ? "bg-accent text-accent-foreground"
-                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                        )}
+                {loadingChatThreads ? (
+                  <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading chats...</p>
+                ) : !chatThreads || chatThreads.length === 0 ? (
+                  <p className="px-3 py-1.5 text-xs text-muted-foreground">No chats yet</p>
+                ) : (
+                  chatThreads.map((thread) => (
+                    <div
+                      key={thread.id}
+                      className={cn(
+                        "group flex items-start justify-between rounded-md px-3 py-2 text-xs transition-colors",
+                        selectedChatThreadId === thread.id
+                          ? "bg-accent text-accent-foreground"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab("chat");
+                          setSelectedChatThreadId(thread.id);
+                        }}
+                        className="min-w-0 flex-1 text-left"
                       >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveTab("chat");
-                            setSelectedChatThreadId(thread.id);
-                          }}
-                          className="min-w-0 flex-1 text-left"
-                        >
-                          <p className="truncate font-medium">{thread.title}</p>
-                          <p className="mt-0.5 text-[10px] opacity-70">
-                            {thread.messageCount} msg{thread.messageCount !== 1 ? "s" : ""}
-                          </p>
-                        </button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className={cn(
-                            "h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
-                            selectedChatThreadId === thread.id && "opacity-100"
-                          )}
-                          onClick={() => deleteChatMutation.mutate(thread.id)}
-                          disabled={deleteChatMutation.isPending}
-                          title="Delete chat"
-                          aria-label="Delete chat"
-                        >
-                          {deleteChatMutation.isPending && deleteChatMutation.variables === thread.id ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-                          )}
-                        </Button>
-                      </div>
-                    ))
-                  )}
-                </CollapsibleContent>
+                        <p className="truncate font-medium">{thread.title}</p>
+                        <p className="mt-0.5 text-[10px] opacity-70">
+                          {thread.messageCount} msg{thread.messageCount !== 1 ? "s" : ""}
+                        </p>
+                      </button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+                          selectedChatThreadId === thread.id && "opacity-100"
+                        )}
+                        onClick={() => deleteChatMutation.mutate(thread.id)}
+                        disabled={deleteChatMutation.isPending}
+                        title="Delete chat"
+                        aria-label="Delete chat"
+                      >
+                        {deleteChatMutation.isPending && deleteChatMutation.variables === thread.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                        )}
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </CollapsibleContent>
 
             </Collapsible>
           </div>
@@ -461,22 +495,80 @@ const Dashboard = () => {
       >
         <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.1),rgba(255,255,255,0))] dark:bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.2),rgba(255,255,255,0))]" />
 
-        {!sidebarOpen && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="absolute left-3 top-3 z-20 h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-muted"
-            onClick={() => setSidebarOpen(true)}
-            aria-label="Open sidebar"
-          >
-            <PanelLeftOpen className="h-5 w-5" />
-          </Button>
-        )}
-        
-        <div className={cn("relative z-10 flex flex-1 min-h-0 flex-col p-6 lg:p-10", activeTab === "chat" && "p-0 lg:p-0")}>
+        <header className="relative z-20 flex h-14 shrink-0 items-center justify-between px-3">
+          <div className="flex items-center gap-2 w-1/3">
+            {!sidebarOpen && (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-muted"
+                  onClick={() => setSidebarOpen(true)}
+                  aria-label="Open sidebar"
+                >
+                  <PanelLeft className="h-5 w-5" />
+                </Button>
+                {activeTab === "chat" && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-muted"
+                    onClick={() => createChatMutation.mutate()}
+                    title="New chat"
+                  >
+                    <Plus className="h-5 w-5" />
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+          
+          <div className="flex justify-center w-1/3">
+            {activeTab === "chat" && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <div className="flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors">
+                    <span className="max-w-[120px] truncate">{activeModel}</span>
+                    <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0" />
+                  </div>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="center" className="w-56">
+                  {availableModels.length > 0 ? (
+                    availableModels.map((model: string) => (
+                      <DropdownMenuItem 
+                        key={model} 
+                        onClick={() => updateModelMutation.mutate(model)}
+                        disabled={updateModelMutation.isPending}
+                      >
+                        <div className="flex flex-1 items-center justify-between">
+                          <span className="truncate pr-2">{model}</span>
+                          {activeModel === model && <Check className="h-4 w-4 shrink-0" />}
+                        </div>
+                      </DropdownMenuItem>
+                    ))
+                  ) : (
+                    <DropdownMenuItem disabled>
+                      <div className="flex flex-1 items-center justify-between">
+                        <span>OpenRouter</span>
+                        <Check className="h-4 w-4" />
+                      </div>
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+
+          <div className="flex justify-end w-1/3">
+            {/* Future right-side header items like profile or share would go here */}
+          </div>
+        </header>
+
+        <div className={cn("relative z-10 flex flex-1 min-h-0 flex-col", activeTab === "chat" ? "p-0" : "p-6 pt-0 lg:p-10 lg:pt-0")}>
           {activeTab !== "chat" && (
-            <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-6">
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-6 pt-2">
               <div>
                 <h1 className="text-3xl font-bold tracking-tight">{tabLabels[activeTab]}</h1>
                 <p className="mt-1 text-sm text-muted-foreground">Welcome back, {user?.firstName || "there"}</p>
