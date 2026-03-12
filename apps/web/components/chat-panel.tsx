@@ -369,7 +369,7 @@ const ChatMessage = () => {
       </MessagePrimitive.If>
 
       <MessagePrimitive.If assistant>
-        <div className="mr-auto relative flex max-w-[90%] items-start gap-3 md:max-w-[90%]">
+        <div className="mr-auto relative flex w-full items-start gap-3">
           <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-lg border bg-background shadow-sm">
             <Bot className="h-4 w-4 text-foreground/80" />
           </div>
