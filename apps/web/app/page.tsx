@@ -112,6 +112,7 @@ export default function Home() {
                     <div className="relative z-10 flex flex-col items-center text-center space-y-4">
                       <div className="flex items-baseline justify-center gap-1 font-medium tracking-tighter text-5xl sm:text-6xl lg:text-7xl bg-gradient-to-r from-rose-100 to-orange-200 dark:from-rose-100/90 dark:to-orange-200/90 bg-clip-text text-transparent">
                         <NumberTicker
+                          start={isHeroTitleComplete}
                           delay={index * 140}
                           useGrouping={stat.value < 1000}
                           value={stat.value}

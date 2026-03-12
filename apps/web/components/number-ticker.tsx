@@ -11,6 +11,7 @@ type NumberTickerProps = ComponentProps<"span"> & {
   decimalPlaces?: number;
   startValue?: number;
   useGrouping?: boolean;
+  start?: boolean;
 };
 
 export function NumberTicker({
@@ -20,13 +21,14 @@ export function NumberTicker({
   decimalPlaces = 0,
   startValue = 0,
   useGrouping = true,
+  start = true,
   className,
   ...props
 }: NumberTickerProps) {
   const [displayValue, setDisplayValue] = useState(direction === "down" ? value : startValue);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (!start || typeof window === "undefined") {
       return;
     }
 
@@ -70,7 +72,7 @@ export function NumberTicker({
       window.clearTimeout(timeoutId);
       window.cancelAnimationFrame(frameId);
     };
-  }, [delay, direction, startValue, value]);
+  }, [start, delay, direction, startValue, value]);
 
   return (
     <span className={cn("tabular-nums", className)} {...props}>
