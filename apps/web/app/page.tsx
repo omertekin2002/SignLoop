@@ -29,7 +29,7 @@ export default function Home() {
 
   return (
     <div
-      className="light flex min-h-screen flex-col"
+      className="flex min-h-screen flex-col"
       style={{
         backgroundImage: "url('/background-landscape.png')",
         backgroundSize: 'cover',
@@ -114,7 +114,7 @@ export default function Home() {
                         <NumberTicker
                           start={isHeroTitleComplete}
                           delay={index * 140}
-                          useGrouping={stat.value < 1000}
+                          useGrouping={stat.value >= 1000}
                           value={stat.value}
                         />
                         <span className="text-orange-200">+</span>

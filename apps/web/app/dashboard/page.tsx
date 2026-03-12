@@ -254,25 +254,21 @@ const Dashboard = () => {
                   aria-label="Contracts"
                   className={cn(
                     "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
-                    activeTab === "contracts" ? "bg-muted text-primary" : "text-muted-foreground",
-                    !sidebarOpen && "justify-center px-0"
+                    activeTab === "contracts" ? "bg-muted text-primary" : "text-muted-foreground"
                   )}
                 >
-                  <span className={cn("flex items-center gap-3", !sidebarOpen && "justify-center")}>
+                  <span className="flex items-center gap-3">
                     <FileText className="h-4 w-4" />
-                    {sidebarOpen ? <span>Contracts</span> : null}
+                    <span>Contracts</span>
                   </span>
-                  {sidebarOpen ? (
-                    openSections.contracts ? (
-                      <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
-                    ) : (
-                      <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
-                    )
-                  ) : null}
+                  {openSections.contracts ? (
+                    <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
+                  ) : (
+                    <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
+                  )}
                 </button>
               </CollapsibleTrigger>
-              {sidebarOpen ? (
-                <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
+              <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
                   {loadingContracts ? (
                     <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading contracts...</p>
                   ) : standaloneContracts.length === 0 ? (
@@ -290,7 +286,7 @@ const Dashboard = () => {
                     ))
                   )}
                 </CollapsibleContent>
-              ) : null}
+
             </Collapsible>
 
             <Collapsible open={openSections.projects} onOpenChange={(open) => setSectionOpen("projects", open)}>
@@ -301,25 +297,21 @@ const Dashboard = () => {
                   aria-label="Projects"
                   className={cn(
                     "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
-                    activeTab === "projects" ? "bg-muted text-primary" : "text-muted-foreground",
-                    !sidebarOpen && "justify-center px-0"
+                    activeTab === "projects" ? "bg-muted text-primary" : "text-muted-foreground"
                   )}
                 >
-                  <span className={cn("flex items-center gap-3", !sidebarOpen && "justify-center")}>
+                  <span className="flex items-center gap-3">
                     <FolderOpen className="h-4 w-4" />
-                    {sidebarOpen ? <span>Projects</span> : null}
+                    <span>Projects</span>
                   </span>
-                  {sidebarOpen ? (
-                    openSections.projects ? (
-                      <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
-                    ) : (
-                      <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
-                    )
-                  ) : null}
+                  {openSections.projects ? (
+                    <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
+                  ) : (
+                    <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
+                  )}
                 </button>
               </CollapsibleTrigger>
-              {sidebarOpen ? (
-                <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
+              <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
                   {loadingProjects ? (
                     <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading projects...</p>
                   ) : !projects || projects.length === 0 ? (
@@ -339,56 +331,50 @@ const Dashboard = () => {
                     ))
                   )}
                 </CollapsibleContent>
-              ) : null}
+
             </Collapsible>
 
             <Collapsible open={openSections.chat} onOpenChange={(open) => setSectionOpen("chat", open)}>
-              <div className={cn("flex items-center gap-1", !sidebarOpen && "justify-center")}>
+              <div className="flex items-center gap-1">
                 <CollapsibleTrigger asChild>
                   <button
                     type="button"
                     onClick={() => setActiveTab("chat")}
                     aria-label="Chat"
                     className={cn(
-                      "flex items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
-                      activeTab === "chat" ? "bg-muted text-primary" : "text-muted-foreground",
-                      sidebarOpen ? "flex-1" : "w-full justify-center px-0"
+                      "flex flex-1 items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
+                      activeTab === "chat" ? "bg-muted text-primary" : "text-muted-foreground"
                     )}
                   >
-                    <span className={cn("flex items-center gap-3", !sidebarOpen && "justify-center")}>
+                    <span className="flex items-center gap-3">
                       <MessagesSquare className="h-4 w-4" />
-                      {sidebarOpen ? <span>Chat</span> : null}
+                      <span>Chat</span>
                     </span>
-                    {sidebarOpen ? (
-                      openSections.chat ? (
-                        <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
-                      ) : (
-                        <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
-                      )
-                    ) : null}
+                    {openSections.chat ? (
+                      <ChevronUp className="ml-auto h-4 w-4 opacity-50" />
+                    ) : (
+                      <ChevronDown className="ml-auto h-4 w-4 opacity-50" />
+                    )}
                   </button>
                 </CollapsibleTrigger>
-                {sidebarOpen ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onClick={() => createChatMutation.mutate()}
-                    disabled={createChatMutation.isPending}
-                    title="New chat"
-                    aria-label="New chat"
-                  >
-                    {createChatMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Plus className="h-4 w-4" />
-                    )}
-                  </Button>
-                ) : null}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  onClick={() => createChatMutation.mutate()}
+                  disabled={createChatMutation.isPending}
+                  title="New chat"
+                  aria-label="New chat"
+                >
+                  {createChatMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
+                </Button>
               </div>
-              {sidebarOpen ? (
-                <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
+              <CollapsibleContent className="mt-1 space-y-1 pl-[1.65rem] border-l ml-3.5 mb-2">
                   {loadingChatThreads ? (
                     <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading chats...</p>
                   ) : !chatThreads || chatThreads.length === 0 ? (
@@ -440,28 +426,28 @@ const Dashboard = () => {
                     ))
                   )}
                 </CollapsibleContent>
-              ) : null}
+
             </Collapsible>
           </div>
         </div>
 
         <div className="border-t p-3">
           <div className="space-y-1">
-            <Button asChild variant="ghost" className={cn("w-full text-muted-foreground hover:text-foreground", sidebarOpen ? "justify-start" : "justify-center px-0")}>
+            <Button asChild variant="ghost" className="w-full justify-start text-muted-foreground hover:text-foreground">
               <Link href="/settings" aria-label="Settings">
-                <Settings className={cn("h-4 w-4", sidebarOpen && "mr-3")} />
-                {sidebarOpen ? <span>Settings</span> : null}
+                <Settings className="mr-3 h-4 w-4" />
+                <span>Settings</span>
               </Link>
             </Button>
             <Button
               type="button"
               variant="ghost"
               aria-label="Sign out"
-              className={cn("w-full text-muted-foreground hover:text-destructive", sidebarOpen ? "justify-start" : "justify-center px-0")}
+              className="w-full justify-start text-muted-foreground hover:text-destructive"
               onClick={() => signOut()}
             >
-              <LogOut className={cn("h-4 w-4", sidebarOpen && "mr-3")} />
-              {sidebarOpen ? <span>Sign out</span> : null}
+              <LogOut className="mr-3 h-4 w-4" />
+              <span>Sign out</span>
             </Button>
           </div>
         </div>
