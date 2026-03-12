@@ -369,7 +369,7 @@ const ChatMessage = () => {
       </MessagePrimitive.If>
 
       <MessagePrimitive.If assistant>
-        <div className="mr-auto relative flex max-w-[90%] items-start gap-3 md:max-w-[85%]">
+        <div className="mr-auto relative flex max-w-[90%] items-start gap-3 md:max-w-[90%]">
           <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-lg border bg-background shadow-sm">
             <Bot className="h-4 w-4 text-foreground/80" />
           </div>
@@ -599,7 +599,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                     </div>
                   </ThreadPrimitive.Empty>
 
-                  <div className="mx-auto w-full max-w-4xl">
+                  <div className="mx-auto w-full max-w-6xl">
                     <ThreadPrimitive.Messages components={{ Message: ChatMessage }} />
                   </div>
                 </>
@@ -607,7 +607,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
             </ThreadPrimitive.Viewport>
 
             <ComposerPrimitive.Root className="shrink-0 bg-transparent p-4 pt-1 sm:p-6 sm:pt-2">
-              <div className="mx-auto flex w-full max-w-4xl items-end gap-2 rounded-2xl border bg-background/80 p-2 shadow-sm backdrop-blur transition-colors focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20">
+              <div className="mx-auto flex w-full max-w-6xl items-end gap-2 rounded-2xl border bg-background/80 p-2 shadow-sm backdrop-blur transition-colors focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20">
                 <ComposerPrimitive.Input
                   className={cn(
                     "min-h-[44px] max-h-60 w-full resize-none bg-transparent px-3 py-3 text-sm text-foreground outline-none",
@@ -644,7 +644,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                   </ThreadPrimitive.If>
                 </div>
               </div>
-              <div className="mx-auto mt-2 max-w-4xl text-center text-xs text-muted-foreground/80">
+              <div className="mx-auto mt-2 max-w-6xl text-center text-xs text-muted-foreground/80">
                 {isHydratingThread
                   ? "Conversation history is loading. Sending is disabled until it finishes."
                   : "AI may produce inaccurate information about laws or guidelines. Keep original records."}
