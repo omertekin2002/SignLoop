@@ -560,7 +560,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
   ]);
 
   return (
-    <Card className="relative flex h-full min-h-0 w-full flex-col overflow-hidden rounded-none border-0 bg-transparent shadow-none sm:border sm:bg-background/50 sm:shadow-sm sm:backdrop-blur-md">
+    <Card className="relative flex h-full min-h-0 w-full flex-col overflow-hidden rounded-none border-0 bg-transparent shadow-none sm:bg-background/50 sm:backdrop-blur-md">
       <CardContent className="flex h-full min-h-0 flex-1 flex-col p-0 sm:p-0">
         <AssistantRuntimeProvider runtime={runtime}>
           <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -606,11 +606,11 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
               )}
             </ThreadPrimitive.Viewport>
 
-            <ComposerPrimitive.Root className="shrink-0 bg-transparent p-4 pt-1 sm:p-6 sm:pt-2">
-              <div className="mx-auto flex w-full max-w-4xl items-end gap-2 rounded-2xl border bg-background/80 p-2 shadow-sm backdrop-blur transition-colors focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20">
+            <ComposerPrimitive.Root className="shrink-0 bg-transparent px-4 pb-2 pt-1 sm:px-6 sm:pb-3 sm:pt-2">
+              <div className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-[1.75rem] border bg-background/80 p-1.5 shadow-sm backdrop-blur transition-colors focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20">
                 <ComposerPrimitive.Input
                   className={cn(
-                    "min-h-[44px] max-h-60 w-full resize-none bg-transparent px-3 py-3 text-sm text-foreground outline-none",
+                    "min-h-[40px] max-h-60 w-full resize-none bg-transparent px-4 py-2.5 text-[15px] text-foreground outline-none",
                     "placeholder:text-muted-foreground",
                   )}
                   disabled={isHydratingThread}
@@ -626,7 +626,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                         type="button"
                         size="icon"
                         disabled={isHydratingThread}
-                        className="h-9 w-9 shrink-0 rounded-xl transition-transform hover:scale-105"
+                        className="h-8 w-8 shrink-0 rounded-full transition-transform hover:scale-105"
                       >
                         <Send className="h-4 w-4" />
                         <span className="sr-only">Send message</span>
@@ -636,7 +636,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
 
                   <ThreadPrimitive.If running>
                     <ComposerPrimitive.Cancel asChild>
-                      <Button type="button" variant="secondary" size="icon" className="h-9 w-9 shrink-0 rounded-xl">
+                      <Button type="button" variant="secondary" size="icon" className="h-8 w-8 shrink-0 rounded-full">
                         <Square className="h-4 w-4 fill-current" />
                         <span className="sr-only">Cancel generation</span>
                       </Button>
@@ -644,7 +644,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                   </ThreadPrimitive.If>
                 </div>
               </div>
-              <div className="mx-auto mt-2 max-w-4xl text-center text-xs text-muted-foreground/80">
+              <div className="mx-auto mt-1.5 max-w-3xl text-center text-xs text-muted-foreground/80">
                 {isHydratingThread
                   ? "Conversation history is loading. Sending is disabled until it finishes."
                   : "AI may produce inaccurate information about laws or guidelines. Keep original records."}
