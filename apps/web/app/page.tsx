@@ -29,7 +29,7 @@ export default function Home() {
 
   return (
     <div
-      className="flex min-h-screen flex-col"
+      className="light flex min-h-screen flex-col"
       style={{
         backgroundImage: "url('/background-landscape.png')",
         backgroundSize: 'cover',
