@@ -217,49 +217,34 @@ const Dashboard = () => {
     <div className="flex h-screen w-full bg-background overflow-hidden text-foreground">
       <aside
         className={cn(
-          "flex h-screen shrink-0 flex-col border-r bg-muted/20 transition-[width] duration-200",
-          sidebarOpen ? "w-72" : "w-[60px]"
+          "flex h-screen shrink-0 flex-col border-r bg-muted/20 transition-[width] duration-200 overflow-hidden",
+          sidebarOpen ? "w-72" : "w-0 border-r-0"
         )}
       >
         <div className="flex h-14 items-center border-b px-3">
-          <div className={cn("flex w-full items-center", sidebarOpen ? "justify-between gap-2" : "justify-center")}>
-            {sidebarOpen ? (
-              <>
-                <button
-                  type="button"
-                  className="flex items-center gap-2 font-semibold tracking-tight cursor-pointer px-1 text-primary"
-                  onClick={() => setActiveTab("contracts")}
-                >
-                  <span className="text-sm font-bold tracking-wide">SignLoop</span>
-                </button>
+          <div className="flex w-full items-center justify-between gap-2">
+            <button
+              type="button"
+              className="flex items-center gap-2 font-semibold tracking-tight cursor-pointer px-1 text-primary"
+              onClick={() => setActiveTab("contracts")}
+            >
+              <span className="text-sm font-bold tracking-wide">SignLoop</span>
+            </button>
 
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                  onClick={() => setSidebarOpen(false)}
-                  aria-label="Collapse sidebar"
-                >
-                  <PanelLeftClose className="h-4 w-4" />
-                </Button>
-              </>
-            ) : (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                onClick={() => setSidebarOpen(true)}
-                aria-label="Expand sidebar"
-              >
-                <PanelLeftOpen className="h-4 w-4" />
-              </Button>
-            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+              onClick={() => setSidebarOpen(false)}
+              aria-label="Collapse sidebar"
+            >
+              <PanelLeftClose className="h-4 w-4" />
+            </Button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto w-full">
+        <div className="flex-1 overflow-y-auto w-72">
           <div className="space-y-4 p-2 sm:p-3">
             <Collapsible open={openSections.contracts} onOpenChange={(open) => setSectionOpen("contracts", open)}>
               <CollapsibleTrigger asChild>
@@ -489,6 +474,19 @@ const Dashboard = () => {
         )}
       >
         <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.1),rgba(255,255,255,0))] dark:bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.2),rgba(255,255,255,0))]" />
+
+        {!sidebarOpen && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="absolute left-3 top-3 z-20 h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-muted"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open sidebar"
+          >
+            <PanelLeftOpen className="h-5 w-5" />
+          </Button>
+        )}
         
         <div className={cn("relative z-10 flex flex-1 min-h-0 flex-col p-6 lg:p-10", activeTab === "chat" && "p-0 lg:p-0")}>
           {activeTab !== "chat" && (
