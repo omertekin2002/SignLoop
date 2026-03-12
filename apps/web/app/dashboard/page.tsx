@@ -495,62 +495,60 @@ const Dashboard = () => {
       >
         <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.1),rgba(255,255,255,0))] dark:bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.2),rgba(255,255,255,0))]" />
 
-        <header className="relative z-20 flex h-14 shrink-0 items-center justify-between px-3">
-          <div className="flex items-center gap-2 w-1/3">
-            {!sidebarOpen && (
-              <>
+        <header className="relative z-20 flex h-14 shrink-0 items-center px-2 gap-0.5">
+          {!sidebarOpen && (
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-10 w-10 text-muted-foreground hover:text-foreground hover:bg-muted"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open sidebar"
+              >
+                <PanelLeft className="h-5 w-5" />
+              </Button>
+              {activeTab === "chat" && (
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-muted"
-                  onClick={() => setSidebarOpen(true)}
-                  aria-label="Open sidebar"
+                  className="h-10 w-10 text-muted-foreground hover:text-foreground hover:bg-muted"
+                  onClick={() => createChatMutation.mutate()}
+                  title="New chat"
                 >
-                  <PanelLeft className="h-5 w-5" />
+                  <Plus className="h-5 w-5" />
                 </Button>
-                {activeTab === "chat" && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-muted"
-                    onClick={() => createChatMutation.mutate()}
-                    title="New chat"
-                  >
-                    <Plus className="h-5 w-5" />
-                  </Button>
-                )}
-              </>
-            )}
-          </div>
+              )}
+            </div>
+          )}
           
-          <div className="flex justify-center w-1/3">
+          <div className="flex items-center">
             {activeTab === "chat" && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <div className="flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors">
-                    <span className="max-w-[120px] truncate">{activeModel}</span>
-                    <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0" />
+                  <div className="flex cursor-pointer items-center gap-1.5 rounded-xl px-3 py-2 text-lg font-semibold transition-colors hover:bg-muted/50 group">
+                    <span className="text-foreground/90">SignLoop</span>
+                    <span className="text-muted-foreground font-medium truncate max-w-[150px]">{activeModel}</span>
+                    <ChevronDown className="h-4 w-4 text-muted-foreground/50 shrink-0 group-hover:text-muted-foreground transition-colors" />
                   </div>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="center" className="w-56">
+                <DropdownMenuContent align="start" className="w-64 mt-1 border border-border/50 bg-background/95 backdrop-blur-sm">
                   {availableModels.length > 0 ? (
                     availableModels.map((model: string) => (
                       <DropdownMenuItem 
                         key={model} 
                         onClick={() => updateModelMutation.mutate(model)}
                         disabled={updateModelMutation.isPending}
+                        className="flex items-center justify-between py-2 px-3 focus:bg-muted/80"
                       >
-                        <div className="flex flex-1 items-center justify-between">
-                          <span className="truncate pr-2">{model}</span>
-                          {activeModel === model && <Check className="h-4 w-4 shrink-0" />}
-                        </div>
+                        <span className="truncate pr-4">{model}</span>
+                        {activeModel === model && <Check className="h-4 w-4 shrink-0 text-primary" />}
                       </DropdownMenuItem>
                     ))
                   ) : (
-                    <DropdownMenuItem disabled>
-                      <div className="flex flex-1 items-center justify-between">
+                    <DropdownMenuItem disabled className="py-2 px-3">
+                      <div className="flex flex-1 items-center justify-between text-muted-foreground">
                         <span>OpenRouter</span>
                         <Check className="h-4 w-4" />
                       </div>
@@ -559,10 +557,6 @@ const Dashboard = () => {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-          </div>
-
-          <div className="flex justify-end w-1/3">
-            {/* Future right-side header items like profile or share would go here */}
           </div>
         </header>
 
