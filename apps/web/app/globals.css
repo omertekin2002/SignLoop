@@ -4,76 +4,76 @@
 
 @layer base {
   :root {
-    --background: 210 50% 98%; /* Light sky background */
-    --foreground: 240 10% 15%;
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 15%;
+    --card-foreground: 240 10% 3.9%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 15%;
-    --primary: 220 90% 56%; /* Vibrant App Store Blue */
-    --primary-foreground: 0 0% 100%;
-    --secondary: 210 20% 96%;
-    --secondary-foreground: 240 10% 15%;
-    --muted: 210 20% 96%;
-    --muted-foreground: 240 5% 45%;
-    --accent: 210 20% 96%;
-    --accent-foreground: 240 10% 15%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 220 90% 56%;
-    --radius: 1rem; /* More rounded Apple feel */
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 10% 3.9%;
+    --radius: 0.75rem;
     --surface-base: hsl(var(--background));
     --surface-elevated: hsl(var(--card));
     --surface-inset: hsl(var(--muted));
     --surface-stroke-soft: hsl(var(--border) / 0.6);
     --surface-stroke: hsl(var(--border));
 
-    --sidebar-background: 0 0% 100%;
+    --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 220 90% 56%;
+    --sidebar-primary: 240 5.9% 10%;
     --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 210 20% 96%;
-    --sidebar-accent-foreground: 240 5.3% 26.1%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 220 90% 56%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
   }
 
   .dark {
-    --background: 224 71% 4%; /* Very deep space blue */
-    --foreground: 210 20% 98%;
-    --card: 224 71% 7%;
-    --card-foreground: 210 20% 98%;
-    --popover: 224 71% 7%;
-    --popover-foreground: 210 20% 98%;
-    --primary: 220 90% 56%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 224 20% 16%;
-    --secondary-foreground: 210 20% 98%;
-    --muted: 224 20% 16%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 224 20% 16%;
-    --accent-foreground: 210 20% 98%;
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
-    --border: 220 20% 18%;
-    --input: 220 20% 18%;
-    --ring: 220 90% 56%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
     --surface-base: hsl(var(--background));
     --surface-elevated: hsl(var(--card));
     --surface-inset: hsl(var(--muted));
     --surface-stroke-soft: hsl(var(--border) / 0.6);
     --surface-stroke: hsl(var(--border));
 
-    --sidebar-background: 224 71% 4%;
-    --sidebar-foreground: 210 20% 98%;
-    --sidebar-primary: 220 90% 56%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 224 20% 16%;
-    --sidebar-accent-foreground: 210 20% 98%;
-    --sidebar-border: 220 20% 18%;
-    --sidebar-ring: 220 90% 56%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
   }
 }
 
@@ -85,16 +85,12 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
-    background-image: url('/background-landscape.png');
-    background-size: cover;
-    background-position: center;
-    background-attachment: fixed;
   }
 }
 
 @layer components {
   .app-page {
-    @apply relative min-h-screen bg-transparent;
+    @apply relative min-h-screen bg-background;
   }
 
   .app-header {
@@ -110,14 +106,14 @@
   }
 
   .app-title {
-    @apply text-3xl font-serif text-foreground md:text-5xl leading-tight;
+    @apply text-3xl font-semibold tracking-tight text-foreground md:text-4xl;
   }
 
   .app-subtitle {
-    @apply text-sm text-muted-foreground max-w-2xl font-sans mt-2;
+    @apply text-sm text-muted-foreground;
   }
 
-  /* Cluely-style specific utilities */
+  /* Landing page specific utilities */
   .glass-card {
     @apply bg-background/5 backdrop-blur-xl border border-white/10 dark:border-white/5 shadow-none relative overflow-hidden;
   }
@@ -137,10 +133,6 @@
 
   .dark .glass-card::before {
     background: linear-gradient(to bottom, rgba(255,255,255,0.1), rgba(255,255,255,0));
-  }
-
-  .glow-shadow {
-    box-shadow: 0 0 30px -5px hsl(var(--primary) / 0.4), 0 8px 16px -4px hsl(var(--primary) / 0.3);
   }
 }
 

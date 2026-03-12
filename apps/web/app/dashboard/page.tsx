@@ -214,10 +214,10 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="flex h-screen w-full bg-transparent overflow-hidden text-foreground">
+    <div className="flex h-screen w-full bg-background overflow-hidden text-foreground">
       <aside
         className={cn(
-          "flex h-screen shrink-0 flex-col border-r border-white/20 dark:border-white/10 bg-background/40 backdrop-blur-3xl transition-[width] duration-200 z-20",
+          "flex h-screen shrink-0 flex-col border-r bg-muted/20 transition-[width] duration-200",
           sidebarOpen ? "w-72" : "w-[60px]"
         )}
       >
@@ -488,14 +488,14 @@ const Dashboard = () => {
           activeTab === "chat" ? "overflow-hidden" : "overflow-y-auto"
         )}
       >
-        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_-20%,hsl(var(--primary)/0.15),transparent_50%),radial-gradient(circle_at_100%_40%,hsl(var(--primary)/0.1),transparent_40%)]" />
+        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.1),rgba(255,255,255,0))] dark:bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.2),rgba(255,255,255,0))]" />
         
         <div className={cn("relative z-10 flex flex-1 flex-col p-6 lg:p-10", activeTab === "chat" && "p-0 lg:p-0")}>
           {activeTab !== "chat" && (
             <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-6">
               <div>
-                <h1 className="text-4xl font-serif text-foreground">{tabLabels[activeTab]}</h1>
-                <p className="mt-2 text-sm text-muted-foreground font-sans">Welcome back, {user?.firstName || "there"}</p>
+                <h1 className="text-3xl font-bold tracking-tight">{tabLabels[activeTab]}</h1>
+                <p className="mt-1 text-sm text-muted-foreground">Welcome back, {user?.firstName || "there"}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {activeTab === "contracts" ? (
@@ -525,13 +525,12 @@ const Dashboard = () => {
                 ))}
               </div>
             ) : standaloneContracts.length === 0 ? (
-              <div className="flex min-h-[400px] flex-col items-center justify-center rounded-3xl glass-card text-center mx-auto w-full max-w-2xl px-4 py-12 relative overflow-hidden group">
-                <div className="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
-                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/10 mb-6 shadow-inner ring-1 ring-white/20">
-                  <FileText className="h-10 w-10 text-primary drop-shadow-[0_0_10px_rgba(var(--primary),0.5)]" />
+              <div className="flex min-h-[400px] flex-col items-center justify-center rounded-xl border border-dashed text-center bg-muted/10 mx-auto w-full max-w-2xl px-4">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-4">
+                  <FileText className="h-8 w-8 text-muted-foreground" />
                 </div>
-                <h3 className="text-3xl font-serif text-foreground mb-3">No contracts found</h3>
-                <p className="mt-2 text-base text-muted-foreground max-w-md">
+                <h3 className="text-xl font-semibold text-foreground">No contracts found</h3>
+                <p className="mt-2 text-sm text-muted-foreground max-w-sm">
                   Upload a contract to begin analyzing it instantly, or create a project for context-aware reviews.
                 </p>
                 <div className="mt-8 flex flex-wrap justify-center gap-3">
@@ -554,7 +553,7 @@ const Dashboard = () => {
                 {standaloneContracts.map((contract) => (
                   <Card
                     key={contract.id}
-                    className="group relative h-full overflow-hidden transition-all duration-300 hover:bg-background/60 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/5 cursor-pointer"
+                    className="group relative h-full overflow-hidden border-border/50 bg-background/50 backdrop-blur transition-colors hover:bg-muted/50 hover:border-border"
                   >
                     <Button
                       variant="ghost"
@@ -567,10 +566,10 @@ const Dashboard = () => {
                       <Trash2 className="h-4 w-4" />
                     </Button>
                     <Link href={`/contracts/${contract.id}`} className="block h-full">
-                      <CardHeader className="space-y-0 p-6 pb-2 pr-12">
-                        <CardTitle className="text-xl font-serif leading-tight line-clamp-2">{contract.title}</CardTitle>
+                      <CardHeader className="space-y-0 pb-4 pr-12">
+                        <CardTitle className="text-base font-semibold leading-tight line-clamp-2">{contract.title}</CardTitle>
                       </CardHeader>
-                      <CardContent className="p-6 pt-2">
+                      <CardContent>
                         <div className="mb-4 flex items-center gap-1.5 text-xs text-muted-foreground">
                           <Calendar className="h-3.5 w-3.5" />
                           {format(new Date(contract.createdAt), "MMMM d, yyyy")}
@@ -579,7 +578,7 @@ const Dashboard = () => {
                           <Badge variant="secondary" className="font-medium bg-secondary/50">
                             {contract.status || "DRAFT"}
                           </Badge>
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary transition-all duration-300 group-hover:bg-primary group-hover:text-primary-foreground group-hover:shadow-[0_0_15px_rgba(var(--primary),0.5)]">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
                             <ChevronRight className="h-4 w-4" />
                           </div>
                         </div>
@@ -599,13 +598,12 @@ const Dashboard = () => {
                 ))}
               </div>
             ) : !projects || projects.length === 0 ? (
-              <div className="flex min-h-[400px] flex-col items-center justify-center rounded-3xl glass-card text-center mx-auto w-full max-w-2xl px-4 py-12 relative overflow-hidden group">
-                <div className="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
-                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/10 mb-6 shadow-inner ring-1 ring-white/20">
-                  <FolderOpen className="h-10 w-10 text-primary drop-shadow-[0_0_10px_rgba(var(--primary),0.5)]" />
+              <div className="flex min-h-[400px] flex-col items-center justify-center rounded-xl border border-dashed text-center bg-muted/10 mx-auto w-full max-w-2xl px-4">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-4">
+                  <FolderOpen className="h-8 w-8 text-muted-foreground" />
                 </div>
-                <h3 className="text-3xl font-serif text-foreground mb-3">No projects yet</h3>
-                <p className="mx-auto mt-2 max-w-md text-base text-muted-foreground">
+                <h3 className="text-xl font-semibold text-foreground">No projects yet</h3>
+                <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
                   Projects let you analyze contracts with legal context. Upload governing laws or reference documents.
                 </p>
                 <div className="mt-8">
@@ -621,12 +619,12 @@ const Dashboard = () => {
               <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {projects.map((project) => (
                   <Link key={project.id} href={`/projects/${project.id}`}>
-                    <Card className="group h-full cursor-pointer overflow-hidden transition-all duration-300 hover:bg-background/60 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/5 before:absolute before:inset-x-0 before:top-0 before:h-1 before:bg-primary/50 before:opacity-0 hover:before:opacity-100 before:transition-opacity">
-                      <CardHeader className="flex flex-row items-start justify-between space-y-0 p-6 pb-2">
-                        <CardTitle className="text-xl font-serif leading-tight line-clamp-2">{project.title}</CardTitle>
-                        <FolderOpen className="h-5 w-5 text-primary shrink-0 ml-2 drop-shadow-[0_0_5px_hsl(var(--primary)/0.5)]" />
+                    <Card className="group h-full cursor-pointer overflow-hidden border-t-2 border-t-primary border-x-border/50 border-b-border/50 bg-background/50 backdrop-blur transition-all hover:bg-muted/50 hover:shadow-sm">
+                      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+                        <CardTitle className="text-base font-semibold leading-tight line-clamp-2">{project.title}</CardTitle>
+                        <FolderOpen className="h-4 w-4 text-primary shrink-0 ml-2" />
                       </CardHeader>
-                      <CardContent className="p-6 pt-2">
+                      <CardContent>
                         {project.description ? (
                           <p className="mb-4 line-clamp-2 text-sm text-muted-foreground leading-relaxed">{project.description}</p>
                         ) : null}
@@ -646,7 +644,7 @@ const Dashboard = () => {
                             <Calendar className="h-3.5 w-3.5" />
                             {format(new Date(project.createdAt), "MMM d, yyyy")}
                           </div>
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary transition-all duration-300 group-hover:bg-primary group-hover:text-primary-foreground group-hover:shadow-[0_0_15px_rgba(var(--primary),0.5)]">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
                             <ChevronRight className="h-4 w-4" />
                           </div>
                         </div>

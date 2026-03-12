@@ -28,7 +28,15 @@ export default function Home() {
   const [isHeroTitleComplete, setIsHeroTitleComplete] = useState(false);
 
   return (
-    <div className="flex min-h-screen flex-col bg-transparent">
+    <div
+      className="flex min-h-screen flex-col"
+      style={{
+        backgroundImage: "url('/background-landscape.png')",
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundAttachment: 'fixed',
+      }}
+    >
       <header className="absolute top-0 z-50 w-full">
         <div className="container mx-auto flex h-20 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2">
@@ -53,9 +61,9 @@ export default function Home() {
       <main className="flex-1 w-full relative">
         {/* Subtle Background Elements */}
         <div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.15),rgba(255,255,255,0))] mix-blend-normal dark:bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.3),rgba(255,255,255,0))]" />
-        
+
         <div className="container mx-auto relative z-10 max-w-7xl space-y-24 px-4 py-24 sm:px-6 lg:px-8 lg:py-32">
-          
+
           <section className="mx-auto flex max-w-[980px] flex-col items-center gap-8 text-center">
             <div className="inline-flex items-center rounded-full border border-border/50 bg-background/50 px-3 py-1 text-sm font-medium backdrop-blur transition-colors hover:bg-muted/50">
               <span className="flex h-2 w-2 rounded-full bg-primary/80 mr-2 animate-pulse" />
@@ -81,7 +89,7 @@ export default function Home() {
             </div>
 
             <div className="flex flex-col gap-4 sm:flex-row items-center justify-center pt-8">
-              <Button asChild size="lg" className={cn("h-12 px-8 text-base glow-shadow border-t border-white/20 opacity-0", isHeroTitleComplete && "animate-fade-in-up")} style={{ animationDelay: "0.2s" }}>
+              <Button asChild size="lg" className={cn("h-12 px-8 text-base border-t border-white/20 text-white hover:opacity-90 opacity-0", isHeroTitleComplete && "animate-fade-in-up")} style={{ animationDelay: "0.2s", backgroundColor: "#162044" }}>
                 <Link href={isSignedIn ? "/dashboard" : "/sign-in"}>
                   {isSignedIn ? "Open Dashboard" : "Get Started Free"}
                   <ArrowRight className="ml-2 h-4 w-4" />
@@ -97,15 +105,15 @@ export default function Home() {
                 return (
                   <Card
                     key={stat.label}
-                    className={cn("group relative overflow-hidden glass-card p-8 pt-10 transition-colors opacity-0", isHeroTitleComplete && "animate-fade-in-up")}
+                    className={cn("group relative overflow-hidden glass-card !bg-transparent !border-0 !shadow-none p-8 pt-10 transition-colors opacity-0", isHeroTitleComplete && "animate-fade-in-up")}
                     style={{ animationDelay: index === 0 ? "0.3s" : "0.4s" }}
                   >
                     <div className="relative z-10 flex flex-col items-center text-center space-y-4">
                       <div className="flex items-baseline justify-center gap-1 font-medium tracking-tighter text-5xl sm:text-6xl lg:text-7xl bg-gradient-to-r from-rose-100 to-orange-200 dark:from-rose-100/90 dark:to-orange-200/90 bg-clip-text text-transparent">
-                        <NumberTicker 
-                          delay={index * 140} 
-                          useGrouping={stat.value < 1000} 
-                          value={stat.value} 
+                        <NumberTicker
+                          delay={index * 140}
+                          useGrouping={stat.value < 1000}
+                          value={stat.value}
                         />
                         <span className="text-orange-200">+</span>
                       </div>
