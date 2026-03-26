@@ -176,12 +176,12 @@ const Dashboard = () => {
   const { signOut } = useClerk();
   const queryClient = useQueryClient();
   const [contractToDelete, setContractToDelete] = useState<Contract | null>(null);
-  const [activeTab, setActiveTab] = useState<DashboardTab>("contracts");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [activeTab, setActiveTab] = useState<DashboardTab>("chat");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openSections, setOpenSections] = useState<SidebarOpenState>({
-    contracts: true,
+    contracts: false,
     projects: false,
-    chat: false,
+    chat: true,
   });
   const [selectedChatThreadId, setSelectedChatThreadId] = useState<string | null>(null);
   const [recentlyDeletedChatThreadId, setRecentlyDeletedChatThreadId] = useState<string | null>(null);
