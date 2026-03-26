@@ -28,15 +28,12 @@ export default function Home() {
   const [isHeroTitleComplete, setIsHeroTitleComplete] = useState(false);
 
   return (
-    <div
-      className="light flex min-h-screen flex-col"
-      style={{
-        backgroundImage: "url('/background-landscape.png')",
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        backgroundAttachment: 'fixed',
-      }}
-    >
+    <div className="light relative flex min-h-screen flex-col overflow-x-hidden">
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-cover bg-center bg-scroll md:bg-fixed"
+        style={{ backgroundImage: "url('/background-landscape.png')" }}
+      />
       <header className="absolute top-0 z-50 w-full">
         <div className="container mx-auto flex h-20 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2">
@@ -71,7 +68,7 @@ export default function Home() {
             </div>
 
             <div className="space-y-6">
-              <h1 className="min-h-[2.5em] text-4xl font-normal tracking-tight bg-gradient-to-br from-indigo-950 to-slate-700 bg-clip-text text-transparent sm:text-5xl md:min-h-[2em] md:text-6xl lg:text-7xl font-[family-name:var(--font-eb-garamond)] whitespace-pre-wrap leading-normal">
+              <h1 className="min-h-[5em] text-4xl font-normal tracking-tight bg-gradient-to-br from-indigo-950 to-slate-700 bg-clip-text text-transparent sm:min-h-[2.5em] sm:text-5xl md:min-h-[2em] md:text-6xl lg:text-7xl font-[family-name:var(--font-eb-garamond)] whitespace-pre-wrap leading-normal">
                 <TypingAnimation
                   text={"Review contracts with precision.\nNot guesswork."}
                   initialDelay={250}
