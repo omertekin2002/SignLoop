@@ -95,32 +95,31 @@ export default function Home() {
             </div>
           </section>
 
-          <section id="features" className="mx-auto max-w-5xl">
-            <div className="grid gap-6 md:grid-cols-2">
+          <section id="features" className="mx-auto w-full max-w-5xl -mt-8 sm:-mt-12">
+            <div className="grid grid-cols-2 pt-4 pb-16 md:pt-8 md:pb-24">
               {stats.map((stat, index) => {
-                const Icon = stat.icon;
                 return (
-                  <Card
+                  <div
                     key={stat.label}
-                    variant="glass"
-                    className={cn("group relative overflow-hidden p-8 pt-10 transition-colors opacity-0", isHeroTitleComplete && "animate-fade-in-up")}
+                    className={cn(
+                      "flex flex-col items-center justify-center space-y-8 opacity-0",
+                      isHeroTitleComplete && "animate-fade-in-up"
+                    )}
                     style={{ animationDelay: index === 0 ? "0.3s" : "0.4s" }}
                   >
-                    <div className="relative z-10 flex flex-col items-center text-center space-y-4">
-                      <div className="flex items-baseline justify-center gap-1 font-medium tracking-tighter text-5xl sm:text-6xl lg:text-7xl bg-gradient-to-r from-rose-100 to-orange-200 bg-clip-text text-transparent">
-                        <NumberTicker
-                          start={isHeroTitleComplete}
-                          delay={index * 140}
-                          useGrouping={stat.value >= 1000}
-                          value={stat.value}
-                        />
-                        <span className="text-orange-200">+</span>
-                      </div>
-                      <p className="text-lg font-medium text-white/90">
-                        {stat.label}
-                      </p>
+                    <div className="flex items-baseline gap-1 font-[family-name:var(--font-eb-garamond)] font-normal tracking-tight text-7xl sm:text-8xl md:text-[7rem] leading-none text-white">
+                      <NumberTicker
+                        start={isHeroTitleComplete}
+                        delay={index * 140}
+                        useGrouping={stat.value >= 1000}
+                        value={stat.value}
+                      />
+                      <span className="text-white/40 font-light ml-2">+</span>
                     </div>
-                  </Card>
+                    <p className="text-sm sm:text-base font-[family-name:var(--font-eb-garamond)] uppercase tracking-[0.2em] font-medium text-white/60">
+                      {stat.label}
+                    </p>
+                  </div>
                 )
               })}
             </div>
