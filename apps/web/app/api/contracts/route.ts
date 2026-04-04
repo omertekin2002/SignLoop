@@ -2,14 +2,18 @@ import { NextResponse } from 'next/server';
 import { auth } from "@clerk/nextjs/server";
 import { createContractForUser, listContractsByUserId } from "@/lib/server-db";
 
-export async function GET() {
+export async function GET(req: Request) {
   const { userId } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const contracts = await listContractsByUserId(userId);
-  return NextResponse.json(contracts);
+  const { searchParams } = new URL(req.url);
+  const limit = searchParams.get("limit") ? Number(searchParams.get("limit")) : undefined;
+  const offset = searchParams.get("offset") ? Number(searchParams.get("offset")) : undefined;
+
+  const result = await listContractsByUserId(userId, { limit, offset });
+  return NextResponse.json(result);
 }
 
 export async function POST(req: Request) {

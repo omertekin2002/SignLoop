@@ -189,8 +189,8 @@ const Dashboard = () => {
   const { data: contracts, isLoading: loadingContracts } = useQuery({
     queryKey: ["contracts"],
     queryFn: async () => {
-      const response = await apiClient.get<Contract[]>("/contracts");
-      return response.data || [];
+      const response = await apiClient.get<{ data: Contract[] }>("/contracts");
+      return response.data.data || [];
     },
   });
 

@@ -5,15 +5,19 @@ import {
   listChatThreadsByUserId,
 } from "@/lib/server-db";
 
-export async function GET() {
+export async function GET(req: Request) {
   const { userId } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const threads = await listChatThreadsByUserId(userId);
-    return NextResponse.json({ data: threads });
+    const { searchParams } = new URL(req.url);
+    const limit = searchParams.get("limit") ? Number(searchParams.get("limit")) : undefined;
+    const offset = searchParams.get("offset") ? Number(searchParams.get("offset")) : undefined;
+
+    const result = await listChatThreadsByUserId(userId, { limit, offset });
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Failed to list chat threads:", error);
     return NextResponse.json({ error: "Failed to list chat threads" }, { status: 500 });

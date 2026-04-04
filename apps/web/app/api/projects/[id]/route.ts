@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { deleteProjectForUser, getProjectByIdForUser } from "@/lib/server-db";
+import { deleteProjectForUser, getProjectByIdForUser, getProjectStorageKeys } from "@/lib/server-db";
 import { deleteObject } from "@/lib/object-storage";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -26,12 +26,18 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   }
 
   const { id } = await params;
+
+  // Delete storage objects while DB references still exist, so a crash
+  // between storage and DB cleanup leaves retryable DB records rather
+  // than permanently orphaned files.
+  const storageKeys = await getProjectStorageKeys(userId, id);
+  await Promise.allSettled(storageKeys.map((key) => deleteObject(key)));
+
   const result = await deleteProjectForUser({ userId, projectId: id });
 
   if (!result.deleted) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  await Promise.allSettled(result.storageKeys.map((key) => deleteObject(key)));
   return NextResponse.json({ success: true });
 }

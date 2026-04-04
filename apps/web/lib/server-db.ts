@@ -4,6 +4,27 @@ import type { PersonalityMode } from "@/lib/personality-settings";
 
 type JsonObject = Record<string, unknown>;
 
+export type PaginationOptions = {
+  limit?: number;
+  offset?: number;
+};
+
+export type PaginatedResult<T> = {
+  data: T[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+const DEFAULT_PAGE_LIMIT = 50;
+const MAX_PAGE_LIMIT = 200;
+
+function clampPagination(opts?: PaginationOptions): { limit: number; offset: number } {
+  const limit = Math.min(Math.max(opts?.limit ?? DEFAULT_PAGE_LIMIT, 1), MAX_PAGE_LIMIT);
+  const offset = Math.max(opts?.offset ?? 0, 0);
+  return { limit, offset };
+}
+
 let schemaReadyPromise: Promise<void> | null = null;
 
 async function ensureSchema(): Promise<void> {
@@ -433,24 +454,37 @@ function mapAnalysisRow(row: {
   };
 }
 
-export async function listContractsByUserId(userId: string): Promise<ContractSummaryRecord[]> {
+export async function listContractsByUserId(
+  userId: string,
+  pagination?: PaginationOptions,
+): Promise<PaginatedResult<ContractSummaryRecord>> {
   await ensureSchema();
 
-  const { rows } = await sql<ContractSummaryRecord>`
-    select
-      id,
-      user_id as "userId",
-      project_id as "projectId",
-      title,
-      status,
-      created_at as "createdAt",
-      updated_at as "updatedAt"
-    from contracts
-    where user_id = ${userId}
-    order by created_at desc
-  `;
+  const { limit, offset } = clampPagination(pagination);
 
-  return rows;
+  const [{ rows }, { rows: countRows }] = await Promise.all([
+    sql<ContractSummaryRecord>`
+      select
+        id,
+        user_id as "userId",
+        project_id as "projectId",
+        title,
+        status,
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+      from contracts
+      where user_id = ${userId}
+      order by created_at desc
+      limit ${limit} offset ${offset}
+    `,
+    sql<{ count: number }>`
+      select count(*)::integer as count
+      from contracts
+      where user_id = ${userId}
+    `,
+  ]);
+
+  return { data: rows, total: countRows[0]?.count ?? 0, limit, offset };
 }
 
 export async function createContractForUser(input: {
@@ -695,6 +729,85 @@ export async function deleteAnalysisForContract(input: {
   return !!rows[0];
 }
 
+/**
+ * Collect all storage keys associated with a contract's uploaded files.
+ * Call this *before* deleting DB records so keys are available for storage
+ * cleanup even if the DB delete succeeds first.
+ */
+export async function getContractStorageKeys(
+  userId: string,
+  contractId: string,
+): Promise<string[]> {
+  await ensureSchema();
+
+  const { rows } = await sql<{ storageKey: string | null }>`
+    select coalesce(cf.storage_key, cf.blob_path) as "storageKey"
+    from contract_files cf
+    inner join contracts c on c.id = cf.contract_id
+    where cf.contract_id = ${contractId}
+      and c.user_id = ${userId}
+  `;
+
+  return rows
+    .map((r) => r.storageKey)
+    .filter((v): v is string => Boolean(v));
+}
+
+/**
+ * Collect all storage keys associated with a project — both contract files
+ * and context documents.
+ */
+export async function getProjectStorageKeys(
+  userId: string,
+  projectId: string,
+): Promise<string[]> {
+  await ensureSchema();
+
+  const { rows: fileRows } = await sql<{ storageKey: string | null }>`
+    select coalesce(cf.storage_key, cf.blob_path) as "storageKey"
+    from contract_files cf
+    inner join contracts c on c.id = cf.contract_id
+    where c.project_id = ${projectId}
+      and c.user_id = ${userId}
+  `;
+
+  const { rows: contextRows } = await sql<{ storageKey: string | null }>`
+    select storage_key as "storageKey"
+    from context_documents
+    where project_id = ${projectId}
+  `;
+
+  return [...fileRows, ...contextRows]
+    .map((r) => r.storageKey)
+    .filter((v): v is string => Boolean(v));
+}
+
+/**
+ * Delete a single contract and its children (analyses, files) using the
+ * provided client so callers can include this in a wider transaction.
+ * Returns the storage keys that should be removed *after* the transaction
+ * commits.
+ */
+async function deleteContractCascade(
+  client: import("@vercel/postgres").VercelPoolClient,
+  userId: string,
+  contractId: string,
+): Promise<string[]> {
+  const { rows: fileRows } = await client.query<{ storageKey: string | null }>(
+    `SELECT coalesce(storage_key, blob_path) AS "storageKey"
+     FROM contract_files WHERE contract_id = $1`,
+    [contractId],
+  );
+
+  await client.query("DELETE FROM analyses WHERE contract_id = $1", [contractId]);
+  await client.query("DELETE FROM contract_files WHERE contract_id = $1", [contractId]);
+  await client.query("DELETE FROM contracts WHERE id = $1 AND user_id = $2", [contractId, userId]);
+
+  return fileRows
+    .map((row) => row.storageKey)
+    .filter((value): value is string => Boolean(value));
+}
+
 export async function deleteContractForUser(input: {
   userId: string;
   contractId: string;
@@ -713,34 +826,18 @@ export async function deleteContractForUser(input: {
     return { deleted: false, storageKeys: [] };
   }
 
-  const { rows: fileRows } = await sql<{ storageKey: string | null }>`
-    select coalesce(storage_key, blob_path) as "storageKey"
-    from contract_files
-    where contract_id = ${input.contractId}
-  `;
-
-  await sql`
-    delete from analyses
-    where contract_id = ${input.contractId}
-  `;
-
-  await sql`
-    delete from contract_files
-    where contract_id = ${input.contractId}
-  `;
-
-  await sql`
-    delete from contracts
-    where id = ${input.contractId}
-      and user_id = ${input.userId}
-  `;
-
-  return {
-    deleted: true,
-    storageKeys: fileRows
-      .map((row) => row.storageKey)
-      .filter((value): value is string => Boolean(value)),
-  };
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
+    const storageKeys = await deleteContractCascade(client, input.userId, input.contractId);
+    await client.query("COMMIT");
+    return { deleted: true, storageKeys };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function createProjectForUser(input: {
@@ -785,27 +882,40 @@ export async function createProjectForUser(input: {
   };
 }
 
-export async function listProjectsByUserId(userId: string): Promise<ProjectSummaryRecord[]> {
+export async function listProjectsByUserId(
+  userId: string,
+  pagination?: PaginationOptions,
+): Promise<PaginatedResult<ProjectSummaryRecord>> {
   await ensureSchema();
 
-  const { rows: projectRows } = await sql<
-    Omit<ProjectSummaryRecord, "contracts" | "contextDocuments">
-  >`
-    select
-      id,
-      user_id as "userId",
-      title,
-      description,
-      status,
-      created_at as "createdAt",
-      updated_at as "updatedAt"
-    from projects
-    where user_id = ${userId}
-    order by created_at desc
-  `;
+  const { limit, offset } = clampPagination(pagination);
+
+  const [{ rows: projectRows }, { rows: countRows }] = await Promise.all([
+    sql<Omit<ProjectSummaryRecord, "contracts" | "contextDocuments">>`
+      select
+        id,
+        user_id as "userId",
+        title,
+        description,
+        status,
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+      from projects
+      where user_id = ${userId}
+      order by created_at desc
+      limit ${limit} offset ${offset}
+    `,
+    sql<{ count: number }>`
+      select count(*)::integer as count
+      from projects
+      where user_id = ${userId}
+    `,
+  ]);
+
+  const total = countRows[0]?.count ?? 0;
 
   if (projectRows.length === 0) {
-    return [];
+    return { data: [], total, limit, offset };
   }
 
   const projectIdsLiteral = `{${projectRows.map((p) => p.id).join(",")}}`;
@@ -854,11 +964,13 @@ export async function listProjectsByUserId(userId: string): Promise<ProjectSumma
     contextDocsByProject.set(row.projectId, list);
   }
 
-  return projectRows.map((project) => ({
+  const data = projectRows.map((project) => ({
     ...project,
     contracts: contractsByProject.get(project.id) ?? [],
     contextDocuments: contextDocsByProject.get(project.id) ?? [],
   }));
+
+  return { data, total, limit, offset };
 }
 
 async function isProjectOwnedByUser(userId: string, projectId: string): Promise<boolean> {
@@ -1036,6 +1148,32 @@ export async function addContextDocumentToProject(
   return created;
 }
 
+/**
+ * Look up the storage key for a context document without deleting it.
+ */
+export async function getContextDocumentStorageKey(
+  userId: string,
+  projectId: string,
+  documentId: string,
+): Promise<string | null> {
+  await ensureSchema();
+
+  const owned = await isProjectOwnedByUser(userId, projectId);
+  if (!owned) {
+    return null;
+  }
+
+  const { rows } = await sql<{ storageKey: string | null }>`
+    select storage_key as "storageKey"
+    from context_documents
+    where id = ${documentId}
+      and project_id = ${projectId}
+    limit 1
+  `;
+
+  return rows[0]?.storageKey ?? null;
+}
+
 export async function deleteContextDocumentFromProject(input: {
   userId: string;
   projectId: string;
@@ -1078,47 +1216,44 @@ export async function deleteProjectForUser(input: {
     return { deleted: false, storageKeys: [] };
   }
 
-  const storageKeys: string[] = [];
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
 
-  const { rows: contractRows } = await sql<{ id: string }>`
-    select id
-    from contracts
-    where project_id = ${input.projectId}
-      and user_id = ${input.userId}
-  `;
+    // Collect storage keys for all contract files in this project
+    const { rows: contractRows } = await client.query<{ id: string }>(
+      "SELECT id FROM contracts WHERE project_id = $1 AND user_id = $2",
+      [input.projectId, input.userId],
+    );
 
-  for (const contract of contractRows) {
-    const deletedContract = await deleteContractForUser({
-      userId: input.userId,
-      contractId: contract.id,
-    });
-    storageKeys.push(...deletedContract.storageKeys);
+    const storageKeys: string[] = [];
+    for (const contract of contractRows) {
+      const keys = await deleteContractCascade(client, input.userId, contract.id);
+      storageKeys.push(...keys);
+    }
+
+    // Collect storage keys for context documents
+    const { rows: contextRows } = await client.query<{ storageKey: string | null }>(
+      `SELECT storage_key AS "storageKey" FROM context_documents WHERE project_id = $1`,
+      [input.projectId],
+    );
+    storageKeys.push(
+      ...contextRows
+        .map((row) => row.storageKey)
+        .filter((value): value is string => Boolean(value)),
+    );
+
+    await client.query("DELETE FROM context_documents WHERE project_id = $1", [input.projectId]);
+    await client.query("DELETE FROM projects WHERE id = $1 AND user_id = $2", [input.projectId, input.userId]);
+
+    await client.query("COMMIT");
+    return { deleted: true, storageKeys };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
-
-  const { rows: contextRows } = await sql<{ storageKey: string | null }>`
-    select storage_key as "storageKey"
-    from context_documents
-    where project_id = ${input.projectId}
-  `;
-
-  storageKeys.push(
-    ...contextRows
-      .map((row) => row.storageKey)
-      .filter((value): value is string => Boolean(value)),
-  );
-
-  await sql`
-    delete from context_documents
-    where project_id = ${input.projectId}
-  `;
-
-  await sql`
-    delete from projects
-    where id = ${input.projectId}
-      and user_id = ${input.userId}
-  `;
-
-  return { deleted: true, storageKeys };
 }
 
 export async function getUserSettingsByUserId(
@@ -1287,43 +1422,56 @@ export async function createChatThreadForUser(input: {
   return created;
 }
 
-export async function listChatThreadsByUserId(userId: string): Promise<ChatThreadSummaryRecord[]> {
+export async function listChatThreadsByUserId(
+  userId: string,
+  pagination?: PaginationOptions,
+): Promise<PaginatedResult<ChatThreadSummaryRecord>> {
   await ensureSchema();
 
-  const { rows } = await sql<ChatThreadSummaryRecord>`
-    select
-      t.id,
-      t.user_id as "userId",
-      t.title,
-      t.created_at as "createdAt",
-      t.updated_at as "updatedAt",
-      case
-        when lm.content is null then null
-        when char_length(lm.content) > 120 then substring(lm.content from 1 for 117) || '...'
-        else lm.content
-      end as "lastMessagePreview",
-      lm.created_at as "lastMessageAt",
-      coalesce(mc.message_count, 0)::integer as "messageCount"
-    from chat_threads t
-    left join lateral (
-      select
-        content,
-        created_at
-      from chat_messages
-      where thread_id = t.id
-      order by position desc, created_at desc
-      limit 1
-    ) lm on true
-    left join lateral (
-      select count(*)::integer as message_count
-      from chat_messages
-      where thread_id = t.id
-    ) mc on true
-    where t.user_id = ${userId}
-    order by coalesce(lm.created_at, t.updated_at) desc
-  `;
+  const { limit, offset } = clampPagination(pagination);
 
-  return rows;
+  const [{ rows }, { rows: countRows }] = await Promise.all([
+    sql<ChatThreadSummaryRecord>`
+      select
+        t.id,
+        t.user_id as "userId",
+        t.title,
+        t.created_at as "createdAt",
+        t.updated_at as "updatedAt",
+        case
+          when lm.content is null then null
+          when char_length(lm.content) > 120 then substring(lm.content from 1 for 117) || '...'
+          else lm.content
+        end as "lastMessagePreview",
+        lm.created_at as "lastMessageAt",
+        coalesce(mc.message_count, 0)::integer as "messageCount"
+      from chat_threads t
+      left join lateral (
+        select
+          content,
+          created_at
+        from chat_messages
+        where thread_id = t.id
+        order by position desc, created_at desc
+        limit 1
+      ) lm on true
+      left join lateral (
+        select count(*)::integer as message_count
+        from chat_messages
+        where thread_id = t.id
+      ) mc on true
+      where t.user_id = ${userId}
+      order by coalesce(lm.created_at, t.updated_at) desc
+      limit ${limit} offset ${offset}
+    `,
+    sql<{ count: number }>`
+      select count(*)::integer as count
+      from chat_threads
+      where user_id = ${userId}
+    `,
+  ]);
+
+  return { data: rows, total: countRows[0]?.count ?? 0, limit, offset };
 }
 
 export async function getChatThreadByIdForUser(
