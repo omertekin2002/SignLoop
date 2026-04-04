@@ -112,7 +112,7 @@ async function ensureSchema(): Promise<void> {
       create table if not exists contract_files (
         id uuid primary key default gen_random_uuid(),
         user_id text not null,
-        project_id text,
+        project_id uuid,
         title text not null default 'Untitled Contract',
         file_name text not null,
         blob_path text,
@@ -121,6 +121,12 @@ async function ensureSchema(): Promise<void> {
         created_at timestamptz not null default now(),
         updated_at timestamptz not null default now()
       )
+    `;
+
+    // For existing databases where the column was originally text
+    await sql`
+      alter table contract_files
+      alter column project_id type uuid using project_id::uuid
     `;
 
     await sql`

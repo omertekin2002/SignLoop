@@ -24,6 +24,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
   }
 
+  const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
+  if (file.size > MAX_FILE_SIZE) {
+    return NextResponse.json(
+      { error: 'File too large. Maximum size is 20 MB.' },
+      { status: 413 },
+    );
+  }
+
   const rawMimeType = file.type || 'application/octet-stream';
   let mimeType: string;
 
