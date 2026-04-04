@@ -1435,39 +1435,46 @@ export async function appendChatMessagesToThread(input: {
     return;
   }
 
-  const { rows } = await sql<{ basePosition: number }>`
-    select coalesce(max(position), 0)::integer as "basePosition"
-    from chat_messages
-    where thread_id = ${input.threadId}
-  `;
+  // Use a dedicated client with a transaction + row-level lock to prevent
+  // concurrent inserts from producing duplicate position values.
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
 
-  const basePosition = rows[0]?.basePosition ?? 0;
+    // Lock the thread row so concurrent appends serialize here.
+    await client.query(
+      "SELECT id FROM chat_threads WHERE id = $1 FOR UPDATE",
+      [input.threadId],
+    );
 
-  for (const [idx, message] of cleanedMessages.entries()) {
-    await sql`
-      insert into chat_messages (
-        thread_id,
-        role,
-        content,
-        position,
-        metadata_json
-      )
-      values (
-        ${input.threadId},
-        ${message.role},
-        ${message.content},
-        ${basePosition + idx + 1},
-        null
-      )
-    `;
+    const posResult = await client.query(
+      `SELECT coalesce(max(position), 0)::integer AS "basePosition"
+       FROM chat_messages WHERE thread_id = $1`,
+      [input.threadId],
+    );
+    const basePosition: number = posResult.rows[0]?.basePosition ?? 0;
+
+    for (const [idx, message] of cleanedMessages.entries()) {
+      await client.query(
+        `INSERT INTO chat_messages (thread_id, role, content, position, metadata_json)
+         VALUES ($1, $2, $3, $4, null)`,
+        [input.threadId, message.role, message.content, basePosition + idx + 1],
+      );
+    }
+
+    await client.query(
+      `UPDATE chat_threads SET updated_at = now()
+       WHERE id = $1 AND user_id = $2`,
+      [input.threadId, input.userId],
+    );
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
-
-  await sql`
-    update chat_threads
-    set updated_at = now()
-    where id = ${input.threadId}
-      and user_id = ${input.userId}
-  `;
 }
 
 export async function deleteChatThreadForUser(input: {
