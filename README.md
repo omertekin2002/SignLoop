@@ -28,4 +28,4 @@ bun install
 bun run dev
 ```
 
-Web app runs on [localhost:3000](http://localhost:3000). See `.env.local` for required environment variables.
+Web app runs on [localhost:3000](http://localhost:3000), See `.env.local` for required environment variables.
