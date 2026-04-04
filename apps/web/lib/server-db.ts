@@ -798,38 +798,61 @@ export async function listProjectsByUserId(userId: string): Promise<ProjectSumma
     order by created_at desc
   `;
 
-  return Promise.all(
-    projectRows.map(async (project) => {
-      const { rows: contracts } = await sql<{
-        id: string;
-        title: string;
-        status: string;
-        createdAt: string;
-      }>`
-        select
-          id,
-          title,
-          status,
-          created_at as "createdAt"
-        from contracts
-        where project_id = ${project.id}
-        order by created_at desc
-      `;
+  if (projectRows.length === 0) {
+    return [];
+  }
 
-      const { rows: contextDocuments } = await sql<{ id: string }>`
-        select id
-        from context_documents
-        where project_id = ${project.id}
-        order by created_at desc
-      `;
+  const projectIdsLiteral = `{${projectRows.map((p) => p.id).join(",")}}`;
 
-      return {
-        ...project,
-        contracts,
-        contextDocuments,
-      };
-    }),
-  );
+  const { rows: contractRows } = await sql<{
+    projectId: string;
+    id: string;
+    title: string;
+    status: string;
+    createdAt: string;
+  }>`
+    select
+      project_id as "projectId",
+      id,
+      title,
+      status,
+      created_at as "createdAt"
+    from contracts
+    where project_id = any(${projectIdsLiteral}::uuid[])
+    order by created_at desc
+  `;
+
+  const { rows: contextDocRows } = await sql<{
+    projectId: string;
+    id: string;
+  }>`
+    select
+      project_id as "projectId",
+      id
+    from context_documents
+    where project_id = any(${projectIdsLiteral}::uuid[])
+    order by created_at desc
+  `;
+
+  const contractsByProject = new Map<string, ProjectSummaryRecord["contracts"]>();
+  for (const row of contractRows) {
+    const list = contractsByProject.get(row.projectId) ?? [];
+    list.push({ id: row.id, title: row.title, status: row.status, createdAt: row.createdAt });
+    contractsByProject.set(row.projectId, list);
+  }
+
+  const contextDocsByProject = new Map<string, ProjectSummaryRecord["contextDocuments"]>();
+  for (const row of contextDocRows) {
+    const list = contextDocsByProject.get(row.projectId) ?? [];
+    list.push({ id: row.id });
+    contextDocsByProject.set(row.projectId, list);
+  }
+
+  return projectRows.map((project) => ({
+    ...project,
+    contracts: contractsByProject.get(project.id) ?? [],
+    contextDocuments: contextDocsByProject.get(project.id) ?? [],
+  }));
 }
 
 async function isProjectOwnedByUser(userId: string, projectId: string): Promise<boolean> {
@@ -880,62 +903,79 @@ export async function getProjectByIdForUser(
     return null;
   }
 
-  const { rows: contractRows } = await sql<{
-    id: string;
-    title: string;
-    status: string;
-    createdAt: string;
-  }>`
-    select
-      id,
-      title,
-      status,
-      created_at as "createdAt"
-    from contracts
-    where project_id = ${projectId}
-      and user_id = ${userId}
-    order by created_at desc
-  `;
+  const [{ rows: contractRows }, { rows: contextDocuments }] = await Promise.all([
+    sql<{
+      id: string;
+      title: string;
+      status: string;
+      createdAt: string;
+    }>`
+      select
+        id,
+        title,
+        status,
+        created_at as "createdAt"
+      from contracts
+      where project_id = ${projectId}
+        and user_id = ${userId}
+      order by created_at desc
+    `,
+    sql<{
+      id: string;
+      title: string;
+      documentType: string;
+      originalFilename: string | null;
+      fileSize: number | null;
+      wordCount: number | null;
+      createdAt: string;
+    }>`
+      select
+        id,
+        title,
+        document_type as "documentType",
+        original_filename as "originalFilename",
+        size_bytes as "fileSize",
+        word_count as "wordCount",
+        created_at as "createdAt"
+      from context_documents
+      where project_id = ${projectId}
+      order by created_at asc
+    `,
+  ]);
 
-  const contracts = await Promise.all(
-    contractRows.map(async (contract) => {
-      const { rows: analyses } = await sql<{ id: string; riskBadge: string | null }>`
-        select
-          id,
-          risk_badge as "riskBadge"
-        from analyses
-        where contract_id = ${contract.id}
-        order by created_at desc
-      `;
+  const analysesByContract = new Map<
+    string,
+    Array<{ id: string; riskBadge: string | null }>
+  >();
 
-      return {
-        ...contract,
-        analyses,
-      };
-    }),
-  );
+  if (contractRows.length > 0) {
+    const contractIdsLiteral = `{${contractRows.map((c) => c.id).join(",")}}`;
 
-  const { rows: contextDocuments } = await sql<{
-    id: string;
-    title: string;
-    documentType: string;
-    originalFilename: string | null;
-    fileSize: number | null;
-    wordCount: number | null;
-    createdAt: string;
-  }>`
-    select
-      id,
-      title,
-      document_type as "documentType",
-      original_filename as "originalFilename",
-      size_bytes as "fileSize",
-      word_count as "wordCount",
-      created_at as "createdAt"
-    from context_documents
-    where project_id = ${projectId}
-    order by created_at asc
-  `;
+    const { rows: analysisRows } = await sql<{
+      contractId: string;
+      id: string;
+      riskBadge: string | null;
+    }>`
+      select
+        contract_id as "contractId",
+        id,
+        risk_badge as "riskBadge"
+      from analyses
+      where contract_id = any(${contractIdsLiteral}::uuid[])
+      order by created_at desc
+    `;
+
+    for (const row of analysisRows) {
+      const list = analysesByContract.get(row.contractId) ?? [];
+      list.push({ id: row.id, riskBadge: row.riskBadge });
+      analysesByContract.set(row.contractId, list);
+    }
+  }
+
+  const contracts = contractRows.map((contract) => ({
+    ...contract,
+    analyses: analysesByContract.get(contract.id) ?? [],
+  }));
 
   return {
     ...project,
