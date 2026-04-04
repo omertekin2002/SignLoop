@@ -612,6 +612,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                   className={cn(
                     "min-h-[40px] max-h-60 w-full resize-none bg-transparent px-4 py-2.5 text-[15px] text-foreground outline-none",
                     "placeholder:text-muted-foreground",
+                    "composer-input-no-scrollbar",
                   )}
                   disabled={isHydratingThread}
                   placeholder={isHydratingThread ? "Loading conversation..." : "Ask SignLoop..."}
