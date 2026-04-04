@@ -1,5 +1,5 @@
 {
-  "buildCommand": "cd ../.. && npm install && npx turbo build --filter=web",
+  "buildCommand": "cd ../.. && bun install && bunx turbo build --filter=web",
   "outputDirectory": ".next",
   "framework": "nextjs"
 }
