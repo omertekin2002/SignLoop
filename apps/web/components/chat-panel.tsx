@@ -592,7 +592,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                           </p>
                         ) : (
                           <p className="text-sm text-muted-foreground leading-relaxed">
-                            Select an existing chat from the sidebar or click <span className="font-medium text-foreground">The "+" Button</span> to start.
+                            Select an existing chat from the sidebar or click <span className="font-medium text-foreground">The &quot;+&quot; Button</span> to start.
                           </p>
                         )}
                       </div>

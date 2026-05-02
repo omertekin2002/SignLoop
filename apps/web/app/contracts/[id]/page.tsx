@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { AxiosError } from "axios";
 import { apiClient } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +24,26 @@ import {
 import { ArrowLeft, Play, AlertTriangle, Loader2, Trash2, Calendar, FileText, HelpCircle, Mail, Shield, Clock, DollarSign, RefreshCw, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import type { AnalysisResult } from "@/lib/schemas";
+
+type ApiError = AxiosError<{ message?: string; error?: string }>;
+
+type AnalysisRecord = {
+    id: string;
+    riskBadge?: string | null;
+    resultJson?: Partial<AnalysisResult> | null;
+    keyPoints?: string[] | null;
+    llmProvider?: string | null;
+    llmModel?: string | null;
+    createdAt?: string | Date | null;
+};
+
+type ContractDetail = {
+    title?: string | null;
+    status?: string | null;
+    createdAt?: string | Date | null;
+    analyses?: AnalysisRecord[] | null;
+};
 
 const ContractDetails = () => {
     const params = useParams();
@@ -49,7 +70,7 @@ const ContractDetails = () => {
     };
 
     const getContractErrorDetails = (error: unknown) => {
-        const response = (error as any)?.response;
+        const response = (error as ApiError).response;
         const status = response?.status;
         const message =
             response?.data?.message ||
@@ -102,7 +123,7 @@ const ContractDetails = () => {
         queryKey: ["contract", id],
         queryFn: async () => {
             const response = await apiClient.get(`/contracts/${id}`);
-            return response.data;
+            return response.data as ContractDetail;
         },
         enabled: !!id,
         refetchInterval: () => 5000,
@@ -138,7 +159,7 @@ const ContractDetails = () => {
             if (data?.jobId) setAnalysisJobId(data.jobId);
             queryClient.invalidateQueries({ queryKey: ["contract", id] });
         },
-        onError: (error: any) => {
+        onError: (error: ApiError) => {
             toast.error(
                 error.response?.data?.message ||
                 error.response?.data?.error ||
@@ -158,13 +179,13 @@ const ContractDetails = () => {
     };
 
     const analysisJobStatus = analysisJob?.status;
-    const analyses = Array.isArray(contract?.analyses) ? contract.analyses : [];
+    const analyses: AnalysisRecord[] = Array.isArray(contract?.analyses) ? contract.analyses : [];
     const sortedAnalyses = [...analyses].sort(
-        (a: any, b: any) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt)
+        (a, b) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt)
     );
     const latestAnalysisRecord = sortedAnalyses[0] ?? null;
     const selectedAnalysis = selectedAnalysisId
-        ? sortedAnalyses.find((a: any) => a.id === selectedAnalysisId) ?? null
+        ? sortedAnalyses.find((a) => a.id === selectedAnalysisId) ?? null
         : null;
     const analysis = selectedAnalysis ?? latestAnalysisRecord;
     const olderAnalyses = sortedAnalyses.slice(1);
@@ -174,7 +195,7 @@ const ContractDetails = () => {
         analysis.id !== latestAnalysisRecord.id
     );
 
-    const resultJson = analysis?.resultJson && typeof analysis.resultJson === "object"
+    const resultJson: Partial<AnalysisResult> | null = analysis?.resultJson && typeof analysis.resultJson === "object"
         ? analysis.resultJson
         : null;
     const summary = resultJson?.summary && typeof resultJson.summary === "object"
@@ -196,14 +217,14 @@ const ContractDetails = () => {
             ? resultJson.risk_badge
             : "UNKNOWN";
 
-    const keyPoints = Array.isArray(analysis?.keyPoints)
+    const keyPoints: string[] = Array.isArray(analysis?.keyPoints)
         ? analysis.keyPoints
         : Array.isArray(resultJson?.key_points)
             ? resultJson.key_points
             : [];
-    const redFlags = Array.isArray(resultJson?.red_flags) ? resultJson.red_flags : [];
+    const redFlags: AnalysisResult["red_flags"] = Array.isArray(resultJson?.red_flags) ? resultJson.red_flags : [];
     const redFlagFindings = redFlags
-        .map((flag: any) => {
+        .map((flag) => {
             const type = typeof flag?.type === "string" ? flag.type.trim() : "";
             const explanation = typeof flag?.explanation === "string" ? flag.explanation.trim() : "";
             if (type && explanation) return `${type}: ${explanation}`;
@@ -214,14 +235,14 @@ const ContractDetails = () => {
     const summaryCancellation = summary?.cancellation && typeof summary.cancellation === "object"
         ? summary.cancellation
         : null;
-    const keyDates = Array.isArray(resultJson?.key_dates) ? resultJson.key_dates : [];
+    const keyDates: AnalysisResult["key_dates"] = Array.isArray(resultJson?.key_dates) ? resultJson.key_dates : [];
     const nextActions = resultJson?.next_actions && typeof resultJson.next_actions === "object"
         ? resultJson.next_actions
         : null;
-    const questionsToAsk = Array.isArray(nextActions?.questions_to_ask)
+    const questionsToAsk: string[] = Array.isArray(nextActions?.questions_to_ask)
         ? nextActions.questions_to_ask
         : [];
-    const emailTemplates = Array.isArray(nextActions?.email_templates)
+    const emailTemplates: AnalysisResult["next_actions"]["email_templates"] = Array.isArray(nextActions?.email_templates)
         ? nextActions.email_templates
         : [];
 
@@ -258,7 +279,7 @@ const ContractDetails = () => {
             queryClient.invalidateQueries({ queryKey: ["contract", id] });
             queryClient.invalidateQueries({ queryKey: ["contracts"] });
         },
-        onError: (error: any) => {
+        onError: (error: ApiError) => {
             toast.error(error.response?.data?.message || "Failed to delete analysis");
         },
     });
@@ -276,7 +297,7 @@ const ContractDetails = () => {
             queryClient.invalidateQueries({ queryKey: ["contract", id] });
             queryClient.invalidateQueries({ queryKey: ["contracts"] });
         },
-        onError: (error: any) => {
+        onError: (error: ApiError) => {
             toast.error(error.response?.data?.message || "Failed to delete older analyses");
         }
     });
@@ -290,7 +311,7 @@ const ContractDetails = () => {
             queryClient.invalidateQueries({ queryKey: ["contracts"] });
             router.push("/dashboard");
         },
-        onError: (error: any) => {
+        onError: (error: ApiError) => {
             toast.error(error.response?.data?.message || "Failed to delete contract");
         }
     });
@@ -303,7 +324,7 @@ const ContractDetails = () => {
 
     useEffect(() => {
         if (!selectedAnalysisId) return;
-        const stillExists = sortedAnalyses.some((item: any) => item.id === selectedAnalysisId);
+        const stillExists = sortedAnalyses.some((item) => item.id === selectedAnalysisId);
         if (!stillExists) {
             setSelectedAnalysisId(null);
         }
@@ -607,7 +628,7 @@ const ContractDetails = () => {
                                 </CardHeader>
                                 <CardContent>
                                     <div className="space-y-4">
-                                        {redFlags.map((flag: any, idx: number) => {
+                                        {redFlags.map((flag, idx) => {
                                             const type = typeof flag?.type === "string" ? flag.type : "Risk";
                                             const explanation = typeof flag?.explanation === "string" ? flag.explanation : "";
                                             const confidence =
@@ -672,7 +693,7 @@ const ContractDetails = () => {
                                 </CardHeader>
                                 <CardContent>
                                     <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                                        {keyDates.map((date: any, idx: number) => (
+                                        {keyDates.map((date, idx) => (
                                             <div key={idx} className="flex items-center gap-3 p-3 rounded-lg border bg-card">
                                                 <div className="rounded-full p-2 bg-primary/10">
                                                     <Calendar className="h-4 w-4 text-primary" />
@@ -730,7 +751,7 @@ const ContractDetails = () => {
                                                 Email Templates
                                             </h4>
                                             <div className="space-y-3">
-                                                {emailTemplates.map((template: any, idx: number) => (
+                                                {emailTemplates.map((template, idx) => (
                                                     <div key={idx} className="p-3 rounded-lg border bg-muted/30">
                                                         <p className="text-sm font-medium mb-1">
                                                             Subject: {typeof template?.subject === "string" ? template.subject : "Untitled"}
@@ -800,7 +821,7 @@ const ContractDetails = () => {
                                         `Delete ${olderAnalyses.length} older analysis(es)? This cannot be undone.`
                                     );
                                     if (!ok) return;
-                                    deleteOlderAnalysesMutation.mutate(olderAnalyses.map((a: any) => a.id));
+                                    deleteOlderAnalysesMutation.mutate(olderAnalyses.map((a) => a.id));
                                 }}
                             >
                                 Delete older analyses
@@ -808,7 +829,7 @@ const ContractDetails = () => {
                         </CardHeader>
                         <CardContent>
                             <div className="space-y-3">
-                                {olderAnalyses.map((a: any) => (
+                                {olderAnalyses.map((a) => (
                                     <div
                                         key={a.id}
                                         className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3"

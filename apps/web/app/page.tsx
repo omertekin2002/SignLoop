@@ -7,7 +7,6 @@ import { ArrowRight, FileText, MessagesSquare } from "lucide-react";
 import { NumberTicker } from "@/components/number-ticker";
 import { TypingAnimation } from "@/components/typing-animation";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 const stats = [
@@ -41,11 +40,6 @@ export default function Home() {
           </div>
 
           <nav className="flex items-center gap-3">
-            {isSignedIn ? (
-              <Button asChild variant="secondary" size="sm" className="hidden sm:inline-flex bg-background/50 hover:bg-background/80 text-foreground border border-border/50 backdrop-blur-md transition-all">
-                <Link href="/dashboard">Dashboard</Link>
-              </Button>
-            ) : null}
             <Button asChild variant="ghost" size="sm" className="text-white hover:text-white/80 hover:bg-white/10 font-medium">
               <Link href={isSignedIn ? "/dashboard" : "/sign-in"}>
                 {isSignedIn ? "Open App" : "Get Started"}

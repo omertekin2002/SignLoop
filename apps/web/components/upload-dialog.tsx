@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import type { AxiosError } from "axios";
 import {
     Dialog,
     DialogContent,
@@ -15,6 +16,8 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api-client";
 import { Upload, File, Loader2 } from "lucide-react";
+
+type ApiError = AxiosError<{ message?: string }>;
 
 interface UploadDialogProps {
     children: React.ReactNode;
@@ -63,9 +66,10 @@ export function UploadDialog({ children }: UploadDialogProps) {
             setFile(null);
             setContractName("");
             queryClient.invalidateQueries({ queryKey: ["contracts"] });
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error(error);
-            toast.error(error.response?.data?.message || "Upload failed");
+            const apiError = error as ApiError;
+            toast.error(apiError.response?.data?.message || "Upload failed");
         } finally {
             setUploading(false);
         }

@@ -1,11 +1,13 @@
+import type { AnalysisResult } from '@/lib/schemas';
+
 export type Contract = {
   id: string;
   title: string;
   status: 'DRAFT' | 'ANALYZED';
   createdAt: string;
   text?: string; // Content of the contract
-  analyses?: any[];
-  latestAnalysis?: any;
+  analyses?: AnalysisResult[];
+  latestAnalysis?: AnalysisResult;
 };
 
 // Global store to persist across hot reloads in dev

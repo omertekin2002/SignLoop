@@ -579,7 +579,7 @@ export function parseStrictJson<T>(content: string): T {
 
 export async function analyzeText(
     text: string,
-    metadata?: any,
+    metadata?: { contractType?: string; region?: string },
     options?: { primaryModel?: string | null }
 ): Promise<{ result: AnalysisResult; provider: string; model: string }> {
     const prompt = `

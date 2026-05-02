@@ -20,7 +20,6 @@ import {
   MessagesSquare,
   PanelLeft,
   PanelLeftClose,
-  PanelLeftOpen,
   Plus,
   Settings,
   Trash2,

@@ -12,8 +12,8 @@ export async function POST(req: NextRequest) {
         const { result } = await analyzeText(text, metadata);
         return NextResponse.json({ result });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Analysis failed:', error);
-        return NextResponse.json({ error: error.message || 'Analysis failed' }, { status: 500 });
+        return NextResponse.json({ error: error instanceof Error ? error.message : 'Analysis failed' }, { status: 500 });
     }
 }
