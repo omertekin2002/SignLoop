@@ -13,6 +13,7 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  Clock,
   FileText,
   FolderOpen,
   Loader2,
@@ -185,6 +186,8 @@ const Dashboard = () => {
   const [selectedChatThreadId, setSelectedChatThreadId] = useState<string | null>(null);
   const [recentlyCreatedChatThreadId, setRecentlyCreatedChatThreadId] = useState<string | null>(null);
   const [recentlyDeletedChatThreadId, setRecentlyDeletedChatThreadId] = useState<string | null>(null);
+  const [isTemporaryChatSelected, setIsTemporaryChatSelected] = useState(false);
+  const [temporaryChatKey, setTemporaryChatKey] = useState(0);
 
   const { data: contracts, isLoading: loadingContracts } = useQuery({
     queryKey: ["contracts"],
@@ -229,9 +232,25 @@ const Dashboard = () => {
   const availableModels = settingsData?.availablePrimaryModels || [];
   const activeModel = settingsData?.primaryModel || availableModels[0] || "OpenRouter";
 
+  const selectSavedChatThread = (threadId: string) => {
+    setIsTemporaryChatSelected(false);
+    setSelectedChatThreadId(threadId);
+  };
+
   const selectNewChatThread = (threadId: string) => {
+    setIsTemporaryChatSelected(false);
     setRecentlyCreatedChatThreadId(threadId);
     setSelectedChatThreadId(threadId);
+  };
+
+  const selectTemporaryChat = () => {
+    setActiveTab("chat");
+    setOpenSections((previous) => ({ ...previous, chat: true }));
+    setRecentlyCreatedChatThreadId(null);
+    setRecentlyDeletedChatThreadId(null);
+    setSelectedChatThreadId(null);
+    setIsTemporaryChatSelected(true);
+    setTemporaryChatKey((key) => key + 1);
   };
 
   const addChatThreadToCache = (thread: ChatThreadSummary) => {
@@ -259,6 +278,10 @@ const Dashboard = () => {
   });
 
   useEffect(() => {
+    if (isTemporaryChatSelected) {
+      return;
+    }
+
     const candidateThreads = chatThreads?.filter((thread) => thread.id !== recentlyDeletedChatThreadId) || [];
     const hasSelectedCandidate = selectedChatThreadId
       ? candidateThreads.some((thread) => thread.id === selectedChatThreadId)
@@ -279,7 +302,13 @@ const Dashboard = () => {
     if (selectedChatThreadId !== fallbackThreadId) {
       setSelectedChatThreadId(fallbackThreadId);
     }
-  }, [chatThreads, recentlyCreatedChatThreadId, recentlyDeletedChatThreadId, selectedChatThreadId]);
+  }, [
+    chatThreads,
+    isTemporaryChatSelected,
+    recentlyCreatedChatThreadId,
+    recentlyDeletedChatThreadId,
+    selectedChatThreadId,
+  ]);
 
   const createChatMutation = useMutation({
     mutationFn: async () => {
@@ -515,8 +544,35 @@ const Dashboard = () => {
                         <Plus className="h-4 w-4" />
                       )}
                     </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      onClick={selectTemporaryChat}
+                      title="Temporary chat"
+                      aria-label="Temporary chat"
+                    >
+                      <Clock className="h-4 w-4" />
+                    </Button>
                   </div>
                   <CollapsibleContent className="mt-1 ml-3.5 mb-2 space-y-1 border-l pl-[1.65rem]">
+                    <button
+                      type="button"
+                      onClick={selectTemporaryChat}
+                      className={cn(
+                        "block w-full rounded-md px-3 py-2 text-left text-xs transition-colors",
+                        isTemporaryChatSelected
+                          ? "bg-accent text-accent-foreground"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      )}
+                    >
+                      <p className="flex items-center gap-1.5 truncate font-medium">
+                        <Clock className="h-3 w-3 shrink-0" />
+                        <span>Temporary chat</span>
+                      </p>
+                      <p className="mt-0.5 text-[10px] opacity-70">Not saved</p>
+                    </button>
                     {loadingChatThreads ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading chats...</p>
                     ) : !chatThreads || chatThreads.length === 0 ? (
@@ -536,7 +592,7 @@ const Dashboard = () => {
                             type="button"
                             onClick={() => {
                               setActiveTab("chat");
-                              setSelectedChatThreadId(thread.id);
+                              selectSavedChatThread(thread.id);
                             }}
                             className="min-w-0 flex-1 text-left"
                           >
@@ -620,16 +676,29 @@ const Dashboard = () => {
                 <PanelLeft className="h-5 w-5" />
               </Button>
               {activeTab === "chat" && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-10 w-10 text-muted-foreground hover:text-foreground hover:bg-muted"
-                  onClick={() => createChatMutation.mutate()}
-                  title="New chat"
-                >
-                  <Plus className="h-5 w-5" />
-                </Button>
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 text-muted-foreground hover:text-foreground hover:bg-muted"
+                    onClick={() => createChatMutation.mutate()}
+                    title="New chat"
+                  >
+                    <Plus className="h-5 w-5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 text-muted-foreground hover:text-foreground hover:bg-muted"
+                    onClick={selectTemporaryChat}
+                    title="Temporary chat"
+                    aria-label="Temporary chat"
+                  >
+                    <Clock className="h-5 w-5" />
+                  </Button>
+                </>
               )}
             </div>
           )}
@@ -816,7 +885,9 @@ const Dashboard = () => {
           {activeTab === "chat" ? (
             <div className="min-h-0 flex-1 overflow-hidden h-full flex flex-col bg-background/50">
               <ChatPanel
-                selectedThreadId={selectedChatThreadId}
+                selectedThreadId={isTemporaryChatSelected ? null : selectedChatThreadId}
+                temporary={isTemporaryChatSelected}
+                temporarySessionKey={temporaryChatKey}
                 onThreadSelected={(threadId) => {
                   if (threadId) {
                     selectNewChatThread(threadId);

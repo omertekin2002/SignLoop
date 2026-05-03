@@ -396,9 +396,16 @@ const ChatMessage = () => {
 type ChatPanelProps = {
   selectedThreadId?: string | null;
   onThreadSelected?: (threadId: string | null) => void;
+  temporary?: boolean;
+  temporarySessionKey?: number;
 };
 
-export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPanelProps) {
+export function ChatPanel({
+  selectedThreadId = null,
+  onThreadSelected,
+  temporary = false,
+  temporarySessionKey = 0,
+}: ChatPanelProps) {
   const queryClient = useQueryClient();
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const hydratedSignatureRef = useRef<string | null>(null);
@@ -421,6 +428,13 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
   });
 
   useEffect(() => {
+    if (temporary) {
+      if (activeThreadId !== null) {
+        setActiveThreadId(null);
+      }
+      return;
+    }
+
     if (!selectedThreadId) {
       if (activeThreadId !== null) {
         setActiveThreadId(null);
@@ -431,13 +445,13 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
     if (selectedThreadId !== activeThreadId) {
       setActiveThreadId(selectedThreadId);
     }
-  }, [selectedThreadId, activeThreadId]);
+  }, [activeThreadId, selectedThreadId, temporary]);
 
   const chatModel = useMemo<ChatModelAdapter>(
     () => ({
       run: async ({ messages, abortSignal }) => {
         let threadId = activeThreadId;
-        if (!threadId) {
+        if (!temporary && !threadId) {
           const createThreadResponse = await fetch("/api/chat/threads", {
             method: "POST",
             headers: {
@@ -469,8 +483,9 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            threadId,
+            threadId: temporary ? undefined : threadId,
             messages: payloadMessages,
+            temporary,
           }),
           signal: abortSignal,
         });
@@ -490,8 +505,10 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
           throw new Error(parseError(parsedPayload, response.status));
         }
 
-        queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
-        queryClient.invalidateQueries({ queryKey: ["chat-thread", threadId] });
+        if (!temporary) {
+          queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+          queryClient.invalidateQueries({ queryKey: ["chat-thread", threadId] });
+        }
 
         const parsedSuccess = parseSuccess(parsedPayload);
         return {
@@ -506,16 +523,31 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
         };
       },
     }),
-    [activeThreadId, onThreadSelected, queryClient]
+    [activeThreadId, onThreadSelected, queryClient, temporary]
   );
 
   const runtime = useLocalRuntime(chatModel);
   const isHydratingThread =
+    !temporary &&
     activeThreadId !== null &&
     activeThreadQuery.isLoading &&
     !newlyCreatedThreadIdsRef.current.has(activeThreadId);
 
   useEffect(() => {
+    if (!temporary) {
+      return;
+    }
+
+    runtime.thread.reset([]);
+    hydratedSignatureRef.current = `temporary:${temporarySessionKey}`;
+    newlyCreatedThreadIdsRef.current.clear();
+  }, [runtime, temporary, temporarySessionKey]);
+
+  useEffect(() => {
+    if (temporary) {
+      return;
+    }
+
     if (!activeThreadId) {
       runtime.thread.reset([]);
       hydratedSignatureRef.current = null;
@@ -557,6 +589,7 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
     activeThreadQuery.data,
     activeThreadQuery.isLoading,
     runtime,
+    temporary,
   ]);
 
   return (
@@ -589,6 +622,10 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
                         {activeThreadId ? (
                           <p className="text-sm text-muted-foreground leading-relaxed">
                             Start a conversation about reviewing your contracts, spotting clauses, or navigating negotiation points.
+                          </p>
+                        ) : temporary ? (
+                          <p className="text-sm text-muted-foreground leading-relaxed">
+                            Temporary chat is not saved to your history.
                           </p>
                         ) : (
                           <p className="text-sm text-muted-foreground leading-relaxed">
@@ -648,6 +685,8 @@ export function ChatPanel({ selectedThreadId = null, onThreadSelected }: ChatPan
               <div className="mx-auto mt-1.5 max-w-3xl text-center text-xs text-muted-foreground/80">
                 {isHydratingThread
                   ? "Conversation history is loading. Sending is disabled until it finishes."
+                  : temporary
+                    ? "Temporary chat is not saved. AI may produce inaccurate information."
                   : "AI may produce inaccurate information about laws or guidelines. Keep original records."}
               </div>
             </ComposerPrimitive.Root>

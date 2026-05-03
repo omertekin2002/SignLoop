@@ -37,6 +37,7 @@ Guidelines:
 type RequestPayload = {
   threadId?: unknown;
   messages?: unknown;
+  temporary?: unknown;
 };
 
 type SearchSource = {
@@ -118,9 +119,11 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
+    const isTemporaryChat = isObject(body) && body.temporary === true;
     const threadId =
       isObject(body) && typeof body.threadId === "string" ? body.threadId.trim() : "";
-    if (!threadId) {
+
+    if (!isTemporaryChat && !threadId) {
       return NextResponse.json({ error: "threadId is required." }, { status: 400 });
     }
 
@@ -156,27 +159,29 @@ export async function POST(req: Request) {
       webSearch?.sources ?? []
     );
 
-    try {
-      await appendChatMessagesToThread({
-        userId,
-        threadId,
-        messages: [
-          { role: "user", content: latestUserMessage.content },
-          { role: "assistant", content: assistantMessage },
-        ],
-      });
-    } catch (persistError) {
-      const persistMessage =
-        persistError instanceof Error ? persistError.message : "Failed to persist chat";
-      const status = persistMessage.includes("not found") ? 404 : 500;
-      return NextResponse.json({ error: persistMessage }, { status });
+    if (!isTemporaryChat) {
+      try {
+        await appendChatMessagesToThread({
+          userId,
+          threadId,
+          messages: [
+            { role: "user", content: latestUserMessage.content },
+            { role: "assistant", content: assistantMessage },
+          ],
+        });
+      } catch (persistError) {
+        const persistMessage =
+          persistError instanceof Error ? persistError.message : "Failed to persist chat";
+        const status = persistMessage.includes("not found") ? 404 : 500;
+        return NextResponse.json({ error: persistMessage }, { status });
+      }
     }
 
     return NextResponse.json({
       message: assistantMessage,
       provider,
       model,
-      mode: "chat",
+      mode: isTemporaryChat ? "temporary-chat" : "chat",
       webSearchQuery: webSearch?.query ?? null,
       webSearchAttempts: webSearch?.attemptedQueries ?? [],
       webSearchSuccessfulCount: webSearch?.successfulSearches ?? 0,
