@@ -186,6 +186,19 @@ function toRuntimeMessages(messages: ChatThreadMessage[]): ThreadMessageLike[] {
   }));
 }
 
+function createRuntimeMessage(
+  role: "user" | "assistant",
+  content: string,
+  idPrefix: string
+): ThreadMessageLike {
+  return {
+    id: `${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    role,
+    content,
+    createdAt: new Date(),
+  };
+}
+
 const UserTextPart = () => (
   <MessagePartPrimitive.Text component="p" className="whitespace-pre-wrap text-sm leading-relaxed" />
 );
@@ -508,6 +521,7 @@ type ChatPanelProps = {
   temporary?: boolean;
   temporarySessionKey?: number;
   landingHero?: boolean;
+  initialPrompt?: string;
 };
 
 export function ChatPanel({
@@ -516,10 +530,13 @@ export function ChatPanel({
   temporary = false,
   temporarySessionKey = 0,
   landingHero = false,
+  initialPrompt,
 }: ChatPanelProps) {
   const queryClient = useQueryClient();
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [isRunningInitialPrompt, setIsRunningInitialPrompt] = useState(false);
   const hydratedSignatureRef = useRef<string | null>(null);
+  const initialPromptSignatureRef = useRef<string | null>(null);
   const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
   const activeThreadQuery = useQuery({
     queryKey: ["chat-thread", activeThreadId],
@@ -660,6 +677,89 @@ export function ChatPanel({
   }, [runtime, temporary, temporarySessionKey]);
 
   useEffect(() => {
+    const prompt = initialPrompt?.trim();
+    if (!temporary || !prompt) {
+      return;
+    }
+
+    const signature = `temporary-prompt:${temporarySessionKey}:${prompt}`;
+    if (initialPromptSignatureRef.current === signature) {
+      return;
+    }
+
+    initialPromptSignatureRef.current = signature;
+    const abortController = new AbortController();
+    let settled = false;
+    const userMessage = createRuntimeMessage("user", prompt, "url-prompt");
+
+    runtime.thread.reset([userMessage]);
+    setIsRunningInitialPrompt(true);
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            temporary: true,
+            messages: [{ role: "user", content: prompt }],
+          }),
+          signal: abortController.signal,
+        });
+
+        const rawPayload = await response.text();
+        let parsedPayload: unknown = null;
+
+        if (rawPayload) {
+          try {
+            parsedPayload = JSON.parse(rawPayload);
+          } catch {
+            parsedPayload = null;
+          }
+        }
+
+        if (!response.ok) {
+          throw new Error(parseError(parsedPayload, response.status));
+        }
+
+        const parsedSuccess = parseSuccess(parsedPayload);
+        if (abortController.signal.aborted) {
+          return;
+        }
+
+        runtime.thread.reset([
+          userMessage,
+          createRuntimeMessage("assistant", parsedSuccess.message, "url-answer"),
+        ]);
+      } catch (error) {
+        if (abortController.signal.aborted) {
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : "Failed to generate a response.";
+        runtime.thread.reset([
+          userMessage,
+          createRuntimeMessage("assistant", message, "url-answer-error"),
+        ]);
+      } finally {
+        settled = true;
+        if (!abortController.signal.aborted) {
+          setIsRunningInitialPrompt(false);
+        }
+      }
+    })();
+
+    return () => {
+      abortController.abort();
+      if (!settled && initialPromptSignatureRef.current === signature) {
+        initialPromptSignatureRef.current = null;
+      }
+    };
+  }, [initialPrompt, runtime, temporary, temporarySessionKey]);
+
+  useEffect(() => {
     if (temporary) {
       return;
     }
@@ -777,8 +877,14 @@ export function ChatPanel({
                     "placeholder:text-muted-foreground",
                     "composer-input-no-scrollbar",
                   )}
-                  disabled={isHydratingThread}
-                  placeholder={isHydratingThread ? "Loading conversation..." : "Ask SignLoop..."}
+                  disabled={isHydratingThread || isRunningInitialPrompt}
+                  placeholder={
+                    isHydratingThread
+                      ? "Loading conversation..."
+                      : isRunningInitialPrompt
+                        ? "Answering..."
+                        : "Ask SignLoop..."
+                  }
                   submitMode="enter"
                   rows={1}
                 />
@@ -789,7 +895,7 @@ export function ChatPanel({
                       <Button
                         type="button"
                         size="icon"
-                        disabled={isHydratingThread}
+                        disabled={isHydratingThread || isRunningInitialPrompt}
                         className="h-8 w-8 shrink-0 rounded-full transition-transform hover:scale-105"
                       >
                         <Send className="h-4 w-4" />
@@ -811,6 +917,8 @@ export function ChatPanel({
               <div className="mx-auto mt-1.5 max-w-3xl text-center text-xs text-muted-foreground/80">
                 {isHydratingThread
                   ? "Conversation history is loading. Sending is disabled until it finishes."
+                  : isRunningInitialPrompt
+                    ? "Answering the temporary prompt from the URL."
                   : temporary
                     ? "Temporary chat is not saved. AI may produce inaccurate information."
                   : "AI may produce inaccurate information about laws or guidelines. Keep original records."}

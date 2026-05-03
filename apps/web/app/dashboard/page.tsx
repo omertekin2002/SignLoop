@@ -177,9 +177,14 @@ function getSettingsErrorMessage(error: unknown): string {
 type DashboardProps = {
   landingHero?: boolean;
   startTemporary?: boolean;
+  initialTemporaryPrompt?: string;
 };
 
-const Dashboard = ({ landingHero = false, startTemporary = false }: DashboardProps) => {
+const Dashboard = ({
+  landingHero = false,
+  startTemporary = false,
+  initialTemporaryPrompt,
+}: DashboardProps) => {
   const { user, isSignedIn } = useUser();
   const { signOut } = useClerk();
   const queryClient = useQueryClient();
@@ -982,13 +987,14 @@ const Dashboard = ({ landingHero = false, startTemporary = false }: DashboardPro
           {activeTab === "chat" ? (
             <div className="min-h-0 flex-1 overflow-hidden h-full flex flex-col bg-background/50">
               <ChatPanel
-                selectedThreadId={isTemporaryChatSelected ? null : selectedChatThreadId}
-                temporary={isTemporaryChatSelected}
-                temporarySessionKey={temporaryChatKey}
-                landingHero={landingHero}
-                onThreadSelected={(threadId) => {
-                  if (threadId) {
-                    selectNewChatThread(threadId);
+                        selectedThreadId={isTemporaryChatSelected ? null : selectedChatThreadId}
+                        temporary={isTemporaryChatSelected}
+                        temporarySessionKey={temporaryChatKey}
+                        landingHero={landingHero}
+                        initialPrompt={initialTemporaryPrompt}
+                        onThreadSelected={(threadId) => {
+                          if (threadId) {
+                            selectNewChatThread(threadId);
                     return;
                   }
 
