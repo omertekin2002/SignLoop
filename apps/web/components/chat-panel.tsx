@@ -37,6 +37,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { NumberTicker } from "@/components/number-ticker";
 import { TypingAnimation } from "@/components/typing-animation";
+import { AnimatedGridPattern } from "@/components/ui/animated-grid-pattern";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -414,15 +415,23 @@ function LandingHeroEmpty() {
   const [isHeroTitleComplete, setIsHeroTitleComplete] = useState(false);
 
   return (
-    <div className="light relative -mx-4 -my-6 isolate flex min-h-[calc(100vh-8.5rem)] flex-col overflow-hidden px-4 py-12 text-center sm:px-8 lg:py-16">
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 -z-20 bg-cover bg-center"
-        style={{ backgroundImage: "url('/background-landscape.png')" }}
+    <div className="light relative -mx-4 -my-6 isolate flex min-h-[calc(100vh-8.5rem)] flex-col overflow-hidden bg-[linear-gradient(180deg,#fbfbff_0%,#f7f3ff_44%,#eef4ff_100%)] px-4 py-12 text-center sm:px-8 lg:py-16">
+      <AnimatedGridPattern
+        width={38}
+        height={38}
+        numSquares={90}
+        maxOpacity={0.14}
+        duration={3.4}
+        repeatDelay={0.8}
+        className={cn(
+          "-z-20 fill-slate-900/[0.045] stroke-slate-900/[0.07]",
+          "[mask-image:radial-gradient(720px_circle_at_center,white,transparent)]",
+          "inset-x-0 inset-y-[-32%] h-[190%] skew-y-12",
+        )}
       />
       <div
         aria-hidden="true"
-        className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_80%_70%_at_50%_5%,rgba(255,255,255,0.18),rgba(255,255,255,0)_62%)]"
+        className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_33%,rgba(255,218,185,0.55),rgba(255,218,185,0)_26%),radial-gradient(circle_at_27%_20%,rgba(125,149,255,0.35),rgba(125,149,255,0)_32%),radial-gradient(circle_at_76%_16%,rgba(217,139,255,0.30),rgba(217,139,255,0)_34%)]"
       />
 
       <section className="mx-auto flex w-full max-w-[980px] flex-1 flex-col items-center justify-center gap-7">
@@ -467,16 +476,16 @@ function LandingHeroEmpty() {
               )}
               style={{ animationDelay: index === 0 ? "0.25s" : "0.35s" }}
             >
-              <div className="flex items-baseline gap-1 font-[family-name:var(--font-eb-garamond)] text-6xl font-normal leading-none tracking-normal text-white drop-shadow-sm sm:text-7xl md:text-8xl">
+              <div className="flex items-baseline gap-1 font-[family-name:var(--font-eb-garamond)] text-6xl font-normal leading-none tracking-normal text-slate-900/85 sm:text-7xl md:text-8xl">
                 <NumberTicker
                   start={isHeroTitleComplete}
                   delay={index * 140}
                   useGrouping={stat.value >= 1000}
                   value={stat.value}
                 />
-                <span className="ml-2 font-light text-white/45">+</span>
+                <span className="ml-2 font-light text-slate-900/25">+</span>
               </div>
-              <p className="text-xs font-medium uppercase tracking-[0.22em] text-white/70 sm:text-sm">
+              <p className="text-xs font-medium uppercase tracking-[0.22em] text-slate-600 sm:text-sm">
                 {stat.label}
               </p>
             </div>

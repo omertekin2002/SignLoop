@@ -179,6 +179,26 @@
   animation: fade-in-up 1s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+@keyframes signloop-grid-square-pulse {
+  0%,
+  15%,
+  100% {
+    opacity: 0;
+  }
+
+  35%,
+  60% {
+    opacity: var(--grid-square-opacity, 0.16);
+  }
+}
+
+.signloop-grid-square {
+  opacity: 0;
+  animation-name: signloop-grid-square-pulse;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
 @keyframes typingCursorBlink {
   0%,
   49% {
