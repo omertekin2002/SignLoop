@@ -183,6 +183,7 @@ const Dashboard = () => {
     chat: true,
   });
   const [selectedChatThreadId, setSelectedChatThreadId] = useState<string | null>(null);
+  const [recentlyCreatedChatThreadId, setRecentlyCreatedChatThreadId] = useState<string | null>(null);
   const [recentlyDeletedChatThreadId, setRecentlyDeletedChatThreadId] = useState<string | null>(null);
 
   const { data: contracts, isLoading: loadingContracts } = useQuery({
@@ -228,6 +229,21 @@ const Dashboard = () => {
   const availableModels = settingsData?.availablePrimaryModels || [];
   const activeModel = settingsData?.primaryModel || availableModels[0] || "OpenRouter";
 
+  const selectNewChatThread = (threadId: string) => {
+    setRecentlyCreatedChatThreadId(threadId);
+    setSelectedChatThreadId(threadId);
+  };
+
+  const addChatThreadToCache = (thread: ChatThreadSummary) => {
+    queryClient.setQueryData<ChatThreadSummary[]>(["chat-threads"], (current) => {
+      const existingThreads = current || [];
+      return [
+        thread,
+        ...existingThreads.filter((existingThread) => existingThread.id !== thread.id),
+      ];
+    });
+  };
+
   const updateModelMutation = useMutation({
     mutationFn: async (primaryModel: string) => {
       const response = await apiClient.put("/settings", { primaryModel });
@@ -249,6 +265,13 @@ const Dashboard = () => {
       : false;
 
     if (hasSelectedCandidate) {
+      if (selectedChatThreadId === recentlyCreatedChatThreadId) {
+        setRecentlyCreatedChatThreadId(null);
+      }
+      return;
+    }
+
+    if (selectedChatThreadId && selectedChatThreadId === recentlyCreatedChatThreadId) {
       return;
     }
 
@@ -256,7 +279,7 @@ const Dashboard = () => {
     if (selectedChatThreadId !== fallbackThreadId) {
       setSelectedChatThreadId(fallbackThreadId);
     }
-  }, [chatThreads, recentlyDeletedChatThreadId, selectedChatThreadId]);
+  }, [chatThreads, recentlyCreatedChatThreadId, recentlyDeletedChatThreadId, selectedChatThreadId]);
 
   const createChatMutation = useMutation({
     mutationFn: async () => {
@@ -276,7 +299,9 @@ const Dashboard = () => {
       return payload.data;
     },
     onSuccess: (thread) => {
-      setSelectedChatThreadId(thread.id);
+      setRecentlyDeletedChatThreadId(null);
+      addChatThreadToCache(thread);
+      selectNewChatThread(thread.id);
       setActiveTab("chat");
       setOpenSections((previous) => ({ ...previous, chat: true }));
       queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
@@ -792,7 +817,14 @@ const Dashboard = () => {
             <div className="min-h-0 flex-1 overflow-hidden h-full flex flex-col bg-background/50">
               <ChatPanel
                 selectedThreadId={selectedChatThreadId}
-                onThreadSelected={(threadId) => setSelectedChatThreadId(threadId)}
+                onThreadSelected={(threadId) => {
+                  if (threadId) {
+                    selectNewChatThread(threadId);
+                    return;
+                  }
+
+                  setSelectedChatThreadId(null);
+                }}
               />
             </div>
           ) : null}
