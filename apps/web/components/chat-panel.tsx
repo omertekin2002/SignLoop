@@ -415,45 +415,27 @@ function LandingHeroEmpty() {
   const [isHeroTitleComplete, setIsHeroTitleComplete] = useState(false);
 
   return (
-    <div className="light relative -mx-4 -my-6 isolate flex min-h-[calc(100vh-8.5rem)] flex-col overflow-hidden bg-[linear-gradient(180deg,#fbfbff_0%,#f7f3ff_44%,#eef4ff_100%)] px-4 py-12 text-center sm:px-8 lg:py-16">
-      <AnimatedGridPattern
-        width={38}
-        height={38}
-        numSquares={90}
-        maxOpacity={0.14}
-        duration={3.4}
-        repeatDelay={0.8}
-        className={cn(
-          "-z-20 fill-slate-900/[0.045] stroke-slate-900/[0.07]",
-          "[mask-image:radial-gradient(720px_circle_at_center,white,transparent)]",
-          "inset-x-0 inset-y-[-32%] h-[190%] skew-y-12",
-        )}
-      />
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_33%,rgba(255,218,185,0.55),rgba(255,218,185,0)_26%),radial-gradient(circle_at_27%_20%,rgba(125,149,255,0.35),rgba(125,149,255,0)_32%),radial-gradient(circle_at_76%_16%,rgba(217,139,255,0.30),rgba(217,139,255,0)_34%)]"
-      />
-
+    <div className="relative -mx-4 -my-6 flex min-h-[calc(100vh-8.5rem)] flex-col overflow-hidden px-4 py-12 text-center sm:px-8 lg:py-16">
       <section className="mx-auto flex w-full max-w-[980px] flex-1 flex-col items-center justify-center gap-7">
-        <div className="inline-flex items-center rounded-full border border-white/40 bg-white/50 px-3 py-1 text-sm font-medium text-slate-950 shadow-sm backdrop-blur">
-          <span className="mr-2 flex h-2 w-2 rounded-full bg-slate-700/70" />
+        <div className="inline-flex items-center rounded-full border border-white/40 bg-white/50 px-3 py-1 text-sm font-medium text-slate-950 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/10 dark:text-white">
+          <span className="mr-2 flex h-2 w-2 rounded-full bg-slate-700/70 dark:bg-white/60" />
           SignLoop is now in Beta
         </div>
 
         <div className="space-y-5">
-          <h1 className="min-h-[5em] whitespace-pre-wrap bg-gradient-to-br from-indigo-950 to-slate-700 bg-clip-text pb-3 font-[family-name:var(--font-eb-garamond)] text-4xl font-normal leading-normal tracking-tight text-transparent drop-shadow-sm sm:min-h-[2.5em] sm:text-5xl md:min-h-[2em] md:text-6xl lg:text-7xl">
+          <h1 className="min-h-[5em] whitespace-pre-wrap bg-gradient-to-br from-indigo-950 to-slate-700 bg-clip-text pb-3 font-[family-name:var(--font-eb-garamond)] text-4xl font-normal leading-normal tracking-tight text-transparent drop-shadow-sm dark:from-white dark:to-slate-300 sm:min-h-[2.5em] sm:text-5xl md:min-h-[2em] md:text-6xl lg:text-7xl">
             <TypingAnimation
               text={"Review contracts with precision.\nNot guesswork."}
               initialDelay={250}
               typeSpeed={40}
               persistCursor={false}
               onComplete={() => setIsHeroTitleComplete(true)}
-              className="inline-block whitespace-pre-wrap bg-gradient-to-br from-indigo-950 to-slate-700 bg-clip-text pb-4 text-transparent"
+              className="inline-block whitespace-pre-wrap bg-gradient-to-br from-indigo-950 to-slate-700 bg-clip-text pb-4 text-transparent dark:from-white dark:to-slate-300"
             />
           </h1>
           <div
             className={cn(
-              "mx-auto min-h-[4rem] max-w-[720px] text-lg leading-relaxed text-slate-600 opacity-0 sm:text-xl",
+              "mx-auto min-h-[4rem] max-w-[720px] text-lg leading-relaxed text-slate-600 opacity-0 dark:text-slate-300 sm:text-xl",
               isHeroTitleComplete && "animate-fade-in-up",
             )}
             style={{ animationDelay: "0.1s" }}
@@ -476,16 +458,16 @@ function LandingHeroEmpty() {
               )}
               style={{ animationDelay: index === 0 ? "0.25s" : "0.35s" }}
             >
-              <div className="flex items-baseline gap-1 font-[family-name:var(--font-eb-garamond)] text-6xl font-normal leading-none tracking-normal text-slate-900/85 sm:text-7xl md:text-8xl">
+              <div className="flex items-baseline gap-1 font-[family-name:var(--font-eb-garamond)] text-6xl font-normal leading-none tracking-normal text-slate-900/85 dark:text-white/90 sm:text-7xl md:text-8xl">
                 <NumberTicker
                   start={isHeroTitleComplete}
                   delay={index * 140}
                   useGrouping={stat.value >= 1000}
                   value={stat.value}
                 />
-                <span className="ml-2 font-light text-slate-900/25">+</span>
+                <span className="ml-2 font-light text-slate-900/25 dark:text-white/20">+</span>
               </div>
-              <p className="text-xs font-medium uppercase tracking-[0.22em] text-slate-600 sm:text-sm">
+              <p className="text-xs font-medium uppercase tracking-[0.22em] text-slate-600 dark:text-slate-400 sm:text-sm">
                 {stat.label}
               </p>
             </div>
@@ -493,6 +475,30 @@ function LandingHeroEmpty() {
         </div>
       </section>
     </div>
+  );
+}
+
+function LandingGridBackdrop() {
+  return (
+    <>
+      <AnimatedGridPattern
+        width={38}
+        height={38}
+        numSquares={90}
+        maxOpacity={0.14}
+        duration={3.4}
+        repeatDelay={0.8}
+        className={cn(
+          "-z-20 fill-slate-900/[0.045] stroke-slate-900/[0.07] dark:fill-white/[0.035] dark:stroke-white/[0.055]",
+          "[mask-image:radial-gradient(720px_circle_at_center,white,transparent)]",
+          "inset-x-0 inset-y-[-32%] h-[190%] skew-y-12",
+        )}
+      />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_33%,rgba(255,218,185,0.55),rgba(255,218,185,0)_26%),radial-gradient(circle_at_27%_20%,rgba(125,149,255,0.35),rgba(125,149,255,0)_32%),radial-gradient(circle_at_76%_16%,rgba(217,139,255,0.30),rgba(217,139,255,0)_34%)] dark:bg-[radial-gradient(circle_at_50%_28%,rgba(80,62,137,0.28),rgba(80,62,137,0)_28%),radial-gradient(circle_at_25%_16%,rgba(42,84,143,0.30),rgba(42,84,143,0)_35%),radial-gradient(circle_at_80%_20%,rgba(96,50,108,0.26),rgba(96,50,108,0)_36%)]"
+      />
+    </>
   );
 }
 
@@ -703,7 +709,13 @@ export function ChatPanel({
   ]);
 
   return (
-    <Card className="relative flex h-full min-h-0 w-full flex-col overflow-hidden rounded-none border-0 bg-transparent shadow-none sm:bg-background/50 sm:backdrop-blur-md">
+    <Card
+      className={cn(
+        "relative isolate flex h-full min-h-0 w-full flex-col overflow-hidden rounded-none border-0 bg-transparent shadow-none sm:bg-background/50 sm:backdrop-blur-md",
+        temporary && landingHero && "bg-[linear-gradient(180deg,#fbfbff_0%,#f7f3ff_44%,#eef4ff_100%)] dark:bg-[linear-gradient(180deg,#090a12_0%,#0d1020_48%,#080a10_100%)] sm:bg-[linear-gradient(180deg,#fbfbff_0%,#f7f3ff_44%,#eef4ff_100%)] sm:dark:bg-[linear-gradient(180deg,#090a12_0%,#0d1020_48%,#080a10_100%)]",
+      )}
+    >
+      {temporary && landingHero ? <LandingGridBackdrop /> : null}
       <CardContent className="flex h-full min-h-0 flex-1 flex-col p-0 sm:p-0">
         <AssistantRuntimeProvider runtime={runtime}>
           <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col overflow-hidden">
