@@ -26,6 +26,10 @@ const ebGaramond = EB_Garamond({
 export const metadata: Metadata = {
   title: "SignLoop",
   description: "AI Contract Analysis",
+  icons: {
+    icon: [{ url: "/favicon.png", type: "image/png" }],
+    apple: [{ url: "/apple-touch-icon.png", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({
