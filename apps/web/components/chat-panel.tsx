@@ -22,20 +22,37 @@ import {
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 import {
+  Bot,
   Download,
+  FileText,
   Loader2,
+  MessagesSquare,
   Send,
-  Square,
   Sparkles,
-  Bot
+  Square,
 } from "lucide-react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import { NumberTicker } from "@/components/number-ticker";
+import { TypingAnimation } from "@/components/typing-animation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+
+const landingStats = [
+  {
+    label: "Contracts Analyzed",
+    value: 150,
+    icon: FileText,
+  },
+  {
+    label: "Chat Interactions",
+    value: 2000,
+    icon: MessagesSquare,
+  },
+] as const;
 
 type ChatApiMessage = {
   role: "system" | "user" | "assistant";
@@ -393,11 +410,89 @@ const ChatMessage = () => {
   );
 };
 
+function LandingHeroEmpty() {
+  const [isHeroTitleComplete, setIsHeroTitleComplete] = useState(false);
+
+  return (
+    <div className="light relative -mx-4 -my-6 isolate flex min-h-[calc(100vh-8.5rem)] flex-col overflow-hidden px-4 py-12 text-center sm:px-8 lg:py-16">
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 -z-20 bg-cover bg-center"
+        style={{ backgroundImage: "url('/background-landscape.png')" }}
+      />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_80%_70%_at_50%_5%,rgba(255,255,255,0.18),rgba(255,255,255,0)_62%)]"
+      />
+
+      <section className="mx-auto flex w-full max-w-[980px] flex-1 flex-col items-center justify-center gap-7">
+        <div className="inline-flex items-center rounded-full border border-white/40 bg-white/50 px-3 py-1 text-sm font-medium text-slate-950 shadow-sm backdrop-blur">
+          <span className="mr-2 flex h-2 w-2 rounded-full bg-slate-700/70" />
+          SignLoop is now in Beta
+        </div>
+
+        <div className="space-y-5">
+          <h1 className="min-h-[5em] whitespace-pre-wrap bg-gradient-to-br from-indigo-950 to-slate-700 bg-clip-text pb-3 font-[family-name:var(--font-eb-garamond)] text-4xl font-normal leading-normal tracking-tight text-transparent drop-shadow-sm sm:min-h-[2.5em] sm:text-5xl md:min-h-[2em] md:text-6xl lg:text-7xl">
+            <TypingAnimation
+              text={"Review contracts with precision.\nNot guesswork."}
+              initialDelay={250}
+              typeSpeed={40}
+              persistCursor={false}
+              onComplete={() => setIsHeroTitleComplete(true)}
+              className="inline-block whitespace-pre-wrap bg-gradient-to-br from-indigo-950 to-slate-700 bg-clip-text pb-4 text-transparent"
+            />
+          </h1>
+          <div
+            className={cn(
+              "mx-auto min-h-[4rem] max-w-[720px] text-lg leading-relaxed text-slate-600 opacity-0 sm:text-xl",
+              isHeroTitleComplete && "animate-fade-in-up",
+            )}
+            style={{ animationDelay: "0.1s" }}
+          >
+            <p>
+              SignLoop combines document ingestion, structured analysis workflows, model routing, and chat into one legal workspace.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto w-full max-w-5xl pb-2">
+        <div className="grid grid-cols-2 gap-4">
+          {landingStats.map((stat, index) => (
+            <div
+              key={stat.label}
+              className={cn(
+                "flex flex-col items-center justify-center gap-5 opacity-0",
+                isHeroTitleComplete && "animate-fade-in-up",
+              )}
+              style={{ animationDelay: index === 0 ? "0.25s" : "0.35s" }}
+            >
+              <div className="flex items-baseline gap-1 font-[family-name:var(--font-eb-garamond)] text-6xl font-normal leading-none tracking-normal text-white drop-shadow-sm sm:text-7xl md:text-8xl">
+                <NumberTicker
+                  start={isHeroTitleComplete}
+                  delay={index * 140}
+                  useGrouping={stat.value >= 1000}
+                  value={stat.value}
+                />
+                <span className="ml-2 font-light text-white/45">+</span>
+              </div>
+              <p className="text-xs font-medium uppercase tracking-[0.22em] text-white/70 sm:text-sm">
+                {stat.label}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 type ChatPanelProps = {
   selectedThreadId?: string | null;
   onThreadSelected?: (threadId: string | null) => void;
   temporary?: boolean;
   temporarySessionKey?: number;
+  landingHero?: boolean;
 };
 
 export function ChatPanel({
@@ -405,6 +500,7 @@ export function ChatPanel({
   onThreadSelected,
   temporary = false,
   temporarySessionKey = 0,
+  landingHero = false,
 }: ChatPanelProps) {
   const queryClient = useQueryClient();
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -538,8 +634,13 @@ export function ChatPanel({
       return;
     }
 
+    const signature = `temporary:${temporarySessionKey}`;
+    if (hydratedSignatureRef.current === signature) {
+      return;
+    }
+
     runtime.thread.reset([]);
-    hydratedSignatureRef.current = `temporary:${temporarySessionKey}`;
+    hydratedSignatureRef.current = signature;
     newlyCreatedThreadIdsRef.current.clear();
   }, [runtime, temporary, temporarySessionKey]);
 
@@ -613,27 +714,31 @@ export function ChatPanel({
               ) : (
                 <>
                   <ThreadPrimitive.Empty>
-                    <div className="flex h-full flex-col items-center justify-center space-y-4 text-center pb-20">
-                      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                        <Sparkles className="h-8 w-8" />
+                    {temporary && landingHero ? (
+                      <LandingHeroEmpty />
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center space-y-4 text-center pb-20">
+                        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                          <Sparkles className="h-8 w-8" />
+                        </div>
+                        <div className="space-y-2 max-w-[400px]">
+                          <h2 className="text-xl font-semibold tracking-tight">How can I help you today?</h2>
+                          {activeThreadId ? (
+                            <p className="text-sm text-muted-foreground leading-relaxed">
+                              Start a conversation about reviewing your contracts, spotting clauses, or navigating negotiation points.
+                            </p>
+                          ) : temporary ? (
+                            <p className="text-sm text-muted-foreground leading-relaxed">
+                              Temporary chat is not saved to your history.
+                            </p>
+                          ) : (
+                            <p className="text-sm text-muted-foreground leading-relaxed">
+                              Select an existing chat from the sidebar or click <span className="font-medium text-foreground">The &quot;+&quot; Button</span> to start.
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      <div className="space-y-2 max-w-[400px]">
-                        <h2 className="text-xl font-semibold tracking-tight">How can I help you today?</h2>
-                        {activeThreadId ? (
-                          <p className="text-sm text-muted-foreground leading-relaxed">
-                            Start a conversation about reviewing your contracts, spotting clauses, or navigating negotiation points.
-                          </p>
-                        ) : temporary ? (
-                          <p className="text-sm text-muted-foreground leading-relaxed">
-                            Temporary chat is not saved to your history.
-                          </p>
-                        ) : (
-                          <p className="text-sm text-muted-foreground leading-relaxed">
-                            Select an existing chat from the sidebar or click <span className="font-medium text-foreground">The &quot;+&quot; Button</span> to start.
-                          </p>
-                        )}
-                      </div>
-                    </div>
+                    )}
                   </ThreadPrimitive.Empty>
 
                   <div className="mx-auto w-full max-w-4xl">

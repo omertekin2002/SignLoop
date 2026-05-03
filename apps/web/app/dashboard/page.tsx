@@ -17,6 +17,7 @@ import {
   FileText,
   FolderOpen,
   Loader2,
+  LogIn,
   LogOut,
   MessagesSquare,
   PanelLeft,
@@ -130,9 +131,11 @@ function ModelSelector({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
+          disabled={disabled}
           className={cn(
             "group flex items-center gap-1.5 rounded-xl px-3 py-2 text-lg font-semibold transition-colors hover:bg-muted/50",
-            !showBrand && "text-base"
+            !showBrand && "text-base",
+            disabled && "cursor-default opacity-80 hover:bg-transparent"
           )}
         >
           {showBrand ? <SignLoopWordmark /> : null}
@@ -171,10 +174,16 @@ function getSettingsErrorMessage(error: unknown): string {
   return axiosError?.response?.data?.error || "Failed to save settings";
 }
 
-const Dashboard = () => {
-  const { user } = useUser();
+type DashboardProps = {
+  landingHero?: boolean;
+  startTemporary?: boolean;
+};
+
+const Dashboard = ({ landingHero = false, startTemporary = false }: DashboardProps) => {
+  const { user, isSignedIn } = useUser();
   const { signOut } = useClerk();
   const queryClient = useQueryClient();
+  const canUseSavedWorkspace = isSignedIn === true;
   const [contractToDelete, setContractToDelete] = useState<Contract | null>(null);
   const [activeTab, setActiveTab] = useState<DashboardTab>("chat");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -186,7 +195,7 @@ const Dashboard = () => {
   const [selectedChatThreadId, setSelectedChatThreadId] = useState<string | null>(null);
   const [recentlyCreatedChatThreadId, setRecentlyCreatedChatThreadId] = useState<string | null>(null);
   const [recentlyDeletedChatThreadId, setRecentlyDeletedChatThreadId] = useState<string | null>(null);
-  const [isTemporaryChatSelected, setIsTemporaryChatSelected] = useState(false);
+  const [isTemporaryChatSelected, setIsTemporaryChatSelected] = useState(startTemporary);
   const [temporaryChatKey, setTemporaryChatKey] = useState(0);
 
   const { data: contracts, isLoading: loadingContracts } = useQuery({
@@ -195,6 +204,7 @@ const Dashboard = () => {
       const response = await apiClient.get<{ data: Contract[] }>("/contracts");
       return response.data.data || [];
     },
+    enabled: canUseSavedWorkspace,
   });
 
   const { data: projects, isLoading: loadingProjects } = useQuery({
@@ -203,6 +213,7 @@ const Dashboard = () => {
       const response = await apiClient.get<{ data: Project[] }>("/projects");
       return response.data.data || [];
     },
+    enabled: canUseSavedWorkspace,
   });
 
   const { data: chatThreads, isLoading: loadingChatThreads } = useQuery({
@@ -219,6 +230,7 @@ const Dashboard = () => {
 
       return payload?.data || [];
     },
+    enabled: canUseSavedWorkspace,
   });
 
   const { data: settingsData } = useQuery({
@@ -227,10 +239,13 @@ const Dashboard = () => {
       const response = await apiClient.get<SettingsResponse>("/settings");
       return response.data;
     },
+    enabled: canUseSavedWorkspace,
   });
 
   const availableModels = settingsData?.availablePrimaryModels || [];
-  const activeModel = settingsData?.primaryModel || availableModels[0] || "OpenRouter";
+  const activeModel = canUseSavedWorkspace
+    ? settingsData?.primaryModel || availableModels[0] || "OpenRouter"
+    : "Temporary chat";
 
   const selectSavedChatThread = (threadId: string) => {
     setIsTemporaryChatSelected(false);
@@ -261,6 +276,34 @@ const Dashboard = () => {
         ...existingThreads.filter((existingThread) => existingThread.id !== thread.id),
       ];
     });
+  };
+
+  const renderLoginRequired = (resource: "contracts" | "projects") => {
+    const isContracts = resource === "contracts";
+
+    return (
+      <div className="flex min-h-[400px] flex-col items-center justify-center rounded-xl border border-dashed bg-muted/10 px-4 text-center">
+        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+          {isContracts ? (
+            <FileText className="h-8 w-8 text-muted-foreground" />
+          ) : (
+            <FolderOpen className="h-8 w-8 text-muted-foreground" />
+          )}
+        </div>
+        <h3 className="text-xl font-semibold text-foreground">
+          Log in to use {isContracts ? "contracts" : "projects"}
+        </h3>
+        <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+          Temporary chat works without an account. Saved {isContracts ? "contract analysis" : "project workspaces"} require login.
+        </p>
+        <Button asChild className="mt-8">
+          <Link href="/sign-in">
+            <LogIn className="mr-2 h-4 w-4" />
+            Log in
+          </Link>
+        </Button>
+      </div>
+    );
   };
 
   const updateModelMutation = useMutation({
@@ -398,8 +441,13 @@ const Dashboard = () => {
                 <button
                   type="button"
                   className="flex items-center rounded-xl px-2 py-1 text-left transition-colors hover:bg-muted/50"
-                  onClick={() => setActiveTab("contracts")}
-                  aria-label="Open contracts"
+                  onClick={() => {
+                    setActiveTab("chat");
+                    if (!canUseSavedWorkspace) {
+                      selectTemporaryChat();
+                    }
+                  }}
+                  aria-label="Open chat"
                 >
                   <SignLoopWordmark className="text-lg" />
                 </button>
@@ -442,7 +490,9 @@ const Dashboard = () => {
                     </button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-1 ml-3.5 mb-2 space-y-1 border-l pl-[1.65rem]">
-                    {loadingContracts ? (
+                    {!canUseSavedWorkspace ? (
+                      <p className="px-3 py-1.5 text-xs text-muted-foreground">Log in to view contracts</p>
+                    ) : loadingContracts ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading contracts...</p>
                     ) : standaloneContracts.length === 0 ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">No standalone contracts</p>
@@ -484,7 +534,9 @@ const Dashboard = () => {
                     </button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-1 ml-3.5 mb-2 space-y-1 border-l pl-[1.65rem]">
-                    {loadingProjects ? (
+                    {!canUseSavedWorkspace ? (
+                      <p className="px-3 py-1.5 text-xs text-muted-foreground">Log in to view projects</p>
+                    ) : loadingProjects ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading projects...</p>
                     ) : !projects || projects.length === 0 ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">No projects yet</p>
@@ -533,12 +585,19 @@ const Dashboard = () => {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
-                      onClick={() => createChatMutation.mutate()}
-                      disabled={createChatMutation.isPending}
+                      onClick={() => {
+                        if (canUseSavedWorkspace) {
+                          createChatMutation.mutate();
+                          return;
+                        }
+
+                        selectTemporaryChat();
+                      }}
+                      disabled={canUseSavedWorkspace && createChatMutation.isPending}
                       title="New chat"
                       aria-label="New chat"
                     >
-                      {createChatMutation.isPending ? (
+                      {canUseSavedWorkspace && createChatMutation.isPending ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <Plus className="h-4 w-4" />
@@ -573,7 +632,9 @@ const Dashboard = () => {
                       </p>
                       <p className="mt-0.5 text-[10px] opacity-70">Not saved</p>
                     </button>
-                    {loadingChatThreads ? (
+                    {!canUseSavedWorkspace ? (
+                      <p className="px-3 py-1.5 text-xs text-muted-foreground">Log in to save chats</p>
+                    ) : loadingChatThreads ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">Loading chats...</p>
                     ) : !chatThreads || chatThreads.length === 0 ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">No chats yet</p>
@@ -632,22 +693,33 @@ const Dashboard = () => {
 
             <div className="border-t p-3">
               <div className="space-y-1">
-                <Button asChild variant="ghost" className="w-full justify-start text-muted-foreground hover:text-foreground">
-                  <Link href="/settings" aria-label="Settings">
-                    <Settings className="mr-3 h-4 w-4" />
-                    <span>Settings</span>
-                  </Link>
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  aria-label="Sign out"
-                  className="w-full justify-start text-muted-foreground hover:text-destructive"
-                  onClick={() => signOut()}
-                >
-                  <LogOut className="mr-3 h-4 w-4" />
-                  <span>Sign out</span>
-                </Button>
+                {canUseSavedWorkspace ? (
+                  <>
+                    <Button asChild variant="ghost" className="w-full justify-start text-muted-foreground hover:text-foreground">
+                      <Link href="/settings" aria-label="Settings">
+                        <Settings className="mr-3 h-4 w-4" />
+                        <span>Settings</span>
+                      </Link>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      aria-label="Sign out"
+                      className="w-full justify-start text-muted-foreground hover:text-destructive"
+                      onClick={() => signOut()}
+                    >
+                      <LogOut className="mr-3 h-4 w-4" />
+                      <span>Sign out</span>
+                    </Button>
+                  </>
+                ) : (
+                  <Button asChild variant="ghost" className="w-full justify-start text-muted-foreground hover:text-foreground">
+                    <Link href="/sign-in" aria-label="Log in">
+                      <LogIn className="mr-3 h-4 w-4" />
+                      <span>Log in</span>
+                    </Link>
+                  </Button>
+                )}
               </div>
             </div>
           </>
@@ -682,7 +754,14 @@ const Dashboard = () => {
                     variant="ghost"
                     size="icon"
                     className="h-10 w-10 text-muted-foreground hover:text-foreground hover:bg-muted"
-                    onClick={() => createChatMutation.mutate()}
+                    onClick={() => {
+                      if (canUseSavedWorkspace) {
+                        createChatMutation.mutate();
+                        return;
+                      }
+
+                      selectTemporaryChat();
+                    }}
                     title="New chat"
                   >
                     <Plus className="h-5 w-5" />
@@ -708,8 +787,11 @@ const Dashboard = () => {
               <ModelSelector
                 activeModel={activeModel}
                 availableModels={availableModels}
-                disabled={updateModelMutation.isPending}
-                onSelect={(model) => updateModelMutation.mutate(model)}
+                disabled={!canUseSavedWorkspace || updateModelMutation.isPending}
+                onSelect={(model) => {
+                  if (!canUseSavedWorkspace) return;
+                  updateModelMutation.mutate(model);
+                }}
                 showBrand={!sidebarOpen}
               />
             )}
@@ -721,10 +803,21 @@ const Dashboard = () => {
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-6 pt-2">
               <div>
                 <h1 className="text-3xl font-bold tracking-tight">{tabLabels[activeTab]}</h1>
-                <p className="mt-1 text-sm text-muted-foreground">Welcome back, {user?.firstName || "there"}</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {canUseSavedWorkspace
+                    ? `Welcome back, ${user?.firstName || "there"}`
+                    : "Log in to create and manage saved workspace items."}
+                </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {activeTab === "contracts" ? (
+                {!canUseSavedWorkspace ? (
+                  <Button asChild>
+                    <Link href="/sign-in">
+                      <LogIn className="mr-2 h-4 w-4" />
+                      Log in
+                    </Link>
+                  </Button>
+                ) : activeTab === "contracts" ? (
                   <UploadDialog>
                     <Button>
                       <Plus className="mr-2 h-4 w-4" />
@@ -744,7 +837,9 @@ const Dashboard = () => {
           )}
 
           {activeTab === "contracts" ? (
-            loadingContracts ? (
+            !canUseSavedWorkspace ? (
+              renderLoginRequired("contracts")
+            ) : loadingContracts ? (
               <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {[1, 2, 3].map((item) => (
                   <Skeleton key={item} className="h-44 w-full rounded-xl" />
@@ -817,7 +912,9 @@ const Dashboard = () => {
           ) : null}
 
           {activeTab === "projects" ? (
-            loadingProjects ? (
+            !canUseSavedWorkspace ? (
+              renderLoginRequired("projects")
+            ) : loadingProjects ? (
               <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {[1, 2, 3].map((item) => (
                   <Skeleton key={item} className="h-44 w-full rounded-xl" />
@@ -888,6 +985,7 @@ const Dashboard = () => {
                 selectedThreadId={isTemporaryChatSelected ? null : selectedChatThreadId}
                 temporary={isTemporaryChatSelected}
                 temporarySessionKey={temporaryChatKey}
+                landingHero={landingHero}
                 onThreadSelected={(threadId) => {
                   if (threadId) {
                     selectNewChatThread(threadId);

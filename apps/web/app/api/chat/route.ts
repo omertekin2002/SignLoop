@@ -112,14 +112,15 @@ function appendWebSourcesToMessage(
 }
 
 export async function POST(req: Request) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
     const body = await req.json();
     const isTemporaryChat = isObject(body) && body.temporary === true;
+    const { userId } = await auth();
+
+    if (!userId && !isTemporaryChat) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const threadId =
       isObject(body) && typeof body.threadId === "string" ? body.threadId.trim() : "";
 
@@ -140,7 +141,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const settings = await getUserSettingsByUserId(userId);
+    const settings = userId ? await getUserSettingsByUserId(userId) : null;
     const personality =
       settings?.personality && isAllowedPersonalityMode(settings.personality)
         ? settings.personality
@@ -160,6 +161,10 @@ export async function POST(req: Request) {
     );
 
     if (!isTemporaryChat) {
+      if (!userId) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+
       try {
         await appendChatMessagesToThread({
           userId,
