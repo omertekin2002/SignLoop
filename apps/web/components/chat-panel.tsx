@@ -67,6 +67,23 @@ type ChatApiSuccess = {
   mode?: string;
 };
 
+type ChatApiStreamEvent =
+  | {
+      type: "delta";
+      text: string;
+    }
+  | ({
+      type: "done";
+    } & ChatApiSuccess)
+  | {
+      type: "error";
+      error: string;
+    };
+
+type ChatApiStreamSnapshot = ChatApiSuccess & {
+  done: boolean;
+};
+
 type ChatThreadMessage = {
   id: string;
   role: "system" | "user" | "assistant";
@@ -175,6 +192,123 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
     model: typeof payload.model === "string" ? payload.model : undefined,
     mode: typeof payload.mode === "string" ? payload.mode : undefined,
   };
+}
+
+function parseStreamEvent(payload: unknown): ChatApiStreamEvent {
+  if (!isRecord(payload) || typeof payload.type !== "string") {
+    throw new Error("Chat stream included an invalid event.");
+  }
+
+  if (payload.type === "delta") {
+    return {
+      type: "delta",
+      text: typeof payload.text === "string" ? payload.text : "",
+    };
+  }
+
+  if (payload.type === "done") {
+    return {
+      type: "done",
+      ...parseSuccess(payload),
+    };
+  }
+
+  if (payload.type === "error") {
+    return {
+      type: "error",
+      error:
+        typeof payload.error === "string" && payload.error.trim()
+          ? payload.error
+          : "Chat request failed.",
+    };
+  }
+
+  throw new Error(`Unknown chat stream event: ${payload.type}`);
+}
+
+function parseJsonPayload(rawPayload: string): unknown {
+  if (!rawPayload) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(rawPayload);
+  } catch {
+    return null;
+  }
+}
+
+async function* readChatApiResponse(response: Response): AsyncGenerator<ChatApiStreamSnapshot> {
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (!response.ok || !response.body || !contentType.includes("application/x-ndjson")) {
+    const parsedPayload = parseJsonPayload(await response.text());
+
+    if (!response.ok) {
+      throw new Error(parseError(parsedPayload, response.status));
+    }
+
+    yield {
+      ...parseSuccess(parsedPayload),
+      done: true,
+    };
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let accumulatedMessage = "";
+  let completed = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done });
+    }
+    if (done) {
+      buffer += decoder.decode();
+    }
+
+    const lines = buffer.split("\n");
+    buffer = done ? "" : lines.pop() ?? "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      const event = parseStreamEvent(JSON.parse(trimmed));
+
+      if (event.type === "error") {
+        throw new Error(event.error);
+      }
+
+      if (event.type === "delta") {
+        if (!event.text) continue;
+        accumulatedMessage += event.text;
+        yield {
+          message: accumulatedMessage,
+          done: false,
+        };
+        continue;
+      }
+
+      completed = true;
+      yield {
+        ...event,
+        message: event.message || accumulatedMessage,
+        done: true,
+      };
+      return;
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (!completed) {
+    throw new Error("Chat stream ended before completion.");
+  }
 }
 
 function toRuntimeMessages(messages: ChatThreadMessage[]): ThreadMessageLike[] {
@@ -577,7 +711,7 @@ export function ChatPanel({
 
   const chatModel = useMemo<ChatModelAdapter>(
     () => ({
-      run: async ({ messages, abortSignal }) => {
+      run: async function* ({ messages, abortSignal }) {
         let threadId = activeThreadId;
         if (!temporary && !threadId) {
           const createThreadResponse = await fetch("/api/chat/threads", {
@@ -614,41 +748,40 @@ export function ChatPanel({
             threadId: temporary ? undefined : threadId,
             messages: payloadMessages,
             temporary,
+            stream: true,
           }),
           signal: abortSignal,
         });
 
-        const rawPayload = await response.text();
-        let parsedPayload: unknown = null;
+        let completedSnapshot: ChatApiStreamSnapshot | null = null;
 
-        if (rawPayload) {
-          try {
-            parsedPayload = JSON.parse(rawPayload);
-          } catch {
-            parsedPayload = null;
-          }
+        for await (const snapshot of readChatApiResponse(response)) {
+          completedSnapshot = snapshot.done ? snapshot : completedSnapshot;
+          yield {
+            content: [{ type: "text", text: snapshot.message }] as const,
+            status: snapshot.done
+              ? ({ type: "complete", reason: "stop" } as const)
+              : undefined,
+            metadata: snapshot.done
+              ? {
+                  custom: {
+                    provider: snapshot.provider ?? null,
+                    model: snapshot.model ?? null,
+                    mode: snapshot.mode ?? null,
+                  },
+                }
+              : undefined,
+          };
         }
 
-        if (!response.ok) {
-          throw new Error(parseError(parsedPayload, response.status));
+        if (!completedSnapshot) {
+          throw new Error("Chat stream ended before completion.");
         }
 
         if (!temporary) {
           queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
           queryClient.invalidateQueries({ queryKey: ["chat-thread", threadId] });
         }
-
-        const parsedSuccess = parseSuccess(parsedPayload);
-        return {
-          content: [{ type: "text", text: parsedSuccess.message }] as const,
-          metadata: {
-            custom: {
-              provider: parsedSuccess.provider ?? null,
-              model: parsedSuccess.model ?? null,
-              mode: parsedSuccess.mode ?? null,
-            },
-          },
-        };
       },
     }),
     [activeThreadId, onThreadSelected, queryClient, temporary]
@@ -705,34 +838,32 @@ export function ChatPanel({
           body: JSON.stringify({
             temporary: true,
             messages: [{ role: "user", content: prompt }],
+            stream: true,
           }),
           signal: abortController.signal,
         });
 
-        const rawPayload = await response.text();
-        let parsedPayload: unknown = null;
+        const assistantMessage = createRuntimeMessage("assistant", "", "url-answer");
+        let completedSnapshot: ChatApiStreamSnapshot | null = null;
 
-        if (rawPayload) {
-          try {
-            parsedPayload = JSON.parse(rawPayload);
-          } catch {
-            parsedPayload = null;
+        for await (const snapshot of readChatApiResponse(response)) {
+          if (abortController.signal.aborted) {
+            return;
           }
+
+          completedSnapshot = snapshot.done ? snapshot : completedSnapshot;
+          runtime.thread.reset([
+            userMessage,
+            {
+              ...assistantMessage,
+              content: snapshot.message,
+            },
+          ]);
         }
 
-        if (!response.ok) {
-          throw new Error(parseError(parsedPayload, response.status));
+        if (!completedSnapshot) {
+          throw new Error("Chat stream ended before completion.");
         }
-
-        const parsedSuccess = parseSuccess(parsedPayload);
-        if (abortController.signal.aborted) {
-          return;
-        }
-
-        runtime.thread.reset([
-          userMessage,
-          createRuntimeMessage("assistant", parsedSuccess.message, "url-answer"),
-        ]);
       } catch (error) {
         if (abortController.signal.aborted) {
           return;

@@ -40,10 +40,22 @@ export type ChatReply = {
     } | null;
 };
 
+export type ChatReplyStreamChunk =
+    | {
+          type: 'delta';
+          text: string;
+      }
+    | {
+          type: 'done';
+          reply: ChatReply;
+      };
+
 type ModelDrivenSearchResult = {
     message: string;
     webSearch: ChatReply['webSearch'];
 };
+
+type ChatRequestOptions = Pick<OpenAI.RequestOptions, 'signal'>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
@@ -77,6 +89,13 @@ function createOpenAiCompatibleClient(baseURL: string, apiKey?: string): OpenAI 
     });
 }
 
+function toResponseInput(messages: readonly ChatMessage[]) {
+    return messages.map((message) => ({
+        role: message.role,
+        content: message.content,
+    }));
+}
+
 function extractResponseOutputText(response: OpenAI.Responses.Response): string | null {
     const directOutputText =
         typeof response.output_text === 'string' ? response.output_text.trim() : '';
@@ -105,6 +124,23 @@ function extractResponseOutputText(response: OpenAI.Responses.Response): string 
 
     const joined = chunks.join('').trim();
     return joined.length > 0 ? joined : null;
+}
+
+function extractResponseFailureMessage(response: OpenAI.Responses.Response): string | null {
+    const error = response.error;
+    if (error?.message) {
+        return error.message;
+    }
+
+    if (response.status === 'incomplete' && response.incomplete_details?.reason) {
+        return `Incomplete response: ${response.incomplete_details.reason}`;
+    }
+
+    if (response.status === 'failed') {
+        return 'AI response failed';
+    }
+
+    return null;
 }
 
 function appendWebSource(
@@ -214,15 +250,16 @@ function extractNativeWebSearchMetadata(response: OpenAI.Responses.Response): Ch
 async function runChatWithResponsesModel(
     openai: OpenAI,
     model: string,
-    messages: readonly ChatMessage[]
+    messages: readonly ChatMessage[],
+    options?: ChatRequestOptions
 ): Promise<string> {
-    const response = await openai.responses.create({
-        model,
-        input: messages.map((message) => ({
-            role: message.role,
-            content: message.content,
-        })),
-    });
+    const response = await openai.responses.create(
+        {
+            model,
+            input: toResponseInput(messages),
+        },
+        options
+    );
 
     const content = extractResponseOutputText(response);
     if (!content) {
@@ -235,18 +272,19 @@ async function runChatWithResponsesModel(
 async function runChatWithNativeWebSearch(
     openai: OpenAI,
     model: string,
-    messages: readonly ChatMessage[]
+    messages: readonly ChatMessage[],
+    options?: ChatRequestOptions
 ): Promise<ModelDrivenSearchResult> {
-    const response = await openai.responses.create({
-        model,
-        input: messages.map((message) => ({
-            role: message.role,
-            content: message.content,
-        })),
-        tools: [{ type: 'web_search' as const }],
-        tool_choice: 'auto',
-        include: ['web_search_call.action.sources'],
-    });
+    const response = await openai.responses.create(
+        {
+            model,
+            input: toResponseInput(messages),
+            tools: [{ type: 'web_search' as const }],
+            tool_choice: 'auto',
+            include: ['web_search_call.action.sources'],
+        },
+        options
+    );
 
     const content = extractResponseOutputText(response);
     if (!content) {
@@ -262,10 +300,11 @@ async function runChatWithNativeWebSearch(
 async function runChatWithoutTools(
     openai: OpenAI,
     model: string,
-    messages: readonly ChatMessage[]
+    messages: readonly ChatMessage[],
+    options?: ChatRequestOptions
 ): Promise<ModelDrivenSearchResult> {
     return {
-        message: await runChatWithResponsesModel(openai, model, messages),
+        message: await runChatWithResponsesModel(openai, model, messages, options),
         webSearch: null,
     };
 }
@@ -273,14 +312,15 @@ async function runChatWithoutTools(
 async function runChatWithWebStrategy(
     openai: OpenAI,
     model: string,
-    messages: readonly ChatMessage[]
+    messages: readonly ChatMessage[],
+    options?: ChatRequestOptions
 ): Promise<ModelDrivenSearchResult> {
     if (!isNativeWebSearchModel(model)) {
-        return runChatWithoutTools(openai, model, messages);
+        return runChatWithoutTools(openai, model, messages, options);
     }
 
     try {
-        return await runChatWithNativeWebSearch(openai, model, messages);
+        return await runChatWithNativeWebSearch(openai, model, messages, options);
     } catch (error) {
         if (!isUnsupportedWebSearchError(error)) {
             throw error;
@@ -292,8 +332,66 @@ async function runChatWithWebStrategy(
             error: errorMessage,
         });
 
-        return runChatWithoutTools(openai, model, messages);
+        return runChatWithoutTools(openai, model, messages, options);
     }
+}
+
+async function* runChatWithResponsesModelStream(
+    openai: OpenAI,
+    model: string,
+    messages: readonly ChatMessage[],
+    options?: ChatRequestOptions,
+    onDelta?: () => void
+): AsyncGenerator<ChatReplyStreamChunk, string, void> {
+    const stream = openai.responses.stream(
+        {
+            model,
+            input: toResponseInput(messages),
+        },
+        options
+    );
+    const chunks: string[] = [];
+    let completedResponse: OpenAI.Responses.Response | null = null;
+    let finalizedText: string | null = null;
+
+    for await (const event of stream) {
+        if (event.type === 'response.output_text.delta') {
+            if (event.delta) {
+                chunks.push(event.delta);
+                onDelta?.();
+                yield { type: 'delta', text: event.delta };
+            }
+            continue;
+        }
+
+        if (event.type === 'response.output_text.done') {
+            finalizedText = event.text;
+            continue;
+        }
+
+        if (event.type === 'response.completed') {
+            completedResponse = event.response;
+            continue;
+        }
+
+        if (event.type === 'response.failed' || event.type === 'response.incomplete') {
+            throw new Error(extractResponseFailureMessage(event.response) ?? 'AI response failed');
+        }
+
+        if (event.type === 'error') {
+            throw new Error(event.message || 'AI response stream failed');
+        }
+    }
+
+    const completedText = completedResponse ? extractResponseOutputText(completedResponse) : null;
+    const finalizedOutputText = finalizedText?.trim();
+    const streamedText = chunks.join('').trim();
+    const content = completedText ?? (finalizedOutputText || null) ?? streamedText;
+    if (!content) {
+        throw new Error('Empty response from AI');
+    }
+
+    return content;
 }
 
 function normalizeModelList(models: string[]): string[] {
@@ -308,7 +406,7 @@ function normalizeModelList(models: string[]): string[] {
 
 export async function generateChatReply(
     messages: readonly ChatMessage[],
-    options?: { primaryModel?: string | null }
+    options?: { primaryModel?: string | null; signal?: AbortSignal }
 ): Promise<ChatReply> {
     if (!messages.length) {
         throw new Error('No chat messages were provided');
@@ -327,7 +425,8 @@ export async function generateChatReply(
         const primaryResult = await runChatWithWebStrategy(
             primaryClient,
             selectedPrimaryModel,
-            messages
+            messages,
+            { signal: options?.signal }
         );
 
         return {
@@ -337,6 +436,10 @@ export async function generateChatReply(
             webSearch: primaryResult.webSearch,
         };
     } catch (primaryError) {
+        if (options?.signal?.aborted) {
+            throw primaryError;
+        }
+
         const primaryErrorMessage =
             primaryError instanceof Error ? primaryError.message : String(primaryError);
 
@@ -361,7 +464,8 @@ export async function generateChatReply(
                 const fallbackResult = await runChatWithWebStrategy(
                     fallbackClient,
                     fallbackModel,
-                    messages
+                    messages,
+                    { signal: options?.signal }
                 );
 
                 if (fallbackModel !== OPENROUTER_MODEL) {
@@ -378,10 +482,125 @@ export async function generateChatReply(
                     webSearch: fallbackResult.webSearch,
                 };
             } catch (fallbackError) {
+                if (options?.signal?.aborted) {
+                    throw fallbackError;
+                }
+
                 const fallbackErrorMessage =
                     fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
                 fallbackFailures.push(`${fallbackModel}: ${fallbackErrorMessage}`);
                 console.warn('OpenRouter chat fallback model failed', {
+                    model: fallbackModel,
+                    error: fallbackErrorMessage,
+                });
+            }
+        }
+
+        throw new Error(
+            `Primary chat model failed (${primaryErrorMessage}) and OpenRouter fallback failed (${fallbackFailures.join(
+                ' | '
+            )})`
+        );
+    }
+}
+
+export async function* generateChatReplyStream(
+    messages: readonly ChatMessage[],
+    options?: { primaryModel?: string | null; signal?: AbortSignal }
+): AsyncGenerator<ChatReplyStreamChunk, void, void> {
+    if (!messages.length) {
+        throw new Error('No chat messages were provided');
+    }
+
+    const candidatePrimaryModel =
+        typeof options?.primaryModel === 'string' && options.primaryModel.trim()
+            ? options.primaryModel.trim()
+            : PRIMARY_LLM_MODEL;
+    const selectedPrimaryModel = isAllowedRuntimePrimaryModel(candidatePrimaryModel)
+        ? candidatePrimaryModel
+        : PRIMARY_LLM_MODEL;
+
+    try {
+        const primaryClient = createOpenAiCompatibleClient(PRIMARY_LLM_BASE_URL, PRIMARY_LLM_API_KEY);
+        const primaryResult = await runChatWithWebStrategy(
+            primaryClient,
+            selectedPrimaryModel,
+            messages,
+            { signal: options?.signal }
+        );
+        const reply: ChatReply = {
+            message: primaryResult.message,
+            provider: 'ngrok-openai-compatible',
+            model: selectedPrimaryModel,
+            webSearch: primaryResult.webSearch,
+        };
+
+        yield { type: 'delta', text: reply.message };
+        yield { type: 'done', reply };
+        return;
+    } catch (primaryError) {
+        const primaryErrorMessage =
+            primaryError instanceof Error ? primaryError.message : String(primaryError);
+
+        console.warn('Primary chat model failed, falling back to streaming OpenRouter', {
+            baseURL: PRIMARY_LLM_BASE_URL,
+            model: selectedPrimaryModel,
+            error: primaryErrorMessage,
+        });
+
+        if (!OPENROUTER_API_KEY) {
+            throw new Error(
+                `Primary chat model failed and OpenRouter fallback is not configured. Primary error: ${primaryErrorMessage}`
+            );
+        }
+
+        const fallbackClient = createOpenAiCompatibleClient(OPENROUTER_BASE_URL, OPENROUTER_API_KEY);
+        const fallbackModels = normalizeModelList([OPENROUTER_MODEL, OPENROUTER_BACKUP_MODEL]);
+        const fallbackFailures: string[] = [];
+
+        for (const fallbackModel of fallbackModels) {
+            let emittedFallbackContent = false;
+
+            try {
+                const message = yield* runChatWithResponsesModelStream(
+                    fallbackClient,
+                    fallbackModel,
+                    messages,
+                    { signal: options?.signal },
+                    () => {
+                        emittedFallbackContent = true;
+                    }
+                );
+
+                if (fallbackModel !== OPENROUTER_MODEL) {
+                    console.warn('Primary OpenRouter chat fallback failed; backup model succeeded', {
+                        primaryFallbackModel: OPENROUTER_MODEL,
+                        backupFallbackModel: fallbackModel,
+                    });
+                }
+
+                yield {
+                    type: 'done',
+                    reply: {
+                        message,
+                        provider: 'openrouter',
+                        model: fallbackModel,
+                        webSearch: null,
+                    },
+                };
+                return;
+            } catch (fallbackError) {
+                const fallbackErrorMessage =
+                    fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+
+                if (emittedFallbackContent) {
+                    throw new Error(
+                        `OpenRouter chat stream failed after response started: ${fallbackErrorMessage}`
+                    );
+                }
+
+                fallbackFailures.push(`${fallbackModel}: ${fallbackErrorMessage}`);
+                console.warn('OpenRouter chat fallback model failed before streaming content', {
                     model: fallbackModel,
                     error: fallbackErrorMessage,
                 });

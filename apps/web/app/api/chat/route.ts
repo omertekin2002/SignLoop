@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
-import { generateChatReply, type ChatMessage, type ChatRole } from '@/lib/chat';
+import {
+  generateChatReply,
+  generateChatReplyStream,
+  type ChatMessage,
+  type ChatReply,
+  type ChatRole,
+} from '@/lib/chat';
 import {
   DEFAULT_PERSONALITY_MODE,
   isAllowedPersonalityMode,
@@ -38,6 +44,7 @@ type RequestPayload = {
   threadId?: unknown;
   messages?: unknown;
   temporary?: unknown;
+  stream?: unknown;
 };
 
 type SearchSource = {
@@ -111,6 +118,62 @@ function appendWebSourcesToMessage(
   return `${trimmed}\n\n${lines.join("\n")}`;
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "APIUserAbortError")
+  );
+}
+
+function streamEvent(event: Record<string, unknown>): Uint8Array {
+  return new TextEncoder().encode(`${JSON.stringify(event)}\n`);
+}
+
+async function persistChatMessages(input: {
+  userId: string | null;
+  threadId: string;
+  latestUserMessage: ChatMessage;
+  assistantMessage: string;
+  temporary: boolean;
+}): Promise<void> {
+  if (input.temporary) {
+    return;
+  }
+
+  if (!input.userId) {
+    throw new Error("Unauthorized");
+  }
+
+  await appendChatMessagesToThread({
+    userId: input.userId,
+    threadId: input.threadId,
+    messages: [
+      { role: "user", content: input.latestUserMessage.content },
+      { role: "assistant", content: input.assistantMessage },
+    ],
+  });
+}
+
+function toDoneStreamEvent(input: {
+  reply: ChatReply;
+  message: string;
+  temporary: boolean;
+}): Record<string, unknown> {
+  const { reply, message, temporary } = input;
+
+  return {
+    type: "done",
+    message,
+    provider: reply.provider,
+    model: reply.model,
+    mode: temporary ? "temporary-chat" : "chat",
+    webSearchQuery: reply.webSearch?.query ?? null,
+    webSearchAttempts: reply.webSearch?.attemptedQueries ?? [],
+    webSearchSuccessfulCount: reply.webSearch?.successfulSearches ?? 0,
+    webSources: reply.webSearch?.sources ?? [],
+  };
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -151,9 +214,86 @@ export async function POST(req: Request) {
         ? [{ role: "system", content: BARE_LLM_SYSTEM_PROMPT }, ...conversationMessages]
         : [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...conversationMessages];
 
+    const wantsStream = isObject(body) && body.stream === true;
+    if (wantsStream) {
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          let sentDone = false;
+
+          try {
+            for await (const chunk of generateChatReplyStream(promptMessages, {
+              primaryModel: settings?.primaryModel ?? null,
+              signal: req.signal,
+            })) {
+              if (req.signal.aborted) {
+                return;
+              }
+
+              if (chunk.type === "delta") {
+                controller.enqueue(streamEvent({ type: "delta", text: chunk.text }));
+                continue;
+              }
+
+              const assistantMessage = appendWebSourcesToMessage(
+                chunk.reply.message,
+                chunk.reply.webSearch?.sources ?? []
+              );
+
+              await persistChatMessages({
+                userId,
+                threadId,
+                latestUserMessage,
+                assistantMessage,
+                temporary: isTemporaryChat,
+              });
+
+              controller.enqueue(
+                streamEvent(
+                  toDoneStreamEvent({
+                    reply: chunk.reply,
+                    message: assistantMessage,
+                    temporary: isTemporaryChat,
+                  })
+                )
+              );
+              sentDone = true;
+            }
+
+            if (!sentDone && !req.signal.aborted) {
+              controller.enqueue(
+                streamEvent({
+                  type: "error",
+                  error: "Chat stream ended before completion.",
+                })
+              );
+            }
+          } catch (streamError) {
+            if (req.signal.aborted || isAbortError(streamError)) {
+              return;
+            }
+
+            console.error("Chat stream error:", streamError);
+            const message =
+              streamError instanceof Error ? streamError.message : "Chat request failed";
+            controller.enqueue(streamEvent({ type: "error", error: message }));
+          } finally {
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "application/x-ndjson; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          "X-Accel-Buffering": "no",
+        },
+      });
+    }
+
     const { message, provider, model, webSearch } = await generateChatReply(
       promptMessages,
-      { primaryModel: settings?.primaryModel ?? null }
+      { primaryModel: settings?.primaryModel ?? null, signal: req.signal }
     );
     const assistantMessage = appendWebSourcesToMessage(
       message,
