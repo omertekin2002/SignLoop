@@ -4,8 +4,11 @@ import { isUsablePrimaryModel } from '@/lib/model-settings';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free';
-const OPENROUTER_BACKUP_MODEL = process.env.OPENROUTER_BACKUP_MODEL || 'openrouter/free';
+const OPENROUTER_MODELS = [
+    'google/gemma-4-31b-it:free',
+    'openai/gpt-oss-120b:free',
+    'openrouter/free',
+];
 const PRIMARY_LLM_BASE_URL =
     process.env.PRIMARY_LLM_BASE_URL || 'https://efficient-sightlessly-ouida.ngrok-free.dev/v1';
 const PRIMARY_LLM_MODEL = process.env.PRIMARY_LLM_MODEL || 'gemini-3-flash';
@@ -656,22 +659,16 @@ ${text.substring(0, 15000)} ... (truncated if too long)
         }
 
         const fallbackClient = createOpenAiCompatibleClient(OPENROUTER_BASE_URL, OPENROUTER_API_KEY);
-        const fallbackModels = Array.from(
-            new Set(
-                [OPENROUTER_MODEL, OPENROUTER_BACKUP_MODEL]
-                    .map((model) => model.trim())
-                    .filter((model): model is string => model.length > 0)
-            )
-        );
+        const fallbackModels = OPENROUTER_MODELS;
         const fallbackFailures: string[] = [];
 
         for (const fallbackModel of fallbackModels) {
             try {
                 const fallbackResult = await runAnalysisWithResponsesModel(fallbackClient, fallbackModel, prompt);
-                if (fallbackModel !== OPENROUTER_MODEL) {
-                    console.warn('Primary OpenRouter fallback model failed; backup model succeeded', {
-                        primaryFallbackModel: OPENROUTER_MODEL,
-                        backupFallbackModel: fallbackModel,
+                if (fallbackModel !== fallbackModels[0]) {
+                    console.warn('OpenRouter fallback model succeeded after earlier model failed', {
+                        firstFallbackModel: fallbackModels[0],
+                        successfulFallbackModel: fallbackModel,
                     });
                 }
                 return { result: fallbackResult, provider: 'openrouter', model: fallbackModel };

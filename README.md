@@ -130,8 +130,7 @@ Primary LLM endpoint (OpenAI-compatible):
 Fallback LLM endpoint (OpenRouter):
 - `OPENROUTER_API_KEY` (required for fallback)
 - `OPENROUTER_BASE_URL` (default: `https://openrouter.ai/api/v1`)
-- `OPENROUTER_MODEL`
-- `OPENROUTER_BACKUP_MODEL`
+- Fallback model order is fixed in code: `google/gemma-4-31b-it:free`, then `openai/gpt-oss-120b:free`, then `openrouter/free`
 
 Storage:
 - `BLOB_READ_WRITE_TOKEN` (if set, enables Vercel Blob)
