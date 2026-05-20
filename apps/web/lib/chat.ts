@@ -146,6 +146,94 @@ function extractResponseFailureMessage(response: OpenAI.Responses.Response): str
     return null;
 }
 
+function getOpenRouterResponsesUrl(): string {
+    return `${OPENROUTER_BASE_URL.replace(/\/+$/, '')}/responses`;
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> | null {
+    try {
+        const parsed: unknown = JSON.parse(value);
+        return isRecord(parsed) ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
+function extractOpenRouterErrorMessage(status: number, body: string): string {
+    const payload = parseJsonRecord(body);
+    const error = isRecord(payload?.error) ? payload.error : null;
+    const message =
+        typeof error?.message === 'string'
+            ? error.message
+            : typeof payload?.message === 'string'
+              ? payload.message
+              : body.trim();
+
+    return `${status} ${message || 'OpenRouter request failed'}`.slice(0, 1200);
+}
+
+function extractSseDataPayload(block: string): string | null {
+    const dataLines: string[] = [];
+
+    for (const line of block.split('\n')) {
+        if (!line || line.startsWith(':')) {
+            continue;
+        }
+
+        const separatorIndex = line.indexOf(':');
+        const field = separatorIndex >= 0 ? line.slice(0, separatorIndex) : line;
+        const rawValue = separatorIndex >= 0 ? line.slice(separatorIndex + 1) : '';
+        const value = rawValue.startsWith(' ') ? rawValue.slice(1) : rawValue;
+
+        if (field === 'data') {
+            dataLines.push(value);
+        }
+    }
+
+    return dataLines.length ? dataLines.join('\n') : null;
+}
+
+async function* readSseDataPayloads(
+    body: ReadableStream<Uint8Array>
+): AsyncGenerator<string, void, void> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (value) {
+            buffer += decoder.decode(value, { stream: !done });
+            buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        }
+        if (done) {
+            buffer += decoder.decode();
+            buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        }
+
+        let separatorIndex = buffer.indexOf('\n\n');
+        while (separatorIndex >= 0) {
+            const block = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+
+            const payload = extractSseDataPayload(block);
+            if (payload) {
+                yield payload;
+            }
+
+            separatorIndex = buffer.indexOf('\n\n');
+        }
+
+        if (done) {
+            const trailingPayload = extractSseDataPayload(buffer);
+            if (trailingPayload) {
+                yield trailingPayload;
+            }
+            return;
+        }
+    }
+}
+
 function appendWebSource(
     sourceMap: Map<string, WebSearchSource>,
     source: { title: string; url: string; snippet?: string | null }
@@ -339,50 +427,102 @@ async function runChatWithWebStrategy(
     }
 }
 
-async function* runChatWithResponsesModelStream(
-    openai: OpenAI,
+async function* runOpenRouterResponsesModelStream(
     model: string,
     messages: readonly ChatMessage[],
     options?: ChatRequestOptions,
     onDelta?: () => void
 ): AsyncGenerator<ChatReplyStreamChunk, string, void> {
-    const stream = openai.responses.stream(
-        {
+    if (!OPENROUTER_API_KEY) {
+        throw new Error('OpenRouter fallback is not configured');
+    }
+
+    const response = await fetch(getOpenRouterResponsesUrl(), {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': SITE_URL,
+            'X-Title': APP_NAME,
+        },
+        body: JSON.stringify({
             model,
             input: toResponseInput(messages),
-        },
-        options
-    );
+            stream: true,
+        }),
+        signal: options?.signal,
+    });
+
+    if (!response.ok) {
+        throw new Error(extractOpenRouterErrorMessage(response.status, await response.text()));
+    }
+
+    if (!response.body) {
+        throw new Error('OpenRouter response stream was empty');
+    }
+
     const chunks: string[] = [];
     let completedResponse: OpenAI.Responses.Response | null = null;
     let finalizedText: string | null = null;
 
-    for await (const event of stream) {
-        if (event.type === 'response.output_text.delta') {
-            if (event.delta) {
-                chunks.push(event.delta);
+    for await (const payload of readSseDataPayloads(response.body)) {
+        if (payload === '[DONE]') {
+            break;
+        }
+
+        const event = parseJsonRecord(payload);
+        if (!event) {
+            continue;
+        }
+
+        const eventType = typeof event.type === 'string' ? event.type : '';
+
+        if (eventType === 'response.keep_alive') {
+            continue;
+        }
+
+        if (eventType === 'response.output_text.delta') {
+            const delta = typeof event.delta === 'string' ? event.delta : '';
+            if (delta) {
+                chunks.push(delta);
                 onDelta?.();
-                yield { type: 'delta', text: event.delta };
+                yield { type: 'delta', text: delta };
             }
             continue;
         }
 
-        if (event.type === 'response.output_text.done') {
-            finalizedText = event.text;
+        if (eventType === 'response.output_text.done') {
+            finalizedText = typeof event.text === 'string' ? event.text : null;
             continue;
         }
 
-        if (event.type === 'response.completed') {
-            completedResponse = event.response;
+        if (eventType === 'response.completed') {
+            if (isRecord(event.response)) {
+                completedResponse = event.response as unknown as OpenAI.Responses.Response;
+            }
             continue;
         }
 
-        if (event.type === 'response.failed' || event.type === 'response.incomplete') {
-            throw new Error(extractResponseFailureMessage(event.response) ?? 'AI response failed');
+        if (eventType === 'response.failed' || eventType === 'response.incomplete') {
+            const failedResponse = isRecord(event.response)
+                ? (event.response as unknown as OpenAI.Responses.Response)
+                : null;
+            throw new Error(
+                failedResponse
+                    ? (extractResponseFailureMessage(failedResponse) ?? 'AI response failed')
+                    : 'AI response failed'
+            );
         }
 
-        if (event.type === 'error') {
-            throw new Error(event.message || 'AI response stream failed');
+        if (eventType === 'error') {
+            const error = isRecord(event.error) ? event.error : null;
+            const message =
+                typeof event.message === 'string'
+                    ? event.message
+                    : typeof error?.message === 'string'
+                      ? error.message
+                      : 'AI response stream failed';
+            throw new Error(message);
         }
     }
 
@@ -532,6 +672,10 @@ export async function* generateChatReplyStream(
         yield { type: 'done', reply };
         return;
     } catch (primaryError) {
+        if (options?.signal?.aborted) {
+            throw primaryError;
+        }
+
         const primaryErrorMessage =
             primaryError instanceof Error ? primaryError.message : String(primaryError);
 
@@ -547,7 +691,6 @@ export async function* generateChatReplyStream(
             );
         }
 
-        const fallbackClient = createOpenAiCompatibleClient(OPENROUTER_BASE_URL, OPENROUTER_API_KEY);
         const fallbackModels = OPENROUTER_MODELS;
         const fallbackFailures: string[] = [];
 
@@ -555,8 +698,7 @@ export async function* generateChatReplyStream(
             let emittedFallbackContent = false;
 
             try {
-                const message = yield* runChatWithResponsesModelStream(
-                    fallbackClient,
+                const message = yield* runOpenRouterResponsesModelStream(
                     fallbackModel,
                     messages,
                     { signal: options?.signal },
@@ -583,6 +725,10 @@ export async function* generateChatReplyStream(
                 };
                 return;
             } catch (fallbackError) {
+                if (options?.signal?.aborted) {
+                    throw fallbackError;
+                }
+
                 const fallbackErrorMessage =
                     fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
 
