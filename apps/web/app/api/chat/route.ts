@@ -206,7 +206,9 @@ export async function POST(req: Request) {
 
     const settings = userId ? await getUserSettingsByUserId(userId) : null;
     const personality =
-      settings?.personality && isAllowedPersonalityMode(settings.personality)
+      !userId && isTemporaryChat
+        ? "bare-llm"
+        : settings?.personality && isAllowedPersonalityMode(settings.personality)
         ? settings.personality
         : DEFAULT_PERSONALITY_MODE;
     const promptMessages: ChatMessage[] =
