@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { parseJsonBody, requireUserId } from "@/lib/api-auth";
 import {
   createChatThreadForUser,
   listChatThreadsByUserId,
 } from "@/lib/server-db";
 
 export async function GET(req: Request) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -25,15 +24,13 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
   try {
-    const payload = await req.json().catch(() => ({}));
-    const title =
-      payload && typeof payload.title === "string" ? payload.title : undefined;
+    const payload = (await parseJsonBody<{ title?: string }>(req)) ?? {};
+    const title = typeof payload.title === "string" ? payload.title : undefined;
 
     const created = await createChatThreadForUser({ userId, title });
     return NextResponse.json({ data: created }, { status: 201 });

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { parseJsonBody, requireUserId } from "@/lib/api-auth";
 import {
   getModelAvailabilitySnapshot,
   type PrimaryModel,
@@ -16,29 +16,19 @@ import {
   upsertUserPrimaryModel,
 } from "@/lib/server-db";
 
-const MODEL_AVAILABILITY_MESSAGE = "Model selection is temporarily unavailable.";
+const MODEL_AVAILABILITY_MESSAGE = "Showing default models; live model list is temporarily unavailable.";
 
 export async function GET() {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
   const settings = await getUserSettingsByUserId(userId);
-  let availablePrimaryModels: PrimaryModel[] = [];
-  let modelsError: string | null = null;
-
-  try {
-    const snapshot = await getModelAvailabilitySnapshot();
-    availablePrimaryModels = snapshot.availablePrimaryModels;
-  } catch (error) {
-    console.error("Failed to load available models", error);
-    modelsError = MODEL_AVAILABILITY_MESSAGE;
-  }
+  const snapshot = await getModelAvailabilitySnapshot();
+  const availablePrimaryModels = snapshot.availablePrimaryModels;
 
   const resolvedPrimaryModel =
-    settings?.primaryModel &&
-    availablePrimaryModels.includes(settings.primaryModel)
+    settings?.primaryModel && availablePrimaryModels.includes(settings.primaryModel)
       ? settings.primaryModel
       : null;
 
@@ -49,42 +39,32 @@ export async function GET() {
         ? settings.personality
         : DEFAULT_PERSONALITY_MODE,
     availablePrimaryModels,
-    modelsError,
+    modelsError: snapshot.usedFallback ? MODEL_AVAILABILITY_MESSAGE : null,
     availablePersonalities: PERSONALITY_OPTIONS,
   });
 }
 
 export async function PUT(req: Request) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
-  const body = (await req.json()) as { primaryModel?: string; personality?: string };
+  const body = await parseJsonBody<{ primaryModel?: string; personality?: string }>(req);
+  if (!body) {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
   const modelInput =
     typeof body.primaryModel === "string" ? body.primaryModel.trim() : "";
   const personalityInput =
     typeof body.personality === "string" ? body.personality.trim() : "";
 
   if (!modelInput && !personalityInput) {
-    return NextResponse.json(
-      {
-        error: "No setting provided",
-      },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "No setting provided" }, { status: 400 });
   }
 
   let model: PrimaryModel | null = null;
   if (modelInput) {
-    let availablePrimaryModels: PrimaryModel[] = [];
-    try {
-      const snapshot = await getModelAvailabilitySnapshot();
-      availablePrimaryModels = snapshot.availablePrimaryModels;
-    } catch (error) {
-      console.error("Failed to refresh available models", error);
-      return NextResponse.json({ error: MODEL_AVAILABILITY_MESSAGE }, { status: 503 });
-    }
+    const { availablePrimaryModels } = await getModelAvailabilitySnapshot();
 
     if (!availablePrimaryModels.includes(modelInput)) {
       return NextResponse.json(
@@ -113,20 +93,15 @@ export async function PUT(req: Request) {
     personality = personalityInput;
   }
 
-  let saved = await getUserSettingsByUserId(userId);
+  // Each upsert returns the full saved row, so we only read what we write (no eager pre-fetch).
+  let saved: Awaited<ReturnType<typeof getUserSettingsByUserId>> = null;
 
   if (model) {
-    saved = await upsertUserPrimaryModel({
-      userId,
-      primaryModel: model,
-    });
+    saved = await upsertUserPrimaryModel({ userId, primaryModel: model });
   }
 
   if (personality) {
-    saved = await upsertUserPersonality({
-      userId,
-      personality,
-    });
+    saved = await upsertUserPersonality({ userId, personality });
   }
 
   if (!saved) {

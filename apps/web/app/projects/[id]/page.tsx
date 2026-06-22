@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
+import { getRiskColor } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -80,9 +81,7 @@ const ProjectDetails = () => {
     const [contextTitle, setContextTitle] = useState("");
     const [contextType, setContextType] = useState<string>("other");
     const [selectedContextFile, setSelectedContextFile] = useState<File | null>(null);
-    const [uploadingContract, setUploadingContract] = useState(false);
-    const [uploadingContext, setUploadingContext] = useState(false);
-    const [docToDelete, setDocToDelete] = useState<{ id: string; type: "contract" | "context" } | null>(null);
+    const [docToDelete, setDocToDelete] = useState<{ id: string; type: "context" } | null>(null);
 
     const { data: project, isLoading } = useQuery({
         queryKey: ["project", id],
@@ -128,68 +127,75 @@ const ProjectDetails = () => {
         }
     };
 
-    const handleUploadContract = async () => {
-        if (!selectedContractFile || !contractName) return;
+    const extractApiMessage = (error: unknown, fallback: string) =>
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message || fallback;
 
-        setUploadingContract(true);
-        try {
-            // 1. Create contract with project association
+    const uploadContractMutation = useMutation({
+        mutationFn: async () => {
+            // 1. Create the contract with project association.
             const createRes = await apiClient.post("/contracts", {
                 title: contractName,
                 projectId: id,
             });
             const contractId = createRes.data.id;
 
-            // 2. Upload file
-            const formData = new FormData();
-            formData.append("file", selectedContractFile);
-            await apiClient.post(`/contracts/${contractId}/upload`, formData, {
-                headers: { "Content-Type": "multipart/form-data" },
-            });
-
+            // 2. Upload the file; if this fails, roll back the just-created contract so we don't
+            // leave an empty, file-less contract behind.
+            try {
+                const formData = new FormData();
+                formData.append("file", selectedContractFile as File);
+                await apiClient.post(`/contracts/${contractId}/upload`, formData, {
+                    headers: { "Content-Type": "multipart/form-data" },
+                });
+            } catch (uploadError) {
+                await apiClient.delete(`/contracts/${contractId}`).catch(() => {});
+                throw uploadError;
+            }
+        },
+        onSuccess: () => {
             toast.success("Contract uploaded successfully");
             setSelectedContractFile(null);
             setContractName("");
             if (contractFileRef.current) contractFileRef.current.value = "";
             queryClient.invalidateQueries({ queryKey: ["project", id] });
-        } catch (error: unknown) {
-            const message =
-                (error as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-                "Failed to upload contract";
-            toast.error(message);
-        } finally {
-            setUploadingContract(false);
-        }
-    };
+        },
+        onError: (error: unknown) => {
+            toast.error(extractApiMessage(error, "Failed to upload contract"));
+        },
+    });
 
-    const handleUploadContext = async () => {
-        if (!selectedContextFile || !contextTitle) return;
-
-        setUploadingContext(true);
-        try {
+    const uploadContextMutation = useMutation({
+        mutationFn: async () => {
             const formData = new FormData();
-            formData.append("file", selectedContextFile);
+            formData.append("file", selectedContextFile as File);
             formData.append("title", contextTitle);
             formData.append("documentType", contextType);
 
             await apiClient.post(`/projects/${id}/context`, formData, {
                 headers: { "Content-Type": "multipart/form-data" },
             });
-
+        },
+        onSuccess: () => {
             toast.success("Context document uploaded");
             setSelectedContextFile(null);
             setContextTitle("");
             setContextType("other");
             if (contextFileRef.current) contextFileRef.current.value = "";
             queryClient.invalidateQueries({ queryKey: ["project", id] });
-        } catch (error: unknown) {
-            const message =
-                (error as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-                "Failed to upload context";
-            toast.error(message);
-        } finally {
-            setUploadingContext(false);
-        }
+        },
+        onError: (error: unknown) => {
+            toast.error(extractApiMessage(error, "Failed to upload context"));
+        },
+    });
+
+    const handleUploadContract = () => {
+        if (!selectedContractFile || !contractName) return;
+        uploadContractMutation.mutate();
+    };
+
+    const handleUploadContext = () => {
+        if (!selectedContextFile || !contextTitle) return;
+        uploadContextMutation.mutate();
     };
 
     const getDocTypeIcon = (type: string) => {
@@ -202,15 +208,6 @@ const ProjectDetails = () => {
                 return <Book className="h-4 w-4 text-purple-500" />;
             default:
                 return <File className="h-4 w-4 text-gray-500" />;
-        }
-    };
-
-    const getRiskColor = (badge: string) => {
-        switch (badge?.toLowerCase()) {
-            case "high": return "bg-destructive/15 text-destructive";
-            case "medium": return "bg-amber-500/15 text-amber-800 dark:text-amber-200";
-            case "low": return "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200";
-            default: return "bg-muted text-muted-foreground";
         }
     };
 
@@ -366,10 +363,10 @@ const ProjectDetails = () => {
                                         </div>
                                         <Button
                                             onClick={handleUploadContract}
-                                            disabled={!selectedContractFile || !contractName || uploadingContract}
+                                            disabled={!selectedContractFile || !contractName || uploadContractMutation.isPending}
                                             className="w-full"
                                         >
-                                            {uploadingContract ? (
+                                            {uploadContractMutation.isPending ? (
                                                 <>
                                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                                     Uploading...
@@ -483,11 +480,11 @@ const ProjectDetails = () => {
                                         </div>
                                         <Button
                                             onClick={handleUploadContext}
-                                            disabled={!selectedContextFile || !contextTitle || uploadingContext}
+                                            disabled={!selectedContextFile || !contextTitle || uploadContextMutation.isPending}
                                             className="w-full"
                                             variant="outline"
                                         >
-                                            {uploadingContext ? (
+                                            {uploadContextMutation.isPending ? (
                                                 <>
                                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                                     Uploading...

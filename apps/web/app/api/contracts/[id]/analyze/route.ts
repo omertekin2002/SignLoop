@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { auth } from "@clerk/nextjs/server";
+import { requireUserId } from "@/lib/api-auth";
 import { analyzeText } from '@/lib/analysis';
 import {
   createAnalysisForContract,
@@ -8,20 +8,31 @@ import {
 } from "@/lib/server-db";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
   const { id } = await params;
+  const force = new URL(req.url).searchParams.get("force") === "true";
+
   const contract = await getContractByIdForUser(userId, id);
-  
+
   if (!contract) {
     return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
   }
 
   if (!contract.text) {
     return NextResponse.json({ error: 'Contract has no text content. Upload a file first.' }, { status: 400 });
+  }
+
+  // Idempotency: unless the caller explicitly forces a re-run, reuse the existing analysis
+  // instead of inserting a duplicate row (the previous behavior piled up duplicates per click).
+  if (!force && contract.latestAnalysis) {
+    return NextResponse.json({
+      message: 'Analysis already exists',
+      jobId: 'done',
+      analysisId: contract.latestAnalysis.id,
+    });
   }
 
   try {

@@ -1,19 +1,17 @@
 import OpenAI from 'openai';
-import { isUsablePrimaryModel } from '@/lib/model-settings';
-
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
-const OPENROUTER_MODELS = [
-    'google/gemma-4-31b-it:free',
-    'openai/gpt-oss-120b:free',
-    'openrouter/free',
-];
-const PRIMARY_LLM_BASE_URL =
-    process.env.PRIMARY_LLM_BASE_URL || 'https://efficient-sightlessly-ouida.ngrok-free.dev/v1';
-const PRIMARY_LLM_MODEL = process.env.PRIMARY_LLM_MODEL || 'gemini-3-flash';
-const PRIMARY_LLM_API_KEY = process.env.PRIMARY_LLM_API_KEY;
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-const APP_NAME = 'SignLoop';
+import {
+    APP_NAME,
+    OPENROUTER_API_KEY,
+    OPENROUTER_BASE_URL,
+    OPENROUTER_MODELS,
+    PRIMARY_LLM_API_KEY,
+    PRIMARY_LLM_BASE_URL,
+    SITE_URL,
+    createOpenAiCompatibleClient,
+    extractResponseOutputText,
+    resolvePrimaryModel,
+    runWithPrimaryAndOpenRouterFallback,
+} from '@/lib/llm-client';
 
 const MAX_WEB_SOURCES_IN_METADATA = 8;
 const NATIVE_WEB_SEARCH_MODELS = new Set(['gpt-5', 'gpt-5.1', 'gpt-5.2']);
@@ -68,28 +66,14 @@ function isNativeWebSearchModel(model: string): boolean {
     return NATIVE_WEB_SEARCH_MODELS.has(model);
 }
 
-function isAllowedRuntimePrimaryModel(value: string): boolean {
-    return isUsablePrimaryModel(value);
-}
-
 function isUnsupportedWebSearchError(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error);
-    return /unsupported tool type:\s*web_search|web_search|tool_choice|invalid.*tools?|unknown tool/i.test(
+    // Only treat the error as an unsupported-tool signal when it explicitly references an
+    // unsupported/unknown/invalid tool — a bare "web_search" substring is too broad and would
+    // misclassify unrelated failures (rate limits, server errors) that echo the tool name.
+    return /unsupported tool type:\s*web_search|unknown tool|invalid[^.]*tools?|web_search[^.]*not\s+support/i.test(
         message
     );
-}
-
-function createOpenAiCompatibleClient(baseURL: string, apiKey?: string): OpenAI {
-    const resolvedApiKey = apiKey?.trim() || 'not-required';
-
-    return new OpenAI({
-        apiKey: resolvedApiKey,
-        baseURL,
-        defaultHeaders: {
-            'HTTP-Referer': SITE_URL,
-            'X-Title': APP_NAME,
-        },
-    });
 }
 
 function toResponseInput(messages: readonly ChatMessage[]) {
@@ -97,36 +81,6 @@ function toResponseInput(messages: readonly ChatMessage[]) {
         role: message.role,
         content: message.content,
     }));
-}
-
-function extractResponseOutputText(response: OpenAI.Responses.Response): string | null {
-    const directOutputText =
-        typeof response.output_text === 'string' ? response.output_text.trim() : '';
-    if (directOutputText) {
-        return directOutputText;
-    }
-
-    const chunks: string[] = [];
-    const outputItems = Array.isArray(response.output) ? response.output : [];
-
-    for (const outputItem of outputItems) {
-        if (typeof outputItem !== 'object' || outputItem === null) continue;
-
-        const content = Array.isArray((outputItem as { content?: unknown }).content)
-            ? ((outputItem as { content?: unknown[] }).content ?? [])
-            : [];
-
-        for (const part of content) {
-            if (typeof part !== 'object' || part === null) continue;
-            const candidate = part as { type?: unknown; text?: unknown };
-            if (candidate.type === 'output_text' && typeof candidate.text === 'string') {
-                chunks.push(candidate.text);
-            }
-        }
-    }
-
-    const joined = chunks.join('').trim();
-    return joined.length > 0 ? joined : null;
 }
 
 function extractResponseFailureMessage(response: OpenAI.Responses.Response): string | null {
@@ -545,96 +499,84 @@ export async function generateChatReply(
         throw new Error('No chat messages were provided');
     }
 
-    const candidatePrimaryModel =
-        typeof options?.primaryModel === 'string' && options.primaryModel.trim()
-            ? options.primaryModel.trim()
-            : PRIMARY_LLM_MODEL;
-    const selectedPrimaryModel = isAllowedRuntimePrimaryModel(candidatePrimaryModel)
-        ? candidatePrimaryModel
-        : PRIMARY_LLM_MODEL;
+    const selectedPrimaryModel = resolvePrimaryModel(options?.primaryModel);
 
-    try {
-        const primaryClient = createOpenAiCompatibleClient(PRIMARY_LLM_BASE_URL, PRIMARY_LLM_API_KEY);
-        const primaryResult = await runChatWithWebStrategy(
-            primaryClient,
-            selectedPrimaryModel,
-            messages,
-            { signal: options?.signal }
-        );
+    const { result, provider, model } = await runWithPrimaryAndOpenRouterFallback(
+        selectedPrimaryModel,
+        (client, runModel) =>
+            runChatWithWebStrategy(client, runModel, messages, { signal: options?.signal }),
+        { signal: options?.signal }
+    );
 
-        return {
-            message: primaryResult.message,
-            provider: 'ngrok-openai-compatible',
-            model: selectedPrimaryModel,
-            webSearch: primaryResult.webSearch,
-        };
-    } catch (primaryError) {
-        if (options?.signal?.aborted) {
-            throw primaryError;
-        }
+    return {
+        message: result.message,
+        provider,
+        model,
+        webSearch: result.webSearch,
+    };
+}
 
-        const primaryErrorMessage =
-            primaryError instanceof Error ? primaryError.message : String(primaryError);
+async function* runPrimaryResponsesModelStream(
+    openai: OpenAI,
+    model: string,
+    messages: readonly ChatMessage[],
+    options?: ChatRequestOptions,
+    onDelta?: () => void
+): AsyncGenerator<ChatReplyStreamChunk, string, void> {
+    const stream = await openai.responses.create(
+        {
+            model,
+            input: toResponseInput(messages),
+            stream: true,
+        },
+        options
+    );
 
-        console.warn('Primary chat model failed, falling back to OpenRouter', {
-            baseURL: PRIMARY_LLM_BASE_URL,
-            model: selectedPrimaryModel,
-            error: primaryErrorMessage,
-        });
+    const chunks: string[] = [];
+    let completedResponse: OpenAI.Responses.Response | null = null;
+    let finalizedText: string | null = null;
 
-        if (!OPENROUTER_API_KEY) {
-            throw new Error(
-                `Primary chat model failed and OpenRouter fallback is not configured. Primary error: ${primaryErrorMessage}`
-            );
-        }
-
-        const fallbackClient = createOpenAiCompatibleClient(OPENROUTER_BASE_URL, OPENROUTER_API_KEY);
-        const fallbackModels = OPENROUTER_MODELS;
-        const fallbackFailures: string[] = [];
-
-        for (const fallbackModel of fallbackModels) {
-            try {
-                const fallbackResult = await runChatWithWebStrategy(
-                    fallbackClient,
-                    fallbackModel,
-                    messages,
-                    { signal: options?.signal }
-                );
-
-                if (fallbackModel !== fallbackModels[0]) {
-                    console.warn('OpenRouter chat fallback model succeeded after earlier model failed', {
-                        firstFallbackModel: fallbackModels[0],
-                        successfulFallbackModel: fallbackModel,
-                    });
-                }
-
-                return {
-                    message: fallbackResult.message,
-                    provider: 'openrouter',
-                    model: fallbackModel,
-                    webSearch: fallbackResult.webSearch,
-                };
-            } catch (fallbackError) {
-                if (options?.signal?.aborted) {
-                    throw fallbackError;
-                }
-
-                const fallbackErrorMessage =
-                    fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-                fallbackFailures.push(`${fallbackModel}: ${fallbackErrorMessage}`);
-                console.warn('OpenRouter chat fallback model failed', {
-                    model: fallbackModel,
-                    error: fallbackErrorMessage,
-                });
+    for await (const event of stream) {
+        if (event.type === 'response.output_text.delta') {
+            const delta = typeof event.delta === 'string' ? event.delta : '';
+            if (delta) {
+                chunks.push(delta);
+                onDelta?.();
+                yield { type: 'delta', text: delta };
             }
+            continue;
         }
 
-        throw new Error(
-            `Primary chat model failed (${primaryErrorMessage}) and OpenRouter fallback failed (${fallbackFailures.join(
-                ' | '
-            )})`
-        );
+        if (event.type === 'response.output_text.done') {
+            finalizedText = typeof event.text === 'string' ? event.text : null;
+            continue;
+        }
+
+        if (event.type === 'response.completed') {
+            completedResponse = event.response;
+            continue;
+        }
+
+        if (event.type === 'response.failed' || event.type === 'response.incomplete') {
+            throw new Error(extractResponseFailureMessage(event.response) ?? 'AI response failed');
+        }
+
+        if (event.type === 'error') {
+            const message =
+                typeof event.message === 'string' ? event.message : 'AI response stream failed';
+            throw new Error(message);
+        }
     }
+
+    const completedText = completedResponse ? extractResponseOutputText(completedResponse) : null;
+    const finalizedOutputText = finalizedText?.trim();
+    const streamedText = chunks.join('').trim();
+    const content = completedText ?? (finalizedOutputText || null) ?? streamedText;
+    if (!content) {
+        throw new Error('Empty response from AI');
+    }
+
+    return content;
 }
 
 export async function* generateChatReplyStream(
@@ -645,31 +587,54 @@ export async function* generateChatReplyStream(
         throw new Error('No chat messages were provided');
     }
 
-    const candidatePrimaryModel =
-        typeof options?.primaryModel === 'string' && options.primaryModel.trim()
-            ? options.primaryModel.trim()
-            : PRIMARY_LLM_MODEL;
-    const selectedPrimaryModel = isAllowedRuntimePrimaryModel(candidatePrimaryModel)
-        ? candidatePrimaryModel
-        : PRIMARY_LLM_MODEL;
+    const selectedPrimaryModel = resolvePrimaryModel(options?.primaryModel);
+
+    let primaryEmittedContent = false;
 
     try {
         const primaryClient = createOpenAiCompatibleClient(PRIMARY_LLM_BASE_URL, PRIMARY_LLM_API_KEY);
-        const primaryResult = await runChatWithWebStrategy(
+
+        if (isNativeWebSearchModel(selectedPrimaryModel)) {
+            // Native web search needs the full response to attach source links, so this path
+            // resolves the complete reply and emits it as a single chunk.
+            const primaryResult = await runChatWithWebStrategy(
+                primaryClient,
+                selectedPrimaryModel,
+                messages,
+                { signal: options?.signal }
+            );
+            const reply: ChatReply = {
+                message: primaryResult.message,
+                provider: 'ngrok-openai-compatible',
+                model: selectedPrimaryModel,
+                webSearch: primaryResult.webSearch,
+            };
+
+            yield { type: 'delta', text: reply.message };
+            yield { type: 'done', reply };
+            return;
+        }
+
+        // Non-web-search models stream token by token directly from the primary endpoint.
+        const message = yield* runPrimaryResponsesModelStream(
             primaryClient,
             selectedPrimaryModel,
             messages,
-            { signal: options?.signal }
+            { signal: options?.signal },
+            () => {
+                primaryEmittedContent = true;
+            }
         );
-        const reply: ChatReply = {
-            message: primaryResult.message,
-            provider: 'ngrok-openai-compatible',
-            model: selectedPrimaryModel,
-            webSearch: primaryResult.webSearch,
-        };
 
-        yield { type: 'delta', text: reply.message };
-        yield { type: 'done', reply };
+        yield {
+            type: 'done',
+            reply: {
+                message,
+                provider: 'ngrok-openai-compatible',
+                model: selectedPrimaryModel,
+                webSearch: null,
+            },
+        };
         return;
     } catch (primaryError) {
         if (options?.signal?.aborted) {
@@ -678,6 +643,14 @@ export async function* generateChatReplyStream(
 
         const primaryErrorMessage =
             primaryError instanceof Error ? primaryError.message : String(primaryError);
+
+        // If the primary stream already emitted tokens, restarting on a fallback model would
+        // duplicate visible content, so surface a hard error instead of falling through.
+        if (primaryEmittedContent) {
+            throw new Error(
+                `Primary chat stream failed after response started: ${primaryErrorMessage}`
+            );
+        }
 
         console.warn('Primary chat model failed, falling back to streaming OpenRouter', {
             baseURL: PRIMARY_LLM_BASE_URL,

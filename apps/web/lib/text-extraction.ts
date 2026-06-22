@@ -1,5 +1,5 @@
 import { extractText } from 'unpdf';
-import Tesseract from 'tesseract.js';
+import { createWorker } from 'tesseract.js';
 import WordExtractor from 'word-extractor';
 
 const MIN_TEXT_DENSITY = 50; // Minimum characters per page for non-scanned PDF
@@ -10,9 +10,24 @@ const PDF_MIME_TYPE = 'application/pdf';
 
 const wordExtractor = new WordExtractor();
 
+// Reuse a single Tesseract worker across requests so we don't re-spin a worker and reload the
+// English language model on every image upload (the dominant cost in tesseract.js). On failure
+// the cached promise is cleared so the next call can retry.
+let ocrWorkerPromise: Promise<Awaited<ReturnType<typeof createWorker>>> | null = null;
+
+function getOcrWorker(): Promise<Awaited<ReturnType<typeof createWorker>>> {
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = createWorker('eng').catch((error) => {
+      ocrWorkerPromise = null;
+      throw error;
+    });
+  }
+  return ocrWorkerPromise;
+}
+
 export interface ExtractionResult {
   text: string;
-  method: 'pdf_parse' | 'pdf_ocr_fallback' | 'tesseract_ocr' | 'doc_parse' | 'docx_parse';
+  method: 'pdf_parse' | 'pdf_scanned' | 'tesseract_ocr' | 'doc_parse' | 'docx_parse' | 'plain_text';
   confidence?: number;
 }
 
@@ -88,10 +103,7 @@ function getSupportedMimeType(mimeType: string, fileName?: string): string | nul
     return normalizedMimeType;
   }
 
-  if (!normalizedMimeType || normalizedMimeType === 'application/octet-stream') {
-    return inferredMimeType;
-  }
-
+  // Unknown or empty declared MIME type: fall back to extension-based inference.
   return inferredMimeType;
 }
 
@@ -115,9 +127,8 @@ export function validateMimeType(mimeType: string, fileName?: string): string {
  */
 export async function extractTextFromPdf(buffer: Buffer): Promise<ExtractionResult> {
   try {
-    // Convert Buffer to Uint8Array for unpdf
-    const uint8Array = new Uint8Array(buffer);
-    const { text, totalPages } = await extractText(uint8Array, { mergePages: true });
+    // A Node Buffer already is a Uint8Array, so pass it straight to unpdf (avoids a full-size copy).
+    const { text, totalPages } = await extractText(buffer, { mergePages: true });
     const extractedText = (text as string)?.trim() || '';
 
     // Check if it's a scanned PDF (low text density)
@@ -125,10 +136,12 @@ export async function extractTextFromPdf(buffer: Buffer): Promise<ExtractionResu
     const avgCharsPerPage = extractedText.length / pageCount;
 
     if (avgCharsPerPage < MIN_TEXT_DENSITY && extractedText.length < 500) {
-      // Likely scanned, OCR would be needed for better extraction
+      // Scanned PDF with no usable text layer. Return the (possibly empty) extracted text so the
+      // caller's "no text extracted" handling applies, rather than a placeholder that would be
+      // saved as if it were real contract content. (OCR of rasterized PDF pages is not implemented.)
       return {
-        text: extractedText || '[OCR required - scanned PDF detected]',
-        method: 'pdf_ocr_fallback',
+        text: extractedText,
+        method: 'pdf_scanned',
         confidence: 0,
       };
     }
@@ -148,10 +161,8 @@ export async function extractTextFromPdf(buffer: Buffer): Promise<ExtractionResu
  */
 export async function extractTextFromImage(buffer: Buffer): Promise<ExtractionResult> {
   try {
-    const result = await Tesseract.recognize(buffer, 'eng', {
-      logger: () => {
-      }, // Suppress logs
-    });
+    const worker = await getOcrWorker();
+    const result = await worker.recognize(buffer);
 
     return {
       text: result.data.text.trim(),
@@ -169,7 +180,7 @@ export async function extractTextFromImage(buffer: Buffer): Promise<ExtractionRe
 export async function extractTextFromPlainText(buffer: Buffer): Promise<ExtractionResult> {
   return {
     text: buffer.toString('utf-8').trim(),
-    method: 'pdf_parse', // Using pdf_parse as a generic "direct extraction" method
+    method: 'plain_text',
     confidence: 100,
   };
 }

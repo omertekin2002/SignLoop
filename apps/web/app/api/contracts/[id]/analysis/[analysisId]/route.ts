@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { requireUserId } from "@/lib/api-auth";
 import { deleteAnalysisForContract } from "@/lib/server-db";
 
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string; analysisId: string }> },
 ) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
   const { id, analysisId } = await params;
   const deleted = await deleteAnalysisForContract({

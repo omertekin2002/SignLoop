@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUser, useClerk } from "@clerk/nextjs";
-import type { AxiosError } from "axios";
 import { format } from "date-fns";
 import {
   Book,
@@ -29,6 +28,7 @@ import {
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import { getSettingsErrorMessage, type SettingsResponse } from "@/lib/settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -74,18 +74,6 @@ interface Project {
   contracts?: Contract[];
   contextDocuments?: { id: string }[];
 }
-
-type SettingsResponse = {
-  primaryModel: string | null;
-  personality: string;
-  availablePrimaryModels: string[];
-  modelsError: string | null;
-  availablePersonalities: string[];
-};
-
-type SettingsErrorPayload = {
-  error?: string;
-};
 
 interface ChatThreadSummary {
   id: string;
@@ -169,11 +157,6 @@ function ModelSelector({
   );
 }
 
-function getSettingsErrorMessage(error: unknown): string {
-  const axiosError = error as AxiosError<SettingsErrorPayload>;
-  return axiosError?.response?.data?.error || "Failed to save settings";
-}
-
 type DashboardProps = {
   landingHero?: boolean;
   startTemporary?: boolean;
@@ -224,16 +207,8 @@ const Dashboard = ({
   const { data: chatThreads, isLoading: loadingChatThreads } = useQuery({
     queryKey: ["chat-threads"],
     queryFn: async () => {
-      const response = await fetch("/api/chat/threads");
-      const payload = (await response.json().catch(() => null)) as
-        | { data?: ChatThreadSummary[]; error?: string }
-        | null;
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "Failed to fetch chat threads.");
-      }
-
-      return payload?.data || [];
+      const response = await apiClient.get<{ data?: ChatThreadSummary[] }>("/chat/threads");
+      return response.data.data || [];
     },
     enabled: canUseSavedWorkspace,
   });
@@ -360,20 +335,12 @@ const Dashboard = ({
 
   const createChatMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch("/api/chat/threads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | { data?: ChatThreadSummary; error?: string }
-        | null;
-
-      if (!response.ok || !payload?.data) {
-        throw new Error(payload?.error || "Failed to create chat thread.");
+      const response = await apiClient.post<{ data?: ChatThreadSummary }>("/chat/threads", {});
+      const thread = response.data.data;
+      if (!thread) {
+        throw new Error("Failed to create chat thread.");
       }
-
-      return payload.data;
+      return thread;
     },
     onSuccess: (thread) => {
       setRecentlyDeletedChatThreadId(null);
@@ -387,16 +354,7 @@ const Dashboard = ({
 
   const deleteChatMutation = useMutation({
     mutationFn: async (threadId: string) => {
-      const response = await fetch(`/api/chat/threads/${threadId}`, {
-        method: "DELETE",
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | { success?: boolean; error?: string }
-        | null;
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "Failed to delete chat thread.");
-      }
+      await apiClient.delete(`/chat/threads/${threadId}`);
     },
     onSuccess: (_result, deletedThreadId) => {
       const fallbackThreadId = chatThreads?.find((thread) => thread.id !== deletedThreadId)?.id ?? null;

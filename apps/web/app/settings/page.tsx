@@ -6,8 +6,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useClerk, useUser } from "@clerk/nextjs";
 import { ArrowLeft, Loader2, Settings as SettingsIcon } from "lucide-react";
 import { useTheme } from "next-themes";
-import type { AxiosError } from "axios";
 import { apiClient } from "@/lib/api-client";
+import { getSettingsErrorMessage, type SettingsResponse } from "@/lib/settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,27 +15,10 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 
-type SettingsResponse = {
-  primaryModel: string | null;
-  personality: string;
-  availablePrimaryModels: string[];
-  modelsError: string | null;
-  availablePersonalities: string[];
-};
-
-type SettingsErrorPayload = {
-  error?: string;
-};
-
 const PERSONALITY_LABELS: Record<string, string> = {
   "bare-llm": "Bare LLM",
   "signloop-assistant": "SignLoop Assistant",
 };
-
-function getErrorMessage(error: unknown): string {
-  const axiosError = error as AxiosError<SettingsErrorPayload>;
-  return axiosError?.response?.data?.error || "Failed to save settings";
-}
 
 export default function SettingsPage() {
   const { user } = useUser();
@@ -111,7 +94,7 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
     },
     onError: (error: unknown) => {
-      toast.error(getErrorMessage(error));
+      toast.error(getSettingsErrorMessage(error));
     },
   });
 
@@ -127,7 +110,7 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
     },
     onError: (error: unknown) => {
-      toast.error(getErrorMessage(error));
+      toast.error(getSettingsErrorMessage(error));
     },
   });
 
