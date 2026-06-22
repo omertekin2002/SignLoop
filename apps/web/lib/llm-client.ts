@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { PRIMARY_LLM_BASE_URL, isUsablePrimaryModel } from '@/lib/model-settings';
+import { PRIMARY_LLM_BASE_URL } from '@/lib/model-settings';
 
 // Shared LLM provider configuration and the primary -> OpenRouter fallback used by
 // both the contract-analysis pipeline (lib/analysis.ts) and the chat pipeline (lib/chat.ts).
@@ -66,12 +66,10 @@ export function extractResponseOutputText(response: OpenAI.Responses.Response): 
     return joined.length > 0 ? joined : null;
 }
 
-// Resolve the model to call: honor a caller-requested model when it is usable, otherwise
-// fall back to the configured default.
+// Resolve the model to call: honor a caller-requested non-empty model, otherwise fall back to
+// the configured default.
 export function resolvePrimaryModel(requested?: string | null): string {
-    const candidate =
-        typeof requested === 'string' && requested.trim() ? requested.trim() : PRIMARY_LLM_MODEL;
-    return isUsablePrimaryModel(candidate) ? candidate : PRIMARY_LLM_MODEL;
+    return typeof requested === 'string' && requested.trim() ? requested.trim() : PRIMARY_LLM_MODEL;
 }
 
 function toErrorMessage(error: unknown): string {
