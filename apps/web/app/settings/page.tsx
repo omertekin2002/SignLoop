@@ -163,10 +163,18 @@ export default function SettingsPage() {
             {isLoading ? (
               <div className="text-sm text-muted-foreground">Loading settings...</div>
             ) : availableModels.length === 0 ? (
-              <div className="space-y-1">
-                <div className="text-sm text-muted-foreground">
-                  SignLoop will use the fallback model for now.
-                </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground" htmlFor="primary-model">
+                  Primary model
+                </label>
+                <Select value="openrouter" disabled>
+                  <SelectTrigger id="primary-model">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="openrouter">OpenRouter</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             ) : (
               <>

@@ -70,7 +70,6 @@ async function listRemoteModelIds(): Promise<string[]> {
 
 export async function getModelAvailabilitySnapshot(): Promise<{
   availablePrimaryModels: PrimaryModel[];
-  usedFallback: boolean;
 }> {
   try {
     const remoteModelIds = await listRemoteModelIds();
@@ -78,15 +77,11 @@ export async function getModelAvailabilitySnapshot(): Promise<{
       availablePrimaryModels: remoteModelIds.filter((model): model is PrimaryModel =>
         isUsablePrimaryModel(model),
       ),
-      usedFallback: false,
     };
   } catch (error) {
-    // The remote /models endpoint is unreachable; fall back to the curated allow-list so model
-    // selection still works offline instead of failing the whole settings request.
-    console.error("Falling back to the curated primary-model allow-list", error);
-    return {
-      availablePrimaryModels: PRIMARY_MODEL_OPTIONS.filter((model) => isUsablePrimaryModel(model)),
-      usedFallback: true,
-    };
+    // ngrok /models is unreachable — return no models so the selector falls back to "OpenRouter"
+    // (same as a genuinely empty list) instead of failing the settings request.
+    console.error("Failed to load available models from ngrok", error);
+    return { availablePrimaryModels: [] };
   }
 }

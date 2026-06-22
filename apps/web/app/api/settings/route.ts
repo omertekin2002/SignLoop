@@ -16,8 +16,6 @@ import {
   upsertUserPrimaryModel,
 } from "@/lib/server-db";
 
-const MODEL_AVAILABILITY_MESSAGE = "Showing default models; live model list is temporarily unavailable.";
-
 export async function GET() {
   const authed = await requireUserId();
   if (authed instanceof NextResponse) return authed;
@@ -39,7 +37,7 @@ export async function GET() {
         ? settings.personality
         : DEFAULT_PERSONALITY_MODE,
     availablePrimaryModels,
-    modelsError: snapshot.usedFallback ? MODEL_AVAILABILITY_MESSAGE : null,
+    modelsError: null,
     availablePersonalities: PERSONALITY_OPTIONS,
   });
 }
