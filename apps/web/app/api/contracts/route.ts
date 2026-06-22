@@ -1,12 +1,11 @@
-import { NextResponse } from 'next/server';
-import { auth } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
+import { parseJsonBody, requireUserId } from "@/lib/api-auth";
 import { createContractForUser, listContractsByUserId } from "@/lib/server-db";
 
 export async function GET(req: Request) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
   const { searchParams } = new URL(req.url);
   const limit = searchParams.get("limit") ? Number(searchParams.get("limit")) : undefined;
@@ -17,12 +16,14 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
-  const body = (await req.json()) as { title?: string; projectId?: string | null };
+  const body = await parseJsonBody<{ title?: string; projectId?: string | null }>(req);
+  if (!body) {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
   const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : "Untitled Contract";
 
   try {

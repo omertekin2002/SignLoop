@@ -20,13 +20,20 @@ const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
 
 function clampPagination(opts?: PaginationOptions): { limit: number; offset: number } {
-  const limit = Math.min(Math.max(opts?.limit ?? DEFAULT_PAGE_LIMIT, 1), MAX_PAGE_LIMIT);
-  const offset = Math.max(opts?.offset ?? 0, 0);
+  // Number.isFinite guards against NaN (e.g. ?limit=abc -> Number(...) === NaN), which the
+  // `?? DEFAULT` nullish coalescing does not catch and would otherwise reach the SQL LIMIT.
+  const rawLimit = Number.isFinite(opts?.limit) ? (opts!.limit as number) : DEFAULT_PAGE_LIMIT;
+  const rawOffset = Number.isFinite(opts?.offset) ? (opts!.offset as number) : 0;
+  const limit = Math.min(Math.max(rawLimit, 1), MAX_PAGE_LIMIT);
+  const offset = Math.max(rawOffset, 0);
   return { limit, offset };
 }
 
 let schemaReadyPromise: Promise<void> | null = null;
 
+// Bootstraps the schema at runtime with idempotent CREATE ... IF NOT EXISTS statements. This
+// mirrors the SQL in db/migrations/*.sql (applied by db/migrate.js); keep the two in sync when
+// changing the schema.
 async function ensureSchema(): Promise<void> {
   if (schemaReadyPromise) {
     return schemaReadyPromise;
@@ -144,10 +151,22 @@ async function ensureSchema(): Promise<void> {
       )
     `;
 
-    // For existing databases where the column was originally text
+    // For legacy databases where project_id was originally created as text. The ALTER takes an
+    // ACCESS EXCLUSIVE lock, so only run it when the column is not already uuid (otherwise this
+    // would needlessly lock the table on every cold start of a new serverless process).
     await sql`
-      alter table contract_files
-      alter column project_id type uuid using project_id::uuid
+      do $$
+      begin
+        if exists (
+          select 1 from information_schema.columns
+          where table_name = 'contract_files'
+            and column_name = 'project_id'
+            and data_type <> 'uuid'
+        ) then
+          alter table contract_files
+            alter column project_id type uuid using project_id::uuid;
+        end if;
+      end $$
     `;
 
     await sql`
@@ -370,7 +389,7 @@ type UploadedContractFileInput = {
   bucket: string;
   contentType: string;
   sizeBytes: number;
-  extractionMethod: string;
+  extractionMethod: string | null;
   extractionConfidence: number | null;
 };
 
@@ -629,6 +648,8 @@ export async function saveContractExtractedText(input: {
 export async function addUploadedContractFile(input: UploadedContractFileInput): Promise<void> {
   await ensureSchema();
 
+  // storage_key is the canonical column; the legacy blob_path column is left null for new rows
+  // (read paths use coalesce(storage_key, blob_path) to tolerate older rows).
   await sql`
     insert into contract_files (
       user_id,
@@ -636,7 +657,6 @@ export async function addUploadedContractFile(input: UploadedContractFileInput):
       contract_id,
       title,
       file_name,
-      blob_path,
       storage_key,
       bucket,
       content_type,
@@ -650,7 +670,6 @@ export async function addUploadedContractFile(input: UploadedContractFileInput):
       ${input.contractId},
       ${input.title},
       ${input.fileName},
-      ${input.storageKey},
       ${input.storageKey},
       ${input.bucket},
       ${input.contentType},
@@ -771,10 +790,14 @@ export async function getProjectStorageKeys(
       and c.user_id = ${userId}
   `;
 
+  // Join projects so the context-document branch is self-guarding on ownership, mirroring the
+  // contract_files branch above (context_documents has no user_id column of its own).
   const { rows: contextRows } = await sql<{ storageKey: string | null }>`
-    select storage_key as "storageKey"
-    from context_documents
-    where project_id = ${projectId}
+    select cd.storage_key as "storageKey"
+    from context_documents cd
+    inner join projects p on p.id = cd.project_id
+    where cd.project_id = ${projectId}
+      and p.user_id = ${userId}
   `;
 
   return [...fileRows, ...contextRows]
@@ -1530,42 +1553,6 @@ export async function getChatThreadByIdForUser(
   };
 }
 
-export async function getLastChatMessageForThread(input: {
-  userId: string;
-  threadId: string;
-}): Promise<ChatMessageRecord | null> {
-  await ensureSchema();
-
-  const owned = await isChatThreadOwnedByUser(input.userId, input.threadId);
-  if (!owned) {
-    return null;
-  }
-
-  const { rows } = await sql<{
-    id: string;
-    threadId: string;
-    role: string;
-    content: string;
-    position: number;
-    createdAt: string;
-  }>`
-    select
-      id,
-      thread_id as "threadId",
-      role,
-      content,
-      position,
-      created_at as "createdAt"
-    from chat_messages
-    where thread_id = ${input.threadId}
-    order by position desc, created_at desc
-    limit 1
-  `;
-
-  const row = rows[0];
-  return row ? mapChatMessageRow(row) : null;
-}
-
 export async function appendChatMessagesToThread(input: {
   userId: string;
   threadId: string;
@@ -1642,16 +1629,23 @@ export async function deleteChatThreadForUser(input: {
     return false;
   }
 
-  await sql`
-    delete from chat_messages
-    where thread_id = ${input.threadId}
-  `;
-
-  await sql`
-    delete from chat_threads
-    where id = ${input.threadId}
-      and user_id = ${input.userId}
-  `;
+  // Delete messages and the thread row in a single transaction so a failure cannot leave an
+  // orphaned (message-less) thread — there are no FK cascades to fall back on.
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`DELETE FROM chat_messages WHERE thread_id = $1`, [input.threadId]);
+    await client.query(
+      `DELETE FROM chat_threads WHERE id = $1 AND user_id = $2`,
+      [input.threadId, input.userId],
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 
   return true;
 }

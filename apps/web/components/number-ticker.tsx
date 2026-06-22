@@ -38,8 +38,8 @@ export function NumberTicker({
       return;
     }
 
-    const from = direction === "down" ? startValue : startValue;
-    const to = direction === "down" ? value : value;
+    const from = direction === "down" ? value : startValue;
+    const to = direction === "down" ? startValue : value;
     const animationDuration = 1400;
 
     let frameId = 0;

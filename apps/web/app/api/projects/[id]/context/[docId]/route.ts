@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { requireUserId } from "@/lib/api-auth";
 import { deleteContextDocumentFromProject, getContextDocumentStorageKey } from "@/lib/server-db";
 import { deleteObject } from "@/lib/object-storage";
 
@@ -7,10 +7,9 @@ export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string; docId: string }> },
 ) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
   const { id, docId } = await params;
 

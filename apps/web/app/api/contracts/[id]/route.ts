@@ -1,27 +1,25 @@
-import { NextResponse } from 'next/server';
-import { auth } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
+import { requireUserId } from "@/lib/api-auth";
 import { deleteContractForUser, getContractByIdForUser, getContractStorageKeys } from "@/lib/server-db";
 import { deleteObject } from "@/lib/object-storage";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
   const { id } = await params;
   const contract = await getContractByIdForUser(userId, id);
   if (!contract) {
-    return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
+    return NextResponse.json({ error: "Contract not found" }, { status: 404 });
   }
   return NextResponse.json(contract);
 }
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
   const { id } = await params;
 
@@ -35,7 +33,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const result = await deleteContractForUser({ userId, contractId: id });
 
   if (!result.deleted) {
-    return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
+    return NextResponse.json({ error: "Contract not found" }, { status: 404 });
   }
 
   return NextResponse.json({ success: true });

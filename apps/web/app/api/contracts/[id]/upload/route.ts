@@ -1,14 +1,12 @@
 import { NextResponse } from 'next/server';
-import { auth } from "@clerk/nextjs/server";
+import { requireUserId } from "@/lib/api-auth";
 import { addUploadedContractFile, getContractByIdForUser, saveContractExtractedText } from "@/lib/server-db";
-import { processFile, validateMimeType } from '@/lib/text-extraction';
-import { getStorageBucketName, uploadObject } from "@/lib/object-storage";
+import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
   const { id } = await params;
   const contract = await getContractByIdForUser(userId, id);
@@ -16,86 +14,57 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
   }
 
-  // Handle FormData
-  const formData = await req.formData();
-  const file = formData.get('file') as File;
-
-  if (!file) {
-    return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
+  const prepared = await prepareUpload(req);
+  if (!prepared.ok) {
+    return NextResponse.json({ error: prepared.error }, { status: prepared.status });
   }
 
-  const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
-  if (file.size > MAX_FILE_SIZE) {
+  if (prepared.extractionError) {
+    console.error('Text extraction failed:', prepared.extractionError);
+    return NextResponse.json({ error: prepared.extractionError }, { status: 500 });
+  }
+
+  if (!prepared.text || prepared.text.length === 0) {
     return NextResponse.json(
-      { error: 'File too large. Maximum size is 20 MB.' },
-      { status: 413 },
+      { error: 'Could not extract any text from the file' },
+      { status: 400 },
     );
   }
 
-  const rawMimeType = file.type || 'application/octet-stream';
-  let mimeType: string;
-
-  // Validate file type
   try {
-    mimeType = validateMimeType(rawMimeType, file.name);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Invalid file type";
-    return NextResponse.json({ error: message }, { status: 400 });
-  }
-
-  try {
-    // Convert File to Buffer
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    // Extract text from file
-    const { text, method, confidence } = await processFile(buffer, mimeType, file.name);
-
-    if (!text || text.length === 0) {
-      return NextResponse.json(
-        { error: 'Could not extract any text from the file' },
-        { status: 400 }
-      );
-    }
-
-    const safeFileName = file.name.replace(/[^\w.-]/g, "_");
-    const storageKey = `contracts/${userId}/${id}/${Date.now()}-${safeFileName}`;
-    const bucket = getStorageBucketName();
-
-    const storedObjectKey = await uploadObject(storageKey, buffer, mimeType);
-    await saveContractExtractedText({
-      userId,
-      contractId: id,
-      text,
+    const { storageKey, bucket } = await storeUploadedFile({
+      buffer: prepared.buffer,
+      mimeType: prepared.mimeType,
+      storageKeyPrefix: `contracts/${userId}/${id}`,
+      fileName: prepared.file.name,
     });
+
+    await saveContractExtractedText({ userId, contractId: id, text: prepared.text });
     await addUploadedContractFile({
       userId,
       contractId: id,
       projectId: contract.projectId,
       title: contract.title,
-      fileName: file.name,
-      storageKey: storedObjectKey,
+      fileName: prepared.file.name,
+      storageKey,
       bucket,
-      contentType: mimeType,
-      sizeBytes: file.size,
-      extractionMethod: method,
-      extractionConfidence: typeof confidence === "number" ? confidence : null,
+      contentType: prepared.mimeType,
+      sizeBytes: prepared.file.size,
+      extractionMethod: prepared.method,
+      extractionConfidence: prepared.confidence,
     });
 
     return NextResponse.json({
       success: true,
       message: 'File uploaded and text extracted',
-      storageKey: storedObjectKey,
-      extractionMethod: method,
-      confidence,
-      textLength: text.length,
+      storageKey,
+      extractionMethod: prepared.method,
+      confidence: prepared.confidence,
+      textLength: prepared.text.length,
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Failed to extract text from file";
-    console.error('Text extraction failed:', error);
-    return NextResponse.json(
-      { error: message },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : "Failed to store uploaded file";
+    console.error('Upload persistence failed:', error);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

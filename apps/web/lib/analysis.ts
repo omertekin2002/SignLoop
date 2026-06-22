@@ -1,20 +1,12 @@
 import OpenAI from 'openai';
 import { AnalysisResultSchema, PartialAnalysisResultSchema, AnalysisResult } from '@/lib/schemas';
-import { isUsablePrimaryModel } from '@/lib/model-settings';
+import {
+    extractResponseOutputText,
+    resolvePrimaryModel,
+    runWithPrimaryAndOpenRouterFallback,
+} from '@/lib/llm-client';
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
-const OPENROUTER_MODELS = [
-    'google/gemma-4-31b-it:free',
-    'openai/gpt-oss-120b:free',
-    'openrouter/free',
-];
-const PRIMARY_LLM_BASE_URL =
-    process.env.PRIMARY_LLM_BASE_URL || 'https://efficient-sightlessly-ouida.ngrok-free.dev/v1';
-const PRIMARY_LLM_MODEL = process.env.PRIMARY_LLM_MODEL || 'gemini-3-flash';
-const PRIMARY_LLM_API_KEY = process.env.PRIMARY_LLM_API_KEY;
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-const APP_NAME = 'SignLoop';
+const MAX_CONTRACT_PROMPT_CHARS = 15000;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -348,10 +340,18 @@ function extractBalancedJsonObject(value: string): string | null {
 
 function parseModelJson(content: string): unknown {
     const trimmed = content.trim();
+
+    // Fast path: clean JSON (the json_object format is preferred) parses immediately, so we
+    // avoid building the fence/balanced/trailing-comma salvage candidates on every call.
+    try {
+        return JSON.parse(trimmed);
+    } catch {
+        // fall through to salvage candidates for fenced or malformed output
+    }
+
     const withoutFences = stripCodeFences(trimmed);
     const balancedCandidate = extractBalancedJsonObject(withoutFences);
     const candidates = [
-        trimmed,
         withoutFences,
         balancedCandidate ?? '',
         removeTrailingCommas(withoutFences),
@@ -375,49 +375,6 @@ function parseModelJson(content: string): unknown {
 function isLikelyUnsupportedJsonModeError(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error);
     return /(response_format|text\.format|json_object|json mode|unsupported|not support)/i.test(message);
-}
-
-function createOpenAiCompatibleClient(baseURL: string, apiKey?: string): OpenAI {
-    const resolvedApiKey = apiKey?.trim() || 'not-required';
-
-    return new OpenAI({
-        apiKey: resolvedApiKey,
-        baseURL,
-        defaultHeaders: {
-            'HTTP-Referer': SITE_URL,
-            'X-Title': APP_NAME,
-        },
-    });
-}
-
-function extractResponseOutputText(response: OpenAI.Responses.Response): string | null {
-    const directOutputText =
-        typeof response.output_text === 'string' ? response.output_text.trim() : '';
-    if (directOutputText) {
-        return directOutputText;
-    }
-
-    const chunks: string[] = [];
-    const outputItems = Array.isArray(response.output) ? response.output : [];
-
-    for (const outputItem of outputItems) {
-        if (typeof outputItem !== 'object' || outputItem === null) continue;
-
-        const content = Array.isArray((outputItem as { content?: unknown }).content)
-            ? ((outputItem as { content?: unknown[] }).content ?? [])
-            : [];
-
-        for (const part of content) {
-            if (typeof part !== 'object' || part === null) continue;
-            const candidate = part as { type?: unknown; text?: unknown };
-            if (candidate.type === 'output_text' && typeof candidate.text === 'string') {
-                chunks.push(candidate.text);
-            }
-        }
-    }
-
-    const joined = chunks.join('').trim();
-    return joined.length > 0 ? joined : null;
 }
 
 async function createResponsesPreferringJson(
@@ -585,6 +542,10 @@ export async function analyzeText(
     metadata?: { contractType?: string; region?: string },
     options?: { primaryModel?: string | null }
 ): Promise<{ result: AnalysisResult; provider: string; model: string }> {
+    const truncated = text.length > MAX_CONTRACT_PROMPT_CHARS;
+    const contractBody = truncated
+        ? `${text.slice(0, MAX_CONTRACT_PROMPT_CHARS)}\n\n[Contract truncated to the first ${MAX_CONTRACT_PROMPT_CHARS} characters for analysis.]`
+        : text;
     const prompt = `
 You are an expert legal contract analyst.
 Analyze the contract and return ONLY a valid JSON object.
@@ -628,65 +589,15 @@ Expected shape:
 Analysis should be detailed but concise. Identify high-risk clauses specific to the contract type and region.
 
 Contract Text:
-${text.substring(0, 15000)} ... (truncated if too long)
+${contractBody}
         `;
 
-    const candidatePrimaryModel =
-        typeof options?.primaryModel === 'string' && options.primaryModel.trim()
-            ? options.primaryModel.trim()
-            : PRIMARY_LLM_MODEL;
-    const selectedPrimaryModel = isUsablePrimaryModel(candidatePrimaryModel)
-        ? candidatePrimaryModel
-        : PRIMARY_LLM_MODEL;
+    const selectedPrimaryModel = resolvePrimaryModel(options?.primaryModel);
 
-    try {
-        const primaryClient = createOpenAiCompatibleClient(PRIMARY_LLM_BASE_URL, PRIMARY_LLM_API_KEY);
-        const primaryResult = await runAnalysisWithResponsesModel(primaryClient, selectedPrimaryModel, prompt);
-        return { result: primaryResult, provider: 'ngrok-openai-compatible', model: selectedPrimaryModel };
-    } catch (primaryError) {
-        const primaryErrorMessage =
-            primaryError instanceof Error ? primaryError.message : String(primaryError);
-        console.warn('Primary ngrok LLM call failed, falling back to OpenRouter', {
-            baseURL: PRIMARY_LLM_BASE_URL,
-            model: selectedPrimaryModel,
-            error: primaryErrorMessage,
-        });
+    const { result, provider, model } = await runWithPrimaryAndOpenRouterFallback(
+        selectedPrimaryModel,
+        (client, runModel) => runAnalysisWithResponsesModel(client, runModel, prompt),
+    );
 
-        if (!OPENROUTER_API_KEY) {
-            throw new Error(
-                `Primary endpoint failed and OpenRouter fallback is not configured. Primary error: ${primaryErrorMessage}`
-            );
-        }
-
-        const fallbackClient = createOpenAiCompatibleClient(OPENROUTER_BASE_URL, OPENROUTER_API_KEY);
-        const fallbackModels = OPENROUTER_MODELS;
-        const fallbackFailures: string[] = [];
-
-        for (const fallbackModel of fallbackModels) {
-            try {
-                const fallbackResult = await runAnalysisWithResponsesModel(fallbackClient, fallbackModel, prompt);
-                if (fallbackModel !== fallbackModels[0]) {
-                    console.warn('OpenRouter fallback model succeeded after earlier model failed', {
-                        firstFallbackModel: fallbackModels[0],
-                        successfulFallbackModel: fallbackModel,
-                    });
-                }
-                return { result: fallbackResult, provider: 'openrouter', model: fallbackModel };
-            } catch (fallbackError) {
-                const fallbackErrorMessage =
-                    fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-                fallbackFailures.push(`${fallbackModel}: ${fallbackErrorMessage}`);
-                console.warn('OpenRouter fallback model failed', {
-                    model: fallbackModel,
-                    error: fallbackErrorMessage,
-                });
-            }
-        }
-
-        throw new Error(
-            `Primary endpoint failed (${primaryErrorMessage}) and OpenRouter fallback failed (${fallbackFailures.join(
-                ' | '
-            )})`
-        );
-    }
+    return { result, provider, model };
 }

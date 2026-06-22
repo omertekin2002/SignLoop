@@ -64,7 +64,6 @@ type ChatApiSuccess = {
   message: string;
   provider?: string;
   model?: string;
-  mode?: string;
 };
 
 type ChatApiStreamEvent =
@@ -190,7 +189,6 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
     message,
     provider: typeof payload.provider === "string" ? payload.provider : undefined,
     model: typeof payload.model === "string" ? payload.model : undefined,
-    mode: typeof payload.mode === "string" ? payload.mode : undefined,
   };
 }
 
@@ -767,7 +765,6 @@ export function ChatPanel({
                   custom: {
                     provider: snapshot.provider ?? null,
                     model: snapshot.model ?? null,
-                    mode: snapshot.mode ?? null,
                   },
                 }
               : undefined,

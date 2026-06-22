@@ -15,7 +15,7 @@ export type PrimaryModel = string;
 
 const primaryModelSet = new Set<string>(PRIMARY_MODEL_OPTIONS);
 const UNSUPPORTED_PRIMARY_MODELS = new Set<string>(["gemini-3.1-flash-image"]);
-const PRIMARY_LLM_BASE_URL =
+export const PRIMARY_LLM_BASE_URL =
   process.env.PRIMARY_LLM_BASE_URL || "https://efficient-sightlessly-ouida.ngrok-free.dev/v1";
 const MODELS_ENDPOINT_TIMEOUT_MS = 5000;
 
@@ -68,17 +68,25 @@ async function listRemoteModelIds(): Promise<string[]> {
   }
 }
 
-export async function listAvailablePrimaryModels(): Promise<PrimaryModel[]> {
-  const remoteModelIds = await listRemoteModelIds();
-  return remoteModelIds.filter((model): model is PrimaryModel => isUsablePrimaryModel(model));
-}
-
 export async function getModelAvailabilitySnapshot(): Promise<{
   availablePrimaryModels: PrimaryModel[];
+  usedFallback: boolean;
 }> {
-  const remoteModelIds = await listRemoteModelIds();
-
-  return {
-    availablePrimaryModels: remoteModelIds.filter((model): model is PrimaryModel => isUsablePrimaryModel(model)),
-  };
+  try {
+    const remoteModelIds = await listRemoteModelIds();
+    return {
+      availablePrimaryModels: remoteModelIds.filter((model): model is PrimaryModel =>
+        isUsablePrimaryModel(model),
+      ),
+      usedFallback: false,
+    };
+  } catch (error) {
+    // The remote /models endpoint is unreachable; fall back to the curated allow-list so model
+    // selection still works offline instead of failing the whole settings request.
+    console.error("Falling back to the curated primary-model allow-list", error);
+    return {
+      availablePrimaryModels: PRIMARY_MODEL_OPTIONS.filter((model) => isUsablePrimaryModel(model)),
+      usedFallback: true,
+    };
+  }
 }

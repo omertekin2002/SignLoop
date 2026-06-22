@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { requireUserId } from "@/lib/api-auth";
 import { addContextDocumentToProject, getProjectByIdForUser } from "@/lib/server-db";
-import { getStorageBucketName, uploadObject } from "@/lib/object-storage";
-import { processFile, validateMimeType } from "@/lib/text-extraction";
+import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
   const { id } = await params;
   const project = await getProjectByIdForUser(userId, id);
@@ -23,81 +21,51 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authed = await requireUserId();
+  if (authed instanceof NextResponse) return authed;
+  const { userId } = authed;
 
   const { id } = await params;
-  const formData = await req.formData();
 
-  const file = formData.get("file");
-  if (!(file instanceof File)) {
-    return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+  const prepared = await prepareUpload(req);
+  if (!prepared.ok) {
+    return NextResponse.json({ error: prepared.error }, { status: prepared.status });
   }
 
-  const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
-  if (file.size > MAX_FILE_SIZE) {
-    return NextResponse.json(
-      { error: "File too large. Maximum size is 20 MB." },
-      { status: 413 },
-    );
-  }
-
-  const titleValue = formData.get("title");
-  const documentTypeValue = formData.get("documentType");
-  const title = typeof titleValue === "string" && titleValue.trim() ? titleValue.trim() : file.name;
+  const titleValue = prepared.formData.get("title");
+  const documentTypeValue = prepared.formData.get("documentType");
+  const title =
+    typeof titleValue === "string" && titleValue.trim() ? titleValue.trim() : prepared.file.name;
   const documentType =
     typeof documentTypeValue === "string" && documentTypeValue.trim()
       ? documentTypeValue.trim()
       : "other";
 
-  const rawMimeType = file.type || "application/octet-stream";
-  let contentType: string;
-  try {
-    contentType = validateMimeType(rawMimeType, file.name);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Invalid file type";
-    return NextResponse.json({ error: message }, { status: 400 });
-  }
+  // Context documents are still stored when extraction yields no text (unlike contracts), but
+  // the failure is surfaced in the response so the client can warn instead of it being silent.
+  const extractionFailed = Boolean(prepared.extractionError) || prepared.text.trim().length === 0;
+  const extractionMethod = extractionFailed ? "extraction_failed" : prepared.method;
 
-  const arrayBuffer = await file.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-
-  let extractedText = "";
-  let extractionMethod: string | null = null;
-  let extractionConfidence: number | null = null;
+  const { storageKey, bucket } = await storeUploadedFile({
+    buffer: prepared.buffer,
+    mimeType: prepared.mimeType,
+    storageKeyPrefix: `projects/${userId}/${id}/context`,
+    fileName: prepared.file.name,
+  });
 
   try {
-    const extracted = await processFile(buffer, contentType, file.name);
-    extractedText = extracted.text;
-    extractionMethod = extracted.method;
-    extractionConfidence = typeof extracted.confidence === "number" ? extracted.confidence : null;
-  } catch {
-    extractedText = "";
-    extractionMethod = null;
-    extractionConfidence = null;
-  }
-
-  const safeFileName = file.name.replace(/[^\w.-]/g, "_");
-  const storageKey = `projects/${userId}/${id}/context/${Date.now()}-${safeFileName}`;
-  const bucket = getStorageBucketName();
-
-  const storedObjectKey = await uploadObject(storageKey, buffer, contentType);
-
-  try {
-    const wordCount = extractedText.split(/\s+/).filter(Boolean).length;
+    const wordCount = prepared.text.split(/\s+/).filter(Boolean).length;
     const created = await addContextDocumentToProject({
       userId,
       projectId: id,
       title,
       documentType,
-      storageKey: storedObjectKey,
+      storageKey,
       bucket,
-      originalFilename: file.name,
-      contentType,
-      sizeBytes: file.size,
-      extractedText,
+      originalFilename: prepared.file.name,
+      contentType: prepared.mimeType,
+      sizeBytes: prepared.file.size,
+      extractedText: prepared.text,
       wordCount,
     });
 
@@ -106,7 +74,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         message: "Context document uploaded successfully",
         documentId: created.id,
         extractionMethod,
-        extractionConfidence,
+        extractionConfidence: prepared.confidence,
+        extractionFailed,
+        ...(extractionFailed
+          ? { warning: "No text could be extracted from this file." }
+          : {}),
       },
       { status: 201 },
     );

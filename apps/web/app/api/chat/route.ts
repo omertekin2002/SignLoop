@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
+import { parseJsonBody } from '@/lib/api-auth';
 import {
   generateChatReply,
   generateChatReplyStream,
@@ -105,13 +106,29 @@ function appendWebSourcesToMessage(
     return message;
   }
 
-  const allUrlsAlreadyPresent = sources.every((source) => trimmed.includes(source.url));
-  if (allUrlsAlreadyPresent) {
+  // Consider a URL already cited only when it appears followed by a non-URL character (or the end
+  // of the text), so a short URL isn't treated as "present" just because it is a prefix of a
+  // longer one in the prose. Then list only the sources that aren't already cited.
+  const isAlreadyCited = (url: string): boolean => {
+    let from = 0;
+    for (;;) {
+      const idx = trimmed.indexOf(url, from);
+      if (idx === -1) return false;
+      const next = trimmed.charAt(idx + url.length);
+      if (next === "" || !/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]/.test(next)) {
+        return true;
+      }
+      from = idx + url.length;
+    }
+  };
+
+  const missingSources = sources.filter((source) => !isAlreadyCited(source.url));
+  if (!missingSources.length) {
     return message;
   }
 
   const lines: string[] = ["Sources:"];
-  for (const [index, source] of sources.entries()) {
+  for (const [index, source] of missingSources.entries()) {
     lines.push(`${index + 1}. [${source.title}](${source.url})`);
   }
 
@@ -176,7 +193,10 @@ function toDoneStreamEvent(input: {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const body = await parseJsonBody<unknown>(req);
+    if (body === null) {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
     const isTemporaryChat = isObject(body) && body.temporary === true;
     const { userId } = await auth();
 

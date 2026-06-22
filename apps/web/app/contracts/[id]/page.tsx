@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { AxiosError } from "axios";
 import { apiClient } from "@/lib/api-client";
+import { getRiskColor } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -50,9 +51,7 @@ const ContractDetails = () => {
     const id = params?.id as string;
     const queryClient = useQueryClient();
     const router = useRouter();
-    const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
     const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(null);
-    const [llmUsed, setLlmUsed] = useState<{ provider?: string; model?: string } | null>(null);
 
     const formatDate = (value: unknown, formatStr: string, fallback: string) => {
         if (!value) return fallback;
@@ -60,13 +59,6 @@ const ContractDetails = () => {
         const time = date.getTime();
         if (Number.isNaN(time)) return fallback;
         return format(date, formatStr);
-    };
-
-    const getTimestamp = (value: unknown) => {
-        if (!value) return 0;
-        const date = value instanceof Date ? value : new Date(value as string);
-        const time = date.getTime();
-        return Number.isNaN(time) ? 0 : time;
     };
 
     const getContractErrorDetails = (error: unknown) => {
@@ -126,25 +118,6 @@ const ContractDetails = () => {
             return response.data as ContractDetail;
         },
         enabled: !!id,
-        refetchInterval: () => 5000,
-    });
-
-    const { data: analysisJob } = useQuery({
-        queryKey: ["job", analysisJobId],
-        queryFn: async () => {
-            const response = await apiClient.get(`/jobs/${analysisJobId}`);
-            return response.data as {
-                status?: string;
-                error?: string;
-                result?: { provider?: string; llmModel?: string };
-            };
-        },
-        enabled: !!analysisJobId,
-        refetchInterval: (query) => {
-            const status = query.state.data?.status;
-            if (!status) return 2000;
-            return status === "SUCCEEDED" || status === "FAILED" ? false : 2000;
-        },
     });
 
     const analyzeMutation = useMutation({
@@ -154,10 +127,9 @@ const ContractDetails = () => {
             return response.data as { message?: string; jobId?: string; status?: string };
         },
         onSuccess: (data) => {
-            toast.success(data?.message || "Analysis started");
-            setLlmUsed(null);
-            if (data?.jobId) setAnalysisJobId(data.jobId);
+            toast.success(data?.message || "Analysis complete");
             queryClient.invalidateQueries({ queryKey: ["contract", id] });
+            queryClient.invalidateQueries({ queryKey: ["contracts"] });
         },
         onError: (error: ApiError) => {
             toast.error(
@@ -168,21 +140,16 @@ const ContractDetails = () => {
         }
     });
 
-    const getRiskColor = (badge: string | null | undefined) => {
-        const normalized = typeof badge === "string" ? badge.toLowerCase() : "";
-        switch (normalized) {
-            case "high": return "bg-destructive/15 text-destructive hover:bg-destructive/20";
-            case "medium": return "bg-amber-500/15 text-amber-800 hover:bg-amber-500/20 dark:text-amber-200";
-            case "low": return "bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200";
-            default: return "bg-muted text-muted-foreground hover:bg-muted";
-        }
-    };
-
-    const analysisJobStatus = analysisJob?.status;
-    const analyses: AnalysisRecord[] = Array.isArray(contract?.analyses) ? contract.analyses : [];
-    const sortedAnalyses = [...analyses].sort(
-        (a, b) => getTimestamp(b?.createdAt) - getTimestamp(a?.createdAt)
-    );
+    const sortedAnalyses = useMemo<AnalysisRecord[]>(() => {
+        const list = Array.isArray(contract?.analyses) ? contract.analyses : [];
+        const ts = (value: unknown) => {
+            if (!value) return 0;
+            const date = value instanceof Date ? value : new Date(value as string);
+            const time = date.getTime();
+            return Number.isNaN(time) ? 0 : time;
+        };
+        return [...list].sort((a, b) => ts(b?.createdAt) - ts(a?.createdAt));
+    }, [contract?.analyses]);
     const latestAnalysisRecord = sortedAnalyses[0] ?? null;
     const selectedAnalysis = selectedAnalysisId
         ? sortedAnalyses.find((a) => a.id === selectedAnalysisId) ?? null
@@ -257,12 +224,8 @@ const ContractDetails = () => {
         ? contract.title
         : "Untitled contract";
 
-    const llmProvider = isViewingHistoricalAnalysis
-        ? analysis?.llmProvider
-        : llmUsed?.provider ?? analysisJob?.result?.provider ?? analysis?.llmProvider;
-    const llmModel = isViewingHistoricalAnalysis
-        ? analysis?.llmModel
-        : llmUsed?.model ?? analysisJob?.result?.llmModel ?? analysis?.llmModel;
+    const llmProvider = analysis?.llmProvider;
+    const llmModel = analysis?.llmModel;
     const llmProviderLabel =
         llmProvider === "openrouter"
             ? "OpenRouter"
@@ -286,16 +249,23 @@ const ContractDetails = () => {
 
     const deleteOlderAnalysesMutation = useMutation({
         mutationFn: async (analysisIds: string[]) => {
-            await Promise.all(
+            const results = await Promise.allSettled(
                 analysisIds.map((analysisId) =>
                     apiClient.delete(`/contracts/${id}/analysis/${analysisId}`)
                 )
             );
+            const failed = results.filter((r) => r.status === "rejected").length;
+            return { total: analysisIds.length, failed };
         },
-        onSuccess: () => {
-            toast.success("Older analyses deleted");
+        onSuccess: ({ total, failed }) => {
+            // Always refresh — some deletes may have succeeded even if others failed.
             queryClient.invalidateQueries({ queryKey: ["contract", id] });
             queryClient.invalidateQueries({ queryKey: ["contracts"] });
+            if (failed > 0) {
+                toast.error(`Deleted ${total - failed} of ${total}; ${failed} could not be deleted.`);
+            } else {
+                toast.success("Older analyses deleted");
+            }
         },
         onError: (error: ApiError) => {
             toast.error(error.response?.data?.message || "Failed to delete older analyses");
@@ -317,9 +287,7 @@ const ContractDetails = () => {
     });
 
     useEffect(() => {
-        setAnalysisJobId(null);
         setSelectedAnalysisId(null);
-        setLlmUsed(null);
     }, [id]);
 
     useEffect(() => {
@@ -329,27 +297,6 @@ const ContractDetails = () => {
             setSelectedAnalysisId(null);
         }
     }, [selectedAnalysisId, sortedAnalyses]);
-
-    useEffect(() => {
-        if (!analysisJobId || !analysisJobStatus) return;
-
-        if (analysisJobStatus === "SUCCEEDED") {
-            const provider = analysisJob?.result?.provider;
-            const model = analysisJob?.result?.llmModel;
-            if (provider || model) {
-                setLlmUsed({ provider, model });
-            }
-            setSelectedAnalysisId(null);
-            queryClient.invalidateQueries({ queryKey: ["contract", id] });
-            setAnalysisJobId(null);
-            return;
-        }
-
-        if (analysisJobStatus === "FAILED") {
-            toast.error(analysisJob?.error || "Analysis failed");
-            setAnalysisJobId(null);
-        }
-    }, [analysisJobId, analysisJobStatus, analysisJob?.error, analysisJob?.result, id, queryClient]);
 
     if (isLoading) {
         return (
@@ -397,9 +344,9 @@ const ContractDetails = () => {
                             {analysis && (
                                 <Button
                                     onClick={() => analyzeMutation.mutate({ force: true })}
-                                    disabled={analyzeMutation.isPending || (!!analysisJobId && analysisJobStatus !== "FAILED")}
+                                    disabled={analyzeMutation.isPending}
                                 >
-                                    {(analyzeMutation.isPending || (!!analysisJobId && analysisJobStatus !== "FAILED")) ? (
+                                    {analyzeMutation.isPending ? (
                                         <>
                                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                             Analyzing...
@@ -472,7 +419,7 @@ const ContractDetails = () => {
                                     <CardDescription>Overall contract risk level</CardDescription>
                                 </CardHeader>
                                 <CardContent>
-                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(riskBadge)}`}>
+                                    <Badge className={`text-lg px-4 py-1 ${getRiskColor(riskBadge, { hover: true })}`}>
                                         {riskBadge || "UNKNOWN"}
                                     </Badge>
                                     <p className="mt-4 text-sm text-muted-foreground">
@@ -771,7 +718,7 @@ const ContractDetails = () => {
                 ) : (
                     <Card className="bg-muted/40 border-dashed">
                         <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                            {analysisJobId && analysisJobStatus !== "FAILED" ? (
+                            {analyzeMutation.isPending ? (
                                 <>
                                     <div className="rounded-full bg-card p-4 shadow-sm mb-4">
                                         <Loader2 className="h-8 w-8 text-primary animate-spin" />
@@ -780,11 +727,6 @@ const ContractDetails = () => {
                                     <p className="text-sm text-muted-foreground max-w-sm mt-2">
                                         This can take up to a minute. We’ll refresh automatically when it’s ready.
                                     </p>
-                                    {analysisJobStatus && (
-                                        <p className="mt-3 text-xs text-muted-foreground">
-                                            Status: {analysisJobStatus}
-                                        </p>
-                                    )}
                                 </>
                             ) : (
                                 <>
@@ -836,7 +778,7 @@ const ContractDetails = () => {
                                     >
                                         <div className="space-y-1">
                                             <div className="flex items-center gap-2">
-                                                <Badge className={getRiskColor(a.riskBadge)}>
+                                                <Badge className={getRiskColor(a.riskBadge, { hover: true })}>
                                                     {a.riskBadge || "UNKNOWN"}
                                                 </Badge>
                                                 <span className="text-sm text-muted-foreground">
