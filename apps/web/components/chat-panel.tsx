@@ -17,6 +17,7 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
   useLocalRuntime,
+  useMessage,
   type ChatModelAdapter,
   type ThreadMessage,
   type ThreadMessageLike,
@@ -520,6 +521,30 @@ const AssistantTextPart = () => (
   <MessagePartPrimitive.Text component={MarkdownMessage} smooth={false} />
 );
 
+// Drop a trailing ":free" tier suffix for readability (e.g. OpenRouter "...:free" models).
+function formatModelLabel(model: string): string {
+  return model.replace(/:free$/i, "");
+}
+
+// Shows the model that actually generated the assistant message, read from the metadata the
+// server attaches on completion. Reflects an OpenRouter fallback model when the primary failed.
+const AssistantModelLabel = () => {
+  const model = useMessage((message) => {
+    const custom = (message.metadata as { custom?: { model?: unknown } } | undefined)?.custom;
+    return typeof custom?.model === "string" && custom.model.trim() ? custom.model : null;
+  });
+
+  if (!model) {
+    return null;
+  }
+
+  return (
+    <span className="truncate text-xs text-muted-foreground" title={model}>
+      {formatModelLabel(model)}
+    </span>
+  );
+};
+
 const ChatMessage = () => {
   return (
     <MessagePrimitive.Root className="group relative flex w-full flex-col gap-2 mb-6">
@@ -533,8 +558,11 @@ const ChatMessage = () => {
 
       <MessagePrimitive.If assistant>
         <div className="mr-auto relative flex w-full flex-col gap-2">
-          <div className="flex h-8 w-8 select-none items-center justify-center rounded-lg border bg-background shadow-sm">
-            <Bot className="h-4 w-4 text-foreground/80" />
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 select-none items-center justify-center rounded-lg border bg-background shadow-sm">
+              <Bot className="h-4 w-4 text-foreground/80" />
+            </div>
+            <AssistantModelLabel />
           </div>
           <div className="flex w-full flex-col gap-1 rounded-2xl rounded-tl-sm border bg-card px-5 py-4 shadow-sm">
             <MessagePrimitive.Content
