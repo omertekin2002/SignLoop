@@ -96,7 +96,7 @@ function getSupportedMimeType(mimeType: string, fileName?: string): string | nul
   if (DOCX_MIME_TYPE_ALIASES.has(normalizedMimeType)) {
     return DOCX_MIME_TYPE;
   }
-  if (normalizedMimeType === 'image/jpg') {
+  if (normalizedMimeType === 'image/jpg' || normalizedMimeType === 'image/pjpeg') {
     return 'image/jpeg';
   }
   if (ALLOWED_MIME_TYPES.includes(normalizedMimeType)) {

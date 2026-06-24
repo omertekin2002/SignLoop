@@ -1,6 +1,5 @@
 import { useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { AxiosError } from "axios";
 import {
     Dialog,
     DialogContent,
@@ -14,10 +13,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, getApiErrorMessage } from "@/lib/api-client";
+import { formatFileSize } from "@/lib/utils";
 import { Upload, File, Loader2 } from "lucide-react";
-
-type ApiError = AxiosError<{ message?: string }>;
 
 interface UploadDialogProps {
     children: React.ReactNode;
@@ -68,8 +66,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
             queryClient.invalidateQueries({ queryKey: ["contracts"] });
         } catch (error: unknown) {
             console.error(error);
-            const apiError = error as ApiError;
-            toast.error(apiError.response?.data?.message || "Upload failed");
+            toast.error(getApiErrorMessage(error, "Upload failed"));
         } finally {
             setUploading(false);
         }
@@ -106,7 +103,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
                                     <File className="h-8 w-8 mx-auto text-primary mb-2" />
                                     <p className="text-sm font-medium">{file.name}</p>
                                     <p className="text-xs text-muted-foreground">
-                                        {(file.size / 1024 / 1024).toFixed(2)} MB
+                                        {formatFileSize(file.size)}
                                     </p>
                                 </div>
                             ) : (

@@ -108,6 +108,10 @@ async function ensureSchema(): Promise<void> {
       create index if not exists analyses_created_at_idx
       on analyses (created_at desc)
     `;
+    await sql`
+      create index if not exists analyses_contract_id_created_at_idx
+      on analyses (contract_id, created_at desc)
+    `;
 
     await sql`
       create table if not exists context_documents (
@@ -625,6 +629,101 @@ export async function getContractByIdForUser(
   };
 }
 
+// Lightweight read for callers that need only contract metadata (e.g. the upload route reads
+// projectId/title). Avoids transferring text_content and scanning/hydrating every analysis row.
+export async function getContractMetaForUser(
+  userId: string,
+  contractId: string,
+): Promise<ContractSummaryRecord | null> {
+  await ensureSchema();
+
+  const { rows } = await sql<ContractSummaryRecord>`
+    select
+      id,
+      user_id as "userId",
+      project_id as "projectId",
+      title,
+      status,
+      created_at as "createdAt",
+      updated_at as "updatedAt"
+    from contracts
+    where id = ${contractId}
+      and user_id = ${userId}
+    limit 1
+  `;
+
+  return rows[0] ?? null;
+}
+
+export type ContractWithLatestAnalysisRecord = ContractSummaryRecord & {
+  text: string | null;
+  latestAnalysis: AnalysisRecord | null;
+};
+
+// Read for callers that need the contract text plus only the most recent analysis (e.g. the
+// analyze route's idempotency check). Fetches a single analysis row instead of the full history.
+export async function getContractWithLatestAnalysisForUser(
+  userId: string,
+  contractId: string,
+): Promise<ContractWithLatestAnalysisRecord | null> {
+  await ensureSchema();
+
+  const { rows: contractRows } = await sql<ContractSummaryRecord & { text: string | null }>`
+    select
+      id,
+      user_id as "userId",
+      project_id as "projectId",
+      title,
+      status,
+      text_content as "text",
+      created_at as "createdAt",
+      updated_at as "updatedAt"
+    from contracts
+    where id = ${contractId}
+      and user_id = ${userId}
+    limit 1
+  `;
+
+  const contract = contractRows[0];
+  if (!contract) {
+    return null;
+  }
+
+  const { rows: analysisRows } = await sql<{
+    id: string;
+    contractId: string;
+    riskBadge: string | null;
+    resultJson: unknown;
+    llmProvider: string | null;
+    llmModel: string | null;
+    llmPromptTokens: number | null;
+    llmCompletionTokens: number | null;
+    processingTimeMs: number | null;
+    createdAt: string;
+  }>`
+    select
+      id,
+      contract_id as "contractId",
+      risk_badge as "riskBadge",
+      result_json as "resultJson",
+      llm_provider as "llmProvider",
+      llm_model as "llmModel",
+      llm_prompt_tokens as "llmPromptTokens",
+      llm_completion_tokens as "llmCompletionTokens",
+      processing_time_ms as "processingTimeMs",
+      created_at as "createdAt"
+    from analyses
+    where contract_id = ${contractId}
+    order by created_at desc
+    limit 1
+  `;
+
+  return {
+    ...contract,
+    latestAnalysis: analysisRows[0] ? mapAnalysisRow(analysisRows[0]) : null,
+  };
+}
+
 export async function saveContractExtractedText(input: {
   userId: string;
   contractId: string;
@@ -680,7 +779,7 @@ export async function addUploadedContractFile(input: UploadedContractFileInput):
   `;
 }
 
-export async function createAnalysisForContract(input: NewAnalysisInput): Promise<void> {
+export async function createAnalysisForContract(input: NewAnalysisInput): Promise<{ id: string }> {
   await ensureSchema();
 
   const { rows: contractRows } = await sql<{ id: string }>`
@@ -695,7 +794,7 @@ export async function createAnalysisForContract(input: NewAnalysisInput): Promis
     throw new Error("Contract not found");
   }
 
-  await sql`
+  const { rows: analysisRows } = await sql<{ id: string }>`
     insert into analyses (
       contract_id,
       risk_badge,
@@ -716,6 +815,7 @@ export async function createAnalysisForContract(input: NewAnalysisInput): Promis
       ${input.llmCompletionTokens ?? null},
       ${input.processingTimeMs ?? null}
     )
+    returning id
   `;
 
   await sql`
@@ -726,6 +826,13 @@ export async function createAnalysisForContract(input: NewAnalysisInput): Promis
     where id = ${input.contractId}
       and user_id = ${input.userId}
   `;
+
+  const created = analysisRows[0];
+  if (!created) {
+    throw new Error("Failed to create analysis");
+  }
+
+  return created;
 }
 
 export async function deleteAnalysisForContract(input: {
@@ -1595,13 +1702,19 @@ export async function appendChatMessagesToThread(input: {
     );
     const basePosition: number = posResult.rows[0]?.basePosition ?? 0;
 
-    for (const [idx, message] of cleanedMessages.entries()) {
-      await client.query(
-        `INSERT INTO chat_messages (thread_id, role, content, position, metadata_json)
-         VALUES ($1, $2, $3, $4, null)`,
-        [input.threadId, message.role, message.content, basePosition + idx + 1],
-      );
-    }
+    // Insert all messages in one round-trip. WITH ORDINALITY yields a 1-based `ord`, so
+    // `basePosition + ord` reproduces the previous `basePosition + idx + 1` sequencing and order.
+    await client.query(
+      `INSERT INTO chat_messages (thread_id, role, content, position, metadata_json)
+       SELECT $1, role, content, $2 + ord, null
+       FROM unnest($3::text[], $4::text[]) WITH ORDINALITY AS t(role, content, ord)`,
+      [
+        input.threadId,
+        basePosition,
+        cleanedMessages.map((message) => message.role),
+        cleanedMessages.map((message) => message.content),
+      ],
+    );
 
     await client.query(
       `UPDATE chat_threads SET updated_at = now()

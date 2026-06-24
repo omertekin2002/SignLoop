@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { parseJsonBody, requireUserId } from "@/lib/api-auth";
+import { parseJsonBody, parsePaginationParams, requireUserId } from "@/lib/api-auth";
 import { createContractForUser, listContractsByUserId } from "@/lib/server-db";
 
 export async function GET(req: Request) {
@@ -7,11 +7,7 @@ export async function GET(req: Request) {
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
 
-  const { searchParams } = new URL(req.url);
-  const limit = searchParams.get("limit") ? Number(searchParams.get("limit")) : undefined;
-  const offset = searchParams.get("offset") ? Number(searchParams.get("offset")) : undefined;
-
-  const result = await listContractsByUserId(userId, { limit, offset });
+  const result = await listContractsByUserId(userId, parsePaginationParams(req));
   return NextResponse.json(result);
 }
 

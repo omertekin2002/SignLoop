@@ -5,16 +5,14 @@ import {
     resolvePrimaryModel,
     runWithPrimaryAndOpenRouterFallback,
 } from '@/lib/llm-client';
+import { isRecord } from '@/lib/utils';
 
 const MAX_CONTRACT_PROMPT_CHARS = 15000;
 
 type JsonRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): JsonRecord | null {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-        return null;
-    }
-    return value as JsonRecord;
+    return isRecord(value) && !Array.isArray(value) ? (value as JsonRecord) : null;
 }
 
 function pickFirst(record: JsonRecord, keys: string[]): unknown {

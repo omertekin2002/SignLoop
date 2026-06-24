@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUser, useClerk } from "@clerk/nextjs";
-import { format } from "date-fns";
 import {
   Book,
   Calendar,
@@ -27,7 +26,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api-client";
-import { cn } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import { getSettingsErrorMessage, type SettingsResponse } from "@/lib/settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -856,7 +855,7 @@ const Dashboard = ({
                       <CardContent>
                         <div className="mb-4 flex items-center gap-1.5 text-xs text-muted-foreground">
                           <Calendar className="h-3.5 w-3.5" />
-                          {format(new Date(contract.createdAt), "MMMM d, yyyy")}
+                          {formatDate(contract.createdAt, "MMMM d, yyyy")}
                         </div>
                         <div className="flex items-end justify-between">
                           <Badge variant="secondary" className="font-medium bg-secondary/50">
@@ -928,7 +927,7 @@ const Dashboard = ({
                         <div className="flex items-end justify-between pt-1">
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <Calendar className="h-3.5 w-3.5" />
-                            {format(new Date(project.createdAt), "MMM d, yyyy")}
+                            {formatDate(project.createdAt, "MMM d, yyyy")}
                           </div>
                           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
                             <ChevronRight className="h-4 w-4" />

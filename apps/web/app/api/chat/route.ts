@@ -16,6 +16,7 @@ import {
   appendChatMessagesToThread,
   getUserSettingsByUserId,
 } from '@/lib/server-db';
+import { isRecord } from '@/lib/utils';
 
 const MAX_MESSAGES = 30;
 const MAX_MESSAGE_LENGTH = 4000;
@@ -53,16 +54,12 @@ type SearchSource = {
   url: string;
 };
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function isChatRole(value: unknown): value is ChatRole {
   return value === "system" || value === "user" || value === "assistant";
 }
 
 function parseChatMessages(payload: unknown): ChatMessage[] {
-  if (!isObject(payload)) {
+  if (!isRecord(payload)) {
     return [];
   }
 
@@ -75,7 +72,7 @@ function parseChatMessages(payload: unknown): ChatMessage[] {
   const normalized: ChatMessage[] = [];
 
   for (const item of rawMessages) {
-    if (!isObject(item)) continue;
+    if (!isRecord(item)) continue;
 
     const role = item.role;
     const content = item.content;
@@ -175,8 +172,9 @@ function toDoneStreamEvent(input: {
   reply: ChatReply;
   message: string;
   temporary: boolean;
+  persisted?: boolean;
 }): Record<string, unknown> {
-  const { reply, message, temporary } = input;
+  const { reply, message, temporary, persisted = true } = input;
 
   return {
     type: "done",
@@ -184,6 +182,7 @@ function toDoneStreamEvent(input: {
     provider: reply.provider,
     model: reply.model,
     mode: temporary ? "temporary-chat" : "chat",
+    persisted,
     webSearchQuery: reply.webSearch?.query ?? null,
     webSearchAttempts: reply.webSearch?.attemptedQueries ?? [],
     webSearchSuccessfulCount: reply.webSearch?.successfulSearches ?? 0,
@@ -197,7 +196,7 @@ export async function POST(req: Request) {
     if (body === null) {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
-    const isTemporaryChat = isObject(body) && body.temporary === true;
+    const isTemporaryChat = isRecord(body) && body.temporary === true;
     const { userId } = await auth();
 
     if (!userId && !isTemporaryChat) {
@@ -205,7 +204,7 @@ export async function POST(req: Request) {
     }
 
     const threadId =
-      isObject(body) && typeof body.threadId === "string" ? body.threadId.trim() : "";
+      isRecord(body) && typeof body.threadId === "string" ? body.threadId.trim() : "";
 
     if (!isTemporaryChat && !threadId) {
       return NextResponse.json({ error: "threadId is required." }, { status: 400 });
@@ -236,7 +235,7 @@ export async function POST(req: Request) {
         ? [{ role: "system", content: BARE_LLM_SYSTEM_PROMPT }, ...conversationMessages]
         : [{ role: "system", content: CHAT_SYSTEM_PROMPT }, ...conversationMessages];
 
-    const wantsStream = isObject(body) && body.stream === true;
+    const wantsStream = isRecord(body) && body.stream === true;
     if (wantsStream) {
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
@@ -261,13 +260,25 @@ export async function POST(req: Request) {
                 chunk.reply.webSearch?.sources ?? []
               );
 
-              await persistChatMessages({
-                userId,
-                threadId,
-                latestUserMessage,
-                assistantMessage,
-                temporary: isTemporaryChat,
-              });
+              // The full answer has already been streamed to (and rendered by) the client, so a
+              // persistence failure here must NOT flip the visible message to an error state.
+              // Log it, mark the done event as unpersisted, and still finalize the turn.
+              let persisted = true;
+              try {
+                await persistChatMessages({
+                  userId,
+                  threadId,
+                  latestUserMessage,
+                  assistantMessage,
+                  temporary: isTemporaryChat,
+                });
+              } catch (persistError) {
+                if (req.signal.aborted || isAbortError(persistError)) {
+                  return;
+                }
+                persisted = false;
+                console.error("Chat persist (stream) failed:", persistError);
+              }
 
               controller.enqueue(
                 streamEvent(
@@ -275,6 +286,7 @@ export async function POST(req: Request) {
                     reply: chunk.reply,
                     message: assistantMessage,
                     temporary: isTemporaryChat,
+                    persisted,
                   })
                 )
               );

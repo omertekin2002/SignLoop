@@ -26,3 +26,15 @@ export async function parseJsonBody<T>(req: Request): Promise<T | null> {
     return null;
   }
 }
+
+// Read ?limit / ?offset from the request URL into pagination options. Absent params become
+// undefined so the data layer's clampPagination applies its defaults (NaN is also clamped there).
+export function parsePaginationParams(req: Request): { limit?: number; offset?: number } {
+  const { searchParams } = new URL(req.url);
+  const limit = searchParams.get("limit");
+  const offset = searchParams.get("offset");
+  return {
+    limit: limit ? Number(limit) : undefined,
+    offset: offset ? Number(offset) : undefined,
+  };
+}

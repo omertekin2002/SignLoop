@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { PRIMARY_LLM_BASE_URL } from '@/lib/model-settings';
+import { getErrorMessage } from '@/lib/utils';
 
 // Shared LLM provider configuration and the primary -> OpenRouter fallback used by
 // both the contract-analysis pipeline (lib/analysis.ts) and the chat pipeline (lib/chat.ts).
@@ -72,10 +73,6 @@ export function resolvePrimaryModel(requested?: string | null): string {
     return typeof requested === 'string' && requested.trim() ? requested.trim() : PRIMARY_LLM_MODEL;
 }
 
-function toErrorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
-
 // Run `run` against the primary endpoint, and on failure iterate the ordered OpenRouter
 // fallback models. Aborts (via options.signal) are re-thrown without triggering fallback.
 export async function runWithPrimaryAndOpenRouterFallback<T>(
@@ -92,7 +89,7 @@ export async function runWithPrimaryAndOpenRouterFallback<T>(
             throw primaryError;
         }
 
-        const primaryErrorMessage = toErrorMessage(primaryError);
+        const primaryErrorMessage = getErrorMessage(primaryError);
         console.warn('Primary LLM call failed, falling back to OpenRouter', {
             baseURL: PRIMARY_LLM_BASE_URL,
             model: selectedPrimaryModel,
@@ -123,7 +120,7 @@ export async function runWithPrimaryAndOpenRouterFallback<T>(
                     throw fallbackError;
                 }
 
-                const fallbackErrorMessage = toErrorMessage(fallbackError);
+                const fallbackErrorMessage = getErrorMessage(fallbackError);
                 fallbackFailures.push(`${fallbackModel}: ${fallbackErrorMessage}`);
                 console.warn('OpenRouter fallback model failed', {
                     model: fallbackModel,

@@ -4,8 +4,8 @@ import { useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiClient } from "@/lib/api-client";
-import { getRiskColor } from "@/lib/utils";
+import { apiClient, getApiErrorMessage } from "@/lib/api-client";
+import { formatDate, formatFileSize, getRiskColor } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -43,7 +43,6 @@ import {
     File,
 } from "lucide-react";
 import { toast } from "sonner";
-import { format } from "date-fns";
 
 interface Project {
     id: string;
@@ -89,6 +88,7 @@ const ProjectDetails = () => {
             const response = await apiClient.get(`/projects/${id}`);
             return response.data as Project;
         },
+        enabled: !!id,
     });
 
     const deleteProjectMutation = useMutation({
@@ -127,9 +127,6 @@ const ProjectDetails = () => {
         }
     };
 
-    const extractApiMessage = (error: unknown, fallback: string) =>
-        (error as { response?: { data?: { message?: string } } })?.response?.data?.message || fallback;
-
     const uploadContractMutation = useMutation({
         mutationFn: async () => {
             // 1. Create the contract with project association.
@@ -160,7 +157,7 @@ const ProjectDetails = () => {
             queryClient.invalidateQueries({ queryKey: ["project", id] });
         },
         onError: (error: unknown) => {
-            toast.error(extractApiMessage(error, "Failed to upload contract"));
+            toast.error(getApiErrorMessage(error, "Failed to upload contract"));
         },
     });
 
@@ -184,7 +181,7 @@ const ProjectDetails = () => {
             queryClient.invalidateQueries({ queryKey: ["project", id] });
         },
         onError: (error: unknown) => {
-            toast.error(extractApiMessage(error, "Failed to upload context"));
+            toast.error(getApiErrorMessage(error, "Failed to upload context"));
         },
     });
 
@@ -258,7 +255,7 @@ const ProjectDetails = () => {
                                 <p className="text-muted-foreground mt-1">{project.description}</p>
                             )}
                             <div className="flex items-center gap-3 mt-2 text-sm text-muted-foreground">
-                                <span>Created {format(new Date(project.createdAt), "MMM d, yyyy")}</span>
+                                <span>Created {formatDate(project.createdAt, "MMM d, yyyy")}</span>
                                 <Badge variant="secondary">{project.status}</Badge>
                             </div>
                         </div>
@@ -305,7 +302,7 @@ const ProjectDetails = () => {
                                                     <div>
                                                         <p className="font-medium">{contract.title}</p>
                                                         <p className="text-xs text-muted-foreground">
-                                                            {format(new Date(contract.createdAt), "MMM d, yyyy")}
+                                                            {formatDate(contract.createdAt, "MMM d, yyyy")}
                                                         </p>
                                                     </div>
                                                 </div>
@@ -343,7 +340,7 @@ const ProjectDetails = () => {
                                                     <File className="h-8 w-8 mx-auto text-primary mb-2" />
                                                     <p className="text-sm font-medium">{selectedContractFile.name}</p>
                                                     <p className="text-xs text-muted-foreground">
-                                                        {(selectedContractFile.size / 1024 / 1024).toFixed(2)} MB
+                                                        {formatFileSize(selectedContractFile.size)}
                                                     </p>
                                                 </div>
                                             ) : (

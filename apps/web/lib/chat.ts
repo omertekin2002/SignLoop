@@ -12,6 +12,7 @@ import {
     resolvePrimaryModel,
     runWithPrimaryAndOpenRouterFallback,
 } from '@/lib/llm-client';
+import { getErrorMessage, isRecord } from '@/lib/utils';
 
 const MAX_WEB_SOURCES_IN_METADATA = 8;
 const NATIVE_WEB_SEARCH_MODELS = new Set(['gpt-5', 'gpt-5.1', 'gpt-5.2']);
@@ -58,16 +59,12 @@ type ModelDrivenSearchResult = {
 
 type ChatRequestOptions = Pick<OpenAI.RequestOptions, 'signal'>;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null;
-}
-
 function isNativeWebSearchModel(model: string): boolean {
     return NATIVE_WEB_SEARCH_MODELS.has(model);
 }
 
 function isUnsupportedWebSearchError(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     // Only treat the error as an unsupported-tool signal when it explicitly references an
     // unsupported/unknown/invalid tool — a bare "web_search" substring is too broad and would
     // misclassify unrelated failures (rate limits, server errors) that echo the tool name.
@@ -371,7 +368,7 @@ async function runChatWithWebStrategy(
             throw error;
         }
 
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.warn('Model rejected native web_search tool; falling back to plain responses', {
             model,
             error: errorMessage,
@@ -641,8 +638,7 @@ export async function* generateChatReplyStream(
             throw primaryError;
         }
 
-        const primaryErrorMessage =
-            primaryError instanceof Error ? primaryError.message : String(primaryError);
+        const primaryErrorMessage = getErrorMessage(primaryError);
 
         // If the primary stream already emitted tokens, restarting on a fallback model would
         // duplicate visible content, so surface a hard error instead of falling through.
@@ -702,8 +698,7 @@ export async function* generateChatReplyStream(
                     throw fallbackError;
                 }
 
-                const fallbackErrorMessage =
-                    fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+                const fallbackErrorMessage = getErrorMessage(fallbackError);
 
                 if (emittedFallbackContent) {
                     throw new Error(
