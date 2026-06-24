@@ -148,6 +148,8 @@ async function persistChatMessages(input: {
   threadId: string;
   latestUserMessage: ChatMessage;
   assistantMessage: string;
+  assistantModel: string | null;
+  assistantProvider: string | null;
   temporary: boolean;
 }): Promise<void> {
   if (input.temporary) {
@@ -163,7 +165,12 @@ async function persistChatMessages(input: {
     threadId: input.threadId,
     messages: [
       { role: "user", content: input.latestUserMessage.content },
-      { role: "assistant", content: input.assistantMessage },
+      {
+        role: "assistant",
+        content: input.assistantMessage,
+        // Persist the generating model/provider so the label survives re-hydration and reloads.
+        metadata: { model: input.assistantModel, provider: input.assistantProvider },
+      },
     ],
   });
 }
@@ -270,6 +277,8 @@ export async function POST(req: Request) {
                   threadId,
                   latestUserMessage,
                   assistantMessage,
+                  assistantModel: chunk.reply.model ?? null,
+                  assistantProvider: chunk.reply.provider ?? null,
                   temporary: isTemporaryChat,
                 });
               } catch (persistError) {
@@ -345,7 +354,11 @@ export async function POST(req: Request) {
           threadId,
           messages: [
             { role: "user", content: latestUserMessage.content },
-            { role: "assistant", content: assistantMessage },
+            {
+              role: "assistant",
+              content: assistantMessage,
+              metadata: { model, provider },
+            },
           ],
         });
       } catch (persistError) {
