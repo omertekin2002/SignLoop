@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { requireUserId } from "@/lib/api-auth";
+import { getErrorMessage } from "@/lib/utils";
 import { analyzeText } from '@/lib/analysis';
 import {
   createAnalysisForContract,
-  getContractByIdForUser,
+  getContractWithLatestAnalysisForUser,
   getUserSettingsByUserId,
 } from "@/lib/server-db";
 
@@ -15,7 +16,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const force = new URL(req.url).searchParams.get("force") === "true";
 
-  const contract = await getContractByIdForUser(userId, id);
+  const contract = await getContractWithLatestAnalysisForUser(userId, id);
 
   if (!contract) {
     return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
@@ -40,7 +41,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const { result, provider, model } = await analyzeText(contract.text, undefined, {
       primaryModel: settings?.primaryModel ?? null,
     });
-    await createAnalysisForContract({
+    const created = await createAnalysisForContract({
       userId,
       contractId: contract.id,
       riskBadge: typeof result.risk_badge === "string" ? result.risk_badge : null,
@@ -49,9 +50,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       llmModel: model ?? null,
     });
 
-    return NextResponse.json({ message: 'Analysis complete', jobId: 'done' });
+    return NextResponse.json({ message: 'Analysis complete', jobId: 'done', analysisId: created.id });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Analysis failed";
+    const message = getErrorMessage(error, "Analysis failed");
     console.error('Analysis error:', error);
     return NextResponse.json({ error: message }, { status: 500 });
   }

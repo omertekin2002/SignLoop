@@ -4,9 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { AxiosError } from "axios";
-import { apiClient } from "@/lib/api-client";
-import { getRiskColor } from "@/lib/utils";
+import { apiClient, type ApiError } from "@/lib/api-client";
+import { coerceDate, formatDate, getRiskColor } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -24,10 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ArrowLeft, Play, AlertTriangle, Loader2, Trash2, Calendar, FileText, HelpCircle, Mail, Shield, Clock, DollarSign, RefreshCw, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { format } from "date-fns";
 import type { AnalysisResult } from "@/lib/schemas";
-
-type ApiError = AxiosError<{ message?: string; error?: string }>;
 
 type AnalysisRecord = {
     id: string;
@@ -52,14 +48,6 @@ const ContractDetails = () => {
     const queryClient = useQueryClient();
     const router = useRouter();
     const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(null);
-
-    const formatDate = (value: unknown, formatStr: string, fallback: string) => {
-        if (!value) return fallback;
-        const date = value instanceof Date ? value : new Date(value as string);
-        const time = date.getTime();
-        if (Number.isNaN(time)) return fallback;
-        return format(date, formatStr);
-    };
 
     const getContractErrorDetails = (error: unknown) => {
         const response = (error as ApiError).response;
@@ -142,12 +130,7 @@ const ContractDetails = () => {
 
     const sortedAnalyses = useMemo<AnalysisRecord[]>(() => {
         const list = Array.isArray(contract?.analyses) ? contract.analyses : [];
-        const ts = (value: unknown) => {
-            if (!value) return 0;
-            const date = value instanceof Date ? value : new Date(value as string);
-            const time = date.getTime();
-            return Number.isNaN(time) ? 0 : time;
-        };
+        const ts = (value: unknown) => coerceDate(value)?.getTime() ?? 0;
         return [...list].sort((a, b) => ts(b?.createdAt) - ts(a?.createdAt));
     }, [contract?.analyses]);
     const latestAnalysisRecord = sortedAnalyses[0] ?? null;
@@ -782,7 +765,7 @@ const ContractDetails = () => {
                                                     {a.riskBadge || "UNKNOWN"}
                                                 </Badge>
                                                 <span className="text-sm text-muted-foreground">
-                                                    {a.createdAt ? format(new Date(a.createdAt), "MMM d, HH:mm") : ""}
+                                                    {formatDate(a.createdAt, "MMM d, HH:mm")}
                                                 </span>
                                             </div>
                                             <div className="text-xs text-muted-foreground">

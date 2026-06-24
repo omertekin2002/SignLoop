@@ -21,8 +21,11 @@ export async function GET() {
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
 
-  const settings = await getUserSettingsByUserId(userId);
-  const snapshot = await getModelAvailabilitySnapshot();
+  // The DB read and the (cached) model-availability lookup are independent — run them concurrently.
+  const [settings, snapshot] = await Promise.all([
+    getUserSettingsByUserId(userId),
+    getModelAvailabilitySnapshot(),
+  ]);
   const availablePrimaryModels = snapshot.availablePrimaryModels;
 
   const resolvedPrimaryModel =
@@ -37,7 +40,6 @@ export async function GET() {
         ? settings.personality
         : DEFAULT_PERSONALITY_MODE,
     availablePrimaryModels,
-    modelsError: null,
     availablePersonalities: PERSONALITY_OPTIONS,
   });
 }

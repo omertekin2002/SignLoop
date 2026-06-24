@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUserId } from "@/lib/api-auth";
-import { addUploadedContractFile, getContractByIdForUser, saveContractExtractedText } from "@/lib/server-db";
+import { addUploadedContractFile, getContractMetaForUser, saveContractExtractedText } from "@/lib/server-db";
 import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -9,7 +9,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { userId } = authed;
 
   const { id } = await params;
-  const contract = await getContractByIdForUser(userId, id);
+  const contract = await getContractMetaForUser(userId, id);
   if (!contract) {
     return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
   }

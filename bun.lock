@@ -4,10 +4,6 @@
   "workspaces": {
     "": {
       "name": "my-turbo",
-      "dependencies": {
-        "@clerk/nextjs": "^6.36.7",
-        "next": "16.1.0",
-      },
       "devDependencies": {
         "prettier": "^3.7.4",
         "turbo": "^2.7.4",
@@ -75,7 +71,7 @@
       "version": "0.0.0",
       "devDependencies": {
         "@eslint/js": "^9.39.1",
-        "@next/eslint-plugin-next": "^15.5.0",
+        "@next/eslint-plugin-next": "^16.1.0",
         "eslint": "^9.39.1",
         "eslint-config-prettier": "^10.1.1",
         "eslint-plugin-only-warn": "^1.1.0",
@@ -259,7 +255,7 @@
 
     "@next/env": ["@next/env@16.1.0", "", {}, "sha512-Dd23XQeFHmhf3KBW76leYVkejHlCdB7erakC2At2apL1N08Bm+dLYNP+nNHh0tzUXfPQcNcXiQyacw0PG4Fcpw=="],
 
-    "@next/eslint-plugin-next": ["@next/eslint-plugin-next@15.5.14", "", { "dependencies": { "fast-glob": "3.3.1" } }, "sha512-ogBjgsFrPPz19abP3VwcYSahbkUOMMvJjxCOYWYndw+PydeMuLuB4XrvNkNutFrTjC9St2KFULRdKID8Sd/CMQ=="],
+    "@next/eslint-plugin-next": ["@next/eslint-plugin-next@16.2.9", "", { "dependencies": { "fast-glob": "3.3.1" } }, "sha512-UZi8+YT/MLgTC9nrrn2Xd4lBYv1B7lVmtWHfPcthAI5Tt/C1LuDe6DfmtCtJ+WQod3ksY4VrKSvk3oMVAnL7qw=="],
 
     "@next/swc-darwin-arm64": ["@next/swc-darwin-arm64@16.1.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-onHq8dl8KjDb8taANQdzs3XmIqQWV3fYdslkGENuvVInFQzZnuBYYOG2HGHqqtvgmEU7xWzhgndXXxnhk4Z3fQ=="],
 

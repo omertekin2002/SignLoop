@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { parseJsonBody, requireUserId } from "@/lib/api-auth";
+import { parseJsonBody, parsePaginationParams, requireUserId } from "@/lib/api-auth";
 import {
   createChatThreadForUser,
   listChatThreadsByUserId,
@@ -11,11 +11,7 @@ export async function GET(req: Request) {
   const { userId } = authed;
 
   try {
-    const { searchParams } = new URL(req.url);
-    const limit = searchParams.get("limit") ? Number(searchParams.get("limit")) : undefined;
-    const offset = searchParams.get("offset") ? Number(searchParams.get("offset")) : undefined;
-
-    const result = await listChatThreadsByUserId(userId, { limit, offset });
+    const result = await listChatThreadsByUserId(userId, parsePaginationParams(req));
     return NextResponse.json(result);
   } catch (error) {
     console.error("Failed to list chat threads:", error);

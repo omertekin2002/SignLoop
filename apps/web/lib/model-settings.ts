@@ -1,19 +1,20 @@
+import { isRecord } from "@/lib/utils";
+
 export type PrimaryModel = string;
 
 export const PRIMARY_LLM_BASE_URL =
   process.env.PRIMARY_LLM_BASE_URL || "https://efficient-sightlessly-ouida.ngrok-free.dev/v1";
 const MODELS_ENDPOINT_TIMEOUT_MS = 5000;
+const MODELS_CACHE_TTL_MS = 60_000;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
+let modelsSnapshotCache: { value: PrimaryModel[]; expiresAt: number } | null = null;
 
 async function listRemoteModelIds(): Promise<string[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MODELS_ENDPOINT_TIMEOUT_MS);
 
   try {
-    const response = await fetch(`${PRIMARY_LLM_BASE_URL}/models`, {
+    const response = await fetch(`${PRIMARY_LLM_BASE_URL.replace(/\/+$/, "")}/models`, {
       method: "GET",
       signal: controller.signal,
       cache: "no-store",
@@ -47,8 +48,16 @@ async function listRemoteModelIds(): Promise<string[]> {
 export async function getModelAvailabilitySnapshot(): Promise<{
   availablePrimaryModels: PrimaryModel[];
 }> {
+  const now = Date.now();
+  if (modelsSnapshotCache && modelsSnapshotCache.expiresAt > now) {
+    return { availablePrimaryModels: modelsSnapshotCache.value };
+  }
+
   try {
     const availablePrimaryModels = await listRemoteModelIds();
+    // Cache only successful lookups; the model list changes rarely, so a short TTL spares every
+    // settings load a full round-trip to the (slow, no-store) ngrok /models endpoint.
+    modelsSnapshotCache = { value: availablePrimaryModels, expiresAt: now + MODELS_CACHE_TTL_MS };
     return { availablePrimaryModels };
   } catch (error) {
     // ngrok /models is unreachable — return no models so the selector falls back to "OpenRouter"

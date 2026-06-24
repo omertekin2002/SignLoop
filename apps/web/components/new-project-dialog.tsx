@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { AxiosError } from "axios";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, getApiErrorMessage } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,8 +17,6 @@ import {
 } from "@/components/ui/dialog";
 import { FolderPlus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-
-type ApiError = AxiosError<{ message?: string }>;
 
 interface NewProjectDialogProps {
     children?: React.ReactNode;
@@ -45,10 +42,8 @@ export function NewProjectDialog({ children }: NewProjectDialogProps) {
             setDescription("");
             router.push(`/projects/${data.id}`);
         },
-        onError: (error: ApiError) => {
-            toast.error(
-                error.response?.data?.message || "Failed to create project"
-            );
+        onError: (error: unknown) => {
+            toast.error(getApiErrorMessage(error, "Failed to create project"));
         },
     });
 

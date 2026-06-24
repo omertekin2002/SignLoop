@@ -16,6 +16,7 @@ const migrationFiles = [
   '004_create_chat_entities.sql',
   '005_add_user_personality.sql',
   '006_fix_contract_files_project_id_type.sql',
+  '007_add_analyses_contract_created_idx.sql',
 ];
 
 const client = createClient();
