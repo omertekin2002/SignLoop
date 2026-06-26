@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  memo,
   type ComponentPropsWithoutRef,
   type ReactNode,
   useEffect,
@@ -36,6 +37,7 @@ import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markd
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import { marked } from "marked";
 import { NumberTicker } from "@/components/number-ticker";
 import { TypingAnimation } from "@/components/typing-animation";
 import { AnimatedGridPattern } from "@/components/ui/animated-grid-pattern";
@@ -488,9 +490,50 @@ const markdownComponents: Components = {
   img: (props) => <MarkdownImage {...props} />,
 };
 
+// Hoisted so the plugin arrays keep a stable identity across every block render.
+const remarkPlugins = [remarkGfm, remarkMath];
+const rehypePlugins = [rehypeKatex];
+
+// Split the accumulated markdown into top-level blocks (paragraphs, headings, fenced code,
+// tables, whole lists, …). `marked.lexer` keeps each block's source in `token.raw`, and the
+// raw strings of completed leading blocks stay byte-for-byte identical as more text streams
+// in — only the trailing, still-growing block changes. That's what makes per-block memoization
+// avoid the O(n²) re-parse of the whole string on every NDJSON delta.
+//
+// Tradeoff (inherent to block-level memoization): a reference-style link/footnote whose
+// definition lands in a different block won't resolve, since each block is parsed in isolation.
+// Chat models emit inline links, so this practically never bites; everything else — GFM tables,
+// loose/ordered lists, fenced code with blank lines, KaTeX `$...$`/`$$...$$` — stays intact
+// because the lexer never splits inside those constructs.
+function parseMarkdownIntoBlocks(markdown: string): string[] {
+  if (!markdown) return [];
+
+  try {
+    return marked.lexer(markdown).map((token) => token.raw);
+  } catch {
+    // The lexer is tolerant of partial markdown, but never let a hiccup break rendering.
+    return [markdown];
+  }
+}
+
+// One block of already-split markdown. Memoized on its raw source so a block only re-parses
+// (remark/rehype/KaTeX) when its own text changes — settled blocks are skipped entirely.
+const MarkdownBlock = memo(function MarkdownBlock({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={remarkPlugins}
+      rehypePlugins={rehypePlugins}
+      urlTransform={markdownUrlTransform}
+      components={markdownComponents}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+});
+
 const MarkdownMessage = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<"div">>(
   ({ children, className, ...props }, ref) => {
-    const markdown = useMemo(() => toMarkdownText(children), [children]);
+    const blocks = useMemo(() => parseMarkdownIntoBlocks(toMarkdownText(children)), [children]);
 
     return (
       <div
@@ -512,14 +555,11 @@ const MarkdownMessage = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<"div
         )}
         {...props}
       >
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath]}
-          rehypePlugins={[rehypeKatex]}
-          urlTransform={markdownUrlTransform}
-          components={markdownComponents}
-        >
-          {markdown}
-        </ReactMarkdown>
+        {blocks.map((block, index) => (
+          // Blocks are append-only while streaming (earlier blocks never reorder), so the index
+          // is a stable key.
+          <MarkdownBlock key={index} content={block} />
+        ))}
       </div>
     );
   }
