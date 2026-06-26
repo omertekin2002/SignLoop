@@ -4,7 +4,6 @@ import { Inter, EB_Garamond } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import Providers from "@/components/providers";
 import { PrivacyNotice } from "@/components/privacy-notice";
-import "katex/dist/katex.min.css";
 import "./globals.css";
 
 const inter = Inter({
