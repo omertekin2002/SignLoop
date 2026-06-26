@@ -139,8 +139,10 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
+const streamEncoder = new TextEncoder();
+
 function streamEvent(event: Record<string, unknown>): Uint8Array {
-  return new TextEncoder().encode(`${JSON.stringify(event)}\n`);
+  return streamEncoder.encode(`${JSON.stringify(event)}\n`);
 }
 
 async function persistChatMessages(input: {

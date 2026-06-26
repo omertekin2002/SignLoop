@@ -58,6 +58,10 @@ async function ensureSchema(): Promise<void> {
       create index if not exists projects_user_id_idx
       on projects (user_id)
     `;
+    await sql`
+      create index if not exists projects_user_id_created_at_idx
+      on projects (user_id, created_at desc)
+    `;
 
     await sql`
       create table if not exists contracts (
@@ -83,6 +87,10 @@ async function ensureSchema(): Promise<void> {
     await sql`
       create index if not exists contracts_created_at_idx
       on contracts (created_at desc)
+    `;
+    await sql`
+      create index if not exists contracts_user_id_created_at_idx
+      on contracts (user_id, created_at desc)
     `;
 
     await sql`
@@ -1054,35 +1062,36 @@ export async function listProjectsByUserId(
 
   const projectIdsLiteral = `{${projectRows.map((p) => p.id).join(",")}}`;
 
-  const { rows: contractRows } = await sql<{
-    projectId: string;
-    id: string;
-    title: string;
-    status: string;
-    createdAt: string;
-  }>`
-    select
-      project_id as "projectId",
-      id,
-      title,
-      status,
-      created_at as "createdAt"
-    from contracts
-    where project_id = any(${projectIdsLiteral}::uuid[])
-    order by created_at desc
-  `;
-
-  const { rows: contextDocRows } = await sql<{
-    projectId: string;
-    id: string;
-  }>`
-    select
-      project_id as "projectId",
-      id
-    from context_documents
-    where project_id = any(${projectIdsLiteral}::uuid[])
-    order by created_at desc
-  `;
+  const [{ rows: contractRows }, { rows: contextDocRows }] = await Promise.all([
+    sql<{
+      projectId: string;
+      id: string;
+      title: string;
+      status: string;
+      createdAt: string;
+    }>`
+      select
+        project_id as "projectId",
+        id,
+        title,
+        status,
+        created_at as "createdAt"
+      from contracts
+      where project_id = any(${projectIdsLiteral}::uuid[])
+      order by created_at desc
+    `,
+    sql<{
+      projectId: string;
+      id: string;
+    }>`
+      select
+        project_id as "projectId",
+        id
+      from context_documents
+      where project_id = any(${projectIdsLiteral}::uuid[])
+      order by created_at desc
+    `,
+  ]);
 
   const contractsByProject = new Map<string, ProjectSummaryRecord["contracts"]>();
   for (const row of contractRows) {
@@ -1208,13 +1217,13 @@ export async function getProjectByIdForUser(
       id: string;
       riskBadge: string | null;
     }>`
-      select
+      select distinct on (contract_id)
         contract_id as "contractId",
         id,
         risk_badge as "riskBadge"
       from analyses
       where contract_id = any(${contractIdsLiteral}::uuid[])
-      order by created_at desc
+      order by contract_id, created_at desc
     `;
 
     for (const row of analysisRows) {
