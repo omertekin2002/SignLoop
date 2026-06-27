@@ -8,6 +8,7 @@ import { ArrowLeft, Loader2, Settings as SettingsIcon } from "lucide-react";
 import { useTheme } from "next-themes";
 import { apiClient } from "@/lib/api-client";
 import { getSettingsErrorMessage, type SettingsResponse } from "@/lib/settings";
+import { DEFAULT_PERSONALITY_MODE } from "@/lib/personality-settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -57,8 +58,8 @@ export default function SettingsPage() {
   const effectivePersonality = useMemo(() => {
     if (selectedPersonality) return selectedPersonality;
     if (data?.personality) return data.personality;
-    return availablePersonalities[1] ?? availablePersonalities[0] ?? "signloop-assistant";
-  }, [availablePersonalities, data?.personality, selectedPersonality]);
+    return DEFAULT_PERSONALITY_MODE;
+  }, [data?.personality, selectedPersonality]);
 
   useEffect(() => {
     if (data?.primaryModel && availableModels.includes(data.primaryModel)) {
@@ -76,11 +77,8 @@ export default function SettingsPage() {
       setSelectedPersonality((current) => current || data.personality || "");
       return;
     }
-    const defaultPersonality = availablePersonalities[1] ?? availablePersonalities[0];
-    if (defaultPersonality) {
-      setSelectedPersonality((current) => current || defaultPersonality);
-    }
-  }, [availablePersonalities, data?.personality]);
+    setSelectedPersonality((current) => current || DEFAULT_PERSONALITY_MODE);
+  }, [data?.personality]);
 
   const saveModelMutation = useMutation({
     mutationFn: async (primaryModel: string) => {
@@ -119,8 +117,7 @@ export default function SettingsPage() {
       ? data.primaryModel
       : availableModels[0] ?? "";
   const hasModelChanges = Boolean(effectiveModel && effectiveModel !== initialModel);
-  const initialPersonality =
-    data?.personality ?? availablePersonalities[1] ?? availablePersonalities[0] ?? "signloop-assistant";
+  const initialPersonality = data?.personality ?? DEFAULT_PERSONALITY_MODE;
   const hasPersonalityChanges = Boolean(
     effectivePersonality && effectivePersonality !== initialPersonality
   );

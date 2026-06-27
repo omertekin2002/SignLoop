@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
     Dialog,
     DialogContent,
@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { apiClient, getApiErrorMessage } from "@/lib/api-client";
 import { formatFileSize } from "@/lib/utils";
+import { MAX_UPLOAD_FILE_SIZE, MAX_UPLOAD_FILE_SIZE_MB } from "@/lib/upload-constants";
 import { Upload, File, Loader2 } from "lucide-react";
 
 interface UploadDialogProps {
@@ -25,7 +26,6 @@ export function UploadDialog({ children }: UploadDialogProps) {
     const [open, setOpen] = useState(false);
     const [file, setFile] = useState<File | null>(null);
     const [contractName, setContractName] = useState("");
-    const [uploading, setUploading] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const queryClient = useQueryClient();
 
@@ -38,38 +38,48 @@ export function UploadDialog({ children }: UploadDialogProps) {
         }
     };
 
-    const handleUpload = async () => {
-        if (!file || !contractName) return;
+    const uploadMutation = useMutation({
+        mutationFn: async () => {
+            if (!file) throw new Error("No file selected");
 
-        setUploading(true);
-        try {
-            // 1. Create Contract
-            const createRes = await apiClient.post("/contracts", {
-                title: contractName,
-            });
+            // 1. Create the contract.
+            const createRes = await apiClient.post("/contracts", { title: contractName.trim() });
             const contractId = createRes.data.id;
 
-            // 2. Upload File
-            const formData = new FormData();
-            formData.append("file", file);
-
-            await apiClient.post(`/contracts/${contractId}/upload`, formData, {
-                headers: {
-                    "Content-Type": "multipart/form-data",
-                },
-            });
-
+            // 2. Upload the file; if this fails, roll back the just-created contract so we don't
+            // leave an empty, file-less contract behind (mirrors the project page flow).
+            try {
+                const formData = new FormData();
+                formData.append("file", file);
+                await apiClient.post(`/contracts/${contractId}/upload`, formData, {
+                    headers: { "Content-Type": "multipart/form-data" },
+                });
+            } catch (uploadError) {
+                await apiClient.delete(`/contracts/${contractId}`).catch(() => {});
+                throw uploadError;
+            }
+        },
+        onSuccess: () => {
             toast.success("Contract uploaded successfully");
             setOpen(false);
             setFile(null);
             setContractName("");
+            if (fileInputRef.current) fileInputRef.current.value = "";
             queryClient.invalidateQueries({ queryKey: ["contracts"] });
-        } catch (error: unknown) {
-            console.error(error);
+        },
+        onError: (error: unknown) => {
             toast.error(getApiErrorMessage(error, "Upload failed"));
-        } finally {
-            setUploading(false);
+        },
+    });
+
+    const handleUpload = () => {
+        if (!file || !contractName.trim()) return;
+        // Fail fast on oversize files before the two-step network flow creates an orphan contract.
+        if (file.size > MAX_UPLOAD_FILE_SIZE) {
+            toast.error(`File too large. Maximum size is ${MAX_UPLOAD_FILE_SIZE_MB} MB.`);
+            return;
         }
+        uploadMutation.mutate();
     };
 
     return (
@@ -110,7 +120,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
                                 <div className="text-center">
                                     <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                                     <p className="text-sm font-medium">Click to select file</p>
-                                    <p className="text-xs text-muted-foreground">PDF, DOC, DOCX, TXT, or images up to 10MB</p>
+                                    <p className="text-xs text-muted-foreground">PDF, DOC, DOCX, TXT, or images up to {MAX_UPLOAD_FILE_SIZE_MB}MB</p>
                                 </div>
                             )}
                             <input
@@ -127,9 +137,9 @@ export function UploadDialog({ children }: UploadDialogProps) {
                 <DialogFooter>
                     <Button
                         onClick={handleUpload}
-                        disabled={!file || !contractName || uploading}
+                        disabled={!file || !contractName.trim() || uploadMutation.isPending}
                     >
-                        {uploading ? (
+                        {uploadMutation.isPending ? (
                             <>
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                 Uploading...

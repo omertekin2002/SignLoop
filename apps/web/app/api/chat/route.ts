@@ -16,7 +16,7 @@ import {
   appendChatMessagesToThread,
   getUserSettingsByUserId,
 } from '@/lib/server-db';
-import { isRecord } from '@/lib/utils';
+import { getErrorMessage, isRecord } from '@/lib/utils';
 
 const MAX_MESSAGES = 30;
 const MAX_MESSAGE_LENGTH = 4000;
@@ -364,8 +364,7 @@ export async function POST(req: Request) {
           ],
         });
       } catch (persistError) {
-        const persistMessage =
-          persistError instanceof Error ? persistError.message : "Failed to persist chat";
+        const persistMessage = getErrorMessage(persistError, "Failed to persist chat");
         const status = persistMessage.includes("not found") ? 404 : 500;
         return NextResponse.json({ error: persistMessage }, { status });
       }
@@ -382,7 +381,7 @@ export async function POST(req: Request) {
       webSources: webSearch?.sources ?? [],
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Chat request failed";
+    const message = getErrorMessage(error, "Chat request failed");
     console.error("Chat API error:", error);
     return NextResponse.json({ error: message }, { status: 500 });
   }

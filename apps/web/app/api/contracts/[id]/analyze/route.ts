@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUserId } from "@/lib/api-auth";
-import { getErrorMessage } from "@/lib/utils";
+import { getErrorMessage, isUuid } from "@/lib/utils";
 import { analyzeText } from '@/lib/analysis';
 import {
   createAnalysisForContract,
@@ -14,6 +14,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { userId } = authed;
 
   const { id } = await params;
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
+  }
   const force = new URL(req.url).searchParams.get("force") === "true";
 
   const contract = await getContractWithLatestAnalysisForUser(userId, id);
@@ -40,6 +43,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const settings = await getUserSettingsByUserId(userId);
     const { result, provider, model } = await analyzeText(contract.text, undefined, {
       primaryModel: settings?.primaryModel ?? null,
+      signal: req.signal,
     });
     const created = await createAnalysisForContract({
       userId,

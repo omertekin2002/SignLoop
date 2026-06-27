@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireUserId } from "@/lib/api-auth";
 import { addUploadedContractFile, getContractMetaForUser, saveContractExtractedText } from "@/lib/server-db";
 import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
+import { getErrorMessage } from "@/lib/utils";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const authed = await requireUserId();
@@ -63,7 +64,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       textLength: prepared.text.length,
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Failed to store uploaded file";
+    const message = getErrorMessage(error, "Failed to store uploaded file");
     console.error('Upload persistence failed:', error);
     return NextResponse.json({ error: message }, { status: 500 });
   }

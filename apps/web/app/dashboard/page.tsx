@@ -25,7 +25,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { apiClient } from "@/lib/api-client";
+import { apiClient, getApiErrorMessage } from "@/lib/api-client";
 import { cn, formatDate } from "@/lib/utils";
 import { getSettingsErrorMessage, type SettingsResponse } from "@/lib/settings";
 import { Button } from "@/components/ui/button";
@@ -373,7 +373,7 @@ const Dashboard = ({
       queryClient.invalidateQueries({ queryKey: ["contracts"] });
     },
     onError: (error: unknown) => {
-      console.error(error);
+      toast.error(getApiErrorMessage(error, "Failed to delete contract"));
       setContractToDelete(null);
     },
   });

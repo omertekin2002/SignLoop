@@ -5,9 +5,12 @@ import {
     resolvePrimaryModel,
     runWithPrimaryAndOpenRouterFallback,
 } from '@/lib/llm-client';
-import { isRecord } from '@/lib/utils';
+import { getErrorMessage, isRecord } from '@/lib/utils';
 
 const MAX_CONTRACT_PROMPT_CHARS = 15000;
+// The repair pass operates on the model's (malformed) OUTPUT, not the contract input — give it a
+// generous budget so we don't hand the repairer pre-truncated JSON it can never make valid.
+const MAX_REPAIR_INPUT_CHARS = 60000;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -79,7 +82,9 @@ function toStringArray(value: unknown): string[] {
             .trim();
         if (!cleaned) return [];
         const parts = cleaned
-            .split(/\n|•|;|,(?=\s)/g)
+            // Split only on unambiguous list delimiters (newline, bullet, semicolon). A bare ", "
+            // is NOT a delimiter — it shreds legitimate prose like "Late fee, applied monthly".
+            .split(/\n|•|;/g)
             .map((item) => item.trim())
             .filter(Boolean);
         return parts.length > 0 ? parts : [cleaned];
@@ -94,9 +99,7 @@ function normalizeRiskBadge(value: unknown): 'LOW' | 'MEDIUM' | 'HIGH' {
     const normalized = toStringOrNull(value)?.toLowerCase() || '';
     if (normalized.includes('high')) return 'HIGH';
     if (normalized.includes('low')) return 'LOW';
-    if (normalized.includes('medium') || normalized.includes('moderate') || normalized.includes('mid')) {
-        return 'MEDIUM';
-    }
+    // Everything else (medium/moderate/mid and anything unrecognized) defaults to MEDIUM.
     return 'MEDIUM';
 }
 
@@ -349,12 +352,10 @@ function parseModelJson(content: string): unknown {
 
     const withoutFences = stripCodeFences(trimmed);
     const balancedCandidate = extractBalancedJsonObject(withoutFences);
-    const candidates = [
-        withoutFences,
-        balancedCandidate ?? '',
-        removeTrailingCommas(withoutFences),
-        balancedCandidate ? removeTrailingCommas(balancedCandidate) : '',
-    ].filter((candidate): candidate is string => Boolean(candidate));
+    const candidates = [withoutFences];
+    if (balancedCandidate) candidates.push(balancedCandidate);
+    candidates.push(removeTrailingCommas(withoutFences));
+    if (balancedCandidate) candidates.push(removeTrailingCommas(balancedCandidate));
 
     const uniqueCandidates = Array.from(new Set(candidates));
     let lastError: Error | null = null;
@@ -371,15 +372,18 @@ function parseModelJson(content: string): unknown {
 }
 
 function isLikelyUnsupportedJsonModeError(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     return /(response_format|text\.format|json_object|json mode|unsupported|not support)/i.test(message);
 }
+
+type LlmRequestOptions = { signal?: AbortSignal };
 
 async function createResponsesPreferringJson(
     openai: OpenAI,
     model: string,
     instructions: string,
     input: string,
+    requestOptions?: LlmRequestOptions,
 ) {
     try {
         return await openai.responses.create({
@@ -387,7 +391,7 @@ async function createResponsesPreferringJson(
             instructions,
             input,
             text: { format: { type: 'json_object' } },
-        });
+        }, requestOptions);
     } catch (error) {
         if (!isLikelyUnsupportedJsonModeError(error)) {
             throw error;
@@ -398,14 +402,15 @@ async function createResponsesPreferringJson(
             model,
             instructions,
             input,
-        });
+        }, requestOptions);
     }
 }
 
 async function repairJsonWithResponsesModel(
     openai: OpenAI,
     model: string,
-    malformedContent: string
+    malformedContent: string,
+    requestOptions?: LlmRequestOptions,
 ): Promise<string> {
     const repairPrompt = `
 You are a JSON repair tool.
@@ -425,7 +430,7 @@ Type constraints:
 - nullable text fields should be null if unknown.
 
 Repair this malformed JSON-like input:
-${malformedContent.slice(0, 12000)}
+${malformedContent.slice(0, MAX_REPAIR_INPUT_CHARS)}
     `;
 
     const response = await createResponsesPreferringJson(
@@ -433,6 +438,7 @@ ${malformedContent.slice(0, 12000)}
         model,
         'You fix malformed JSON and output only valid JSON.',
         repairPrompt,
+        requestOptions,
     );
 
     const repairedContent = extractResponseOutputText(response);
@@ -446,12 +452,14 @@ async function runAnalysisWithResponsesModel(
     openai: OpenAI,
     model: string,
     prompt: string,
+    requestOptions?: LlmRequestOptions,
 ): Promise<AnalysisResult> {
     const response = await createResponsesPreferringJson(
         openai,
         model,
         'Return only valid JSON with the exact required keys.',
         prompt,
+        requestOptions,
     );
 
     const content = extractResponseOutputText(response);
@@ -469,7 +477,7 @@ async function runAnalysisWithResponsesModel(
             initialMessage,
         });
 
-        const repairedContent = await repairJsonWithResponsesModel(openai, model, content);
+        const repairedContent = await repairJsonWithResponsesModel(openai, model, content, requestOptions);
         try {
             return parseStrictJson<AnalysisResult>(repairedContent);
         } catch (repairError) {
@@ -538,7 +546,7 @@ export function parseStrictJson<T>(content: string): T {
 export async function analyzeText(
     text: string,
     metadata?: { contractType?: string; region?: string },
-    options?: { primaryModel?: string | null }
+    options?: { primaryModel?: string | null; signal?: AbortSignal }
 ): Promise<{ result: AnalysisResult; provider: string; model: string }> {
     const truncated = text.length > MAX_CONTRACT_PROMPT_CHARS;
     const contractBody = truncated
@@ -594,7 +602,9 @@ ${contractBody}
 
     const { result, provider, model } = await runWithPrimaryAndOpenRouterFallback(
         selectedPrimaryModel,
-        (client, runModel) => runAnalysisWithResponsesModel(client, runModel, prompt),
+        (client, runModel) =>
+            runAnalysisWithResponsesModel(client, runModel, prompt, { signal: options?.signal }),
+        { signal: options?.signal },
     );
 
     return { result, provider, model };

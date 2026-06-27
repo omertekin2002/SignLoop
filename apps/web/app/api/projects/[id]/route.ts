@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
 import { deleteProjectForUser, getProjectByIdForUser, getProjectStorageKeys } from "@/lib/server-db";
 import { deleteObject } from "@/lib/object-storage";
+import { isUuid } from "@/lib/utils";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const authed = await requireUserId();
@@ -9,6 +10,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { userId } = authed;
 
   const { id } = await params;
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
   const project = await getProjectByIdForUser(userId, id);
 
   if (!project) {
@@ -24,6 +28,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const { userId } = authed;
 
   const { id } = await params;
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
 
   // Delete storage objects while DB references still exist, so a crash
   // between storage and DB cleanup leaves retryable DB records rather

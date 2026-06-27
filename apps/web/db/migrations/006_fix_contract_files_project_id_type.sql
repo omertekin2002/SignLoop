@@ -2,6 +2,10 @@
 -- Existing values are either valid UUIDs or null, so the cast is safe.
 -- Guarded so the ALTER (which takes an ACCESS EXCLUSIVE lock) only runs when the column is
 -- not already uuid, making re-runs cheap no-ops.
+-- Bound the exclusive lock so the rewrite can't block indefinitely on a busy table (the runner
+-- wraps each migration in a transaction, so SET LOCAL applies for this statement's duration).
+set local lock_timeout = '5s';
+
 do $$
 begin
   if exists (
