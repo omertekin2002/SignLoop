@@ -11,7 +11,7 @@ const MODELS_CACHE_TTL_MS = 60_000;
 // picked up quickly.
 const MODELS_NEGATIVE_CACHE_TTL_MS = 10_000;
 
-let modelsSnapshotCache: { value: PrimaryModel[]; error: boolean; expiresAt: number } | null = null;
+let modelsSnapshotCache: { value: PrimaryModel[]; expiresAt: number } | null = null;
 
 async function listRemoteModelIds(): Promise<string[]> {
   const controller = new AbortController();
@@ -50,26 +50,24 @@ async function listRemoteModelIds(): Promise<string[]> {
 
 export async function getModelAvailabilitySnapshot(): Promise<{
   availablePrimaryModels: PrimaryModel[];
-  // True when the lookup failed (ngrok unreachable) — distinct from a genuinely empty model list.
-  // Callers use it to trust the user's saved model instead of resetting/rejecting it on an outage.
-  error: boolean;
 }> {
   const now = Date.now();
   if (modelsSnapshotCache && modelsSnapshotCache.expiresAt > now) {
-    return { availablePrimaryModels: modelsSnapshotCache.value, error: modelsSnapshotCache.error };
+    return { availablePrimaryModels: modelsSnapshotCache.value };
   }
 
   try {
     const availablePrimaryModels = await listRemoteModelIds();
     // The model list changes rarely, so a short TTL spares every settings load a full round-trip to
     // the (slow, no-store) ngrok /models endpoint.
-    modelsSnapshotCache = { value: availablePrimaryModels, error: false, expiresAt: now + MODELS_CACHE_TTL_MS };
-    return { availablePrimaryModels, error: false };
+    modelsSnapshotCache = { value: availablePrimaryModels, expiresAt: now + MODELS_CACHE_TTL_MS };
+    return { availablePrimaryModels };
   } catch (error) {
-    // ngrok /models is unreachable — briefly negative-cache the failure (so we don't re-pay the 5s
-    // timeout on every request) and flag error:true so callers can keep the saved model.
+    // ngrok /models is unreachable — treat as "no primary models available" so the UI honestly
+    // shows the OpenRouter fallback rather than advertising an unreachable model. Negative-cache the
+    // empty result briefly so an outage doesn't make every settings load pay the full 5s timeout.
     console.error("Failed to load available models from ngrok", getErrorMessage(error));
-    modelsSnapshotCache = { value: [], error: true, expiresAt: now + MODELS_NEGATIVE_CACHE_TTL_MS };
-    return { availablePrimaryModels: [], error: true };
+    modelsSnapshotCache = { value: [], expiresAt: now + MODELS_NEGATIVE_CACHE_TTL_MS };
+    return { availablePrimaryModels: [] };
   }
 }
