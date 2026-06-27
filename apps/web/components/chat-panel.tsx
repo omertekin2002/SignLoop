@@ -282,7 +282,12 @@ async function* readChatApiResponse(response: Response): AsyncGenerator<ChatApiS
       const trimmed = line.trim();
       if (!trimmed) continue;
 
-      const event = parseStreamEvent(JSON.parse(trimmed));
+      // Use the safe parser: an intermediary (CDN/proxy) keep-alive or comment line that survives
+      // the split is non-JSON and would otherwise throw here and abort an already-streaming turn.
+      const parsed = parseJsonPayload(trimmed);
+      if (parsed === null) continue;
+
+      const event = parseStreamEvent(parsed);
 
       if (event.type === "error") {
         throw new Error(event.error);

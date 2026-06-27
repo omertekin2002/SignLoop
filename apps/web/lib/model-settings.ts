@@ -1,4 +1,4 @@
-import { isRecord } from "@/lib/utils";
+import { getErrorMessage, isRecord } from "@/lib/utils";
 
 export type PrimaryModel = string;
 
@@ -6,8 +6,12 @@ export const PRIMARY_LLM_BASE_URL =
   process.env.PRIMARY_LLM_BASE_URL || "https://efficient-sightlessly-ouida.ngrok-free.dev/v1";
 const MODELS_ENDPOINT_TIMEOUT_MS = 5000;
 const MODELS_CACHE_TTL_MS = 60_000;
+// Negative cache: when the ngrok /models lookup fails, remember that briefly so an outage doesn't
+// make every settings request pay the full 5s timeout. Shorter than the success TTL so recovery is
+// picked up quickly.
+const MODELS_NEGATIVE_CACHE_TTL_MS = 10_000;
 
-let modelsSnapshotCache: { value: PrimaryModel[]; expiresAt: number } | null = null;
+let modelsSnapshotCache: { value: PrimaryModel[]; error: boolean; expiresAt: number } | null = null;
 
 async function listRemoteModelIds(): Promise<string[]> {
   const controller = new AbortController();
@@ -38,8 +42,7 @@ async function listRemoteModelIds(): Promise<string[]> {
 
     return Array.from(new Set(modelIds));
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to load available models from ngrok: ${message}`);
+    throw new Error(`Failed to load available models from ngrok: ${getErrorMessage(error)}`);
   } finally {
     clearTimeout(timer);
   }
@@ -47,22 +50,26 @@ async function listRemoteModelIds(): Promise<string[]> {
 
 export async function getModelAvailabilitySnapshot(): Promise<{
   availablePrimaryModels: PrimaryModel[];
+  // True when the lookup failed (ngrok unreachable) — distinct from a genuinely empty model list.
+  // Callers use it to trust the user's saved model instead of resetting/rejecting it on an outage.
+  error: boolean;
 }> {
   const now = Date.now();
   if (modelsSnapshotCache && modelsSnapshotCache.expiresAt > now) {
-    return { availablePrimaryModels: modelsSnapshotCache.value };
+    return { availablePrimaryModels: modelsSnapshotCache.value, error: modelsSnapshotCache.error };
   }
 
   try {
     const availablePrimaryModels = await listRemoteModelIds();
-    // Cache only successful lookups; the model list changes rarely, so a short TTL spares every
-    // settings load a full round-trip to the (slow, no-store) ngrok /models endpoint.
-    modelsSnapshotCache = { value: availablePrimaryModels, expiresAt: now + MODELS_CACHE_TTL_MS };
-    return { availablePrimaryModels };
+    // The model list changes rarely, so a short TTL spares every settings load a full round-trip to
+    // the (slow, no-store) ngrok /models endpoint.
+    modelsSnapshotCache = { value: availablePrimaryModels, error: false, expiresAt: now + MODELS_CACHE_TTL_MS };
+    return { availablePrimaryModels, error: false };
   } catch (error) {
-    // ngrok /models is unreachable — return no models so the selector falls back to "OpenRouter"
-    // (same as a genuinely empty list) instead of failing the settings request.
-    console.error("Failed to load available models from ngrok", error);
-    return { availablePrimaryModels: [] };
+    // ngrok /models is unreachable — briefly negative-cache the failure (so we don't re-pay the 5s
+    // timeout on every request) and flag error:true so callers can keep the saved model.
+    console.error("Failed to load available models from ngrok", getErrorMessage(error));
+    modelsSnapshotCache = { value: [], error: true, expiresAt: now + MODELS_NEGATIVE_CACHE_TTL_MS };
+    return { availablePrimaryModels: [], error: true };
   }
 }

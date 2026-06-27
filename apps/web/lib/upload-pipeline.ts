@@ -1,10 +1,12 @@
-import { processFile, validateMimeType } from "@/lib/text-extraction";
+import { processFile, validateMimeType, type ExtractionMethod } from "@/lib/text-extraction";
 import { getStorageBucketName, uploadObject } from "@/lib/object-storage";
+import { getErrorMessage } from "@/lib/utils";
+import { MAX_UPLOAD_FILE_SIZE, MAX_UPLOAD_FILE_SIZE_MB } from "@/lib/upload-constants";
 
 // Shared file-upload pipeline used by both the contract-upload and project-context routes,
 // so size/MIME validation, the single buffer conversion, and text extraction live in one place.
 
-export const MAX_UPLOAD_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
+export { MAX_UPLOAD_FILE_SIZE };
 
 export type UploadValidationError = { ok: false; status: number; error: string };
 
@@ -15,7 +17,7 @@ export type PreparedUpload = {
   buffer: Buffer;
   mimeType: string;
   text: string;
-  method: string | null;
+  method: ExtractionMethod | null;
   confidence: number | null;
   // Non-null when text extraction threw; the text/method/confidence fields are then empty/null.
   extractionError: string | null;
@@ -33,7 +35,7 @@ export async function prepareUpload(
   }
 
   if (file.size > MAX_UPLOAD_FILE_SIZE) {
-    return { ok: false, status: 413, error: "File too large. Maximum size is 20 MB." };
+    return { ok: false, status: 413, error: `File too large. Maximum size is ${MAX_UPLOAD_FILE_SIZE_MB} MB.` };
   }
 
   const rawMimeType = file.type || "application/octet-stream";
@@ -44,14 +46,14 @@ export async function prepareUpload(
     return {
       ok: false,
       status: 400,
-      error: error instanceof Error ? error.message : "Invalid file type",
+      error: getErrorMessage(error, "Invalid file type"),
     };
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
 
   let text = "";
-  let method: string | null = null;
+  let method: ExtractionMethod | null = null;
   let confidence: number | null = null;
   let extractionError: string | null = null;
   try {
@@ -60,7 +62,7 @@ export async function prepareUpload(
     method = extracted.method;
     confidence = typeof extracted.confidence === "number" ? extracted.confidence : null;
   } catch (error: unknown) {
-    extractionError = error instanceof Error ? error.message : "Text extraction failed";
+    extractionError = getErrorMessage(error, "Text extraction failed");
   }
 
   return { ok: true, formData, file, buffer, mimeType, text, method, confidence, extractionError };

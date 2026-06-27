@@ -14,7 +14,7 @@ The `packageManager` field in root `package.json` is set to `bun@1.3.11`.
 ## Build and Validation
 
 - Build: `bun run build` from repo root to validate all workspaces compile.
-- Dev server: `bun run dev` from repo root (web on :3000, docs on :3001).
+- Dev server: `bun run dev` from repo root (web on :3000).
 - Lint: `bun run lint` from repo root to run workspace linting.
 - Type check: `bun run check-types` from repo root to verify TypeScript types.
 - Tests: `bun run test` from `apps/web` to run vitest.
@@ -25,8 +25,6 @@ The `packageManager` field in root `package.json` is set to `bun@1.3.11`.
 Turborepo monorepo with npm-style workspaces (`apps/*`, `packages/*`):
 
 - `apps/web` - Main Next.js 16 app (port 3000)
-- `apps/docs` - Docs Next.js app (port 3001)
-- `packages/ui` - Shared UI components
 - `packages/eslint-config` - Shared ESLint config
 - `packages/typescript-config` - Shared TypeScript configs
 

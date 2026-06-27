@@ -80,7 +80,7 @@ const ProjectDetails = () => {
     const [contextTitle, setContextTitle] = useState("");
     const [contextType, setContextType] = useState<string>("other");
     const [selectedContextFile, setSelectedContextFile] = useState<File | null>(null);
-    const [docToDelete, setDocToDelete] = useState<{ id: string; type: "context" } | null>(null);
+    const [docToDelete, setDocToDelete] = useState<string | null>(null);
 
     const { data: project, isLoading } = useQuery({
         queryKey: ["project", id],
@@ -100,6 +100,9 @@ const ProjectDetails = () => {
             queryClient.invalidateQueries({ queryKey: ["projects"] });
             router.push("/dashboard");
         },
+        onError: (error: unknown) => {
+            toast.error(getApiErrorMessage(error, "Failed to delete project"));
+        },
     });
 
     const deleteContextDocMutation = useMutation({
@@ -110,6 +113,9 @@ const ProjectDetails = () => {
             toast.success("Context document deleted");
             queryClient.invalidateQueries({ queryKey: ["project", id] });
             setDocToDelete(null);
+        },
+        onError: (error: unknown) => {
+            toast.error(getApiErrorMessage(error, "Failed to delete context document"));
         },
     });
 
@@ -415,7 +421,7 @@ const ProjectDetails = () => {
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
-                                                    onClick={() => setDocToDelete({ id: doc.id, type: "context" })}
+                                                    onClick={() => setDocToDelete(doc.id)}
                                                 >
                                                     <Trash2 className="h-4 w-4 text-muted-foreground" />
                                                 </Button>
@@ -529,7 +535,7 @@ const ProjectDetails = () => {
                     <AlertDialogHeader>
                         <AlertDialogTitle>Delete document?</AlertDialogTitle>
                         <AlertDialogDescription>
-                            This will permanently delete this {docToDelete?.type} document.
+                            This will permanently delete this context document.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -537,8 +543,8 @@ const ProjectDetails = () => {
                         <AlertDialogAction
                             className="bg-destructive text-destructive-foreground"
                             onClick={() => {
-                                if (docToDelete?.type === "context") {
-                                    deleteContextDocMutation.mutate(docToDelete.id);
+                                if (docToDelete) {
+                                    deleteContextDocMutation.mutate(docToDelete);
                                 }
                             }}
                         >

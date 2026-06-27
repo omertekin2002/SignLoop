@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
 import { addContextDocumentToProject, getProjectByIdForUser } from "@/lib/server-db";
 import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
+import { ProjectNotFoundError } from "@/lib/errors";
+import { isUuid } from "@/lib/utils";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const authed = await requireUserId();
@@ -9,6 +11,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { userId } = authed;
 
   const { id } = await params;
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
   const project = await getProjectByIdForUser(userId, id);
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
@@ -26,6 +31,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { userId } = authed;
 
   const { id } = await params;
+
+  // Verify the project exists and is owned BEFORE storing the blob. Previously storeUploadedFile()
+  // ran first and ownership was only checked inside the DB insert, so a POST to a non-owned/unknown
+  // project persisted the bytes and then 404'd — leaking an unreachable, never-cleaned-up object.
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+  const project = await getProjectByIdForUser(userId, id);
+  if (!project) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
 
   const prepared = await prepareUpload(req);
   if (!prepared.ok) {
@@ -83,8 +99,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       { status: 201 },
     );
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "";
-    if (message === "Project not found") {
+    if (error instanceof ProjectNotFoundError) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
     throw error;

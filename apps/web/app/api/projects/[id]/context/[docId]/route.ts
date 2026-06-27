@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
 import { deleteContextDocumentFromProject, getContextDocumentStorageKey } from "@/lib/server-db";
 import { deleteObject } from "@/lib/object-storage";
+import { isUuid } from "@/lib/utils";
 
 export async function DELETE(
   req: Request,
@@ -12,6 +13,9 @@ export async function DELETE(
   const { userId } = authed;
 
   const { id, docId } = await params;
+  if (!isUuid(id) || !isUuid(docId)) {
+    return NextResponse.json({ error: "Context document not found" }, { status: 404 });
+  }
 
   // Delete storage while DB reference still exists so a crash leaves a
   // retryable DB record instead of a permanently orphaned file.

@@ -1,6 +1,5 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { format } from "date-fns";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -13,11 +12,44 @@ export function coerceDate(value: unknown): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-// Safely format a date-ish value with a date-fns format string, returning `fallback` when the
-// value is missing or invalid. Replaces per-page formatDate/`format(new Date(...))` duplicates.
+const MONTHS_SHORT = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+const MONTHS_LONG = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+function pad2(value: number): string {
+  return value < 10 ? `0${value}` : `${value}`;
+}
+
+// Safely format a date-ish value, returning `fallback` when the value is missing or invalid.
+// Supports the token subset the app uses (yyyy, MMMM, MMM, d, HH, mm) in local time — a tiny,
+// dependency-free replacement for date-fns `format`.
 export function formatDate(value: unknown, formatStr: string, fallback = ""): string {
   const date = coerceDate(value);
-  return date ? format(date, formatStr) : fallback;
+  if (!date) return fallback;
+
+  const replacements: Record<string, () => string> = {
+    yyyy: () => String(date.getFullYear()),
+    MMMM: () => MONTHS_LONG[date.getMonth()] ?? "",
+    MMM: () => MONTHS_SHORT[date.getMonth()] ?? "",
+    HH: () => pad2(date.getHours()),
+    mm: () => pad2(date.getMinutes()),
+    d: () => String(date.getDate()),
+  };
+
+  return formatStr.replace(/yyyy|MMMM|MMM|HH|mm|d/g, (token) => replacements[token]?.() ?? token);
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// True when `value` is a syntactically valid UUID. Used by dynamic API routes to 404 on malformed
+// ids before they reach a uuid-typed SQL column (which would otherwise throw 22P02 → unhandled 500).
+export function isUuid(value: unknown): value is string {
+  return typeof value === "string" && UUID_RE.test(value);
 }
 
 // Render a byte count as "X.XX MB" (the format used in the upload dialog and project pages).

@@ -13,8 +13,6 @@ The main app lets users:
 ## What Is In This Repository
 
 - `apps/web`: the production product (`Next.js 16`, App Router) running on `:3000`
-- `apps/docs`: a secondary docs app (`Next.js 16`) on `:3001` (currently starter scaffold)
-- `packages/ui`: shared React UI package
 - `packages/eslint-config`: shared ESLint presets
 - `packages/typescript-config`: shared TypeScript configs
 
@@ -88,8 +86,6 @@ Main route groups in `apps/web/app/api`:
   - create/list/delete/get threads
 - `settings`
   - read and update model/personality preferences
-- `jobs`
-  - lightweight status endpoint used by analysis polling UI
 
 Most endpoints require Clerk auth; temporary chat is the main unauthenticated exception.
 
@@ -155,23 +151,17 @@ App URL metadata:
 bun install
 ```
 
-### Run all apps in dev mode
+### Run dev mode
 
 ```bash
 bun run dev
 ```
 
 - Web: [http://localhost:3000](http://localhost:3000)
-- Docs: [http://localhost:3001](http://localhost:3001)
 
 ### Run one workspace only
 
 From `apps/web`:
-```bash
-bun run dev
-```
-
-From `apps/docs`:
 ```bash
 bun run dev
 ```
@@ -205,11 +195,4 @@ bun run db:migrate
 ## Deployment Notes
 
 - Root `vercel.json` builds only the web app using Turbo filters.
-- `apps/web/vercel.json` contains workspace-level build settings.
 - Bun is the expected package manager in CI/deploy environments.
-
----
-
-## Current State of `apps/docs`
-
-`apps/docs` is present in the monorepo and wired into Turbo scripts, but currently contains the default scaffold content rather than full product documentation pages.

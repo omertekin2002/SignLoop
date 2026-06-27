@@ -57,7 +57,9 @@ type ModelDrivenSearchResult = {
     webSearch: ChatReply['webSearch'];
 };
 
-type ChatRequestOptions = Pick<OpenAI.RequestOptions, 'signal'>;
+// The fetch-based OpenRouter streamer never touches the SDK, so define this structurally rather
+// than importing OpenAI.RequestOptions just for one field. (Stays compatible with the SDK shape.)
+type ChatRequestOptions = { signal?: AbortSignal | null };
 
 function isNativeWebSearchModel(model: string): boolean {
     return NATIVE_WEB_SEARCH_MODELS.has(model);
@@ -289,6 +291,27 @@ function extractNativeWebSearchMetadata(response: OpenAI.Responses.Response): Ch
     };
 }
 
+// Resolve the final assistant text from a finished Responses stream, preferring the fully-formed
+// completed response, then the finalized output-text event, then the concatenated deltas. Shared by
+// both streaming readers (SDK iterator + raw OpenRouter SSE) so the fallback order can't drift.
+function resolveStreamedContent(input: {
+    completedResponse: OpenAI.Responses.Response | null;
+    finalizedText: string | null;
+    chunks: string[];
+}): string {
+    const completedText = input.completedResponse
+        ? extractResponseOutputText(input.completedResponse)
+        : null;
+    const finalizedOutputText = input.finalizedText?.trim();
+    const streamedText = input.chunks.join('').trim();
+    const content = completedText ?? (finalizedOutputText || null) ?? streamedText;
+    if (!content) {
+        throw new Error('Empty response from AI');
+    }
+
+    return content;
+}
+
 async function runChatWithResponsesModel(
     openai: OpenAI,
     model: string,
@@ -477,15 +500,7 @@ async function* runOpenRouterResponsesModelStream(
         }
     }
 
-    const completedText = completedResponse ? extractResponseOutputText(completedResponse) : null;
-    const finalizedOutputText = finalizedText?.trim();
-    const streamedText = chunks.join('').trim();
-    const content = completedText ?? (finalizedOutputText || null) ?? streamedText;
-    if (!content) {
-        throw new Error('Empty response from AI');
-    }
-
-    return content;
+    return resolveStreamedContent({ completedResponse, finalizedText, chunks });
 }
 
 export async function generateChatReply(
@@ -565,15 +580,7 @@ async function* runPrimaryResponsesModelStream(
         }
     }
 
-    const completedText = completedResponse ? extractResponseOutputText(completedResponse) : null;
-    const finalizedOutputText = finalizedText?.trim();
-    const streamedText = chunks.join('').trim();
-    const content = completedText ?? (finalizedOutputText || null) ?? streamedText;
-    if (!content) {
-        throw new Error('Empty response from AI');
-    }
-
-    return content;
+    return resolveStreamedContent({ completedResponse, finalizedText, chunks });
 }
 
 export async function* generateChatReplyStream(

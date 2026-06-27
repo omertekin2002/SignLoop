@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiClient, type ApiError } from "@/lib/api-client";
+import { apiClient, getApiErrorMessage, type ApiError } from "@/lib/api-client";
 import { coerceDate, formatDate, getRiskColor } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -50,12 +50,8 @@ const ContractDetails = () => {
     const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(null);
 
     const getContractErrorDetails = (error: unknown) => {
-        const response = (error as ApiError).response;
-        const status = response?.status;
-        const message =
-            response?.data?.message ||
-            response?.data?.error ||
-            (error instanceof Error ? error.message : null);
+        const status = (error as ApiError).response?.status;
+        const message = getApiErrorMessage(error, error instanceof Error ? error.message : "");
 
         if (status === 404) {
             return {
@@ -120,11 +116,7 @@ const ContractDetails = () => {
             queryClient.invalidateQueries({ queryKey: ["contracts"] });
         },
         onError: (error: ApiError) => {
-            toast.error(
-                error.response?.data?.message ||
-                error.response?.data?.error ||
-                "Analysis failed to start"
-            );
+            toast.error(getApiErrorMessage(error, "Analysis failed to start"));
         }
     });
 
@@ -226,7 +218,7 @@ const ContractDetails = () => {
             queryClient.invalidateQueries({ queryKey: ["contracts"] });
         },
         onError: (error: ApiError) => {
-            toast.error(error.response?.data?.message || "Failed to delete analysis");
+            toast.error(getApiErrorMessage(error, "Failed to delete analysis"));
         },
     });
 
@@ -251,7 +243,7 @@ const ContractDetails = () => {
             }
         },
         onError: (error: ApiError) => {
-            toast.error(error.response?.data?.message || "Failed to delete older analyses");
+            toast.error(getApiErrorMessage(error, "Failed to delete older analyses"));
         }
     });
 
@@ -265,7 +257,7 @@ const ContractDetails = () => {
             router.push("/dashboard");
         },
         onError: (error: ApiError) => {
-            toast.error(error.response?.data?.message || "Failed to delete contract");
+            toast.error(getApiErrorMessage(error, "Failed to delete contract"));
         }
     });
 

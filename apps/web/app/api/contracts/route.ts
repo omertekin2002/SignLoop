@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { parseJsonBody, parsePaginationParams, requireUserId } from "@/lib/api-auth";
 import { createContractForUser, listContractsByUserId } from "@/lib/server-db";
+import { ProjectNotFoundError } from "@/lib/errors";
+import { isUuid } from "@/lib/utils";
 
 export async function GET(req: Request) {
   const authed = await requireUserId();
@@ -22,17 +24,19 @@ export async function POST(req: Request) {
   }
   const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : "Untitled Contract";
 
+  // Validate projectId is a UUID (or absent) before it reaches the uuid-typed query, which would
+  // otherwise throw 22P02 and surface as an unhandled 500.
+  const projectId = body.projectId ?? null;
+  if (projectId !== null && !isUuid(projectId)) {
+    return NextResponse.json({ error: "Invalid project id" }, { status: 400 });
+  }
+
   try {
-    const contract = await createContractForUser({
-      userId,
-      title,
-      projectId: body.projectId ?? null,
-    });
+    const contract = await createContractForUser({ userId, title, projectId });
 
     return NextResponse.json(contract, { status: 201 });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "";
-    if (message === "Project not found") {
+    if (error instanceof ProjectNotFoundError) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
     throw error;

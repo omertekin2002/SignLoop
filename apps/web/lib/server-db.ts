@@ -1,6 +1,7 @@
 import { sql } from "@vercel/postgres";
 import type { PrimaryModel } from "@/lib/model-settings";
 import type { PersonalityMode } from "@/lib/personality-settings";
+import { ProjectNotFoundError } from "@/lib/errors";
 
 type JsonObject = Record<string, unknown>;
 
@@ -54,10 +55,7 @@ async function ensureSchema(): Promise<void> {
       )
     `;
 
-    await sql`
-      create index if not exists projects_user_id_idx
-      on projects (user_id)
-    `;
+    // projects_user_id_idx omitted: it's a left-prefix of projects_user_id_created_at_idx below.
     await sql`
       create index if not exists projects_user_id_created_at_idx
       on projects (user_id, created_at desc)
@@ -76,17 +74,11 @@ async function ensureSchema(): Promise<void> {
       )
     `;
 
-    await sql`
-      create index if not exists contracts_user_id_idx
-      on contracts (user_id)
-    `;
+    // contracts_user_id_idx omitted: left-prefix of contracts_user_id_created_at_idx.
+    // contracts_created_at_idx omitted: no global created_at sort (all reads filter by user/project).
     await sql`
       create index if not exists contracts_project_id_idx
       on contracts (project_id)
-    `;
-    await sql`
-      create index if not exists contracts_created_at_idx
-      on contracts (created_at desc)
     `;
     await sql`
       create index if not exists contracts_user_id_created_at_idx
@@ -108,10 +100,7 @@ async function ensureSchema(): Promise<void> {
       )
     `;
 
-    await sql`
-      create index if not exists analyses_contract_id_idx
-      on analyses (contract_id)
-    `;
+    // analyses_contract_id_idx omitted: left-prefix of analyses_contract_id_created_at_idx.
     await sql`
       create index if not exists analyses_created_at_idx
       on analyses (created_at desc)
@@ -260,10 +249,7 @@ async function ensureSchema(): Promise<void> {
       )
     `;
 
-    await sql`
-      create index if not exists chat_messages_thread_id_idx
-      on chat_messages (thread_id)
-    `;
+    // chat_messages_thread_id_idx omitted: left-prefix of the two thread composites below.
     await sql`
       create index if not exists chat_messages_thread_position_idx
       on chat_messages (thread_id, position)
@@ -456,7 +442,9 @@ function parseJsonObject(value: unknown): JsonObject {
   return {};
 }
 
-function mapAnalysisRow(row: {
+// Raw analyses row shape (snake_case columns aliased to camelCase). Declared once and shared by
+// mapAnalysisRow and the fetch helper instead of repeating the 10-field inline type per query.
+type AnalysisRow = {
   id: string;
   contractId: string;
   riskBadge: string | null;
@@ -467,7 +455,39 @@ function mapAnalysisRow(row: {
   llmCompletionTokens: number | null;
   processingTimeMs: number | null;
   createdAt: string;
-}): AnalysisRecord {
+};
+
+// Fetch a contract's analyses (newest first). Pass `limit` for callers that need only the latest.
+// Centralizes the column list/order so the two read paths can't drift.
+async function fetchAnalysisRowsByContractId(
+  contractId: string,
+  limit?: number,
+): Promise<AnalysisRow[]> {
+  const baseQuery = `
+    select
+      id,
+      contract_id as "contractId",
+      risk_badge as "riskBadge",
+      result_json as "resultJson",
+      llm_provider as "llmProvider",
+      llm_model as "llmModel",
+      llm_prompt_tokens as "llmPromptTokens",
+      llm_completion_tokens as "llmCompletionTokens",
+      processing_time_ms as "processingTimeMs",
+      created_at as "createdAt"
+    from analyses
+    where contract_id = $1
+    order by created_at desc`;
+
+  const { rows } =
+    limit != null
+      ? await sql.query<AnalysisRow>(`${baseQuery} limit $2`, [contractId, limit])
+      : await sql.query<AnalysisRow>(baseQuery, [contractId]);
+
+  return rows;
+}
+
+function mapAnalysisRow(row: AnalysisRow): AnalysisRecord {
   const resultJson = parseJsonObject(row.resultJson);
   const rawKeyPoints = resultJson.key_points;
   const keyPoints = Array.isArray(rawKeyPoints)
@@ -531,18 +551,8 @@ export async function createContractForUser(input: {
 
   const validatedProjectId: string | null = input.projectId ?? null;
 
-  if (validatedProjectId) {
-    const { rows: projectRows } = await sql<{ id: string }>`
-      select id
-      from projects
-      where id = ${validatedProjectId}
-        and user_id = ${input.userId}
-      limit 1
-    `;
-
-    if (!projectRows[0]) {
-      throw new Error("Project not found");
-    }
+  if (validatedProjectId && !(await isProjectOwnedByUser(input.userId, validatedProjectId))) {
+    throw new ProjectNotFoundError();
   }
 
   const { rows } = await sql<ContractSummaryRecord>`
@@ -603,33 +613,7 @@ export async function getContractByIdForUser(
     return null;
   }
 
-  const { rows: analysisRows } = await sql<{
-    id: string;
-    contractId: string;
-    riskBadge: string | null;
-    resultJson: unknown;
-    llmProvider: string | null;
-    llmModel: string | null;
-    llmPromptTokens: number | null;
-    llmCompletionTokens: number | null;
-    processingTimeMs: number | null;
-    createdAt: string;
-  }>`
-    select
-      id,
-      contract_id as "contractId",
-      risk_badge as "riskBadge",
-      result_json as "resultJson",
-      llm_provider as "llmProvider",
-      llm_model as "llmModel",
-      llm_prompt_tokens as "llmPromptTokens",
-      llm_completion_tokens as "llmCompletionTokens",
-      processing_time_ms as "processingTimeMs",
-      created_at as "createdAt"
-    from analyses
-    where contract_id = ${contractId}
-    order by created_at desc
-  `;
+  const analysisRows = await fetchAnalysisRowsByContractId(contractId);
 
   const analyses = analysisRows.map(mapAnalysisRow);
   const latestAnalysis = analyses[0] ?? null;
@@ -701,34 +685,7 @@ export async function getContractWithLatestAnalysisForUser(
     return null;
   }
 
-  const { rows: analysisRows } = await sql<{
-    id: string;
-    contractId: string;
-    riskBadge: string | null;
-    resultJson: unknown;
-    llmProvider: string | null;
-    llmModel: string | null;
-    llmPromptTokens: number | null;
-    llmCompletionTokens: number | null;
-    processingTimeMs: number | null;
-    createdAt: string;
-  }>`
-    select
-      id,
-      contract_id as "contractId",
-      risk_badge as "riskBadge",
-      result_json as "resultJson",
-      llm_provider as "llmProvider",
-      llm_model as "llmModel",
-      llm_prompt_tokens as "llmPromptTokens",
-      llm_completion_tokens as "llmCompletionTokens",
-      processing_time_ms as "processingTimeMs",
-      created_at as "createdAt"
-    from analyses
-    where contract_id = ${contractId}
-    order by created_at desc
-    limit 1
-  `;
+  const analysisRows = await fetchAnalysisRowsByContractId(contractId, 1);
 
   return {
     ...contract,
@@ -794,57 +751,54 @@ export async function addUploadedContractFile(input: UploadedContractFileInput):
 export async function createAnalysisForContract(input: NewAnalysisInput): Promise<{ id: string }> {
   await ensureSchema();
 
-  const { rows: contractRows } = await sql<{ id: string }>`
-    select id
-    from contracts
-    where id = ${input.contractId}
-      and user_id = ${input.userId}
-    limit 1
-  `;
+  // Insert the analysis and flip the contract to ANALYZED atomically in one transaction (on a
+  // single checked-out connection) so a crash can't leave an analysis row without the status flip.
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
 
-  if (!contractRows[0]) {
-    throw new Error("Contract not found");
+    // Insert only if the contract exists and is owned by the user — folds the ownership check into
+    // the write, removing the separate pre-SELECT round-trip and any TOCTOU between check and insert.
+    const { rows: analysisRows } = await client.query<{ id: string }>(
+      `INSERT INTO analyses (
+         contract_id, risk_badge, result_json,
+         llm_provider, llm_model, llm_prompt_tokens, llm_completion_tokens, processing_time_ms
+       )
+       SELECT $1, $2, $3::jsonb, $4, $5, $6, $7, $8
+       WHERE EXISTS (SELECT 1 FROM contracts WHERE id = $1 AND user_id = $9)
+       RETURNING id`,
+      [
+        input.contractId,
+        input.riskBadge,
+        JSON.stringify(input.resultJson),
+        input.llmProvider,
+        input.llmModel,
+        input.llmPromptTokens ?? null,
+        input.llmCompletionTokens ?? null,
+        input.processingTimeMs ?? null,
+        input.userId,
+      ],
+    );
+
+    const created = analysisRows[0];
+    if (!created) {
+      throw new Error("Contract not found");
+    }
+
+    await client.query(
+      `UPDATE contracts SET status = 'ANALYZED', updated_at = now()
+       WHERE id = $1 AND user_id = $2`,
+      [input.contractId, input.userId],
+    );
+
+    await client.query("COMMIT");
+    return created;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
-
-  const { rows: analysisRows } = await sql<{ id: string }>`
-    insert into analyses (
-      contract_id,
-      risk_badge,
-      result_json,
-      llm_provider,
-      llm_model,
-      llm_prompt_tokens,
-      llm_completion_tokens,
-      processing_time_ms
-    )
-    values (
-      ${input.contractId},
-      ${input.riskBadge},
-      ${JSON.stringify(input.resultJson)},
-      ${input.llmProvider},
-      ${input.llmModel},
-      ${input.llmPromptTokens ?? null},
-      ${input.llmCompletionTokens ?? null},
-      ${input.processingTimeMs ?? null}
-    )
-    returning id
-  `;
-
-  await sql`
-    update contracts
-    set
-      status = 'ANALYZED',
-      updated_at = now()
-    where id = ${input.contractId}
-      and user_id = ${input.userId}
-  `;
-
-  const created = analysisRows[0];
-  if (!created) {
-    throw new Error("Failed to create analysis");
-  }
-
-  return created;
 }
 
 export async function deleteAnalysisForContract(input: {
@@ -854,17 +808,46 @@ export async function deleteAnalysisForContract(input: {
 }): Promise<boolean> {
   await ensureSchema();
 
-  const { rows } = await sql<{ id: string }>`
-    delete from analyses
-    using contracts
-    where analyses.id = ${input.analysisId}
-      and analyses.contract_id = ${input.contractId}
-      and contracts.id = analyses.contract_id
-      and contracts.user_id = ${input.userId}
-    returning analyses.id
-  `;
+  // Delete the analysis and, if it was the contract's last one, revert the contract status — in a
+  // single transaction so the contract can't be left badged ANALYZED with zero analyses.
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
 
-  return !!rows[0];
+    const { rows } = await client.query<{ id: string }>(
+      `DELETE FROM analyses
+       USING contracts
+       WHERE analyses.id = $1
+         AND analyses.contract_id = $2
+         AND contracts.id = analyses.contract_id
+         AND contracts.user_id = $3
+       RETURNING analyses.id`,
+      [input.analysisId, input.contractId, input.userId],
+    );
+
+    if (!rows[0]) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+
+    // Only fires when no analyses remain (so deleting one of several leaves status — and
+    // updated_at — untouched). 'DRAFT' matches saveContractExtractedText's default.
+    await client.query(
+      `UPDATE contracts
+       SET status = 'DRAFT', updated_at = now()
+       WHERE id = $1 AND user_id = $2
+         AND NOT EXISTS (SELECT 1 FROM analyses WHERE contract_id = $1)`,
+      [input.contractId, input.userId],
+    );
+
+    await client.query("COMMIT");
+    return true;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -925,35 +908,25 @@ export async function getProjectStorageKeys(
 }
 
 /**
- * Delete a single contract and its children (analyses, files) using the
- * provided client so callers can include this in a wider transaction.
- * Returns the storage keys that should be removed *after* the transaction
- * commits.
+ * Delete a single contract and its children (analyses, files) using the provided client so callers
+ * can include this in a wider transaction. Storage cleanup is the route's responsibility — it
+ * collects keys via getContractStorageKeys *before* the delete (storage-before-DB ordering for
+ * crash safety), so this helper doesn't return them.
  */
 async function deleteContractCascade(
   client: import("@vercel/postgres").VercelPoolClient,
   userId: string,
   contractId: string,
-): Promise<string[]> {
-  const { rows: fileRows } = await client.query<{ storageKey: string | null }>(
-    `SELECT coalesce(storage_key, blob_path) AS "storageKey"
-     FROM contract_files WHERE contract_id = $1`,
-    [contractId],
-  );
-
+): Promise<void> {
   await client.query("DELETE FROM analyses WHERE contract_id = $1", [contractId]);
   await client.query("DELETE FROM contract_files WHERE contract_id = $1", [contractId]);
   await client.query("DELETE FROM contracts WHERE id = $1 AND user_id = $2", [contractId, userId]);
-
-  return fileRows
-    .map((row) => row.storageKey)
-    .filter((value): value is string => Boolean(value));
 }
 
 export async function deleteContractForUser(input: {
   userId: string;
   contractId: string;
-}): Promise<{ deleted: boolean; storageKeys: string[] }> {
+}): Promise<{ deleted: boolean }> {
   await ensureSchema();
 
   const { rows: contractRows } = await sql<{ id: string }>`
@@ -965,15 +938,15 @@ export async function deleteContractForUser(input: {
   `;
 
   if (!contractRows[0]) {
-    return { deleted: false, storageKeys: [] };
+    return { deleted: false };
   }
 
   const client = await sql.connect();
   try {
     await client.query("BEGIN");
-    const storageKeys = await deleteContractCascade(client, input.userId, input.contractId);
+    await deleteContractCascade(client, input.userId, input.contractId);
     await client.query("COMMIT");
-    return { deleted: true, storageKeys };
+    return { deleted: true };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
@@ -1060,37 +1033,39 @@ export async function listProjectsByUserId(
     return { data: [], total, limit, offset };
   }
 
-  const projectIdsLiteral = `{${projectRows.map((p) => p.id).join(",")}}`;
+  const projectIds = projectRows.map((p) => p.id);
 
   const [{ rows: contractRows }, { rows: contextDocRows }] = await Promise.all([
-    sql<{
+    sql.query<{
       projectId: string;
       id: string;
       title: string;
       status: string;
       createdAt: string;
-    }>`
-      select
+    }>(
+      `select
         project_id as "projectId",
         id,
         title,
         status,
         created_at as "createdAt"
       from contracts
-      where project_id = any(${projectIdsLiteral}::uuid[])
-      order by created_at desc
-    `,
-    sql<{
+      where project_id = any($1::uuid[])
+      order by created_at desc`,
+      [projectIds],
+    ),
+    sql.query<{
       projectId: string;
       id: string;
-    }>`
-      select
+    }>(
+      `select
         project_id as "projectId",
         id
       from context_documents
-      where project_id = any(${projectIdsLiteral}::uuid[])
-      order by created_at desc
-    `,
+      where project_id = any($1::uuid[])
+      order by created_at desc`,
+      [projectIds],
+    ),
   ]);
 
   const contractsByProject = new Map<string, ProjectSummaryRecord["contracts"]>();
@@ -1210,21 +1185,22 @@ export async function getProjectByIdForUser(
   >();
 
   if (contractRows.length > 0) {
-    const contractIdsLiteral = `{${contractRows.map((c) => c.id).join(",")}}`;
+    const contractIds = contractRows.map((c) => c.id);
 
-    const { rows: analysisRows } = await sql<{
+    const { rows: analysisRows } = await sql.query<{
       contractId: string;
       id: string;
       riskBadge: string | null;
-    }>`
-      select distinct on (contract_id)
+    }>(
+      `select distinct on (contract_id)
         contract_id as "contractId",
         id,
         risk_badge as "riskBadge"
       from analyses
-      where contract_id = any(${contractIdsLiteral}::uuid[])
-      order by contract_id, created_at desc
-    `;
+      where contract_id = any($1::uuid[])
+      order by contract_id, created_at desc`,
+      [contractIds],
+    );
 
     for (const row of analysisRows) {
       const list = analysesByContract.get(row.contractId) ?? [];
@@ -1250,42 +1226,34 @@ export async function addContextDocumentToProject(
 ): Promise<{ id: string }> {
   await ensureSchema();
 
-  const owned = await isProjectOwnedByUser(input.userId, input.projectId);
-  if (!owned) {
-    throw new Error("Project not found");
-  }
-
-  const { rows } = await sql<{ id: string }>`
-    insert into context_documents (
-      project_id,
-      title,
-      document_type,
-      storage_key,
-      bucket,
-      original_filename,
-      content_type,
-      size_bytes,
-      extracted_text,
-      word_count
-    )
-    values (
-      ${input.projectId},
-      ${input.title},
-      ${input.documentType},
-      ${input.storageKey},
-      ${input.bucket},
-      ${input.originalFilename},
-      ${input.contentType},
-      ${input.sizeBytes},
-      ${input.extractedText},
-      ${input.wordCount}
-    )
-    returning id
-  `;
+  // Insert only if the project is owned by the user — folds the ownership check into the write so
+  // there's no separate round-trip. No inserted row ⇒ the project doesn't exist / isn't owned.
+  const { rows } = await sql.query<{ id: string }>(
+    `insert into context_documents (
+       project_id, title, document_type, storage_key, bucket,
+       original_filename, content_type, size_bytes, extracted_text, word_count
+     )
+     select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+     where exists (select 1 from projects where id = $1 and user_id = $11)
+     returning id`,
+    [
+      input.projectId,
+      input.title,
+      input.documentType,
+      input.storageKey,
+      input.bucket,
+      input.originalFilename,
+      input.contentType,
+      input.sizeBytes,
+      input.extractedText,
+      input.wordCount,
+      input.userId,
+    ],
+  );
 
   const created = rows[0];
   if (!created) {
-    throw new Error("Failed to create context document");
+    throw new ProjectNotFoundError();
   }
 
   return created;
@@ -1301,16 +1269,14 @@ export async function getContextDocumentStorageKey(
 ): Promise<string | null> {
   await ensureSchema();
 
-  const owned = await isProjectOwnedByUser(userId, projectId);
-  if (!owned) {
-    return null;
-  }
-
+  // Join projects so ownership is enforced in the same query instead of a separate pre-check.
   const { rows } = await sql<{ storageKey: string | null }>`
-    select storage_key as "storageKey"
-    from context_documents
-    where id = ${documentId}
-      and project_id = ${projectId}
+    select cd.storage_key as "storageKey"
+    from context_documents cd
+    inner join projects p on p.id = cd.project_id
+    where cd.id = ${documentId}
+      and cd.project_id = ${projectId}
+      and p.user_id = ${userId}
     limit 1
   `;
 
@@ -1324,18 +1290,17 @@ export async function deleteContextDocumentFromProject(input: {
 }): Promise<{ deleted: boolean; storageKey: string | null }> {
   await ensureSchema();
 
-  const owned = await isProjectOwnedByUser(input.userId, input.projectId);
-  if (!owned) {
-    return { deleted: false, storageKey: null };
-  }
-
+  // Join projects so ownership is enforced in the DELETE itself (no separate pre-check round-trip).
   const { rows } = await sql<{ id: string; storageKey: string | null }>`
-    delete from context_documents
-    where id = ${input.documentId}
-      and project_id = ${input.projectId}
+    delete from context_documents cd
+    using projects p
+    where cd.id = ${input.documentId}
+      and cd.project_id = ${input.projectId}
+      and p.id = cd.project_id
+      and p.user_id = ${input.userId}
     returning
-      id,
-      storage_key as "storageKey"
+      cd.id,
+      cd.storage_key as "storageKey"
   `;
 
   if (!rows[0]) {
@@ -1351,46 +1316,34 @@ export async function deleteContextDocumentFromProject(input: {
 export async function deleteProjectForUser(input: {
   userId: string;
   projectId: string;
-}): Promise<{ deleted: boolean; storageKeys: string[] }> {
+}): Promise<{ deleted: boolean }> {
   await ensureSchema();
 
   const owned = await isProjectOwnedByUser(input.userId, input.projectId);
   if (!owned) {
-    return { deleted: false, storageKeys: [] };
+    return { deleted: false };
   }
 
+  // Storage cleanup is the route's job (it collects keys via getProjectStorageKeys before this
+  // call), so this transaction only deletes DB rows.
   const client = await sql.connect();
   try {
     await client.query("BEGIN");
 
-    // Collect storage keys for all contract files in this project
     const { rows: contractRows } = await client.query<{ id: string }>(
       "SELECT id FROM contracts WHERE project_id = $1 AND user_id = $2",
       [input.projectId, input.userId],
     );
 
-    const storageKeys: string[] = [];
     for (const contract of contractRows) {
-      const keys = await deleteContractCascade(client, input.userId, contract.id);
-      storageKeys.push(...keys);
+      await deleteContractCascade(client, input.userId, contract.id);
     }
-
-    // Collect storage keys for context documents
-    const { rows: contextRows } = await client.query<{ storageKey: string | null }>(
-      `SELECT storage_key AS "storageKey" FROM context_documents WHERE project_id = $1`,
-      [input.projectId],
-    );
-    storageKeys.push(
-      ...contextRows
-        .map((row) => row.storageKey)
-        .filter((value): value is string => Boolean(value)),
-    );
 
     await client.query("DELETE FROM context_documents WHERE project_id = $1", [input.projectId]);
     await client.query("DELETE FROM projects WHERE id = $1 AND user_id = $2", [input.projectId, input.userId]);
 
     await client.query("COMMIT");
-    return { deleted: true, storageKeys };
+    return { deleted: true };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
@@ -1691,11 +1644,6 @@ export async function appendChatMessagesToThread(input: {
 }): Promise<void> {
   await ensureSchema();
 
-  const owned = await isChatThreadOwnedByUser(input.userId, input.threadId);
-  if (!owned) {
-    throw new Error("Chat thread not found");
-  }
-
   const cleanedMessages = input.messages
     .map((message) => ({
       role: message.role,
@@ -1714,11 +1662,17 @@ export async function appendChatMessagesToThread(input: {
   try {
     await client.query("BEGIN");
 
-    // Lock the thread row so concurrent appends serialize here.
-    await client.query(
-      "SELECT id FROM chat_threads WHERE id = $1 FOR UPDATE",
-      [input.threadId],
+    // Lock the thread row, scoped by user, so concurrent appends serialize here AND ownership is
+    // enforced atomically in the same statement — no separate pre-check round-trip, no TOCTOU.
+    const { rowCount: lockedThreadCount } = await client.query(
+      "SELECT id FROM chat_threads WHERE id = $1 AND user_id = $2 FOR UPDATE",
+      [input.threadId, input.userId],
     );
+
+    if (!lockedThreadCount) {
+      await client.query("ROLLBACK");
+      throw new Error("Chat thread not found");
+    }
 
     const posResult = await client.query(
       `SELECT coalesce(max(position), 0)::integer AS "basePosition"
