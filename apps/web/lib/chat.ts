@@ -15,7 +15,13 @@ import {
 import { getErrorMessage, isRecord } from '@/lib/utils';
 
 const MAX_WEB_SOURCES_IN_METADATA = 8;
-const NATIVE_WEB_SEARCH_MODELS = new Set(['gpt-5', 'gpt-5.1', 'gpt-5.2']);
+const NATIVE_WEB_SEARCH_MODELS = new Set([
+    'gpt-5',
+    'gpt-5.1',
+    'gpt-5.2',
+    'gpt-5.4-mini',
+    'gpt-5.5',
+]);
 
 export type ChatRole = 'system' | 'user' | 'assistant';
 

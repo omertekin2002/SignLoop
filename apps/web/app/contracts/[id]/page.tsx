@@ -554,11 +554,11 @@ const ContractDetails = () => {
                                             const type = typeof flag?.type === "string" ? flag.type : "Risk";
                                             const explanation = typeof flag?.explanation === "string" ? flag.explanation : "";
                                             const confidence =
-                                                typeof flag?.confidence === "number" ? `${flag.confidence}%` : "Unknown";
+                                                typeof flag?.confidence === "number" ? `${flag.confidence}%` : "Not provided";
                                             const severity =
                                                 typeof flag?.severity === "number" && Number.isFinite(flag.severity)
                                                     ? Math.max(0, Math.min(10, flag.severity))
-                                                    : 0;
+                                                    : null;
                                             const where = typeof flag?.where === "string" ? flag.where : "";
 
                                             return (
@@ -582,17 +582,21 @@ const ContractDetails = () => {
                                                         </div>
                                                         <div className="flex flex-col items-end gap-1">
                                                             <span className="text-xs text-muted-foreground">Severity</span>
-                                                            <div className="flex items-center gap-1">
-                                                                <div className="w-16 h-2 rounded-full bg-muted overflow-hidden">
-                                                                    <div
-                                                                        className={`h-full rounded-full ${severity >= 7 ? "bg-destructive" :
-                                                                            severity >= 4 ? "bg-amber-500" : "bg-emerald-500"
-                                                                            }`}
-                                                                        style={{ width: `${severity * 10}%` }}
-                                                                    />
+                                                            {severity !== null ? (
+                                                                <div className="flex items-center gap-1">
+                                                                    <div className="w-16 h-2 rounded-full bg-muted overflow-hidden">
+                                                                        <div
+                                                                            className={`h-full rounded-full ${severity >= 7 ? "bg-destructive" :
+                                                                                severity >= 4 ? "bg-amber-500" : "bg-emerald-500"
+                                                                                }`}
+                                                                            style={{ width: `${severity * 10}%` }}
+                                                                        />
+                                                                    </div>
+                                                                    <span className="text-xs font-medium">{severity}/10</span>
                                                                 </div>
-                                                                <span className="text-xs font-medium">{severity}/10</span>
-                                                            </div>
+                                                            ) : (
+                                                                <span className="text-xs font-medium text-muted-foreground">Not provided</span>
+                                                            )}
                                                         </div>
                                                     </div>
                                                 </div>

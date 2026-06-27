@@ -30,10 +30,11 @@ export const AnalysisResultSchema = z.object({
 
     red_flags: z.array(z.object({
         type: z.string(),
-        severity: z.number().min(1).max(10),
+        // null when the model didn't supply a value — we don't fabricate a score/level.
+        severity: z.number().min(1).max(10).nullable(),
         explanation: z.string(),
         where: z.string().nullable(),
-        confidence: z.number().min(0).max(100),
+        confidence: z.number().min(0).max(100).nullable(),
     })),
 
     normal_in_region: z.array(z.object({
@@ -97,10 +98,10 @@ export const PartialAnalysisResultSchema = z.object({
     }),
     red_flags: z.array(z.object({
         type: z.string(),
-        severity: z.number().min(1).max(10),
+        severity: z.number().min(1).max(10).nullable().optional().default(null),
         explanation: z.string(),
         where: z.string().nullable().optional().default(null),
-        confidence: z.number().min(0).max(100).optional().default(50),
+        confidence: z.number().min(0).max(100).nullable().optional().default(null),
     })).optional().default([]),
     normal_in_region: z.array(z.object({
         topic: z.string(),

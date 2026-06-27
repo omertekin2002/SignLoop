@@ -74,6 +74,27 @@ function clamp(value: number, min: number, max: number): number {
     return value;
 }
 
+// Like toNumber, but returns null when the value isn't a usable number — so callers can tell
+// "the model omitted this" apart from a fabricated default.
+function toNumberOrNull(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+    }
+    if (typeof value === 'string') {
+        const numericMatch = value.match(/-?\d+(\.\d+)?/);
+        if (numericMatch) {
+            const parsed = Number(numericMatch[0]);
+            if (Number.isFinite(parsed)) return parsed;
+        }
+    }
+    return null;
+}
+
+function toClampedNumberOrNull(value: unknown, min: number, max: number): number | null {
+    const parsed = toNumberOrNull(value);
+    return parsed === null ? null : clamp(Math.round(parsed), min, max);
+}
+
 function toStringArray(value: unknown): string[] {
     if (typeof value === 'string') {
         const cleaned = value
@@ -144,10 +165,10 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
                 if (!text) return null;
                 return {
                     type: 'General risk',
-                    severity: 5,
+                    severity: null,
                     explanation: text,
                     where: null,
-                    confidence: 50,
+                    confidence: null,
                 };
             }
 
@@ -156,18 +177,11 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
             );
             return {
                 type: toStringOrNull(pickFirst(record, ['type', 'category', 'name'])) || 'General risk',
-                severity: clamp(
-                    Math.round(toNumber(pickFirst(record, ['severity', 'score', 'risk_score']), 5)),
-                    1,
-                    10
-                ),
+                // null (not a fabricated 5/50) when the model didn't provide a value.
+                severity: toClampedNumberOrNull(pickFirst(record, ['severity', 'score', 'risk_score']), 1, 10),
                 explanation: explanation || 'Potential risk identified.',
                 where: toStringOrNull(pickFirst(record, ['where', 'location', 'clause'])),
-                confidence: clamp(
-                    Math.round(toNumber(pickFirst(record, ['confidence', 'certainty']), 50)),
-                    0,
-                    100
-                ),
+                confidence: toClampedNumberOrNull(pickFirst(record, ['confidence', 'certainty']), 0, 100),
             };
         })
         .filter((item): item is AnalysisResult['red_flags'][number] => Boolean(item));
