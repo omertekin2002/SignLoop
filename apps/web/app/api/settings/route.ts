@@ -28,13 +28,13 @@ export async function GET() {
   ]);
   const availablePrimaryModels = snapshot.availablePrimaryModels;
 
-  // When the availability lookup failed (ngrok down), trust the saved model rather than resetting
-  // the user's selection to null just because we couldn't fetch the list.
-  const resolvedPrimaryModel = settings?.primaryModel
-    ? snapshot.error || availablePrimaryModels.includes(settings.primaryModel)
+  // Only present the saved model as active when it's actually in the available list. If the primary
+  // (ngrok) endpoint is down the list is empty, so this resolves to null and the UI shows the
+  // OpenRouter fallback instead of advertising an unreachable model.
+  const resolvedPrimaryModel =
+    settings?.primaryModel && availablePrimaryModels.includes(settings.primaryModel)
       ? settings.primaryModel
-      : null
-    : null;
+      : null;
 
   return NextResponse.json({
     primaryModel: resolvedPrimaryModel,
@@ -67,11 +67,9 @@ export async function PUT(req: Request) {
 
   let model: PrimaryModel | null = null;
   if (modelInput) {
-    const { availablePrimaryModels, error: snapshotError } = await getModelAvailabilitySnapshot();
+    const { availablePrimaryModels } = await getModelAvailabilitySnapshot();
 
-    // Only reject an unavailable model when we actually have a model list to check against. During
-    // an ngrok outage (snapshotError) we can't validate, so accept the save rather than 409.
-    if (!snapshotError && !availablePrimaryModels.includes(modelInput)) {
+    if (!availablePrimaryModels.includes(modelInput)) {
       return NextResponse.json(
         {
           error: "Selected primary model is not currently available",
