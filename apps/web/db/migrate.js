@@ -19,6 +19,7 @@ const migrationFiles = [
   '007_add_analyses_contract_created_idx.sql',
   '008_add_user_created_at_idxs.sql',
   '009_drop_redundant_indexes.sql',
+  '010_drop_unused_indexes.sql',
 ];
 
 const client = createClient();

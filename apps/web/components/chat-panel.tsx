@@ -43,7 +43,7 @@ import { TypingAnimation } from "@/components/typing-animation";
 import { AnimatedGridPattern } from "@/components/ui/animated-grid-pattern";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
+import { cn, isRecord } from "@/lib/utils";
 // KaTeX styles are only needed where assistant markdown can render math, which is here.
 // Scoped to this client component so the ~24KB stylesheet no longer loads on every route.
 import "katex/dist/katex.min.css";
@@ -103,10 +103,6 @@ type ChatThreadDetail = {
   title: string;
   messages: ChatThreadMessage[];
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 function compactInlineImageDataUris(text: string): string {
   return text

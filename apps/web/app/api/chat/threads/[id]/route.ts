@@ -4,6 +4,7 @@ import {
   deleteChatThreadForUser,
   getChatThreadByIdForUser,
 } from "@/lib/server-db";
+import { isUuid } from "@/lib/utils";
 
 export async function GET(
   _req: Request,
@@ -15,6 +16,9 @@ export async function GET(
 
   try {
     const { id } = await params;
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+    }
     const thread = await getChatThreadByIdForUser(userId, id);
     if (!thread) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
@@ -37,6 +41,9 @@ export async function DELETE(
 
   try {
     const { id } = await params;
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+    }
     const deleted = await deleteChatThreadForUser({ userId, threadId: id });
     if (!deleted) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });

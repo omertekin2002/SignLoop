@@ -8,3 +8,10 @@ export class ProjectNotFoundError extends Error {
     this.name = "ProjectNotFoundError";
   }
 }
+
+export class ChatThreadNotFoundError extends Error {
+  constructor(message = "Chat thread not found") {
+    super(message);
+    this.name = "ChatThreadNotFoundError";
+  }
+}

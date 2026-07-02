@@ -1,7 +1,7 @@
 import { sql } from "@vercel/postgres";
 import type { PrimaryModel } from "@/lib/model-settings";
 import type { PersonalityMode } from "@/lib/personality-settings";
-import { ProjectNotFoundError } from "@/lib/errors";
+import { ChatThreadNotFoundError, ProjectNotFoundError } from "@/lib/errors";
 
 type JsonObject = Record<string, unknown>;
 
@@ -37,6 +37,14 @@ let schemaReadyPromise: Promise<void> | null = null;
 // changing the schema.
 async function ensureSchema(): Promise<void> {
   if (schemaReadyPromise) {
+    return schemaReadyPromise;
+  }
+
+  // When migrations (db/migrate.js) are applied at deploy time, set SKIP_SCHEMA_BOOTSTRAP=1 to
+  // skip this runtime bootstrap — it saves ~30 DDL round-trips on every serverless cold start.
+  // Left unset, the bootstrap keeps dev/first-run environments working with zero setup.
+  if (process.env.SKIP_SCHEMA_BOOTSTRAP === "1") {
+    schemaReadyPromise = Promise.resolve();
     return schemaReadyPromise;
   }
 
@@ -101,10 +109,7 @@ async function ensureSchema(): Promise<void> {
     `;
 
     // analyses_contract_id_idx omitted: left-prefix of analyses_contract_id_created_at_idx.
-    await sql`
-      create index if not exists analyses_created_at_idx
-      on analyses (created_at desc)
-    `;
+    // analyses_created_at_idx omitted: every read filters by contract_id; nothing sorts globally.
     await sql`
       create index if not exists analyses_contract_id_created_at_idx
       on analyses (contract_id, created_at desc)
@@ -128,13 +133,11 @@ async function ensureSchema(): Promise<void> {
       )
     `;
 
+    // context_documents_created_at_idx omitted: reads filter by project_id and sort tiny
+    // per-project sets; a global created_at index serves no query.
     await sql`
       create index if not exists context_documents_project_id_idx
       on context_documents (project_id)
-    `;
-    await sql`
-      create index if not exists context_documents_created_at_idx
-      on context_documents (created_at desc)
     `;
 
     await sql`
@@ -228,13 +231,11 @@ async function ensureSchema(): Promise<void> {
       )
     `;
 
+    // chat_threads_updated_at_idx omitted: the thread list orders by a computed
+    // coalesce(last_message_at, updated_at), which an index on updated_at cannot serve.
     await sql`
       create index if not exists chat_threads_user_id_idx
       on chat_threads (user_id)
-    `;
-    await sql`
-      create index if not exists chat_threads_updated_at_idx
-      on chat_threads (updated_at desc)
     `;
 
     await sql`
@@ -907,44 +908,34 @@ export async function getProjectStorageKeys(
     .filter((v): v is string => Boolean(v));
 }
 
-/**
- * Delete a single contract and its children (analyses, files) using the provided client so callers
- * can include this in a wider transaction. Storage cleanup is the route's responsibility — it
- * collects keys via getContractStorageKeys *before* the delete (storage-before-DB ordering for
- * crash safety), so this helper doesn't return them.
- */
-async function deleteContractCascade(
-  client: import("@vercel/postgres").VercelPoolClient,
-  userId: string,
-  contractId: string,
-): Promise<void> {
-  await client.query("DELETE FROM analyses WHERE contract_id = $1", [contractId]);
-  await client.query("DELETE FROM contract_files WHERE contract_id = $1", [contractId]);
-  await client.query("DELETE FROM contracts WHERE id = $1 AND user_id = $2", [contractId, userId]);
-}
-
 export async function deleteContractForUser(input: {
   userId: string;
   contractId: string;
 }): Promise<{ deleted: boolean }> {
   await ensureSchema();
 
-  const { rows: contractRows } = await sql<{ id: string }>`
-    select id
-    from contracts
-    where id = ${input.contractId}
-      and user_id = ${input.userId}
-    limit 1
-  `;
-
-  if (!contractRows[0]) {
-    return { deleted: false };
-  }
-
+  // Delete the contract row first — ownership is enforced in the DELETE itself (replacing the
+  // previous pre-SELECT round-trip) — and children only once the row is known to exist and be
+  // owned. There are no FK constraints, so parent-first ordering inside the transaction is safe.
+  // Storage cleanup is the route's responsibility — it collects keys via getContractStorageKeys
+  // *before* this call (storage-before-DB ordering for crash safety).
   const client = await sql.connect();
   try {
     await client.query("BEGIN");
-    await deleteContractCascade(client, input.userId, input.contractId);
+
+    const { rowCount } = await client.query(
+      "DELETE FROM contracts WHERE id = $1 AND user_id = $2",
+      [input.contractId, input.userId],
+    );
+
+    if (!rowCount) {
+      await client.query("ROLLBACK");
+      return { deleted: false };
+    }
+
+    await client.query("DELETE FROM analyses WHERE contract_id = $1", [input.contractId]);
+    await client.query("DELETE FROM contract_files WHERE contract_id = $1", [input.contractId]);
+
     await client.query("COMMIT");
     return { deleted: true };
   } catch (err) {
@@ -1319,28 +1310,43 @@ export async function deleteProjectForUser(input: {
 }): Promise<{ deleted: boolean }> {
   await ensureSchema();
 
-  const owned = await isProjectOwnedByUser(input.userId, input.projectId);
-  if (!owned) {
-    return { deleted: false };
-  }
-
   // Storage cleanup is the route's job (it collects keys via getProjectStorageKeys before this
-  // call), so this transaction only deletes DB rows.
+  // call), so this transaction only deletes DB rows. The project row goes first — ownership is
+  // enforced in that DELETE (replacing the previous pre-check round-trip) — then children are
+  // removed with set-based statements (previously a 3-queries-per-contract loop). There are no
+  // FK constraints, so parent-first ordering inside the transaction is safe; the contracts rows
+  // are kept until last among their children so the USING joins can still resolve them.
   const client = await sql.connect();
   try {
     await client.query("BEGIN");
 
-    const { rows: contractRows } = await client.query<{ id: string }>(
-      "SELECT id FROM contracts WHERE project_id = $1 AND user_id = $2",
+    const { rowCount } = await client.query(
+      "DELETE FROM projects WHERE id = $1 AND user_id = $2",
       [input.projectId, input.userId],
     );
 
-    for (const contract of contractRows) {
-      await deleteContractCascade(client, input.userId, contract.id);
+    if (!rowCount) {
+      await client.query("ROLLBACK");
+      return { deleted: false };
     }
 
+    await client.query(
+      `DELETE FROM analyses USING contracts
+       WHERE analyses.contract_id = contracts.id
+         AND contracts.project_id = $1 AND contracts.user_id = $2`,
+      [input.projectId, input.userId],
+    );
+    await client.query(
+      `DELETE FROM contract_files USING contracts
+       WHERE contract_files.contract_id = contracts.id
+         AND contracts.project_id = $1 AND contracts.user_id = $2`,
+      [input.projectId, input.userId],
+    );
+    await client.query(
+      "DELETE FROM contracts WHERE project_id = $1 AND user_id = $2",
+      [input.projectId, input.userId],
+    );
     await client.query("DELETE FROM context_documents WHERE project_id = $1", [input.projectId]);
-    await client.query("DELETE FROM projects WHERE id = $1 AND user_id = $2", [input.projectId, input.userId]);
 
     await client.query("COMMIT");
     return { deleted: true };
@@ -1475,20 +1481,6 @@ function mapChatMessageRow(row: {
     model,
     provider,
   };
-}
-
-async function isChatThreadOwnedByUser(userId: string, threadId: string): Promise<boolean> {
-  await ensureSchema();
-
-  const { rows } = await sql<{ id: string }>`
-    select id
-    from chat_threads
-    where id = ${threadId}
-      and user_id = ${userId}
-    limit 1
-  `;
-
-  return !!rows[0];
 }
 
 export async function createChatThreadForUser(input: {
@@ -1671,7 +1663,7 @@ export async function appendChatMessagesToThread(input: {
 
     if (!lockedThreadCount) {
       await client.query("ROLLBACK");
-      throw new Error("Chat thread not found");
+      throw new ChatThreadNotFoundError();
     }
 
     const posResult = await client.query(
@@ -1720,28 +1712,30 @@ export async function deleteChatThreadForUser(input: {
 }): Promise<boolean> {
   await ensureSchema();
 
-  const owned = await isChatThreadOwnedByUser(input.userId, input.threadId);
-  if (!owned) {
-    return false;
-  }
-
-  // Delete messages and the thread row in a single transaction so a failure cannot leave an
-  // orphaned (message-less) thread — there are no FK cascades to fall back on.
+  // Delete the thread row first — ownership is enforced in the DELETE itself (replacing the
+  // previous pre-check round-trip) — then its messages, in one transaction so a failure cannot
+  // leave orphaned rows (there are no FK cascades to fall back on).
   const client = await sql.connect();
   try {
     await client.query("BEGIN");
-    await client.query(`DELETE FROM chat_messages WHERE thread_id = $1`, [input.threadId]);
-    await client.query(
-      `DELETE FROM chat_threads WHERE id = $1 AND user_id = $2`,
+
+    const { rowCount } = await client.query(
+      "DELETE FROM chat_threads WHERE id = $1 AND user_id = $2",
       [input.threadId, input.userId],
     );
+
+    if (!rowCount) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+
+    await client.query(`DELETE FROM chat_messages WHERE thread_id = $1`, [input.threadId]);
     await client.query("COMMIT");
+    return true;
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
   } finally {
     client.release();
   }
-
-  return true;
 }

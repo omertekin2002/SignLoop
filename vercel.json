@@ -2,5 +2,5 @@
   "framework": "nextjs",
   "buildCommand": "bunx turbo build --filter=web",
   "outputDirectory": "apps/web/.next",
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- apps/web/ packages/" 
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- apps/web/ packages/ package.json bun.lock turbo.json vercel.json"
 }

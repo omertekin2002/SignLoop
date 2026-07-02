@@ -1,4 +1,4 @@
-import Dashboard from "@/app/dashboard/page";
+import Dashboard from "@/components/dashboard";
 
 type HomeProps = {
   searchParams?: Promise<{

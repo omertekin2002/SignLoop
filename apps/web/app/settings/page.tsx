@@ -61,25 +61,9 @@ export default function SettingsPage() {
     return DEFAULT_PERSONALITY_MODE;
   }, [data?.personality, selectedPersonality]);
 
-  useEffect(() => {
-    if (data?.primaryModel && availableModels.includes(data.primaryModel)) {
-      setSelectedModel((current) => current || data.primaryModel || "");
-      return;
-    }
-    const firstModel = availableModels[0];
-    if (firstModel) {
-      setSelectedModel((current) => current || firstModel);
-    }
-  }, [availableModels, data?.primaryModel]);
-
-  useEffect(() => {
-    if (data?.personality) {
-      setSelectedPersonality((current) => current || data.personality || "");
-      return;
-    }
-    setSelectedPersonality((current) => current || DEFAULT_PERSONALITY_MODE);
-  }, [data?.personality]);
-
+  // No state-sync effects here: selectedModel/selectedPersonality stay "" until the user picks,
+  // and the effective* memos above fall back to the fetched values — pre-seeding the state with
+  // the same fallback was redundant and pinned the display to a stale value across refetches.
   const saveModelMutation = useMutation({
     mutationFn: async (primaryModel: string) => {
       const response = await apiClient.put<{ primaryModel: string; updatedAt: string }>("/settings", {

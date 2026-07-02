@@ -13,7 +13,8 @@
     "POSTGRES_URL",
     "POSTGRES_URL_NON_POOLING",
     "LOCAL_STORAGE_PATH",
-    "LOCAL_STORAGE_BUCKET"
+    "LOCAL_STORAGE_BUCKET",
+    "SKIP_SCHEMA_BOOTSTRAP"
   ],
   "tasks": {
     "build": {

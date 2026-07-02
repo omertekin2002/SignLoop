@@ -136,6 +136,11 @@ Storage:
 App URL metadata:
 - `NEXT_PUBLIC_APP_URL` (used in LLM request headers; defaults to `http://localhost:3000`)
 
+Schema bootstrap:
+- `SKIP_SCHEMA_BOOTSTRAP` (set to `1` in deployments where `bun run db:migrate` is applied at
+  deploy time; skips the runtime schema bootstrap and its ~30 DDL statements per serverless cold
+  start. Leave unset in dev for zero-setup first runs.)
+
 ---
 
 ## Local Development
@@ -143,7 +148,7 @@ App URL metadata:
 ### Prerequisites
 
 - Bun `1.3.11+`
-- Node `18+` (engine minimum)
+- Node `20.9+` (engine minimum, see root `package.json`)
 
 ### Install
 

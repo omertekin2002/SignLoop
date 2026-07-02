@@ -16,7 +16,8 @@ import {
   appendChatMessagesToThread,
   getUserSettingsByUserId,
 } from '@/lib/server-db';
-import { getErrorMessage, isRecord } from '@/lib/utils';
+import { ChatThreadNotFoundError } from '@/lib/errors';
+import { getErrorMessage, isRecord, isUuid } from '@/lib/utils';
 
 const MAX_MESSAGES = 30;
 const MAX_MESSAGE_LENGTH = 4000;
@@ -219,6 +220,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "threadId is required." }, { status: 400 });
     }
 
+    // Reject malformed thread ids before they reach the uuid-typed persist query, which would
+    // otherwise throw 22P02 and surface as a raw 500 after the reply was already generated.
+    if (!isTemporaryChat && !isUuid(threadId)) {
+      return NextResponse.json({ error: "Chat thread not found" }, { status: 404 });
+    }
+
     const parsedMessages = parseChatMessages(body);
     const conversationMessages = parsedMessages.filter((message) => message.role !== "system");
 
@@ -351,22 +358,21 @@ export async function POST(req: Request) {
       }
 
       try {
-        await appendChatMessagesToThread({
+        await persistChatMessages({
           userId,
           threadId,
-          messages: [
-            { role: "user", content: latestUserMessage.content },
-            {
-              role: "assistant",
-              content: assistantMessage,
-              metadata: { model, provider },
-            },
-          ],
+          latestUserMessage,
+          assistantMessage,
+          assistantModel: model ?? null,
+          assistantProvider: provider ?? null,
+          temporary: false,
         });
       } catch (persistError) {
-        const persistMessage = getErrorMessage(persistError, "Failed to persist chat");
-        const status = persistMessage.includes("not found") ? 404 : 500;
-        return NextResponse.json({ error: persistMessage }, { status });
+        const status = persistError instanceof ChatThreadNotFoundError ? 404 : 500;
+        return NextResponse.json(
+          { error: getErrorMessage(persistError, "Failed to persist chat") },
+          { status },
+        );
       }
     }
 
