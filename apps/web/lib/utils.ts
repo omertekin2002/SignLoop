@@ -13,12 +13,32 @@ export function coerceDate(value: unknown): Date | null {
 }
 
 const MONTHS_SHORT = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ];
 const MONTHS_LONG = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 function pad2(value: number): string {
@@ -28,7 +48,11 @@ function pad2(value: number): string {
 // Safely format a date-ish value, returning `fallback` when the value is missing or invalid.
 // Supports the token subset the app uses (yyyy, MMMM, MMM, d, HH, mm) in local time — a tiny,
 // dependency-free replacement for date-fns `format`.
-export function formatDate(value: unknown, formatStr: string, fallback = ""): string {
+export function formatDate(
+  value: unknown,
+  formatStr: string,
+  fallback = "",
+): string {
   const date = coerceDate(value);
   if (!date) return fallback;
 
@@ -41,10 +65,14 @@ export function formatDate(value: unknown, formatStr: string, fallback = ""): st
     d: () => String(date.getDate()),
   };
 
-  return formatStr.replace(/yyyy|MMMM|MMM|HH|mm|d/g, (token) => replacements[token]?.() ?? token);
+  return formatStr.replace(
+    /yyyy|MMMM|MMM|HH|mm|d/g,
+    (token) => replacements[token]?.() ?? token,
+  );
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // True when `value` is a syntactically valid UUID. Used by dynamic API routes to 404 on malformed
 // ids before they reach a uuid-typed SQL column (which would otherwise throw 22P02 → unhandled 500).
@@ -52,9 +80,14 @@ export function isUuid(value: unknown): value is string {
   return typeof value === "string" && UUID_RE.test(value);
 }
 
-// Render a byte count as "X.XX MB" (the format used in the upload dialog and project pages).
+// Keep small uploads legible instead of displaying them as "0.00 MB".
 export function formatFileSize(bytes: number | null | undefined): string {
-  const value = typeof bytes === "number" && Number.isFinite(bytes) ? bytes : 0;
+  const value = Math.max(
+    0,
+    typeof bytes === "number" && Number.isFinite(bytes) ? bytes : 0,
+  );
+  if (value < 1024) return `${Math.round(value)} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / 1024 / 1024).toFixed(2)} MB`;
 }
 
@@ -95,6 +128,8 @@ export function getRiskColor(
         ? "bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200"
         : "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200";
     default:
-      return hover ? "bg-muted text-muted-foreground hover:bg-muted" : "bg-muted text-muted-foreground";
+      return hover
+        ? "bg-muted text-muted-foreground hover:bg-muted"
+        : "bg-muted text-muted-foreground";
   }
 }

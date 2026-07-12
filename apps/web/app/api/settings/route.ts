@@ -28,11 +28,12 @@ export async function GET() {
   ]);
   const availablePrimaryModels = snapshot.availablePrimaryModels;
 
-  // Only present the saved model as active when it's actually in the available list. If the primary
-  // (ngrok) endpoint is down the list is empty, so this resolves to null and the UI shows the
+  // Only present the saved model as active when it's actually in the available list. If the
+  // primary endpoint is down the list is empty, so this resolves to null and the UI shows the
   // OpenRouter fallback instead of advertising an unreachable model.
   const resolvedPrimaryModel =
-    settings?.primaryModel && availablePrimaryModels.includes(settings.primaryModel)
+    settings?.primaryModel &&
+    availablePrimaryModels.includes(settings.primaryModel)
       ? settings.primaryModel
       : null;
 
@@ -52,7 +53,10 @@ export async function PUT(req: Request) {
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
 
-  const body = await parseJsonBody<{ primaryModel?: string; personality?: string }>(req);
+  const body = await parseJsonBody<{
+    primaryModel?: string;
+    personality?: string;
+  }>(req);
   if (!body) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -108,7 +112,10 @@ export async function PUT(req: Request) {
   }
 
   if (!saved) {
-    return NextResponse.json({ error: "Failed to save settings" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to save settings" },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json({

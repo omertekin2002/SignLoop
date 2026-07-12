@@ -39,3 +39,7 @@ bun-debug.log*
 *.pem
 .env*.local
 tmp/
+
+# Local object-storage fallback (including generated *.meta.json sidecars)
+/uploads/
+/apps/web/uploads/

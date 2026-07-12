@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
-import { deleteContractForUser, getContractByIdForUser, getContractStorageKeys } from "@/lib/server-db";
-import { deleteObject } from "@/lib/object-storage";
+import {
+  deleteContractForUser,
+  getContractByIdForUser,
+  getContractStorageKeys,
+} from "@/lib/server-db";
+import { deleteObjects } from "@/lib/object-storage";
 import { isUuid } from "@/lib/utils";
 
-export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   const authed = await requireUserId();
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
@@ -17,10 +24,16 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (!contract) {
     return NextResponse.json({ error: "Contract not found" }, { status: 404 });
   }
-  return NextResponse.json(contract);
+
+  // The detail UI renders analysis metadata and never consumes the extracted source text.
+  // Keep that potentially large, confidential payload server-side for the analysis route.
+  return NextResponse.json({ ...contract, text: undefined });
 }
 
-export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   const authed = await requireUserId();
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
@@ -35,7 +48,18 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // before the DB delete, the user can retry and the DB delete will succeed
   // (storage deletes are idempotent no-ops for missing files).
   const storageKeys = await getContractStorageKeys(userId, id);
-  await Promise.allSettled(storageKeys.map((key) => deleteObject(key)));
+  try {
+    await deleteObjects(storageKeys);
+  } catch (error: unknown) {
+    console.error(
+      "Failed to delete contract storage before database cleanup:",
+      error,
+    );
+    return NextResponse.json(
+      { error: "Could not remove the contract file. Please retry." },
+      { status: 502 },
+    );
+  }
 
   const result = await deleteContractForUser({ userId, contractId: id });
 

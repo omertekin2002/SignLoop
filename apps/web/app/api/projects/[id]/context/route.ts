@@ -1,11 +1,29 @@
 import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
-import { addContextDocumentToProject, getProjectByIdForUser } from "@/lib/server-db";
+import {
+  addContextDocumentToProject,
+  getProjectByIdForUser,
+} from "@/lib/server-db";
 import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
+import { deleteObject } from "@/lib/object-storage";
 import { ProjectNotFoundError } from "@/lib/errors";
 import { isUuid } from "@/lib/utils";
 
-export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+async function cleanupNewUpload(storageKey: string): Promise<void> {
+  try {
+    await deleteObject(storageKey);
+  } catch (cleanupError: unknown) {
+    console.error(
+      "Failed to clean up context upload after persistence error:",
+      cleanupError,
+    );
+  }
+}
+
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   const authed = await requireUserId();
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
@@ -25,7 +43,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   });
 }
 
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   const authed = await requireUserId();
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
@@ -45,63 +66,96 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const prepared = await prepareUpload(req);
   if (!prepared.ok) {
-    return NextResponse.json({ error: prepared.error }, { status: prepared.status });
+    return NextResponse.json(
+      { error: prepared.error },
+      { status: prepared.status },
+    );
   }
 
   const titleValue = prepared.formData.get("title");
   const documentTypeValue = prepared.formData.get("documentType");
   const title =
-    typeof titleValue === "string" && titleValue.trim() ? titleValue.trim() : prepared.file.name;
+    typeof titleValue === "string" && titleValue.trim()
+      ? titleValue.trim()
+      : prepared.file.name;
   const documentType =
     typeof documentTypeValue === "string" && documentTypeValue.trim()
       ? documentTypeValue.trim()
       : "other";
 
-  // Context documents are still stored when extraction yields no text (unlike contracts), but
-  // the failure is surfaced in the response so the client can warn instead of it being silent.
-  const extractionFailed = Boolean(prepared.extractionError) || prepared.text.trim().length === 0;
-  const extractionMethod = extractionFailed ? "extraction_failed" : prepared.method;
+  // A context document is useful only when it can contribute text to analysis. Reject failed
+  // extraction before storage rather than retaining an unusable public object.
+  if (prepared.extractionError) {
+    console.error("Context text extraction failed:", prepared.extractionError);
+    return NextResponse.json(
+      {
+        error:
+          "Text could not be extracted. Verify the file is valid and try again.",
+      },
+      { status: 422 },
+    );
+  }
+  if (!prepared.text.trim()) {
+    return NextResponse.json(
+      { error: "Could not extract any text from the context document" },
+      { status: 422 },
+    );
+  }
 
-  const { storageKey, bucket } = await storeUploadedFile({
-    buffer: prepared.buffer,
-    mimeType: prepared.mimeType,
-    storageKeyPrefix: `projects/${userId}/${id}/context`,
-    fileName: prepared.file.name,
-  });
+  const extractionMethod = prepared.method;
+  const extractionWarning = prepared.extractionWarning;
 
+  let stored: { storageKey: string; bucket: string };
+  try {
+    stored = await storeUploadedFile({
+      buffer: prepared.buffer,
+      mimeType: prepared.mimeType,
+    });
+  } catch (error: unknown) {
+    console.error("Context upload storage failed:", error);
+    return NextResponse.json(
+      { error: "Failed to store the context document. Please try again." },
+      { status: 500 },
+    );
+  }
+
+  let created: { id: string };
   try {
     const wordCount = prepared.text.split(/\s+/).filter(Boolean).length;
-    const created = await addContextDocumentToProject({
+    created = await addContextDocumentToProject({
       userId,
       projectId: id,
       title,
       documentType,
-      storageKey,
-      bucket,
+      storageKey: stored.storageKey,
+      bucket: stored.bucket,
       originalFilename: prepared.file.name,
       contentType: prepared.mimeType,
       sizeBytes: prepared.file.size,
       extractedText: prepared.text,
       wordCount,
     });
-
-    return NextResponse.json(
-      {
-        message: "Context document uploaded successfully",
-        documentId: created.id,
-        extractionMethod,
-        extractionConfidence: prepared.confidence,
-        extractionFailed,
-        ...(extractionFailed
-          ? { warning: "No text could be extracted from this file." }
-          : {}),
-      },
-      { status: 201 },
-    );
   } catch (error: unknown) {
+    await cleanupNewUpload(stored.storageKey);
     if (error instanceof ProjectNotFoundError) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
-    throw error;
+    console.error("Context upload persistence failed:", error);
+    return NextResponse.json(
+      { error: "Failed to save the context document. Please try again." },
+      { status: 500 },
+    );
   }
+
+  return NextResponse.json(
+    {
+      message: "Context document uploaded successfully",
+      documentId: created.id,
+      extractionMethod,
+      extractionConfidence: prepared.confidence,
+      extractionFailed: false,
+      ...(extractionWarning ? { warning: extractionWarning } : {}),
+    },
+    { status: 201 },
+  );
 }

@@ -2,6 +2,7 @@
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
   "globalEnv": [
+    "NODE_ENV",
     "CLERK_SECRET_KEY",
     "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
     "OPENROUTER_API_KEY",
@@ -10,6 +11,9 @@
     "PRIMARY_LLM_MODEL",
     "PRIMARY_LLM_API_KEY",
     "BLOB_READ_WRITE_TOKEN",
+    "BLOB_STORE_ID",
+    "BLOB_ACCESS",
+    "VERCEL_OIDC_TOKEN",
     "POSTGRES_URL",
     "POSTGRES_URL_NON_POOLING",
     "LOCAL_STORAGE_PATH",
@@ -27,6 +31,9 @@
     },
     "check-types": {
       "dependsOn": ["^check-types"]
+    },
+    "test": {
+      "dependsOn": ["^test"]
     },
     "dev": {
       "cache": false,

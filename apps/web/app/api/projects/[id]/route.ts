@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
-import { deleteProjectForUser, getProjectByIdForUser, getProjectStorageKeys } from "@/lib/server-db";
-import { deleteObject } from "@/lib/object-storage";
+import {
+  deleteProjectForUser,
+  getProjectByIdForUser,
+  getProjectStorageKeys,
+} from "@/lib/server-db";
+import { deleteObjects } from "@/lib/object-storage";
 import { isUuid } from "@/lib/utils";
 
-export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   const authed = await requireUserId();
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
@@ -22,7 +29,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   return NextResponse.json(project);
 }
 
-export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   const authed = await requireUserId();
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
@@ -36,7 +46,18 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // between storage and DB cleanup leaves retryable DB records rather
   // than permanently orphaned files.
   const storageKeys = await getProjectStorageKeys(userId, id);
-  await Promise.allSettled(storageKeys.map((key) => deleteObject(key)));
+  try {
+    await deleteObjects(storageKeys);
+  } catch (error: unknown) {
+    console.error(
+      "Failed to delete project storage before database cleanup:",
+      error,
+    );
+    return NextResponse.json(
+      { error: "Could not remove every project file. Please retry." },
+      { status: 502 },
+    );
+  }
 
   const result = await deleteProjectForUser({ userId, projectId: id });
 

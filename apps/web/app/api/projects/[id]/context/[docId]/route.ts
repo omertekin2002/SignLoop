@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
-import { deleteContextDocumentFromProject, getContextDocumentStorageKey } from "@/lib/server-db";
+import {
+  deleteContextDocumentFromProject,
+  getContextDocumentStorageKey,
+} from "@/lib/server-db";
 import { deleteObject } from "@/lib/object-storage";
 import { isUuid } from "@/lib/utils";
 
@@ -14,14 +17,28 @@ export async function DELETE(
 
   const { id, docId } = await params;
   if (!isUuid(id) || !isUuid(docId)) {
-    return NextResponse.json({ error: "Context document not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Context document not found" },
+      { status: 404 },
+    );
   }
 
   // Delete storage while DB reference still exists so a crash leaves a
   // retryable DB record instead of a permanently orphaned file.
   const storageKey = await getContextDocumentStorageKey(userId, id, docId);
   if (storageKey) {
-    await deleteObject(storageKey);
+    try {
+      await deleteObject(storageKey);
+    } catch (error: unknown) {
+      console.error(
+        "Failed to delete context storage before database cleanup:",
+        error,
+      );
+      return NextResponse.json(
+        { error: "Could not remove the context document file. Please retry." },
+        { status: 502 },
+      );
+    }
   }
 
   const result = await deleteContextDocumentFromProject({
@@ -31,7 +48,10 @@ export async function DELETE(
   });
 
   if (!result.deleted) {
-    return NextResponse.json({ error: "Context document not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Context document not found" },
+      { status: 404 },
+    );
   }
 
   return NextResponse.json({ success: true });

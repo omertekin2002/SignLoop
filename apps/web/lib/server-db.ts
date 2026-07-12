@@ -1,7 +1,11 @@
 import { sql } from "@vercel/postgres";
 import type { PrimaryModel } from "@/lib/model-settings";
 import type { PersonalityMode } from "@/lib/personality-settings";
-import { ChatThreadNotFoundError, ProjectNotFoundError } from "@/lib/errors";
+import {
+  ChatThreadNotFoundError,
+  ContractRevisionChangedError,
+  ProjectNotFoundError,
+} from "@/lib/errors";
 
 type JsonObject = Record<string, unknown>;
 
@@ -19,14 +23,22 @@ export type PaginatedResult<T> = {
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
+const MAX_PAGE_OFFSET = 1_000_000;
 
-function clampPagination(opts?: PaginationOptions): { limit: number; offset: number } {
+function clampPagination(opts?: PaginationOptions): {
+  limit: number;
+  offset: number;
+} {
   // Number.isFinite guards against NaN (e.g. ?limit=abc -> Number(...) === NaN), which the
   // `?? DEFAULT` nullish coalescing does not catch and would otherwise reach the SQL LIMIT.
-  const rawLimit = Number.isFinite(opts?.limit) ? (opts!.limit as number) : DEFAULT_PAGE_LIMIT;
-  const rawOffset = Number.isFinite(opts?.offset) ? (opts!.offset as number) : 0;
+  const rawLimit = Number.isFinite(opts?.limit)
+    ? Math.trunc(opts!.limit as number)
+    : DEFAULT_PAGE_LIMIT;
+  const rawOffset = Number.isFinite(opts?.offset)
+    ? Math.trunc(opts!.offset as number)
+    : 0;
   const limit = Math.min(Math.max(rawLimit, 1), MAX_PAGE_LIMIT);
-  const offset = Math.max(rawOffset, 0);
+  const offset = Math.min(Math.max(rawOffset, 0), MAX_PAGE_OFFSET);
   return { limit, offset };
 }
 
@@ -305,13 +317,8 @@ export type ProjectSummaryRecord = {
   status: string;
   createdAt: string;
   updatedAt: string;
-  contracts: Array<{
-    id: string;
-    title: string;
-    status: string;
-    createdAt: string;
-  }>;
-  contextDocuments: Array<{ id: string }>;
+  contractCount: number;
+  contextDocumentCount: number;
 };
 
 export type ProjectDetailRecord = {
@@ -338,6 +345,13 @@ export type ProjectDetailRecord = {
     wordCount: number | null;
     createdAt: string;
   }>;
+};
+
+export type ProjectContextForAnalysisRecord = {
+  title: string;
+  documentType: string;
+  extractedText: string;
+  originalCharacterCount: number;
 };
 
 export type UserSettingsRecord = {
@@ -399,6 +413,7 @@ type UploadedContractFileInput = {
 type NewAnalysisInput = {
   userId: string;
   contractId: string;
+  expectedRevision: string;
   riskBadge: string | null;
   resultJson: JsonObject;
   llmProvider: string | null;
@@ -458,11 +473,10 @@ type AnalysisRow = {
   createdAt: string;
 };
 
-// Fetch a contract's analyses (newest first). Pass `limit` for callers that need only the latest.
-// Centralizes the column list/order so the two read paths can't drift.
+// Fetch all of a contract's analyses newest first for the detail page. The analysis endpoint uses
+// a single lateral-join snapshot instead, so its contract status and latest result cannot drift.
 async function fetchAnalysisRowsByContractId(
   contractId: string,
-  limit?: number,
 ): Promise<AnalysisRow[]> {
   const baseQuery = `
     select
@@ -480,10 +494,7 @@ async function fetchAnalysisRowsByContractId(
     where contract_id = $1
     order by created_at desc`;
 
-  const { rows } =
-    limit != null
-      ? await sql.query<AnalysisRow>(`${baseQuery} limit $2`, [contractId, limit])
-      : await sql.query<AnalysisRow>(baseQuery, [contractId]);
+  const { rows } = await sql.query<AnalysisRow>(baseQuery, [contractId]);
 
   return rows;
 }
@@ -552,7 +563,10 @@ export async function createContractForUser(input: {
 
   const validatedProjectId: string | null = input.projectId ?? null;
 
-  if (validatedProjectId && !(await isProjectOwnedByUser(input.userId, validatedProjectId))) {
+  if (
+    validatedProjectId &&
+    !(await isProjectOwnedByUser(input.userId, validatedProjectId))
+  ) {
     throw new ProjectNotFoundError();
   }
 
@@ -593,7 +607,9 @@ export async function getContractByIdForUser(
 ): Promise<ContractRecord | null> {
   await ensureSchema();
 
-  const { rows: contractRows } = await sql<ContractSummaryRecord & { text: string | null }>`
+  const { rows: contractRows } = await sql<
+    ContractSummaryRecord & { text: string | null }
+  >`
     select
       id,
       user_id as "userId",
@@ -654,6 +670,7 @@ export async function getContractMetaForUser(
 
 export type ContractWithLatestAnalysisRecord = ContractSummaryRecord & {
   text: string | null;
+  revision: string;
   latestAnalysis: AnalysisRecord | null;
 };
 
@@ -665,91 +682,156 @@ export async function getContractWithLatestAnalysisForUser(
 ): Promise<ContractWithLatestAnalysisRecord | null> {
   await ensureSchema();
 
-  const { rows: contractRows } = await sql<ContractSummaryRecord & { text: string | null }>`
+  const { rows } = await sql<
+    ContractSummaryRecord & {
+      text: string | null;
+      revision: string;
+      analysisId: string | null;
+      analysisRiskBadge: string | null;
+      analysisResultJson: unknown;
+      analysisLlmProvider: string | null;
+      analysisLlmModel: string | null;
+      analysisLlmPromptTokens: number | null;
+      analysisLlmCompletionTokens: number | null;
+      analysisProcessingTimeMs: number | null;
+      analysisCreatedAt: string | null;
+    }
+  >`
     select
-      id,
-      user_id as "userId",
-      project_id as "projectId",
-      title,
-      status,
-      text_content as "text",
-      created_at as "createdAt",
-      updated_at as "updatedAt"
-    from contracts
-    where id = ${contractId}
-      and user_id = ${userId}
+      c.id,
+      c.user_id as "userId",
+      c.project_id as "projectId",
+      c.title,
+      c.status,
+      c.text_content as "text",
+      to_char(
+        c.updated_at at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.US'
+      ) as "revision",
+      c.created_at as "createdAt",
+      c.updated_at as "updatedAt",
+      latest.id as "analysisId",
+      latest.risk_badge as "analysisRiskBadge",
+      latest.result_json as "analysisResultJson",
+      latest.llm_provider as "analysisLlmProvider",
+      latest.llm_model as "analysisLlmModel",
+      latest.llm_prompt_tokens as "analysisLlmPromptTokens",
+      latest.llm_completion_tokens as "analysisLlmCompletionTokens",
+      latest.processing_time_ms as "analysisProcessingTimeMs",
+      latest.created_at as "analysisCreatedAt"
+    from contracts c
+    left join lateral (
+      select
+        a.id,
+        a.risk_badge,
+        a.result_json,
+        a.llm_provider,
+        a.llm_model,
+        a.llm_prompt_tokens,
+        a.llm_completion_tokens,
+        a.processing_time_ms,
+        a.created_at
+      from analyses a
+      where a.contract_id = c.id
+      order by a.created_at desc
+      limit 1
+    ) latest on true
+    where c.id = ${contractId}
+      and c.user_id = ${userId}
     limit 1
   `;
 
-  const contract = contractRows[0];
-  if (!contract) {
+  const row = rows[0];
+  if (!row) {
     return null;
   }
 
-  const analysisRows = await fetchAnalysisRowsByContractId(contractId, 1);
+  const latestAnalysis =
+    row.analysisId && row.analysisCreatedAt
+      ? mapAnalysisRow({
+          id: row.analysisId,
+          contractId: row.id,
+          riskBadge: row.analysisRiskBadge,
+          resultJson: row.analysisResultJson,
+          llmProvider: row.analysisLlmProvider,
+          llmModel: row.analysisLlmModel,
+          llmPromptTokens: row.analysisLlmPromptTokens,
+          llmCompletionTokens: row.analysisLlmCompletionTokens,
+          processingTimeMs: row.analysisProcessingTimeMs,
+          createdAt: row.analysisCreatedAt,
+        })
+      : null;
 
   return {
-    ...contract,
-    latestAnalysis: analysisRows[0] ? mapAnalysisRow(analysisRows[0]) : null,
+    id: row.id,
+    userId: row.userId,
+    projectId: row.projectId,
+    title: row.title,
+    status: row.status,
+    text: row.text,
+    revision: row.revision,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    latestAnalysis,
   };
 }
 
-export async function saveContractExtractedText(input: {
-  userId: string;
-  contractId: string;
-  text: string;
-}): Promise<boolean> {
+export async function saveContractUploadForUser(
+  input: UploadedContractFileInput & { text: string },
+): Promise<boolean> {
   await ensureSchema();
 
-  const { rowCount } = await sql`
-    update contracts
-    set
-      text_content = ${input.text},
-      status = 'DRAFT',
-      updated_at = now()
-    where id = ${input.contractId}
-      and user_id = ${input.userId}
-  `;
+  // Keep the extracted text/status and file metadata atomic. If either statement fails, the route
+  // can safely remove the new object without leaving a DRAFT contract that points to no file row.
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
+    const { rowCount } = await client.query(
+      `UPDATE contracts
+       SET text_content = $1, status = 'DRAFT', updated_at = now()
+       WHERE id = $2 AND user_id = $3`,
+      [input.text, input.contractId, input.userId],
+    );
 
-  return (rowCount ?? 0) > 0;
+    if (!rowCount) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+
+    // storage_key is canonical; blob_path remains null for new rows while legacy reads coalesce.
+    await client.query(
+      `INSERT INTO contract_files (
+         user_id, project_id, contract_id, title, file_name, storage_key, bucket,
+         content_type, size_bytes, extraction_method, extraction_confidence
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        input.userId,
+        input.projectId,
+        input.contractId,
+        input.title,
+        input.fileName,
+        input.storageKey,
+        input.bucket,
+        input.contentType,
+        input.sizeBytes,
+        input.extractionMethod,
+        input.extractionConfidence,
+      ],
+    );
+
+    await client.query("COMMIT");
+    return true;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
-export async function addUploadedContractFile(input: UploadedContractFileInput): Promise<void> {
-  await ensureSchema();
-
-  // storage_key is the canonical column; the legacy blob_path column is left null for new rows
-  // (read paths use coalesce(storage_key, blob_path) to tolerate older rows).
-  await sql`
-    insert into contract_files (
-      user_id,
-      project_id,
-      contract_id,
-      title,
-      file_name,
-      storage_key,
-      bucket,
-      content_type,
-      size_bytes,
-      extraction_method,
-      extraction_confidence
-    )
-    values (
-      ${input.userId},
-      ${input.projectId},
-      ${input.contractId},
-      ${input.title},
-      ${input.fileName},
-      ${input.storageKey},
-      ${input.bucket},
-      ${input.contentType},
-      ${input.sizeBytes},
-      ${input.extractionMethod},
-      ${input.extractionConfidence}
-    )
-  `;
-}
-
-export async function createAnalysisForContract(input: NewAnalysisInput): Promise<{ id: string }> {
+export async function createAnalysisForContract(
+  input: NewAnalysisInput,
+): Promise<{ id: string }> {
   await ensureSchema();
 
   // Insert the analysis and flip the contract to ANALYZED atomically in one transaction (on a
@@ -758,15 +840,32 @@ export async function createAnalysisForContract(input: NewAnalysisInput): Promis
   try {
     await client.query("BEGIN");
 
-    // Insert only if the contract exists and is owned by the user — folds the ownership check into
-    // the write, removing the separate pre-SELECT round-trip and any TOCTOU between check and insert.
+    // Lock and compare the exact revision that was sent to the model. A re-upload or another
+    // completed analysis changes updated_at, so stale/concurrent work cannot mark a newer revision
+    // ANALYZED or insert a duplicate result for the same starting snapshot.
+    const { rowCount: lockedRevisionCount } = await client.query(
+      `SELECT id
+       FROM contracts
+       WHERE id = $1
+         AND user_id = $2
+         AND to_char(
+           updated_at at time zone 'UTC',
+           'YYYY-MM-DD"T"HH24:MI:SS.US'
+         ) = $3
+       FOR UPDATE`,
+      [input.contractId, input.userId, input.expectedRevision],
+    );
+
+    if (!lockedRevisionCount) {
+      throw new ContractRevisionChangedError();
+    }
+
     const { rows: analysisRows } = await client.query<{ id: string }>(
       `INSERT INTO analyses (
          contract_id, risk_badge, result_json,
          llm_provider, llm_model, llm_prompt_tokens, llm_completion_tokens, processing_time_ms
        )
-       SELECT $1, $2, $3::jsonb, $4, $5, $6, $7, $8
-       WHERE EXISTS (SELECT 1 FROM contracts WHERE id = $1 AND user_id = $9)
+       VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8)
        RETURNING id`,
       [
         input.contractId,
@@ -777,7 +876,6 @@ export async function createAnalysisForContract(input: NewAnalysisInput): Promis
         input.llmPromptTokens ?? null,
         input.llmCompletionTokens ?? null,
         input.processingTimeMs ?? null,
-        input.userId,
       ],
     );
 
@@ -832,7 +930,7 @@ export async function deleteAnalysisForContract(input: {
     }
 
     // Only fires when no analyses remain (so deleting one of several leaves status — and
-    // updated_at — untouched). 'DRAFT' matches saveContractExtractedText's default.
+    // updated_at — untouched). 'DRAFT' matches upload persistence's default.
     await client.query(
       `UPDATE contracts
        SET status = 'DRAFT', updated_at = now()
@@ -870,9 +968,7 @@ export async function getContractStorageKeys(
       and c.user_id = ${userId}
   `;
 
-  return rows
-    .map((r) => r.storageKey)
-    .filter((v): v is string => Boolean(v));
+  return rows.map((r) => r.storageKey).filter((v): v is string => Boolean(v));
 }
 
 /**
@@ -933,8 +1029,12 @@ export async function deleteContractForUser(input: {
       return { deleted: false };
     }
 
-    await client.query("DELETE FROM analyses WHERE contract_id = $1", [input.contractId]);
-    await client.query("DELETE FROM contract_files WHERE contract_id = $1", [input.contractId]);
+    await client.query("DELETE FROM analyses WHERE contract_id = $1", [
+      input.contractId,
+    ]);
+    await client.query("DELETE FROM contract_files WHERE contract_id = $1", [
+      input.contractId,
+    ]);
 
     await client.query("COMMIT");
     return { deleted: true };
@@ -973,7 +1073,9 @@ export async function createProjectForUser(input: {
       description,
       status,
       created_at as "createdAt",
-      updated_at as "updatedAt"
+      updated_at as "updatedAt",
+      0::integer as "contractCount",
+      0::integer as "contextDocumentCount"
   `;
 
   const created = rows[0];
@@ -981,11 +1083,7 @@ export async function createProjectForUser(input: {
     throw new Error("Failed to create project");
   }
 
-  return {
-    ...created,
-    contracts: [],
-    contextDocuments: [],
-  };
+  return created;
 }
 
 export async function listProjectsByUserId(
@@ -997,18 +1095,29 @@ export async function listProjectsByUserId(
   const { limit, offset } = clampPagination(pagination);
 
   const [{ rows: projectRows }, { rows: countRows }] = await Promise.all([
-    sql<Omit<ProjectSummaryRecord, "contracts" | "contextDocuments">>`
+    sql<ProjectSummaryRecord>`
       select
-        id,
-        user_id as "userId",
-        title,
-        description,
-        status,
-        created_at as "createdAt",
-        updated_at as "updatedAt"
-      from projects
-      where user_id = ${userId}
-      order by created_at desc
+        p.id,
+        p.user_id as "userId",
+        p.title,
+        p.description,
+        p.status,
+        p.created_at as "createdAt",
+        p.updated_at as "updatedAt",
+        (
+          select count(*)::integer
+          from contracts c
+          where c.project_id = p.id
+            and c.user_id = ${userId}
+        ) as "contractCount",
+        (
+          select count(*)::integer
+          from context_documents cd
+          where cd.project_id = p.id
+        ) as "contextDocumentCount"
+      from projects p
+      where p.user_id = ${userId}
+      order by p.created_at desc
       limit ${limit} offset ${offset}
     `,
     sql<{ count: number }>`
@@ -1018,71 +1127,18 @@ export async function listProjectsByUserId(
     `,
   ]);
 
-  const total = countRows[0]?.count ?? 0;
-
-  if (projectRows.length === 0) {
-    return { data: [], total, limit, offset };
-  }
-
-  const projectIds = projectRows.map((p) => p.id);
-
-  const [{ rows: contractRows }, { rows: contextDocRows }] = await Promise.all([
-    sql.query<{
-      projectId: string;
-      id: string;
-      title: string;
-      status: string;
-      createdAt: string;
-    }>(
-      `select
-        project_id as "projectId",
-        id,
-        title,
-        status,
-        created_at as "createdAt"
-      from contracts
-      where project_id = any($1::uuid[])
-      order by created_at desc`,
-      [projectIds],
-    ),
-    sql.query<{
-      projectId: string;
-      id: string;
-    }>(
-      `select
-        project_id as "projectId",
-        id
-      from context_documents
-      where project_id = any($1::uuid[])
-      order by created_at desc`,
-      [projectIds],
-    ),
-  ]);
-
-  const contractsByProject = new Map<string, ProjectSummaryRecord["contracts"]>();
-  for (const row of contractRows) {
-    const list = contractsByProject.get(row.projectId) ?? [];
-    list.push({ id: row.id, title: row.title, status: row.status, createdAt: row.createdAt });
-    contractsByProject.set(row.projectId, list);
-  }
-
-  const contextDocsByProject = new Map<string, ProjectSummaryRecord["contextDocuments"]>();
-  for (const row of contextDocRows) {
-    const list = contextDocsByProject.get(row.projectId) ?? [];
-    list.push({ id: row.id });
-    contextDocsByProject.set(row.projectId, list);
-  }
-
-  const data = projectRows.map((project) => ({
-    ...project,
-    contracts: contractsByProject.get(project.id) ?? [],
-    contextDocuments: contextDocsByProject.get(project.id) ?? [],
-  }));
-
-  return { data, total, limit, offset };
+  return {
+    data: projectRows,
+    total: countRows[0]?.count ?? 0,
+    limit,
+    offset,
+  };
 }
 
-async function isProjectOwnedByUser(userId: string, projectId: string): Promise<boolean> {
+async function isProjectOwnedByUser(
+  userId: string,
+  projectId: string,
+): Promise<boolean> {
   await ensureSchema();
 
   const { rows } = await sql<{ id: string }>`
@@ -1130,13 +1186,14 @@ export async function getProjectByIdForUser(
     return null;
   }
 
-  const [{ rows: contractRows }, { rows: contextDocuments }] = await Promise.all([
-    sql<{
-      id: string;
-      title: string;
-      status: string;
-      createdAt: string;
-    }>`
+  const [{ rows: contractRows }, { rows: contextDocuments }] =
+    await Promise.all([
+      sql<{
+        id: string;
+        title: string;
+        status: string;
+        createdAt: string;
+      }>`
       select
         id,
         title,
@@ -1147,15 +1204,15 @@ export async function getProjectByIdForUser(
         and user_id = ${userId}
       order by created_at desc
     `,
-    sql<{
-      id: string;
-      title: string;
-      documentType: string;
-      originalFilename: string | null;
-      fileSize: number | null;
-      wordCount: number | null;
-      createdAt: string;
-    }>`
+      sql<{
+        id: string;
+        title: string;
+        documentType: string;
+        originalFilename: string | null;
+        fileSize: number | null;
+        wordCount: number | null;
+        createdAt: string;
+      }>`
       select
         id,
         title,
@@ -1168,7 +1225,7 @@ export async function getProjectByIdForUser(
       where project_id = ${projectId}
       order by created_at asc
     `,
-  ]);
+    ]);
 
   const analysesByContract = new Map<
     string,
@@ -1210,6 +1267,48 @@ export async function getProjectByIdForUser(
     contracts,
     contextDocuments,
   };
+}
+
+/**
+ * Fetch only the small, ownership-scoped context excerpt needed by contract analysis. Keeping the
+ * bound in SQL prevents a large context upload from being transferred wholesale just to be sliced
+ * for the model prompt. Both the beginning and end are retained for definitions and late clauses.
+ */
+export async function getProjectContextForAnalysis(
+  userId: string,
+  projectId: string,
+): Promise<ProjectContextForAnalysisRecord[]> {
+  await ensureSchema();
+
+  const maxDocumentCharacters = 6_000;
+  const headCharacters = 3_900;
+  const tailCharacters = maxDocumentCharacters - headCharacters;
+  // Fetch one sentinel row beyond the prompt's eight-document cap so the prompt can disclose that
+  // additional context was omitted without counting or transferring the whole project collection.
+  const maxDocuments = 9;
+
+  const { rows } = await sql<ProjectContextForAnalysisRecord>`
+    select
+      cd.title,
+      cd.document_type as "documentType",
+      case
+        when char_length(cd.extracted_text) > ${maxDocumentCharacters}
+          then left(cd.extracted_text, ${headCharacters})
+            || E'\n\n[Context excerpt omitted from the middle]\n\n'
+            || right(cd.extracted_text, ${tailCharacters})
+        else cd.extracted_text
+      end as "extractedText",
+      char_length(cd.extracted_text)::integer as "originalCharacterCount"
+    from context_documents cd
+    inner join projects p on p.id = cd.project_id
+    where cd.project_id = ${projectId}
+      and p.user_id = ${userId}
+      and nullif(btrim(cd.extracted_text), '') is not null
+    order by cd.created_at asc
+    limit ${maxDocuments}
+  `;
+
+  return rows;
 }
 
 export async function addContextDocumentToProject(
@@ -1278,30 +1377,25 @@ export async function deleteContextDocumentFromProject(input: {
   userId: string;
   projectId: string;
   documentId: string;
-}): Promise<{ deleted: boolean; storageKey: string | null }> {
+}): Promise<{ deleted: boolean }> {
   await ensureSchema();
 
   // Join projects so ownership is enforced in the DELETE itself (no separate pre-check round-trip).
-  const { rows } = await sql<{ id: string; storageKey: string | null }>`
+  const { rows } = await sql<{ id: string }>`
     delete from context_documents cd
     using projects p
     where cd.id = ${input.documentId}
       and cd.project_id = ${input.projectId}
       and p.id = cd.project_id
       and p.user_id = ${input.userId}
-    returning
-      cd.id,
-      cd.storage_key as "storageKey"
+    returning cd.id
   `;
 
   if (!rows[0]) {
-    return { deleted: false, storageKey: null };
+    return { deleted: false };
   }
 
-  return {
-    deleted: true,
-    storageKey: rows[0].storageKey,
-  };
+  return { deleted: true };
 }
 
 export async function deleteProjectForUser(input: {
@@ -1346,7 +1440,9 @@ export async function deleteProjectForUser(input: {
       "DELETE FROM contracts WHERE project_id = $1 AND user_id = $2",
       [input.projectId, input.userId],
     );
-    await client.query("DELETE FROM context_documents WHERE project_id = $1", [input.projectId]);
+    await client.query("DELETE FROM context_documents WHERE project_id = $1", [
+      input.projectId,
+    ]);
 
     await client.query("COMMIT");
     return { deleted: true };
@@ -1467,9 +1563,13 @@ function mapChatMessageRow(row: {
 
   const metadata = parseJsonObject(row.metadata);
   const model =
-    typeof metadata.model === "string" && metadata.model.trim() ? metadata.model : null;
+    typeof metadata.model === "string" && metadata.model.trim()
+      ? metadata.model
+      : null;
   const provider =
-    typeof metadata.provider === "string" && metadata.provider.trim() ? metadata.provider : null;
+    typeof metadata.provider === "string" && metadata.provider.trim()
+      ? metadata.provider
+      : null;
 
   return {
     id: row.id,
@@ -1535,30 +1635,16 @@ export async function listChatThreadsByUserId(
         t.title,
         t.created_at as "createdAt",
         t.updated_at as "updatedAt",
-        case
-          when lm.content is null then null
-          when char_length(lm.content) > 120 then substring(lm.content from 1 for 117) || '...'
-          else lm.content
-        end as "lastMessagePreview",
-        lm.created_at as "lastMessageAt",
-        coalesce(mc.message_count, 0)::integer as "messageCount"
+        null::text as "lastMessagePreview",
+        null::timestamptz as "lastMessageAt",
+        (
+          select count(*)::integer
+          from chat_messages m
+          where m.thread_id = t.id
+        ) as "messageCount"
       from chat_threads t
-      left join lateral (
-        select
-          content,
-          created_at
-        from chat_messages
-        where thread_id = t.id
-        order by position desc, created_at desc
-        limit 1
-      ) lm on true
-      left join lateral (
-        select count(*)::integer as message_count
-        from chat_messages
-        where thread_id = t.id
-      ) mc on true
       where t.user_id = ${userId}
-      order by coalesce(lm.created_at, t.updated_at) desc
+      order by t.updated_at desc
       limit ${limit} offset ${offset}
     `,
     sql<{ count: number }>`
@@ -1571,9 +1657,90 @@ export async function listChatThreadsByUserId(
   return { data: rows, total: countRows[0]?.count ?? 0, limit, offset };
 }
 
+/**
+ * Return a bounded canonical transcript, or null when the thread is absent/not owned. The inner
+ * descending query selects the newest messages efficiently; the outer query restores conversation
+ * order for model input.
+ */
+export async function getRecentChatMessagesForThreadForUser(
+  userId: string,
+  threadId: string,
+  limit: number,
+): Promise<ChatMessageRecord[] | null> {
+  await ensureSchema();
+
+  const safeLimit = Math.min(
+    Math.max(Number.isFinite(limit) ? Math.trunc(limit) : 1, 1),
+    100,
+  );
+  const { rows } = await sql<{
+    ownedThreadId: string;
+    id: string | null;
+    threadId: string | null;
+    role: string | null;
+    content: string | null;
+    position: number | null;
+    createdAt: string | null;
+    metadata: unknown;
+  }>`
+    select
+      t.id as "ownedThreadId",
+      recent.id,
+      recent."threadId",
+      recent.role,
+      recent.content,
+      recent.position,
+      recent."createdAt",
+      recent.metadata
+    from chat_threads t
+    left join lateral (
+      select
+        m.id,
+        m.thread_id as "threadId",
+        m.role,
+        m.content,
+        m.position,
+        m.created_at as "createdAt",
+        m.metadata_json as metadata
+      from chat_messages m
+      where m.thread_id = t.id
+      order by m.position desc, m.created_at desc
+      limit ${safeLimit}
+    ) recent on true
+    where t.id = ${threadId}
+      and t.user_id = ${userId}
+    order by recent.position asc nulls first, recent."createdAt" asc nulls first
+  `;
+
+  if (!rows[0]) {
+    return null;
+  }
+
+  return rows
+    .filter(
+      (
+        row,
+      ): row is typeof row & {
+        id: string;
+        threadId: string;
+        role: string;
+        content: string;
+        position: number;
+        createdAt: string;
+      } =>
+        row.id !== null &&
+        row.threadId !== null &&
+        row.role !== null &&
+        row.content !== null &&
+        row.position !== null &&
+        row.createdAt !== null,
+    )
+    .map(mapChatMessageRow);
+}
+
 export async function getChatThreadByIdForUser(
   userId: string,
-  threadId: string
+  threadId: string,
 ): Promise<ChatThreadDetailRecord | null> {
   await ensureSchema();
 
@@ -1632,7 +1799,11 @@ export async function getChatThreadByIdForUser(
 export async function appendChatMessagesToThread(input: {
   userId: string;
   threadId: string;
-  messages: Array<{ role: ChatMessageRole; content: string; metadata?: JsonObject | null }>;
+  messages: Array<{
+    role: ChatMessageRole;
+    content: string;
+    metadata?: JsonObject | null;
+  }>;
 }): Promise<void> {
   await ensureSchema();
 
@@ -1729,7 +1900,9 @@ export async function deleteChatThreadForUser(input: {
       return false;
     }
 
-    await client.query(`DELETE FROM chat_messages WHERE thread_id = $1`, [input.threadId]);
+    await client.query(`DELETE FROM chat_messages WHERE thread_id = $1`, [
+      input.threadId,
+    ]);
     await client.query("COMMIT");
     return true;
   } catch (err) {

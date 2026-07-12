@@ -15,3 +15,10 @@ export class ChatThreadNotFoundError extends Error {
     this.name = "ChatThreadNotFoundError";
   }
 }
+
+export class ContractRevisionChangedError extends Error {
+  constructor(message = "Contract changed while analysis was running") {
+    super(message);
+    this.name = "ContractRevisionChangedError";
+  }
+}
