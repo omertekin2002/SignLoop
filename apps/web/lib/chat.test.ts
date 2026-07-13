@@ -32,6 +32,7 @@ import {
   generateChatReplyStream,
   type ChatMessage,
 } from "@/lib/chat";
+import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
 
 type FakeOpenAiClient = {
   responses: {
@@ -44,6 +45,14 @@ type RunChat = (client: FakeOpenAiClient, model: string) => Promise<string>;
 const originalMessages: ChatMessage[] = [
   { role: "system", content: "System prompt" },
   { role: "user", content: "What changed?" },
+];
+const fixedNow = new Date("2026-07-13T08:15:30.000Z");
+const timeAwareMessages: ChatMessage[] = [
+  {
+    role: "system",
+    content: `System prompt\n\n${buildAuthoritativeUtcTimeContext(fixedNow)}`,
+  },
+  originalMessages[1]!,
 ];
 
 const searchMetadata = {
@@ -60,7 +69,7 @@ const searchMetadata = {
 };
 
 const preparedMessages: ChatMessage[] = [
-  originalMessages[0]!,
+  timeAwareMessages[0]!,
   {
     role: "user",
     content:
@@ -69,6 +78,8 @@ const preparedMessages: ChatMessage[] = [
 ];
 
 beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(fixedNow);
   vi.resetAllMocks();
   mocks.resolvePrimaryModel.mockImplementation(
     (model: string | null | undefined) => model?.trim() || "default/model",
@@ -86,12 +97,13 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe("generateChatReply", () => {
-  it("does not call Gemini or alter provider input when search is disabled", async () => {
+  it("gives every model authoritative current time when search is disabled", async () => {
     const create = vi.fn().mockResolvedValue({ output_text: "Plain answer" });
     const client = { responses: { create } };
     mocks.runWithPrimaryAndOpenRouterFallback.mockImplementation(
@@ -111,8 +123,15 @@ describe("generateChatReply", () => {
     expect(create).toHaveBeenCalledOnce();
     expect(create.mock.calls[0]?.[0]).toMatchObject({
       model: "arbitrary/model",
-      input: originalMessages,
+      input: timeAwareMessages,
     });
+    expect(timeAwareMessages[0]?.content).toContain(
+      "Current UTC timestamp: 2026-07-13T08:15:30.000Z",
+    );
+    expect(timeAwareMessages[0]?.content).toContain(
+      "dates before 2026-07-13 are in the past",
+    );
+    expect(originalMessages[0]?.content).toBe("System prompt");
     expect(reply).toEqual({
       message: "Plain answer",
       provider: "primary-openai-compatible",
@@ -142,8 +161,8 @@ describe("generateChatReply", () => {
     });
 
     expect(mocks.prepareMessagesWithGeminiWebSearch).toHaveBeenCalledWith(
-      originalMessages,
-      { signal: controller.signal },
+      timeAwareMessages,
+      { signal: controller.signal, currentTime: fixedNow },
     );
     const providerRequest = create.mock.calls[0]?.[0] as Record<
       string,
@@ -154,6 +173,41 @@ describe("generateChatReply", () => {
     expect(create.mock.calls[0]?.[1]).toEqual({ signal: controller.signal });
     expect(reply.message).toBe("Answer written by the selected model");
     expect(reply.webSearch).toEqual(searchMetadata);
+  });
+
+  it("prepends trusted time context when no system message exists", async () => {
+    const create = vi.fn().mockResolvedValue({ output_text: "Timed answer" });
+    const client = { responses: { create } };
+    mocks.runWithPrimaryAndOpenRouterFallback.mockImplementation(
+      async (selectedModel: string, run: RunChat) => ({
+        result: await run(client, selectedModel),
+        provider: "primary-openai-compatible",
+        model: selectedModel,
+      }),
+    );
+    const userOnlyMessages: ChatMessage[] = [
+      {
+        role: "user",
+        content: "Was July 10, 2026 in the past on July 13, 2026?",
+      },
+    ];
+
+    await generateChatReply(userOnlyMessages, {
+      primaryModel: "arbitrary/free-model",
+    });
+
+    const providerInput = create.mock.calls[0]?.[0]?.input as ChatMessage[];
+    expect(providerInput[0]).toMatchObject({ role: "system" });
+    expect(providerInput[0]?.content).toContain(
+      "Current UTC calendar date: 2026-07-13",
+    );
+    expect(providerInput[1]).toEqual(userOnlyMessages[0]);
+    expect(userOnlyMessages).toEqual([
+      {
+        role: "user",
+        content: "Was July 10, 2026 in the past on July 13, 2026?",
+      },
+    ]);
   });
 
   it("searches once and reuses the evidence across an OpenRouter fallback", async () => {

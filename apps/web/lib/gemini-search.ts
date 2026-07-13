@@ -1,4 +1,5 @@
 import { getErrorMessage, isRecord } from "@/lib/utils";
+import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
 
 const GEMINI_API_BASE_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
@@ -380,6 +381,7 @@ function buildGenerationConfig(model: string): Record<string, unknown> {
 async function runGeminiGroundedSearch(
   messages: readonly GeminiSearchMessage[],
   signal?: AbortSignal,
+  currentTime?: Date,
 ): Promise<GeminiGroundedResult> {
   const apiKey = getGeminiApiKey();
   if (!apiKey) {
@@ -418,7 +420,13 @@ async function runGeminiGroundedSearch(
         },
         body: JSON.stringify({
           systemInstruction: {
-            parts: [{ text: SEARCH_SYSTEM_INSTRUCTION }],
+            parts: [
+              {
+                text: `${SEARCH_SYSTEM_INSTRUCTION}\n\n${buildAuthoritativeUtcTimeContext(
+                  currentTime,
+                )}`,
+              },
+            ],
           },
           contents: [
             {
@@ -543,11 +551,15 @@ function getPublicWebSearchErrorMessage(message: string): string {
 
 export async function prepareMessagesWithGeminiWebSearch(
   messages: readonly GeminiSearchMessage[],
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; currentTime?: Date },
 ): Promise<PreparedGeminiWebSearch> {
   let result: GeminiGroundedResult;
   try {
-    result = await runGeminiGroundedSearch(messages, options?.signal);
+    result = await runGeminiGroundedSearch(
+      messages,
+      options?.signal,
+      options?.currentTime,
+    );
   } catch (error) {
     if (
       options?.signal?.aborted ||

@@ -16,6 +16,7 @@ import {
   prepareMessagesWithGeminiWebSearch,
   type WebSearchMetadata,
 } from "@/lib/gemini-search";
+import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
 import { getErrorMessage, isRecord } from "@/lib/utils";
 
 const MAX_CHAT_OUTPUT_TOKENS = 4_096;
@@ -330,12 +331,30 @@ async function prepareChatMessages(
   messages: readonly ChatMessage[];
   webSearch: WebSearchMetadata | null;
 }> {
-  if (!options?.enableWebSearch) {
-    return { messages, webSearch: null };
+  const currentTime = new Date();
+  const preparedMessages = messages.map((message) => ({ ...message }));
+  const timeContext = buildAuthoritativeUtcTimeContext(currentTime);
+  const systemIndex = preparedMessages.findIndex(
+    (message) => message.role === "system",
+  );
+
+  if (systemIndex >= 0) {
+    const systemMessage = preparedMessages[systemIndex]!;
+    preparedMessages[systemIndex] = {
+      ...systemMessage,
+      content: `${systemMessage.content.trim()}\n\n${timeContext}`,
+    };
+  } else {
+    preparedMessages.unshift({ role: "system", content: timeContext });
   }
 
-  const prepared = await prepareMessagesWithGeminiWebSearch(messages, {
+  if (!options?.enableWebSearch) {
+    return { messages: preparedMessages, webSearch: null };
+  }
+
+  const prepared = await prepareMessagesWithGeminiWebSearch(preparedMessages, {
     signal: options.signal,
+    currentTime,
   });
   return {
     messages: prepared.messages,
