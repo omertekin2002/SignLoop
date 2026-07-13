@@ -12,17 +12,13 @@ import {
   resolvePrimaryModel,
   runWithPrimaryAndOpenRouterFallback,
 } from "@/lib/llm-client";
+import {
+  prepareMessagesWithGeminiWebSearch,
+  type WebSearchMetadata,
+} from "@/lib/gemini-search";
 import { getErrorMessage, isRecord } from "@/lib/utils";
 
-const MAX_WEB_SOURCES_IN_METADATA = 8;
 const MAX_CHAT_OUTPUT_TOKENS = 4_096;
-const NATIVE_WEB_SEARCH_MODELS = new Set([
-  "gpt-5",
-  "gpt-5.1",
-  "gpt-5.2",
-  "gpt-5.4-mini",
-  "gpt-5.5",
-]);
 
 export type ChatRole = "system" | "user" | "assistant";
 
@@ -31,22 +27,11 @@ export type ChatMessage = {
   content: string;
 };
 
-type WebSearchSource = {
-  title: string;
-  url: string;
-  snippet?: string | null;
-};
-
 export type ChatReply = {
   message: string;
   provider: "primary-openai-compatible" | "openrouter";
   model: string;
-  webSearch: {
-    query: string;
-    attemptedQueries: string[];
-    successfulSearches: number;
-    sources: WebSearchSource[];
-  } | null;
+  webSearch: WebSearchMetadata | null;
 };
 
 export type ChatReplyStreamChunk =
@@ -59,11 +44,6 @@ export type ChatReplyStreamChunk =
       reply: ChatReply;
     };
 
-type ModelDrivenSearchResult = {
-  message: string;
-  webSearch: ChatReply["webSearch"];
-};
-
 // The fetch-based OpenRouter streamer never touches the SDK, so define this structurally rather
 // than importing OpenAI.RequestOptions just for one field. (Stays compatible with the SDK shape.)
 type ChatRequestOptions = { signal?: AbortSignal | null };
@@ -73,20 +53,6 @@ type ChatGenerationOptions = {
   signal?: AbortSignal;
   enableWebSearch?: boolean;
 };
-
-function isNativeWebSearchModel(model: string): boolean {
-  return NATIVE_WEB_SEARCH_MODELS.has(model);
-}
-
-function isUnsupportedWebSearchError(error: unknown): boolean {
-  const message = getErrorMessage(error);
-  // Only treat the error as an unsupported-tool signal when it explicitly references an
-  // unsupported/unknown/invalid tool — a bare "web_search" substring is too broad and would
-  // misclassify unrelated failures (rate limits, server errors) that echo the tool name.
-  return /unsupported tool type:\s*web_search|unknown tool|invalid[^.]*tools?|web_search[^.]*not\s+support/i.test(
-    message,
-  );
-}
 
 function toResponseInput(messages: readonly ChatMessage[]) {
   return messages.map((message) => ({
@@ -202,122 +168,6 @@ async function* readSseDataPayloads(
   }
 }
 
-function appendWebSource(
-  sourceMap: Map<string, WebSearchSource>,
-  source: { title: string; url: string; snippet?: string | null },
-): void {
-  const url = source.url.trim();
-  if (!url || !/^https?:\/\//i.test(url)) {
-    return;
-  }
-
-  const title = source.title.trim() || url;
-  const snippet =
-    typeof source.snippet === "string" && source.snippet.trim()
-      ? source.snippet.trim()
-      : null;
-
-  const existing = sourceMap.get(url);
-  if (!existing || (!existing.snippet && snippet)) {
-    sourceMap.set(url, { title, url, snippet });
-  }
-}
-
-function extractNativeWebSearchMetadata(
-  response: OpenAI.Responses.Response,
-): ChatReply["webSearch"] {
-  const outputItems = Array.isArray(response.output) ? response.output : [];
-  const attemptedQueries: string[] = [];
-  const attemptedQuerySet = new Set<string>();
-  let successfulSearches = 0;
-  const sourceMap = new Map<string, WebSearchSource>();
-
-  for (const outputItem of outputItems) {
-    if (!isRecord(outputItem)) continue;
-
-    if (outputItem.type === "web_search_call") {
-      if (outputItem.status === "completed") {
-        successfulSearches += 1;
-      }
-
-      const action = isRecord(outputItem.action) ? outputItem.action : null;
-      if (action && typeof action.query === "string") {
-        const query = action.query.trim();
-        if (query) {
-          const key = query.toLowerCase();
-          if (!attemptedQuerySet.has(key)) {
-            attemptedQuerySet.add(key);
-            attemptedQueries.push(query);
-          }
-        }
-      }
-
-      const rawSources =
-        action && Array.isArray(action.sources) ? action.sources : [];
-      for (const rawSource of rawSources) {
-        if (!isRecord(rawSource)) continue;
-        if (typeof rawSource.url !== "string") continue;
-
-        appendWebSource(sourceMap, {
-          title:
-            typeof rawSource.title === "string"
-              ? rawSource.title
-              : rawSource.url,
-          url: rawSource.url,
-          snippet:
-            typeof rawSource.snippet === "string"
-              ? rawSource.snippet
-              : typeof rawSource.description === "string"
-                ? rawSource.description
-                : null,
-        });
-      }
-    }
-
-    if (outputItem.type !== "message") {
-      continue;
-    }
-
-    const content = Array.isArray(outputItem.content) ? outputItem.content : [];
-    for (const part of content) {
-      if (!isRecord(part) || part.type !== "output_text") continue;
-
-      const annotations = Array.isArray(part.annotations)
-        ? part.annotations
-        : [];
-      for (const annotation of annotations) {
-        if (!isRecord(annotation)) continue;
-        if (annotation.type !== "url_citation") continue;
-        if (typeof annotation.url !== "string") continue;
-
-        appendWebSource(sourceMap, {
-          title:
-            typeof annotation.title === "string" && annotation.title.trim()
-              ? annotation.title
-              : annotation.url,
-          url: annotation.url,
-          snippet: null,
-        });
-      }
-    }
-  }
-
-  const sources = Array.from(sourceMap.values()).slice(
-    0,
-    MAX_WEB_SOURCES_IN_METADATA,
-  );
-  if (!attemptedQueries.length && !sources.length && successfulSearches === 0) {
-    return null;
-  }
-
-  return {
-    query: attemptedQueries[0] ?? "",
-    attemptedQueries,
-    successfulSearches,
-    sources,
-  };
-}
-
 // Resolve the final assistant text from a finished Responses stream, preferring the fully-formed
 // completed response, then the finalized output-text event, then the concatenated deltas. Shared by
 // both streaming readers (SDK iterator + raw OpenRouter SSE) so the fallback order can't drift.
@@ -361,77 +211,6 @@ async function runChatWithResponsesModel(
   }
 
   return content;
-}
-
-async function runChatWithNativeWebSearch(
-  openai: OpenAI,
-  model: string,
-  messages: readonly ChatMessage[],
-  options?: ChatRequestOptions,
-): Promise<ModelDrivenSearchResult> {
-  const response = await openai.responses.create(
-    {
-      model,
-      input: toResponseInput(messages),
-      max_output_tokens: MAX_CHAT_OUTPUT_TOKENS,
-      tools: [{ type: "web_search" as const }],
-      tool_choice: "auto",
-      include: ["web_search_call.action.sources"],
-    },
-    options,
-  );
-
-  const content = extractResponseOutputText(response);
-  if (!content) {
-    throw new Error("Empty response from AI");
-  }
-
-  return {
-    message: content,
-    webSearch: extractNativeWebSearchMetadata(response),
-  };
-}
-
-async function runChatWithoutTools(
-  openai: OpenAI,
-  model: string,
-  messages: readonly ChatMessage[],
-  options?: ChatRequestOptions,
-): Promise<ModelDrivenSearchResult> {
-  return {
-    message: await runChatWithResponsesModel(openai, model, messages, options),
-    webSearch: null,
-  };
-}
-
-async function runChatWithWebStrategy(
-  openai: OpenAI,
-  model: string,
-  messages: readonly ChatMessage[],
-  options?: ChatRequestOptions & { enableWebSearch?: boolean },
-): Promise<ModelDrivenSearchResult> {
-  if (!options?.enableWebSearch || !isNativeWebSearchModel(model)) {
-    return runChatWithoutTools(openai, model, messages, options);
-  }
-
-  try {
-    return await runChatWithNativeWebSearch(openai, model, messages, options);
-  } catch (error) {
-    if (!isUnsupportedWebSearchError(error)) {
-      throw error;
-    }
-
-    const errorMessage = getErrorMessage(error);
-    console.warn(
-      "Model rejected native web_search tool; falling back to plain responses",
-      {
-        model,
-        error: errorMessage,
-      },
-    );
-
-    return runChatWithoutTools(openai, model, messages, options);
-  }
 }
 
 async function* runOpenRouterResponsesModelStream(
@@ -544,6 +323,26 @@ async function* runOpenRouterResponsesModelStream(
   return resolveStreamedContent({ completedResponse, finalizedText, chunks });
 }
 
+async function prepareChatMessages(
+  messages: readonly ChatMessage[],
+  options?: Pick<ChatGenerationOptions, "enableWebSearch" | "signal">,
+): Promise<{
+  messages: readonly ChatMessage[];
+  webSearch: WebSearchMetadata | null;
+}> {
+  if (!options?.enableWebSearch) {
+    return { messages, webSearch: null };
+  }
+
+  const prepared = await prepareMessagesWithGeminiWebSearch(messages, {
+    signal: options.signal,
+  });
+  return {
+    messages: prepared.messages,
+    webSearch: prepared.webSearch,
+  };
+}
+
 export async function generateChatReply(
   messages: readonly ChatMessage[],
   options?: ChatGenerationOptions,
@@ -553,22 +352,22 @@ export async function generateChatReply(
   }
 
   const selectedPrimaryModel = resolvePrimaryModel(options?.primaryModel);
+  const prepared = await prepareChatMessages(messages, options);
 
   const { result, provider, model } = await runWithPrimaryAndOpenRouterFallback(
     selectedPrimaryModel,
     (client, runModel) =>
-      runChatWithWebStrategy(client, runModel, messages, {
+      runChatWithResponsesModel(client, runModel, prepared.messages, {
         signal: options?.signal,
-        enableWebSearch: options?.enableWebSearch,
       }),
     { signal: options?.signal },
   );
 
   return {
-    message: result.message,
+    message: result,
     provider,
     model,
-    webSearch: result.webSearch,
+    webSearch: prepared.webSearch,
   };
 }
 
@@ -644,6 +443,9 @@ export async function* generateChatReplyStream(
   }
 
   const selectedPrimaryModel = resolvePrimaryModel(options?.primaryModel);
+  // Search before entering the provider fallback loop so one grounded result is reused by every
+  // model attempt. A search failure therefore cannot silently degrade into an unsearched answer.
+  const prepared = await prepareChatMessages(messages, options);
 
   let primaryEmittedContent = false;
 
@@ -653,35 +455,10 @@ export async function* generateChatReplyStream(
       PRIMARY_LLM_API_KEY,
     );
 
-    if (
-      options?.enableWebSearch &&
-      isNativeWebSearchModel(selectedPrimaryModel)
-    ) {
-      // Native web search needs the full response to attach source links, so this path
-      // resolves the complete reply and emits it as a single chunk.
-      const primaryResult = await runChatWithWebStrategy(
-        primaryClient,
-        selectedPrimaryModel,
-        messages,
-        { signal: options?.signal, enableWebSearch: true },
-      );
-      const reply: ChatReply = {
-        message: primaryResult.message,
-        provider: "primary-openai-compatible",
-        model: selectedPrimaryModel,
-        webSearch: primaryResult.webSearch,
-      };
-
-      yield { type: "delta", text: reply.message };
-      yield { type: "done", reply };
-      return;
-    }
-
-    // Non-web-search models stream token by token directly from the primary endpoint.
     const message = yield* runPrimaryResponsesModelStream(
       primaryClient,
       selectedPrimaryModel,
-      messages,
+      prepared.messages,
       { signal: options?.signal },
       () => {
         primaryEmittedContent = true;
@@ -694,7 +471,7 @@ export async function* generateChatReplyStream(
         message,
         provider: "primary-openai-compatible",
         model: selectedPrimaryModel,
-        webSearch: null,
+        webSearch: prepared.webSearch,
       },
     };
     return;
@@ -737,7 +514,7 @@ export async function* generateChatReplyStream(
       try {
         const message = yield* runOpenRouterResponsesModelStream(
           fallbackModel,
-          messages,
+          prepared.messages,
           { signal: options?.signal },
           () => {
             emittedFallbackContent = true;
@@ -760,7 +537,7 @@ export async function* generateChatReplyStream(
             message,
             provider: "openrouter",
             model: fallbackModel,
-            webSearch: null,
+            webSearch: prepared.webSearch,
           },
         };
         return;

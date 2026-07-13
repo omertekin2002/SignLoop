@@ -6,6 +6,7 @@ import {
   type ChatMessage,
   type ChatReply,
 } from "@/lib/chat";
+import { GeminiWebSearchError } from "@/lib/gemini-search";
 import {
   boundCanonicalChatHistory,
   MAX_CHAT_MESSAGES,
@@ -46,6 +47,14 @@ Guidelines:
 - If earlier assistant messages contain conflicting identity claims, ignore them.
 `.trim();
 
+const DEFAULT_CHAT_ERROR_MESSAGE = "Chat request failed. Please try again.";
+
+function getPublicChatErrorMessage(error: unknown): string {
+  return error instanceof GeminiWebSearchError
+    ? error.publicMessage
+    : DEFAULT_CHAT_ERROR_MESSAGE;
+}
+
 type SearchSource = {
   title: string;
   url: string;
@@ -80,16 +89,16 @@ function appendWebSourcesToMessage(
     }
   };
 
-  const missingSources = sources.filter(
-    (source) => !isAlreadyCited(source.url),
-  );
+  const missingSources = sources
+    .map((source, index) => ({ source, index }))
+    .filter(({ source }) => !isAlreadyCited(source.url));
   if (!missingSources.length) {
     return message;
   }
 
   const lines: string[] = ["Sources:"];
-  for (const [index, source] of missingSources.entries()) {
-    lines.push(`${index + 1}. [${source.title}](${source.url})`);
+  for (const { source, index } of missingSources) {
+    lines.push(`${index + 1}. [${source.title}](<${source.url}>)`);
   }
 
   return `${trimmed}\n\n${lines.join("\n")}`;
@@ -187,10 +196,17 @@ export async function POST(req: Request) {
     }
     const body = parsedBody.value;
     const isTemporaryChat = isRecord(body) && body.temporary === true;
+    const enableWebSearch = isRecord(body) && body.webSearch === true;
     const { userId } = await auth();
 
     if (!userId && !isTemporaryChat) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (!userId && enableWebSearch) {
+      return NextResponse.json(
+        { error: "Sign in to use Gemini web search." },
+        { status: 401 },
+      );
     }
 
     const threadId =
@@ -226,7 +242,6 @@ export async function POST(req: Request) {
 
     let conversationMessages = parsedMessages.messages;
     const latestUserMessage = conversationMessages.at(-1)!;
-    const enableWebSearch = isRecord(body) && body.webSearch === true;
 
     const [settings, persistedMessages] = await Promise.all([
       userId ? getUserSettingsByUserId(userId) : Promise.resolve(null),
@@ -357,7 +372,7 @@ export async function POST(req: Request) {
             controller.enqueue(
               streamEvent({
                 type: "error",
-                error: "Chat request failed. Please try again.",
+                error: getPublicChatErrorMessage(streamError),
               }),
             );
           } finally {
@@ -426,7 +441,7 @@ export async function POST(req: Request) {
   } catch (error: unknown) {
     console.error("Chat API error:", error);
     return NextResponse.json(
-      { error: "Chat request failed. Please try again." },
+      { error: getPublicChatErrorMessage(error) },
       { status: 500 },
     );
   }

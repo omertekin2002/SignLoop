@@ -3,6 +3,7 @@
 SignLoop is a Bun + Turborepo monorepo centered around an AI-assisted contract workspace.
 
 The main app lets users:
+
 - upload contracts and extract text from PDF, Word, plain text, and image files,
 - run structured AI analysis with normalized legal-risk output,
 - organize work in projects with supporting context documents,
@@ -17,6 +18,7 @@ The main app lets users:
 - `packages/typescript-config`: shared TypeScript configs
 
 This repo uses:
+
 - `bun` as the package manager and script runner
 - `turbo` for workspace orchestration
 - `@vercel/postgres` for data
@@ -65,7 +67,9 @@ This repo uses:
   - `chat_threads`
   - `chat_messages` (ordered by transactional position locking)
 - Chat uses a configurable persona (`signloop-assistant` or `bare-llm`).
-- For supported models (`gpt-5` family), native web search tools can be used and source links are appended to replies.
+- When web search is enabled, Gemini performs one Google-grounded research pass before generation.
+  The same bounded research brief is supplied to the selected primary model or any OpenRouter
+  fallback, and source links are appended to the reply.
 
 ---
 
@@ -113,30 +117,44 @@ Migrations live in `apps/web/db/migrations`, and a migration runner exists at `a
 Set these in `.env.local` (or your deployment environment).
 
 Required for core authenticated app + persistence:
+
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
 - `CLERK_SECRET_KEY`
 - `POSTGRES_URL`
 - `POSTGRES_URL_NON_POOLING`
 
 Primary LLM endpoint (OpenAI-compatible):
+
 - `PRIMARY_LLM_BASE_URL` (default provided in code)
 - `PRIMARY_LLM_MODEL` (default: `gemini-3-flash`)
 - `PRIMARY_LLM_API_KEY` (optional if endpoint does not require auth)
 
 Fallback LLM endpoint (OpenRouter):
+
 - `OPENROUTER_API_KEY` (required for fallback)
 - `OPENROUTER_BASE_URL` (default: `https://openrouter.ai/api/v1`)
 - Fallback model order is fixed in code: `google/gemma-4-31b-it:free`, then `openai/gpt-oss-120b:free`, then `openrouter/free`
 
+Model-independent web search:
+
+- `GEMINI_API_KEY` (required when the web-search toggle is enabled)
+- `GEMINI_SEARCH_MODEL` (optional; defaults to `gemini-2.5-flash`)
+- Search requires a signed-in user, runs once per enabled turn, and is reused across
+  primary/OpenRouter retries. If Gemini does not return grounded web sources, the request fails
+  instead of silently returning an unsearched answer.
+
 Storage:
+
 - `BLOB_READ_WRITE_TOKEN` (if set, enables Vercel Blob)
 - `LOCAL_STORAGE_PATH` (optional local fallback path)
 - `LOCAL_STORAGE_BUCKET` (optional local fallback bucket label)
 
 App URL metadata:
+
 - `NEXT_PUBLIC_APP_URL` (used in LLM request headers; defaults to `http://localhost:3000`)
 
 Schema bootstrap:
+
 - `SKIP_SCHEMA_BOOTSTRAP` (set to `1` in deployments where `bun run db:migrate` is applied at
   deploy time; skips the runtime schema bootstrap and its ~30 DDL statements per serverless cold
   start. Leave unset in dev for zero-setup first runs.)
@@ -167,6 +185,7 @@ bun run dev
 ### Run one workspace only
 
 From `apps/web`:
+
 ```bash
 bun run dev
 ```

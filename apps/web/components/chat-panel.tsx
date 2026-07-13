@@ -837,6 +837,7 @@ export function ChatPanel({
   const [persistenceWarning, setPersistenceWarning] = useState(false);
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const canUseWebSearch = Boolean(user?.id);
   const hydratedSignatureRef = useRef<string | null>(null);
   const initialPromptSignatureRef = useRef<string | null>(null);
   const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
@@ -855,6 +856,12 @@ export function ChatPanel({
     window.addEventListener(PRIVACY_CONSENT_EVENT, syncConsent);
     return () => window.removeEventListener(PRIVACY_CONSENT_EVENT, syncConsent);
   }, [isUserLoaded, user?.id]);
+
+  useEffect(() => {
+    if (isUserLoaded && !canUseWebSearch) {
+      setWebSearchEnabled(false);
+    }
+  }, [canUseWebSearch, isUserLoaded]);
 
   const activeThreadQuery = useQuery({
     queryKey: ["chat-thread", activeThreadId],
@@ -1376,17 +1383,21 @@ export function ChatPanel({
                     size="icon"
                     variant={webSearchEnabled ? "secondary" : "ghost"}
                     aria-label={
-                      webSearchEnabled
-                        ? "Disable web search"
-                        : "Enable web search"
+                      !canUseWebSearch
+                        ? "Sign in to use Gemini web search"
+                        : webSearchEnabled
+                          ? "Disable Gemini web search"
+                          : "Enable Gemini web search"
                     }
                     aria-pressed={webSearchEnabled}
                     title={
-                      webSearchEnabled
-                        ? "Web search enabled"
-                        : "Web search disabled"
+                      !canUseWebSearch
+                        ? "Sign in to use Gemini web search"
+                        : webSearchEnabled
+                          ? "Gemini web search enabled"
+                          : "Gemini web search disabled"
                     }
-                    disabled={composerDisabled}
+                    disabled={composerDisabled || !canUseWebSearch}
                     className="h-8 w-8 shrink-0 rounded-full"
                     onClick={() => setWebSearchEnabled((enabled) => !enabled)}
                   >
