@@ -20,6 +20,10 @@ import {
   isAllowedPersonalityMode,
 } from "@/lib/personality-settings";
 import {
+  getModelAvailabilitySnapshot,
+  resolveAvailablePrimaryModel,
+} from "@/lib/model-settings";
+import {
   appendChatMessagesToThread,
   getRecentChatMessagesForThreadForUser,
   getUserSettingsByUserId,
@@ -239,7 +243,7 @@ export async function POST(req: Request) {
     let conversationMessages = parsedMessages.messages;
     const latestUserMessage = conversationMessages.at(-1)!;
 
-    const [settings, persistedMessages] = await Promise.all([
+    const [settings, persistedMessages, modelSnapshot] = await Promise.all([
       userId ? getUserSettingsByUserId(userId) : Promise.resolve(null),
       userId && !isTemporaryChat
         ? getRecentChatMessagesForThreadForUser(
@@ -248,7 +252,17 @@ export async function POST(req: Request) {
             MAX_CHAT_MESSAGES - 1,
           )
         : Promise.resolve([]),
+      userId
+        ? getModelAvailabilitySnapshot({ forceRefresh: true })
+        : Promise.resolve({ availablePrimaryModels: [] }),
     ]);
+
+    const selectedPrimaryModel = userId
+      ? resolveAvailablePrimaryModel(
+          settings?.primaryModel,
+          modelSnapshot.availablePrimaryModels,
+        )
+      : null;
 
     if (!isTemporaryChat) {
       if (persistedMessages === null) {
@@ -296,7 +310,7 @@ export async function POST(req: Request) {
 
           try {
             for await (const chunk of generateChatReplyStream(promptMessages, {
-              primaryModel: settings?.primaryModel ?? null,
+              primaryModel: selectedPrimaryModel,
               signal: req.signal,
               enableWebSearch,
             })) {
@@ -389,7 +403,7 @@ export async function POST(req: Request) {
     const { message, provider, model, webSearch } = await generateChatReply(
       promptMessages,
       {
-        primaryModel: settings?.primaryModel ?? null,
+        primaryModel: selectedPrimaryModel,
         signal: req.signal,
         enableWebSearch,
       },

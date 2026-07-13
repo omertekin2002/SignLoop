@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUser, useClerk } from "@clerk/nextjs";
@@ -27,7 +27,11 @@ import {
 import { toast } from "sonner";
 import { apiClient, getApiErrorMessage } from "@/lib/api-client";
 import { cn, formatDate } from "@/lib/utils";
-import { getSettingsErrorMessage, type SettingsResponse } from "@/lib/settings";
+import {
+  fetchSettings,
+  getSettingsErrorMessage,
+  type SettingsResponse,
+} from "@/lib/settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -98,6 +102,8 @@ type ModelSelectorProps = {
   activeModel: string;
   availableModels: string[];
   disabled: boolean;
+  refreshing: boolean;
+  onBeforeOpen: () => Promise<boolean>;
   onSelect: (model: string) => void;
   showBrand?: boolean;
 };
@@ -119,11 +125,26 @@ function ModelSelector({
   activeModel,
   availableModels,
   disabled,
+  refreshing,
+  onBeforeOpen,
   onSelect,
   showBrand = false,
 }: ModelSelectorProps) {
+  const [open, setOpen] = useState(false);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      setOpen(false);
+      return;
+    }
+
+    void onBeforeOpen().then((refreshed) => {
+      if (refreshed) setOpen(true);
+    });
+  };
+
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -138,7 +159,11 @@ function ModelSelector({
           <span className="max-w-[180px] truncate font-medium text-muted-foreground">
             {activeModel}
           </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-muted-foreground" />
+          {refreshing ? (
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground/50" />
+          ) : (
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-muted-foreground" />
+          )}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -206,6 +231,8 @@ const Dashboard = ({
   const [isTemporaryChatSelected, setIsTemporaryChatSelected] =
     useState(startTemporary);
   const [temporaryChatKey, setTemporaryChatKey] = useState(0);
+  const [isRefreshingModels, setIsRefreshingModels] = useState(false);
+  const modelRefreshPromiseRef = useRef<Promise<boolean> | null>(null);
 
   const {
     data: contracts,
@@ -257,12 +284,34 @@ const Dashboard = ({
 
   const { data: settingsData } = useQuery({
     queryKey: ["settings"],
-    queryFn: async () => {
-      const response = await apiClient.get<SettingsResponse>("/settings");
-      return response.data;
-    },
+    queryFn: () => fetchSettings(),
     enabled: canUseSavedWorkspace,
   });
+
+  const refreshAvailableModels = (): Promise<boolean> => {
+    if (!canUseSavedWorkspace) return Promise.resolve(false);
+    if (modelRefreshPromiseRef.current) {
+      return modelRefreshPromiseRef.current;
+    }
+
+    setIsRefreshingModels(true);
+    const request = fetchSettings({ refreshModels: true })
+      .then((settings) => {
+        queryClient.setQueryData<SettingsResponse>(["settings"], settings);
+        return true;
+      })
+      .catch((error: unknown) => {
+        toast.error(getApiErrorMessage(error, "Failed to refresh models"));
+        return false;
+      })
+      .finally(() => {
+        modelRefreshPromiseRef.current = null;
+        setIsRefreshingModels(false);
+      });
+
+    modelRefreshPromiseRef.current = request;
+    return request;
+  };
 
   const availableModels = settingsData?.availablePrimaryModels || [];
   const activeModel = canUseSavedWorkspace
@@ -433,6 +482,16 @@ const Dashboard = ({
       toast.error(getApiErrorMessage(error, "Failed to create chat"));
     },
   });
+
+  const startNewChat = async () => {
+    if (!canUseSavedWorkspace) {
+      selectTemporaryChat();
+      return;
+    }
+
+    if (!(await refreshAvailableModels())) return;
+    createChatMutation.mutate();
+  };
 
   const deleteChatMutation = useMutation({
     mutationFn: async (threadId: string) => {
@@ -690,21 +749,16 @@ const Dashboard = ({
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
-                      onClick={() => {
-                        if (canUseSavedWorkspace) {
-                          createChatMutation.mutate();
-                          return;
-                        }
-
-                        selectTemporaryChat();
-                      }}
+                      onClick={() => void startNewChat()}
                       disabled={
-                        canUseSavedWorkspace && createChatMutation.isPending
+                        canUseSavedWorkspace &&
+                        (createChatMutation.isPending || isRefreshingModels)
                       }
                       title="New chat"
                       aria-label="New chat"
                     >
-                      {canUseSavedWorkspace && createChatMutation.isPending ? (
+                      {canUseSavedWorkspace &&
+                      (createChatMutation.isPending || isRefreshingModels) ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <Plus className="h-4 w-4" />
@@ -889,18 +943,20 @@ const Dashboard = ({
                     variant="ghost"
                     size="icon"
                     className="h-10 w-10 text-muted-foreground hover:text-foreground hover:bg-muted"
-                    onClick={() => {
-                      if (canUseSavedWorkspace) {
-                        createChatMutation.mutate();
-                        return;
-                      }
-
-                      selectTemporaryChat();
-                    }}
+                    onClick={() => void startNewChat()}
+                    disabled={
+                      canUseSavedWorkspace &&
+                      (createChatMutation.isPending || isRefreshingModels)
+                    }
                     title="New chat"
                     aria-label="New chat"
                   >
-                    <Plus className="h-5 w-5" />
+                    {canUseSavedWorkspace &&
+                    (createChatMutation.isPending || isRefreshingModels) ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <Plus className="h-5 w-5" />
+                    )}
                   </Button>
                   <Button
                     type="button"
@@ -924,8 +980,12 @@ const Dashboard = ({
                 activeModel={activeModel}
                 availableModels={availableModels}
                 disabled={
-                  !canUseSavedWorkspace || updateModelMutation.isPending
+                  !canUseSavedWorkspace ||
+                  updateModelMutation.isPending ||
+                  isRefreshingModels
                 }
+                refreshing={isRefreshingModels}
+                onBeforeOpen={refreshAvailableModels}
                 onSelect={(model) => {
                   if (!canUseSavedWorkspace) return;
                   updateModelMutation.mutate(model);

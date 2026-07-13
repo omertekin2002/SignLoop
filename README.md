@@ -125,9 +125,15 @@ Required for core authenticated app + persistence:
 
 Primary LLM endpoint (OpenAI-compatible):
 
-- `PRIMARY_LLM_BASE_URL` (default provided in code)
+- `PRIMARY_LLM_BASE_URL` (required to enable the primary provider; include its `/v1` prefix)
 - `PRIMARY_LLM_MODEL` (default: `gemini-3-flash`)
 - `PRIMARY_LLM_API_KEY` (optional if endpoint does not require auth)
+
+SignLoop refreshes the provider's `/models` list before opening a model selector, creating a saved
+chat, entering Settings, saving a model, starting contract analysis, or generating an authenticated
+chat response. A saved model that disappears is replaced by the first currently available primary
+model for that operation; if none are available, the normal OpenRouter fallback behavior remains in
+effect.
 
 Fallback LLM endpoint (OpenRouter):
 

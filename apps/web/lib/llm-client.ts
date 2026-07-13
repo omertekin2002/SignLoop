@@ -41,13 +41,12 @@ export function createOpenAiCompatibleClient(
   apiKey?: string,
 ): OpenAI {
   const resolvedBaseUrl = baseURL.trim();
-  const resolvedApiKey = apiKey?.trim();
+  // The OpenAI client requires a non-empty value even when the compatible endpoint does not use
+  // authentication. Real configured credentials still pass through unchanged.
+  const resolvedApiKey = apiKey?.trim() || "not-required";
 
   if (!resolvedBaseUrl) {
     throw new Error("LLM base URL is not configured");
-  }
-  if (!resolvedApiKey) {
-    throw new Error("LLM API key is not configured");
   }
 
   let parsedBaseUrl: URL;

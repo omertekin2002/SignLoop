@@ -17,8 +17,8 @@ let modelsSnapshotCache: { value: PrimaryModel[]; expiresAt: number } | null =
 let modelsSnapshotPromise: Promise<PrimaryModel[]> | null = null;
 
 async function listRemoteModelIds(): Promise<string[]> {
-  if (!PRIMARY_LLM_BASE_URL || !PRIMARY_LLM_API_KEY) {
-    throw new Error("Primary LLM endpoint and API key must both be configured");
+  if (!PRIMARY_LLM_BASE_URL) {
+    throw new Error("Primary LLM endpoint must be configured");
   }
 
   const baseUrl = new URL(PRIMARY_LLM_BASE_URL);
@@ -37,7 +37,9 @@ async function listRemoteModelIds(): Promise<string[]> {
       `${PRIMARY_LLM_BASE_URL.replace(/\/+$/, "")}/models`,
       {
         method: "GET",
-        headers: { Authorization: `Bearer ${PRIMARY_LLM_API_KEY}` },
+        headers: PRIMARY_LLM_API_KEY
+          ? { Authorization: `Bearer ${PRIMARY_LLM_API_KEY}` }
+          : undefined,
         signal: controller.signal,
         cache: "no-store",
       },
@@ -71,17 +73,23 @@ async function listRemoteModelIds(): Promise<string[]> {
   }
 }
 
-export async function getModelAvailabilitySnapshot(): Promise<{
+export async function getModelAvailabilitySnapshot(options?: {
+  forceRefresh?: boolean;
+}): Promise<{
   availablePrimaryModels: PrimaryModel[];
 }> {
   const now = Date.now();
-  if (modelsSnapshotCache && modelsSnapshotCache.expiresAt > now) {
+  if (
+    !options?.forceRefresh &&
+    modelsSnapshotCache &&
+    modelsSnapshotCache.expiresAt > now
+  ) {
     return { availablePrimaryModels: modelsSnapshotCache.value };
   }
 
-  // An absent or half-configured primary provider is intentionally unavailable. In particular,
-  // never fall back to a hard-coded development tunnel or invent an authentication token.
-  if (!PRIMARY_LLM_BASE_URL || !PRIMARY_LLM_API_KEY) {
+  // There is intentionally no hard-coded provider URL. API keys remain optional because some
+  // OpenAI-compatible endpoints are private-network or otherwise intentionally unauthenticated.
+  if (!PRIMARY_LLM_BASE_URL) {
     return { availablePrimaryModels: [] };
   }
 
@@ -94,7 +102,7 @@ export async function getModelAvailabilitySnapshot(): Promise<{
     // the remote, no-store /models endpoint. The shared promise also coalesces concurrent loads.
     modelsSnapshotCache = {
       value: availablePrimaryModels,
-      expiresAt: now + MODELS_CACHE_TTL_MS,
+      expiresAt: Date.now() + MODELS_CACHE_TTL_MS,
     };
     return { availablePrimaryModels };
   } catch (error) {
@@ -107,8 +115,20 @@ export async function getModelAvailabilitySnapshot(): Promise<{
     );
     modelsSnapshotCache = {
       value: [],
-      expiresAt: now + MODELS_NEGATIVE_CACHE_TTL_MS,
+      expiresAt: Date.now() + MODELS_NEGATIVE_CACHE_TTL_MS,
     };
     return { availablePrimaryModels: [] };
   }
+}
+
+export function resolveAvailablePrimaryModel(
+  requested: string | null | undefined,
+  availablePrimaryModels: readonly PrimaryModel[],
+): PrimaryModel | null {
+  const normalized = typeof requested === "string" ? requested.trim() : "";
+  if (normalized && availablePrimaryModels.includes(normalized)) {
+    return normalized;
+  }
+
+  return availablePrimaryModels[0] ?? null;
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { parseJsonBody, requireUserId } from "@/lib/api-auth";
 import {
   getModelAvailabilitySnapshot,
+  resolveAvailablePrimaryModel,
   type PrimaryModel,
 } from "@/lib/model-settings";
 import {
@@ -16,7 +17,7 @@ import {
   upsertUserPrimaryModel,
 } from "@/lib/server-db";
 
-export async function GET() {
+export async function GET(req: Request) {
   const authed = await requireUserId();
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
@@ -24,18 +25,18 @@ export async function GET() {
   // The DB read and the (cached) model-availability lookup are independent — run them concurrently.
   const [settings, snapshot] = await Promise.all([
     getUserSettingsByUserId(userId),
-    getModelAvailabilitySnapshot(),
+    getModelAvailabilitySnapshot({
+      forceRefresh: new URL(req.url).searchParams.get("refreshModels") === "1",
+    }),
   ]);
   const availablePrimaryModels = snapshot.availablePrimaryModels;
 
-  // Only present the saved model as active when it's actually in the available list. If the
-  // primary endpoint is down the list is empty, so this resolves to null and the UI shows the
-  // OpenRouter fallback instead of advertising an unreachable model.
-  const resolvedPrimaryModel =
-    settings?.primaryModel &&
-    availablePrimaryModels.includes(settings.primaryModel)
-      ? settings.primaryModel
-      : null;
+  // Only present the saved model as active when it is still available. Otherwise move the UI to
+  // the provider's first current model; an empty list still resolves to the OpenRouter fallback.
+  const resolvedPrimaryModel = resolveAvailablePrimaryModel(
+    settings?.primaryModel,
+    availablePrimaryModels,
+  );
 
   return NextResponse.json({
     primaryModel: resolvedPrimaryModel,
@@ -71,7 +72,9 @@ export async function PUT(req: Request) {
 
   let model: PrimaryModel | null = null;
   if (modelInput) {
-    const { availablePrimaryModels } = await getModelAvailabilitySnapshot();
+    const { availablePrimaryModels } = await getModelAvailabilitySnapshot({
+      forceRefresh: true,
+    });
 
     if (!availablePrimaryModels.includes(modelInput)) {
       return NextResponse.json(

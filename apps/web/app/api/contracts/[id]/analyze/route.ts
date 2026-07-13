@@ -9,6 +9,10 @@ import {
   getUserSettingsByUserId,
 } from "@/lib/server-db";
 import { ContractRevisionChangedError } from "@/lib/errors";
+import {
+  getModelAvailabilitySnapshot,
+  resolveAvailablePrimaryModel,
+} from "@/lib/model-settings";
 
 export async function POST(
   req: Request,
@@ -48,17 +52,22 @@ export async function POST(
   }
 
   try {
-    const [settings, contextDocuments] = await Promise.all([
+    const [settings, contextDocuments, modelSnapshot] = await Promise.all([
       getUserSettingsByUserId(userId),
       contract.projectId
         ? getProjectContextForAnalysis(userId, contract.projectId)
         : Promise.resolve([]),
+      getModelAvailabilitySnapshot({ forceRefresh: true }),
     ]);
+    const selectedPrimaryModel = resolveAvailablePrimaryModel(
+      settings?.primaryModel,
+      modelSnapshot.availablePrimaryModels,
+    );
     const { result, provider, model } = await analyzeText(
       contract.text,
       undefined,
       {
-        primaryModel: settings?.primaryModel ?? null,
+        primaryModel: selectedPrimaryModel,
         signal: req.signal,
         contextDocuments: contextDocuments.map((document) => ({
           title: document.title,

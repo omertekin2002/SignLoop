@@ -6,8 +6,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useClerk, useUser } from "@clerk/nextjs";
 import { ArrowLeft, Loader2, Settings as SettingsIcon } from "lucide-react";
 import { useTheme } from "next-themes";
-import { apiClient } from "@/lib/api-client";
-import { getSettingsErrorMessage, type SettingsResponse } from "@/lib/settings";
+import { apiClient, getApiErrorMessage } from "@/lib/api-client";
+import { fetchSettings, getSettingsErrorMessage } from "@/lib/settings";
 import { DEFAULT_PERSONALITY_MODE } from "@/lib/personality-settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,18 +29,34 @@ export default function SettingsPage() {
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectedPersonality, setSelectedPersonality] = useState<string>("");
   const [themeMounted, setThemeMounted] = useState(false);
+  const [modelSelectOpen, setModelSelectOpen] = useState(false);
 
   useEffect(() => {
     setThemeMounted(true);
   }, []);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["settings"],
-    queryFn: async () => {
-      const response = await apiClient.get<SettingsResponse>("/settings");
-      return response.data;
-    },
+    queryFn: () => fetchSettings({ refreshModels: true }),
+    refetchOnMount: "always",
   });
+
+  const handleModelSelectOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      setModelSelectOpen(false);
+      return;
+    }
+    if (isFetching) return;
+
+    void refetch().then((result) => {
+      if (result.isSuccess) {
+        setModelSelectOpen(true);
+        return;
+      }
+
+      toast.error(getApiErrorMessage(result.error, "Failed to refresh models"));
+    });
+  };
 
   const availableModels = useMemo(
     () => data?.availablePrimaryModels ?? [],
@@ -51,8 +67,11 @@ export default function SettingsPage() {
     [data?.availablePersonalities],
   );
   const effectiveModel = useMemo(() => {
-    if (selectedModel) return selectedModel;
-    if (data?.primaryModel && availableModels.includes(data.primaryModel)) return data.primaryModel;
+    if (selectedModel && availableModels.includes(selectedModel)) {
+      return selectedModel;
+    }
+    if (data?.primaryModel && availableModels.includes(data.primaryModel))
+      return data.primaryModel;
     return availableModels[0] ?? "";
   }, [availableModels, data?.primaryModel, selectedModel]);
   const effectivePersonality = useMemo(() => {
@@ -163,7 +182,13 @@ export default function SettingsPage() {
                   <label className="text-sm font-medium text-foreground" htmlFor="primary-model">
                     Primary model
                   </label>
-                  <Select value={effectiveModel} onValueChange={setSelectedModel}>
+                  <Select
+                    value={effectiveModel}
+                    open={modelSelectOpen}
+                    onOpenChange={handleModelSelectOpenChange}
+                    onValueChange={setSelectedModel}
+                    disabled={isFetching || saveModelMutation.isPending}
+                  >
                     <SelectTrigger id="primary-model">
                       <SelectValue placeholder="Select a primary model" />
                     </SelectTrigger>
@@ -175,6 +200,14 @@ export default function SettingsPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {isFetching ? (
+                    <p
+                      className="text-xs text-muted-foreground"
+                      aria-live="polite"
+                    >
+                      Refreshing available models...
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="flex gap-2">

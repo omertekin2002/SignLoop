@@ -11,10 +11,10 @@ describe("createOpenAiCompatibleClient", () => {
     );
   });
 
-  it("fails closed instead of inventing an authentication credential", () => {
+  it("supports intentionally unauthenticated compatible endpoints", () => {
     expect(() =>
       createOpenAiCompatibleClient("https://provider.example/v1"),
-    ).toThrow(/API key is not configured/i);
+    ).not.toThrow();
   });
 
   it("rejects non-HTTP provider URLs", () => {
