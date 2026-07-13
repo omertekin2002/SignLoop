@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   boundCanonicalChatHistory,
+  compactInlineImageDataUris,
   MAX_CHAT_MESSAGE_LENGTH,
   MAX_CHAT_MESSAGES,
   parseBoundedJsonRequest,
@@ -66,6 +67,19 @@ describe("parseClientChatMessages", () => {
 });
 
 describe("saved chat policy", () => {
+  it("removes inline image payloads before rebuilding text-model history", () => {
+    const imageMessage = `![Generated image](data:image/png;base64,${"A".repeat(5_000)})`;
+
+    expect(compactInlineImageDataUris(imageMessage)).toBe(
+      "[generated image: Generated image]",
+    );
+    expect(
+      boundCanonicalChatHistory([{ role: "assistant", content: imageMessage }]),
+    ).toEqual([
+      { role: "assistant", content: "[generated image: Generated image]" },
+    ]);
+  });
+
   it("validates only the latest submitted user turn", () => {
     expect(
       parseLatestClientUserMessage({

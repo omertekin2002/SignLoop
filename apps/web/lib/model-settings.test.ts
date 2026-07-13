@@ -30,6 +30,7 @@ describe("getModelAvailabilitySnapshot", () => {
     });
 
     expect(snapshot.availablePrimaryModels).toEqual(["model-a"]);
+    expect(snapshot.imageGenerationAvailable).toBe(false);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://provider.example/v1/models",
       expect.objectContaining({
@@ -38,6 +39,26 @@ describe("getModelAvailabilitySnapshot", () => {
         cache: "no-store",
       }),
     );
+  });
+
+  it("advertises gpt-image-2 without offering image-only models for text", async () => {
+    vi.stubEnv("PRIMARY_LLM_BASE_URL", "https://provider.example/v1");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        modelResponse(["model-a", "gpt-image-2", "gpt-image-1"]),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { getModelAvailabilitySnapshot } = await import("./model-settings");
+    const snapshot = await getModelAvailabilitySnapshot({
+      forceRefresh: true,
+    });
+
+    expect(snapshot).toEqual({
+      availablePrimaryModels: ["model-a"],
+      imageGenerationAvailable: true,
+    });
   });
 
   it("bypasses a successful snapshot when a fresh list is requested", async () => {
@@ -74,6 +95,7 @@ describe("getModelAvailabilitySnapshot", () => {
     });
 
     expect(snapshot.availablePrimaryModels).toEqual([]);
+    expect(snapshot.imageGenerationAvailable).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

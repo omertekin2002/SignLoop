@@ -28,6 +28,7 @@ import {
   Bot,
   Download,
   FileText,
+  Image as ImageIcon,
   Loader2,
   MessagesSquare,
   Send,
@@ -47,6 +48,7 @@ import { TypingAnimation } from "@/components/typing-animation";
 import { AnimatedGridPattern } from "@/components/ui/animated-grid-pattern";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { compactInlineImageDataUris } from "@/lib/chat-policy";
 import { cn, isRecord } from "@/lib/utils";
 import {
   hasPrivacyConsent,
@@ -98,6 +100,11 @@ type ChatApiStreamSnapshot = ChatApiSuccess & {
   done: boolean;
 };
 
+type ChatCapabilities = {
+  imageGenerationAvailable: boolean;
+  imageGenerationModel: string | null;
+};
+
 type ChatThreadMessage = {
   id: string;
   role: "system" | "user" | "assistant";
@@ -112,19 +119,6 @@ type ChatThreadDetail = {
   title: string;
   messages: ChatThreadMessage[];
 };
-
-function compactInlineImageDataUris(text: string): string {
-  return text
-    .replace(
-      /!\[([^\]]*)\]\(\s*data:image\/[a-z0-9.+-]+;base64,[^)]+\)/gi,
-      (_match, alt: string) =>
-        `[generated image${alt?.trim() ? `: ${alt.trim()}` : ""}]`,
-    )
-    .replace(
-      /data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]{200,}/gi,
-      "[generated image data]",
-    );
-}
 
 function extractMessageText(message: ThreadMessage): string {
   const chunks: string[] = [];
@@ -835,6 +829,7 @@ export function ChatPanel({
   const [isRunningInitialPrompt, setIsRunningInitialPrompt] = useState(false);
   const [persistenceWarning, setPersistenceWarning] = useState(false);
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
+  const [imageMode, setImageMode] = useState(false);
   const hydratedSignatureRef = useRef<string | null>(null);
   const initialPromptSignatureRef = useRef<string | null>(null);
   const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
@@ -871,6 +866,41 @@ export function ChatPanel({
       return payload.data;
     },
   });
+
+  const capabilitiesQuery = useQuery({
+    queryKey: ["chat-capabilities"],
+    queryFn: async (): Promise<ChatCapabilities> => {
+      const response = await fetch("/api/chat", { cache: "no-store" });
+      const payload = (await response
+        .json()
+        .catch(() => null)) as Partial<ChatCapabilities> | null;
+
+      if (
+        !response.ok ||
+        typeof payload?.imageGenerationAvailable !== "boolean"
+      ) {
+        throw new Error("Failed to load chat capabilities.");
+      }
+
+      return {
+        imageGenerationAvailable: payload.imageGenerationAvailable,
+        imageGenerationModel:
+          typeof payload.imageGenerationModel === "string"
+            ? payload.imageGenerationModel
+            : null,
+      };
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+  const imageGenerationAvailable =
+    capabilitiesQuery.data?.imageGenerationAvailable === true;
+
+  useEffect(() => {
+    if (!imageGenerationAvailable) {
+      setImageMode(false);
+    }
+  }, [imageGenerationAvailable]);
 
   useEffect(() => {
     if (temporary) {
@@ -951,6 +981,7 @@ export function ChatPanel({
             messages: payloadMessages,
             temporary,
             stream: true,
+            imageMode,
           }),
           signal: abortSignal,
         });
@@ -990,6 +1021,7 @@ export function ChatPanel({
     }),
     [
       activeThreadId,
+      imageMode,
       onThreadSelected,
       privacyAcknowledged,
       queryClient,
@@ -1344,6 +1376,29 @@ export function ChatPanel({
                 </div>
               ) : null}
               <div className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-[1.75rem] border bg-background/80 p-1.5 shadow-sm backdrop-blur transition-colors focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20">
+                {imageGenerationAvailable ? (
+                  <button
+                    type="button"
+                    aria-label={
+                      imageMode
+                        ? "Turn off image generation mode"
+                        : "Turn on image generation mode"
+                    }
+                    aria-pressed={imageMode}
+                    className={cn(
+                      "mb-1 ml-1 flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors",
+                      imageMode
+                        ? "border-primary/40 bg-primary/10 text-primary"
+                        : "border-border bg-background/60 text-muted-foreground hover:bg-muted hover:text-foreground",
+                    )}
+                    disabled={composerDisabled}
+                    onClick={() => setImageMode((enabled) => !enabled)}
+                    title="Generate an image with gpt-image-2"
+                  >
+                    <ImageIcon className="h-3.5 w-3.5" />
+                    <span>Image</span>
+                  </button>
+                ) : null}
                 <ComposerPrimitive.Input
                   className={cn(
                     "min-h-[40px] max-h-60 w-full resize-none bg-transparent px-4 py-2.5 text-[15px] text-foreground outline-none",
@@ -1359,7 +1414,9 @@ export function ChatPanel({
                         ? "Conversation unavailable"
                         : isRunningInitialPrompt
                           ? "Answering..."
-                          : "Ask SignLoop..."
+                          : imageMode
+                            ? "Describe the image you want..."
+                            : "Ask SignLoop..."
                   }
                   submitMode="enter"
                   rows={1}
@@ -1401,8 +1458,12 @@ export function ChatPanel({
                   : isRunningInitialPrompt
                     ? "Answering the temporary prompt from the URL."
                     : temporary
-                      ? "Temporary chat is not saved. AI may produce inaccurate information."
-                      : "AI may produce inaccurate information about laws or guidelines. Keep original records."}
+                      ? imageMode
+                        ? "Image mode uses gpt-image-2. Temporary chat is not saved."
+                        : "Temporary chat is not saved. AI may produce inaccurate information."
+                      : imageMode
+                        ? "Image mode uses gpt-image-2 and returns one generated image."
+                        : "AI may produce inaccurate information about laws or guidelines. Keep original records."}
               </div>
             </ComposerPrimitive.Root>
           </ThreadPrimitive.Root>

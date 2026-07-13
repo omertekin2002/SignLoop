@@ -2,6 +2,8 @@ import { getErrorMessage, isRecord } from "@/lib/utils";
 
 export type PrimaryModel = string;
 
+export const IMAGE_GENERATION_MODEL = "gpt-image-2";
+
 export const PRIMARY_LLM_BASE_URL =
   process.env.PRIMARY_LLM_BASE_URL?.trim() ?? "";
 const PRIMARY_LLM_API_KEY = process.env.PRIMARY_LLM_API_KEY?.trim() ?? "";
@@ -15,6 +17,24 @@ const MODELS_NEGATIVE_CACHE_TTL_MS = 10_000;
 let modelsSnapshotCache: { value: PrimaryModel[]; expiresAt: number } | null =
   null;
 let modelsSnapshotPromise: Promise<PrimaryModel[]> | null = null;
+
+export type ModelAvailabilitySnapshot = {
+  availablePrimaryModels: PrimaryModel[];
+  imageGenerationAvailable: boolean;
+};
+
+function toModelAvailabilitySnapshot(
+  remoteModelIds: readonly string[],
+): ModelAvailabilitySnapshot {
+  return {
+    // Image-only models cannot satisfy the Responses API calls used by chat and analysis.
+    availablePrimaryModels: remoteModelIds.filter(
+      (model) =>
+        !/^gpt-image-/i.test(model) && model !== "chatgpt-image-latest",
+    ),
+    imageGenerationAvailable: remoteModelIds.includes(IMAGE_GENERATION_MODEL),
+  };
+}
 
 async function listRemoteModelIds(): Promise<string[]> {
   if (!PRIMARY_LLM_BASE_URL) {
@@ -75,36 +95,34 @@ async function listRemoteModelIds(): Promise<string[]> {
 
 export async function getModelAvailabilitySnapshot(options?: {
   forceRefresh?: boolean;
-}): Promise<{
-  availablePrimaryModels: PrimaryModel[];
-}> {
+}): Promise<ModelAvailabilitySnapshot> {
   const now = Date.now();
   if (
     !options?.forceRefresh &&
     modelsSnapshotCache &&
     modelsSnapshotCache.expiresAt > now
   ) {
-    return { availablePrimaryModels: modelsSnapshotCache.value };
+    return toModelAvailabilitySnapshot(modelsSnapshotCache.value);
   }
 
   // There is intentionally no hard-coded provider URL. API keys remain optional because some
   // OpenAI-compatible endpoints are private-network or otherwise intentionally unauthenticated.
   if (!PRIMARY_LLM_BASE_URL) {
-    return { availablePrimaryModels: [] };
+    return toModelAvailabilitySnapshot([]);
   }
 
   try {
     modelsSnapshotPromise ??= listRemoteModelIds().finally(() => {
       modelsSnapshotPromise = null;
     });
-    const availablePrimaryModels = await modelsSnapshotPromise;
+    const remoteModelIds = await modelsSnapshotPromise;
     // The model list changes rarely, so a short TTL spares every settings load a full round-trip to
     // the remote, no-store /models endpoint. The shared promise also coalesces concurrent loads.
     modelsSnapshotCache = {
-      value: availablePrimaryModels,
+      value: remoteModelIds,
       expiresAt: Date.now() + MODELS_CACHE_TTL_MS,
     };
-    return { availablePrimaryModels };
+    return toModelAvailabilitySnapshot(remoteModelIds);
   } catch (error) {
     // The primary /models endpoint is unreachable — treat it as unavailable so the UI honestly
     // shows the OpenRouter fallback rather than advertising an unreachable model. Negative-cache the
@@ -117,7 +135,7 @@ export async function getModelAvailabilitySnapshot(options?: {
       value: [],
       expiresAt: Date.now() + MODELS_NEGATIVE_CACHE_TTL_MS,
     };
-    return { availablePrimaryModels: [] };
+    return toModelAvailabilitySnapshot([]);
   }
 }
 

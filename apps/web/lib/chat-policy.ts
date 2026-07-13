@@ -6,6 +6,20 @@ export const MAX_CHAT_MESSAGE_LENGTH = 4_000;
 export const MAX_CHAT_TOTAL_MESSAGE_LENGTH = 60_000;
 export const MAX_CHAT_REQUEST_BODY_BYTES = 128 * 1024;
 
+/** Replace generated image payloads before a message is sent back to a text model. */
+export function compactInlineImageDataUris(text: string): string {
+  return text
+    .replace(
+      /!\[([^\]]*)\]\(\s*data:image\/[a-z0-9.+-]+;base64,[^)]+\)/gi,
+      (_match, alt: string) =>
+        `[generated image${alt?.trim() ? `: ${alt.trim()}` : ""}]`,
+    )
+    .replace(
+      /data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]{200,}/gi,
+      "[generated image data]",
+    );
+}
+
 type RequestPayload = {
   messages?: unknown;
 };
@@ -224,7 +238,10 @@ export function boundCanonicalChatHistory(
     if (!message || (message.role !== "user" && message.role !== "assistant"))
       continue;
 
-    const content = message.content.trim().slice(0, MAX_CHAT_MESSAGE_LENGTH);
+    const content = compactInlineImageDataUris(message.content.trim()).slice(
+      0,
+      MAX_CHAT_MESSAGE_LENGTH,
+    );
     if (!content) continue;
     if (content.length > remainingCharacters) break;
 

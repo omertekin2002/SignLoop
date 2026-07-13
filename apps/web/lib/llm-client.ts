@@ -39,6 +39,7 @@ export class LlmResponseValidationError extends Error {
 export function createOpenAiCompatibleClient(
   baseURL: string,
   apiKey?: string,
+  options?: { timeoutMs?: number },
 ): OpenAI {
   const resolvedBaseUrl = baseURL.trim();
   // The OpenAI client requires a non-empty value even when the compatible endpoint does not use
@@ -65,7 +66,7 @@ export function createOpenAiCompatibleClient(
   return new OpenAI({
     apiKey: resolvedApiKey,
     baseURL: resolvedBaseUrl,
-    timeout: 60_000,
+    timeout: options?.timeoutMs ?? 60_000,
     maxRetries: 1,
     defaultHeaders: {
       "HTTP-Referer": SITE_URL,

@@ -7,6 +7,7 @@ import {
   type ChatReply,
 } from "@/lib/chat";
 import { GeminiWebSearchError } from "@/lib/gemini-search";
+import { generateImageReply } from "@/lib/image-generation";
 import {
   boundCanonicalChatHistory,
   MAX_CHAT_MESSAGES,
@@ -21,6 +22,7 @@ import {
 } from "@/lib/personality-settings";
 import {
   getModelAvailabilitySnapshot,
+  IMAGE_GENERATION_MODEL,
   resolveAvailablePrimaryModel,
 } from "@/lib/model-settings";
 import {
@@ -52,6 +54,19 @@ Guidelines:
 `.trim();
 
 const DEFAULT_CHAT_ERROR_MESSAGE = "Chat request failed. Please try again.";
+
+export const maxDuration = 180;
+
+export async function GET() {
+  const snapshot = await getModelAvailabilitySnapshot();
+
+  return NextResponse.json({
+    imageGenerationAvailable: snapshot.imageGenerationAvailable,
+    imageGenerationModel: snapshot.imageGenerationAvailable
+      ? IMAGE_GENERATION_MODEL
+      : null,
+  });
+}
 
 function getPublicChatErrorMessage(error: unknown): string {
   return error instanceof GeminiWebSearchError
@@ -200,6 +215,7 @@ export async function POST(req: Request) {
     }
     const body = parsedBody.value;
     const isTemporaryChat = isRecord(body) && body.temporary === true;
+    const isImageMode = isRecord(body) && body.imageMode === true;
     const { userId } = await auth();
     // Search is a server-side invariant for authenticated chats, so clients cannot disable it.
     // Anonymous temporary chats stay unsearched to protect the private Gemini quota.
@@ -252,9 +268,12 @@ export async function POST(req: Request) {
             MAX_CHAT_MESSAGES - 1,
           )
         : Promise.resolve([]),
-      userId
+      userId || isImageMode
         ? getModelAvailabilitySnapshot({ forceRefresh: true })
-        : Promise.resolve({ availablePrimaryModels: [] }),
+        : Promise.resolve({
+            availablePrimaryModels: [],
+            imageGenerationAvailable: false,
+          }),
     ]);
 
     const selectedPrimaryModel = userId
@@ -285,6 +304,47 @@ export async function POST(req: Request) {
         latestUserMessage.content.length,
       );
       conversationMessages = [...canonicalMessages, latestUserMessage];
+    }
+
+    if (isImageMode) {
+      if (!modelSnapshot.imageGenerationAvailable) {
+        return NextResponse.json(
+          { error: "Image generation is not currently available." },
+          { status: 409 },
+        );
+      }
+
+      const reply = await generateImageReply(latestUserMessage.content, {
+        signal: req.signal,
+        userId,
+      });
+      let persisted = true;
+
+      if (!isTemporaryChat) {
+        try {
+          await persistChatMessages({
+            userId,
+            threadId,
+            latestUserMessage,
+            assistantMessage: reply.message,
+            assistantModel: reply.model,
+            assistantProvider: reply.provider,
+            temporary: false,
+          });
+        } catch (persistError) {
+          if (req.signal.aborted || isAbortError(persistError)) {
+            throw persistError;
+          }
+          persisted = false;
+          console.error("Image chat persist failed:", persistError);
+        }
+      }
+
+      return NextResponse.json({
+        ...reply,
+        mode: isTemporaryChat ? "temporary-chat" : "chat",
+        persisted: isTemporaryChat ? undefined : persisted,
+      });
     }
 
     const personality =
