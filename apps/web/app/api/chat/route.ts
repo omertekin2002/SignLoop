@@ -196,17 +196,13 @@ export async function POST(req: Request) {
     }
     const body = parsedBody.value;
     const isTemporaryChat = isRecord(body) && body.temporary === true;
-    const enableWebSearch = isRecord(body) && body.webSearch === true;
     const { userId } = await auth();
+    // Search is a server-side invariant for authenticated chats, so clients cannot disable it.
+    // Anonymous temporary chats stay unsearched to protect the private Gemini quota.
+    const enableWebSearch = Boolean(userId);
 
     if (!userId && !isTemporaryChat) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (!userId && enableWebSearch) {
-      return NextResponse.json(
-        { error: "Sign in to use Gemini web search." },
-        { status: 401 },
-      );
     }
 
     const threadId =

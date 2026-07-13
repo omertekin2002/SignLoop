@@ -67,9 +67,9 @@ This repo uses:
   - `chat_threads`
   - `chat_messages` (ordered by transactional position locking)
 - Chat uses a configurable persona (`signloop-assistant` or `bare-llm`).
-- When web search is enabled, Gemini performs one Google-grounded research pass before generation.
-  The same bounded research brief is supplied to the selected primary model or any OpenRouter
-  fallback, and source links are appended to the reply.
+- Every authenticated chat turn performs one Google-grounded Gemini research pass before
+  generation. The same bounded research brief is supplied to the selected primary model or any
+  OpenRouter fallback, and source links are appended to the reply.
 
 ---
 
@@ -137,11 +137,12 @@ Fallback LLM endpoint (OpenRouter):
 
 Model-independent web search:
 
-- `GEMINI_API_KEY` (required when the web-search toggle is enabled)
+- `GEMINI_API_KEY` (required for authenticated chat)
 - `GEMINI_SEARCH_MODEL` (optional; defaults to `gemini-2.5-flash`)
-- Search requires a signed-in user, runs once per enabled turn, and is reused across
-  primary/OpenRouter retries. If Gemini does not return grounded web sources, the request fails
-  instead of silently returning an unsearched answer.
+- Search is always on for signed-in users, runs once per turn, and is reused across
+  primary/OpenRouter retries. Anonymous temporary chat remains unsearched. If Gemini does not
+  return grounded web sources, the request fails instead of silently returning an unsearched
+  answer.
 
 Storage:
 

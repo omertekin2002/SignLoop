@@ -28,7 +28,6 @@ import {
   Bot,
   Download,
   FileText,
-  Globe2,
   Loader2,
   MessagesSquare,
   Send,
@@ -836,8 +835,6 @@ export function ChatPanel({
   const [isRunningInitialPrompt, setIsRunningInitialPrompt] = useState(false);
   const [persistenceWarning, setPersistenceWarning] = useState(false);
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
-  const canUseWebSearch = Boolean(user?.id);
   const hydratedSignatureRef = useRef<string | null>(null);
   const initialPromptSignatureRef = useRef<string | null>(null);
   const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
@@ -856,12 +853,6 @@ export function ChatPanel({
     window.addEventListener(PRIVACY_CONSENT_EVENT, syncConsent);
     return () => window.removeEventListener(PRIVACY_CONSENT_EVENT, syncConsent);
   }, [isUserLoaded, user?.id]);
-
-  useEffect(() => {
-    if (isUserLoaded && !canUseWebSearch) {
-      setWebSearchEnabled(false);
-    }
-  }, [canUseWebSearch, isUserLoaded]);
 
   const activeThreadQuery = useQuery({
     queryKey: ["chat-thread", activeThreadId],
@@ -960,7 +951,6 @@ export function ChatPanel({
             messages: payloadMessages,
             temporary,
             stream: true,
-            webSearch: webSearchEnabled,
           }),
           signal: abortSignal,
         });
@@ -1004,7 +994,6 @@ export function ChatPanel({
       privacyAcknowledged,
       queryClient,
       temporary,
-      webSearchEnabled,
     ],
   );
 
@@ -1077,7 +1066,6 @@ export function ChatPanel({
             temporary: true,
             messages: [{ role: "user", content: prompt }],
             stream: true,
-            webSearch: false,
           }),
           signal: abortController.signal,
         });
@@ -1378,31 +1366,6 @@ export function ChatPanel({
                 />
 
                 <div className="flex shrink-0 p-1">
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant={webSearchEnabled ? "secondary" : "ghost"}
-                    aria-label={
-                      !canUseWebSearch
-                        ? "Sign in to use Gemini web search"
-                        : webSearchEnabled
-                          ? "Disable Gemini web search"
-                          : "Enable Gemini web search"
-                    }
-                    aria-pressed={webSearchEnabled}
-                    title={
-                      !canUseWebSearch
-                        ? "Sign in to use Gemini web search"
-                        : webSearchEnabled
-                          ? "Gemini web search enabled"
-                          : "Gemini web search disabled"
-                    }
-                    disabled={composerDisabled || !canUseWebSearch}
-                    className="h-8 w-8 shrink-0 rounded-full"
-                    onClick={() => setWebSearchEnabled((enabled) => !enabled)}
-                  >
-                    <Globe2 className="h-4 w-4" />
-                  </Button>
                   <ThreadPrimitive.If running={false}>
                     <ComposerPrimitive.Send asChild>
                       <Button
