@@ -268,6 +268,9 @@ export async function POST(req: Request) {
             MAX_CHAT_MESSAGES - 1,
           )
         : Promise.resolve([]),
+      // Anonymous image requests still need the snapshot, since imageGenerationAvailable gates the
+      // call below. Anonymous *text* chat does not: it uses the configured default model, so it
+      // skips the upstream /models round-trip rather than blocking on a 5s timeout for nothing.
       userId || isImageMode
         ? getModelAvailabilitySnapshot({ forceRefresh: true })
         : Promise.resolve({

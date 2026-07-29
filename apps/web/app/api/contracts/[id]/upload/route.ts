@@ -8,6 +8,10 @@ import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
 import { deleteObject } from "@/lib/object-storage";
 import { isUuid } from "@/lib/utils";
 
+// Image uploads run OCR, which budgets 60s for worker init plus 90s for recognition. The platform
+// default is well below that, so a scanned upload would be killed after the work was already done.
+export const maxDuration = 180;
+
 async function cleanupNewUpload(storageKey: string): Promise<void> {
   try {
     await deleteObject(storageKey);

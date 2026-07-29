@@ -14,6 +14,11 @@ import {
   resolveAvailablePrimaryModel,
 } from "@/lib/model-settings";
 
+// Analysis drives a primary-model call (60s client timeout, one retry) and, on failure, an ordered
+// OpenRouter fallback chain plus a JSON repair pass. The platform default would kill that mid-call
+// after the LLM cost was already paid, so the budget is stated explicitly.
+export const maxDuration = 300;
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
