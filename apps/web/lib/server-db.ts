@@ -96,9 +96,11 @@ async function ensureSchema(): Promise<void> {
 
     // contracts_user_id_idx omitted: left-prefix of contracts_user_id_created_at_idx.
     // contracts_created_at_idx omitted: no global created_at sort (all reads filter by user/project).
+    // contracts_project_id_idx omitted: left-prefix of contracts_project_id_created_at_idx, which
+    // also orders the project-detail read (`where project_id and user_id order by created_at desc`).
     await sql`
-      create index if not exists contracts_project_id_idx
-      on contracts (project_id)
+      create index if not exists contracts_project_id_created_at_idx
+      on contracts (project_id, created_at desc)
     `;
     await sql`
       create index if not exists contracts_user_id_created_at_idx
@@ -206,14 +208,9 @@ async function ensureSchema(): Promise<void> {
       add column if not exists extraction_confidence double precision
     `;
 
-    await sql`
-      create index if not exists contract_files_user_id_idx
-      on contract_files (user_id)
-    `;
-    await sql`
-      create index if not exists contract_files_project_id_idx
-      on contract_files (project_id)
-    `;
+    // contract_files_user_id_idx / contract_files_project_id_idx omitted: no query filters or joins
+    // on those columns. Every access path reaches this table by contract_id and joins to
+    // contracts/projects for ownership.
     await sql`
       create index if not exists contract_files_contract_id_idx
       on contract_files (contract_id)
@@ -243,11 +240,13 @@ async function ensureSchema(): Promise<void> {
       )
     `;
 
-    // chat_threads_updated_at_idx omitted: the thread list orders by a computed
-    // coalesce(last_message_at, updated_at), which an index on updated_at cannot serve.
+    // The thread list runs `where user_id = $1 order by updated_at desc limit $2`, so the composite
+    // serves both the filter and the sort. chat_threads_user_id_idx is omitted as its left prefix.
+    // (An earlier comment here claimed the list ordered by a computed
+    // coalesce(last_message_at, updated_at); no such column or expression has ever existed.)
     await sql`
-      create index if not exists chat_threads_user_id_idx
-      on chat_threads (user_id)
+      create index if not exists chat_threads_user_id_updated_at_idx
+      on chat_threads (user_id, updated_at desc)
     `;
 
     await sql`
@@ -1039,7 +1038,9 @@ export async function deleteContractForUser(input: {
     await client.query("COMMIT");
     return { deleted: true };
   } catch (err) {
-    await client.query("ROLLBACK");
+    // Swallow rollback failures: when the try failed because the connection died, ROLLBACK throws
+    // too and would replace `err` with a generic connection error, hiding the real cause.
+    await client.query("ROLLBACK").catch(() => {});
     throw err;
   } finally {
     client.release();
@@ -1135,7 +1136,10 @@ export async function listProjectsByUserId(
   };
 }
 
-async function isProjectOwnedByUser(
+// Cheapest possible ownership probe: one indexed lookup, no child rows. Prefer this over
+// getProjectByIdForUser wherever only the boolean matters — that function fans out into four
+// unbounded queries (project, all contracts, all context documents, latest analyses).
+export async function isProjectOwnedByUser(
   userId: string,
   projectId: string,
 ): Promise<boolean> {
@@ -1447,7 +1451,9 @@ export async function deleteProjectForUser(input: {
     await client.query("COMMIT");
     return { deleted: true };
   } catch (err) {
-    await client.query("ROLLBACK");
+    // Swallow rollback failures: when the try failed because the connection died, ROLLBACK throws
+    // too and would replace `err` with a generic connection error, hiding the real cause.
+    await client.query("ROLLBACK").catch(() => {});
     throw err;
   } finally {
     client.release();
@@ -1870,7 +1876,9 @@ export async function appendChatMessagesToThread(input: {
 
     await client.query("COMMIT");
   } catch (err) {
-    await client.query("ROLLBACK");
+    // Swallow rollback failures: when the try failed because the connection died, ROLLBACK throws
+    // too and would replace `err` with a generic connection error, hiding the real cause.
+    await client.query("ROLLBACK").catch(() => {});
     throw err;
   } finally {
     client.release();
@@ -1906,7 +1914,9 @@ export async function deleteChatThreadForUser(input: {
     await client.query("COMMIT");
     return true;
   } catch (err) {
-    await client.query("ROLLBACK");
+    // Swallow rollback failures: when the try failed because the connection died, ROLLBACK throws
+    // too and would replace `err` with a generic connection error, hiding the real cause.
+    await client.query("ROLLBACK").catch(() => {});
     throw err;
   } finally {
     client.release();

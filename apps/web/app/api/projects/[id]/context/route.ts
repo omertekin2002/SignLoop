@@ -3,6 +3,7 @@ import { requireUserId } from "@/lib/api-auth";
 import {
   addContextDocumentToProject,
   getProjectByIdForUser,
+  isProjectOwnedByUser,
 } from "@/lib/server-db";
 import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
 import { deleteObject } from "@/lib/object-storage";
@@ -59,8 +60,9 @@ export async function POST(
   if (!isUuid(id)) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
-  const project = await getProjectByIdForUser(userId, id);
-  if (!project) {
+  // Only the ownership boolean matters here, so use the single-row probe rather than loading the
+  // full project graph (contracts + context documents + analyses) and discarding all of it.
+  if (!(await isProjectOwnedByUser(userId, id))) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
