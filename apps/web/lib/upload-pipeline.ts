@@ -21,8 +21,6 @@ const LOW_OCR_CONFIDENCE = 60;
 // Shared file-upload pipeline used by both the contract-upload and project-context routes,
 // so size/MIME validation, the single buffer conversion, and text extraction live in one place.
 
-export { MAX_UPLOAD_FILE_SIZE };
-
 export type UploadValidationError = {
   ok: false;
   status: number;

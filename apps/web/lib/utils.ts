@@ -93,8 +93,10 @@ export function formatFileSize(bytes: number | null | undefined): string {
 
 // Narrow an unknown value to a plain object. Shared guard reused across the LLM/chat/parsing code
 // (previously reimplemented in model-settings, chat, the chat route, and analysis).
+// Arrays are excluded: `typeof [] === "object"`, so without the check this predicate would claim an
+// array is a Record and callers would read named properties that are always undefined.
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // Extract a human-readable message from an unknown thrown value. When the value is not an Error,

@@ -162,7 +162,7 @@ const ProjectDetails = () => {
     mutationFn: async () => {
       // 1. Create the contract with project association.
       const createRes = await apiClient.post("/contracts", {
-        title: contractName,
+        title: contractName.trim(),
         projectId: id,
       });
       const contractId = createRes.data.id;
@@ -522,8 +522,9 @@ const ProjectDetails = () => {
                             <p className="font-medium text-sm">{doc.title}</p>
                             <p className="text-xs text-muted-foreground">
                               {doc.documentType.replace("_", " ")}
-                              {doc.wordCount &&
-                                ` • ${doc.wordCount.toLocaleString()} words`}
+                              {doc.wordCount
+                                ? ` • ${doc.wordCount.toLocaleString()} words`
+                                : null}
                             </p>
                           </div>
                         </div>

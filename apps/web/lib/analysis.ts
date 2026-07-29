@@ -236,10 +236,9 @@ ${contractExcerpt.text}
   return { prompt, coverageNotices };
 }
 
+// isRecord already excludes arrays, so this is just the nullable-returning form of it.
 function asRecord(value: unknown): JsonRecord | null {
-  return isRecord(value) && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : null;
+  return isRecord(value) ? (value as JsonRecord) : null;
 }
 
 function pickFirst(record: JsonRecord, keys: string[]): unknown {
