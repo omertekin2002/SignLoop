@@ -5,6 +5,7 @@ import {
   memo,
   type ComponentPropsWithoutRef,
   type ReactNode,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -277,61 +278,66 @@ async function* readChatApiResponse(
   const decoder = new TextDecoder();
   let buffer = "";
   let accumulatedMessage = "";
-  let completed = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (value) {
-      buffer += decoder.decode(value, { stream: !done });
-    }
-    if (done) {
-      buffer += decoder.decode();
-    }
-
-    const lines = buffer.split("\n");
-    buffer = done ? "" : (lines.pop() ?? "");
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      // Use the safe parser: an intermediary (CDN/proxy) keep-alive or comment line that survives
-      // the split is non-JSON and would otherwise throw here and abort an already-streaming turn.
-      const parsed = parseJsonPayload(trimmed);
-      if (parsed === null) continue;
-
-      const event = parseStreamEvent(parsed);
-
-      if (event.type === "error") {
-        throw new Error(event.error);
+  // The `finally` releases the reader on every exit path — normal completion, a thrown stream
+  // error, and (importantly) the implicit generator return when the consumer aborts mid-turn.
+  // Without it the ReadableStream stays locked with unread bytes until GC.
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (value) {
+        buffer += decoder.decode(value, { stream: !done });
+      }
+      if (done) {
+        buffer += decoder.decode();
       }
 
-      if (event.type === "delta") {
-        if (!event.text) continue;
-        accumulatedMessage += event.text;
+      const lines = buffer.split("\n");
+      buffer = done ? "" : (lines.pop() ?? "");
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        // Use the safe parser: an intermediary (CDN/proxy) keep-alive or comment line that survives
+        // the split is non-JSON and would otherwise throw here and abort an already-streaming turn.
+        const parsed = parseJsonPayload(trimmed);
+        if (parsed === null) continue;
+
+        const event = parseStreamEvent(parsed);
+
+        if (event.type === "error") {
+          throw new Error(event.error);
+        }
+
+        if (event.type === "delta") {
+          if (!event.text) continue;
+          accumulatedMessage += event.text;
+          yield {
+            message: accumulatedMessage,
+            done: false,
+          };
+          continue;
+        }
+
         yield {
-          message: accumulatedMessage,
-          done: false,
+          ...event,
+          message: event.message || accumulatedMessage,
+          done: true,
         };
-        continue;
+        return;
       }
 
-      completed = true;
-      yield {
-        ...event,
-        message: event.message || accumulatedMessage,
-        done: true,
-      };
-      return;
+      if (done) {
+        break;
+      }
     }
 
-    if (done) {
-      break;
-    }
-  }
-
-  if (!completed) {
+    // Only reachable via the `break` above: the stream ended without a terminal event. The
+    // success path returns from inside the loop.
     throw new Error("Chat stream ended before completion.");
+  } finally {
+    await reader.cancel().catch(() => {});
   }
 }
 
@@ -504,8 +510,11 @@ const MarkdownImage = ({
   src,
   alt,
   className,
+  // react-markdown passes the hast node down to custom components. Pull it out of the rest so it
+  // isn't spread onto the real <img>, where React would serialize it as node="[object Object]".
+  node: _node,
   ...props
-}: MarkdownImageProps) => {
+}: MarkdownImageProps & { node?: unknown }) => {
   if (typeof src !== "string" || !src) {
     return null;
   }
@@ -575,7 +584,14 @@ function parseMarkdownIntoBlocks(markdown: string): string[] {
   if (!markdown) return [];
 
   try {
-    return marked.lexer(markdown).map((token) => token.raw);
+    // The lexer emits a `space` token for every blank line between blocks — roughly half of all
+    // tokens. Each one would otherwise mount a full ReactMarkdown instance (remark-parse →
+    // remark-gfm → remark-math → rehype-katex → rehype-react) to render nothing. Blocks are parsed
+    // in isolation anyway, so dropping the blank ones changes no output.
+    return marked
+      .lexer(markdown)
+      .map((token) => token.raw)
+      .filter((raw) => raw.trim().length > 0);
   } catch {
     // The lexer is tolerant of partial markdown, but never let a hiccup break rendering.
     return [markdown];
@@ -605,9 +621,14 @@ const MarkdownMessage = forwardRef<
   HTMLDivElement,
   ComponentPropsWithoutRef<"div">
 >(({ children, className, ...props }, ref) => {
+  // While streaming, `children` is the cumulative message text, so it changes on every delta and
+  // this memo always misses — re-lexing the whole message (plus four full-string regex passes) per
+  // token, which is O(n^2) over a turn. Deferring lets React skip intermediate parses under load
+  // and keep the newest text; settled messages are unaffected because the value stops changing.
+  const deferredChildren = useDeferredValue(children);
   const blocks = useMemo(
-    () => parseMarkdownIntoBlocks(toMarkdownText(children)),
-    [children],
+    () => parseMarkdownIntoBlocks(toMarkdownText(deferredChildren)),
+    [deferredChildren],
   );
 
   return (
@@ -965,11 +986,12 @@ export function ChatPanel({
           queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
         }
 
-        const runtimeMessages = toApiMessages(messages);
         // Saved-thread history is reconstructed from the database; submit only the new user turn.
+        // Slice before mapping — toApiMessages runs image-data-URI compaction over every message,
+        // so mapping the full history first would scan megabytes of base64 only to discard it.
         const payloadMessages = temporary
-          ? runtimeMessages
-          : runtimeMessages.slice(-1);
+          ? toApiMessages(messages)
+          : toApiMessages(messages.slice(-1));
 
         const response = await fetch("/api/chat", {
           method: "POST",
