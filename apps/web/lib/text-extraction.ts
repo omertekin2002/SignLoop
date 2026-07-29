@@ -3,6 +3,9 @@ import type WordExtractor from "word-extractor";
 import { getErrorMessage } from "@/lib/utils";
 
 const MIN_TEXT_DENSITY = 50; // Minimum characters per page for non-scanned PDF
+// At or below this page count a sparse PDF may still be a legitimately short document, so the
+// absolute-length check applies. Above it, low density is decisive on its own.
+const SHORT_DOCUMENT_PAGE_COUNT = 2;
 const MAX_PDF_PAGES = 500;
 const DOC_MIME_TYPE = "application/msword";
 const DOCX_MIME_TYPE =
@@ -367,7 +370,15 @@ export async function extractTextFromPdf(
     const pageCount = totalPages || 1;
     const avgCharsPerPage = extractedText.length / pageCount;
 
-    if (avgCharsPerPage < MIN_TEXT_DENSITY && extractedText.length < 500) {
+    // Density alone decides for anything longer than a couple of pages. A previous
+    // `&& extractedText.length < 500` conjunct here was inert for short documents (under ~10 pages,
+    // sparse density already implies a sub-500-character total) and actively harmful for long ones:
+    // it suppressed scanned detection for exactly the large scans that need it, so a 200-page scan
+    // carrying only per-page furniture (Bates stamps, scanner headers) was reported as a fully
+    // parsed contract at confidence 100 and analyzed as if that furniture were the agreement.
+    const isSparse = avgCharsPerPage < MIN_TEXT_DENSITY;
+    const isShortDocument = pageCount <= SHORT_DOCUMENT_PAGE_COUNT;
+    if (isSparse && (!isShortDocument || extractedText.length < 500)) {
       // Scanned PDF with no usable text layer. Return the (possibly empty) extracted text so the
       // caller's "no text extracted" handling applies, rather than a placeholder that would be
       // saved as if it were real contract content. (OCR of rasterized PDF pages is not implemented.)
@@ -518,12 +529,13 @@ export async function extractTextFromPlainText(
     text = buffer.subarray(2).toString("utf16le");
   } else if (hasPrefix(buffer, [0xfe, 0xff])) {
     const source = buffer.subarray(2);
-    const swapped = Buffer.alloc(source.length);
-    for (let index = 0; index + 1 < source.length; index += 2) {
-      swapped[index] = source[index + 1]!;
-      swapped[index + 1] = source[index]!;
-    }
-    text = swapped.toString("utf16le");
+    // Native word swap instead of a per-byte JS loop (a 20 MB file was ~10M bounds-checked
+    // iterations). swap16() throws on an odd byte count, so drop a trailing stray byte first —
+    // matching the old loop, whose `index + 1 < length` bound also ignored it. Buffer.from copies,
+    // so the caller's buffer is never mutated in place.
+    text = Buffer.from(source.subarray(0, source.length & ~1))
+      .swap16()
+      .toString("utf16le");
   } else {
     text = buffer.toString("utf-8");
   }

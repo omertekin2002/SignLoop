@@ -112,4 +112,30 @@ describe("validateFileSignature", () => {
       text: "Contract text",
     });
   });
+
+  it("decodes big-endian UTF-16 and leaves the source buffer untouched", async () => {
+    const body = Buffer.from("Contract text", "utf16le").swap16(); // → UTF-16BE bytes
+    const utf16be = Buffer.concat([Buffer.from([0xfe, 0xff]), body]);
+    const pristine = Buffer.from(utf16be);
+
+    await expect(extractTextFromPlainText(utf16be)).resolves.toMatchObject({
+      text: "Contract text",
+    });
+    // The decoder must copy, not swap the caller's bytes in place — the same buffer is handed to
+    // object storage after extraction.
+    expect(utf16be.equals(pristine)).toBe(true);
+  });
+
+  it("tolerates a big-endian UTF-16 body with a stray trailing byte", async () => {
+    const body = Buffer.from("Contract text", "utf16le").swap16();
+    const utf16be = Buffer.concat([
+      Buffer.from([0xfe, 0xff]),
+      body,
+      Buffer.from([0x00]),
+    ]);
+
+    await expect(extractTextFromPlainText(utf16be)).resolves.toMatchObject({
+      text: "Contract text",
+    });
+  });
 });
