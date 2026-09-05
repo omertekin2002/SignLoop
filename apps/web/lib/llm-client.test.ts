@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  resolvePrimaryModel,
+  PRIMARY_LLM_MODEL,
   createOpenAiCompatibleClient,
   LlmResponseValidationError,
 } from "./llm-client";
@@ -31,4 +33,10 @@ describe("LlmResponseValidationError", () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe("LlmResponseValidationError");
   });
+});
+
+
+it("distinguishes unavailable primary from the configured default", () => {
+  expect(resolvePrimaryModel(null)).toBeNull();
+  expect(resolvePrimaryModel(undefined)).toBe(PRIMARY_LLM_MODEL);
 });

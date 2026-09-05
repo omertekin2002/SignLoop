@@ -1,5 +1,7 @@
 "use client";
 
+import { uploadContract } from "@/lib/upload-contract";
+
 import { useState, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -15,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { apiClient, getApiErrorMessage } from "@/lib/api-client";
+import { getApiErrorMessage } from "@/lib/api-client";
 import { formatFileSize } from "@/lib/utils";
 import {
   MAX_UPLOAD_FILE_SIZE,
@@ -44,31 +46,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
   };
 
   const uploadMutation = useMutation({
-    mutationFn: async () => {
-      if (!file) throw new Error("No file selected");
-
-      // 1. Create the contract.
-      const createRes = await apiClient.post("/contracts", {
-        title: contractName.trim(),
-      });
-      const contractId = createRes.data.id;
-
-      // 2. Upload the file; if this fails, roll back the just-created contract so we don't
-      // leave an empty, file-less contract behind (mirrors the project page flow).
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
-        const uploadResponse = await apiClient.post<{
-          warning?: string;
-        }>(`/contracts/${contractId}/upload`, formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-        return uploadResponse.data;
-      } catch (uploadError) {
-        await apiClient.delete(`/contracts/${contractId}`).catch(() => {});
-        throw uploadError;
-      }
-    },
+    mutationFn: () => uploadContract({ file, title: contractName }),
     onSuccess: (result) => {
       if (result.warning) {
         toast.warning(`Contract uploaded. ${result.warning}`);

@@ -50,7 +50,6 @@ type AnalysisRecord = {
   id: string;
   riskBadge?: string | null;
   resultJson?: Partial<AnalysisResult> | null;
-  keyPoints?: string[] | null;
   llmProvider?: string | null;
   llmModel?: string | null;
   createdAt?: string | Date | null;
@@ -163,14 +162,19 @@ const ContractDetails = () => {
 
   const sortedAnalyses = useMemo<AnalysisRecord[]>(() => {
     const list = Array.isArray(contract?.analyses) ? contract.analyses : [];
-    const ts = (value: unknown) => coerceDate(value)?.getTime() ?? 0;
-    return [...list].sort((a, b) => ts(b?.createdAt) - ts(a?.createdAt));
+    return list;
   }, [contract?.analyses]);
   const latestAnalysisRecord = sortedAnalyses[0] ?? null;
   const selectedAnalysis = selectedAnalysisId
     ? (sortedAnalyses.find((a) => a.id === selectedAnalysisId) ?? null)
     : null;
-  const analysis = selectedAnalysis ?? latestAnalysisRecord;
+  const viewingOlder = Boolean(selectedAnalysis && selectedAnalysis.id !== latestAnalysisRecord?.id);
+  const historicalAnalysisQuery = useQuery({
+    queryKey: ["analysis", id, selectedAnalysisId],
+    enabled: viewingOlder,
+    queryFn: async () => (await apiClient.get<AnalysisRecord>(`/contracts/${id}/analysis/${selectedAnalysisId}`)).data,
+  });
+  const analysis = viewingOlder ? historicalAnalysisQuery.data ?? null : latestAnalysisRecord;
   const olderAnalyses = sortedAnalyses.slice(1);
   const isViewingHistoricalAnalysis = Boolean(
     analysis?.id &&
@@ -204,26 +208,14 @@ const ContractDetails = () => {
         ? resultJson.risk_badge
         : "UNKNOWN";
 
-  const keyPoints: string[] = Array.isArray(analysis?.keyPoints)
-    ? analysis.keyPoints
-    : Array.isArray(resultJson?.key_points)
-      ? resultJson.key_points
-      : [];
+  const keyPoints: string[] = Array.isArray(resultJson?.key_points) ? resultJson.key_points : [];
   const redFlags: AnalysisResult["red_flags"] = Array.isArray(
     resultJson?.red_flags,
   )
     ? resultJson.red_flags
     : [];
-  const redFlagFindings = redFlags
-    .map((flag) => {
-      const type = typeof flag?.type === "string" ? flag.type.trim() : "";
-      const explanation =
-        typeof flag?.explanation === "string" ? flag.explanation.trim() : "";
-      if (type && explanation) return `${type}: ${explanation}`;
-      return explanation || type || "";
-    })
-    .filter(Boolean);
-  const keyFindings = redFlagFindings.length > 0 ? redFlagFindings : keyPoints;
+  const coverageNotices = Array.isArray(resultJson?.coverage_notices) ? resultJson.coverage_notices : [];
+  const keyFindings = keyPoints.filter((point) => !coverageNotices.includes(point));
   const summaryCancellation =
     summary?.cancellation && typeof summary.cancellation === "object"
       ? summary.cancellation
@@ -293,28 +285,16 @@ const ContractDetails = () => {
   });
 
   const deleteOlderAnalysesMutation = useMutation({
-    mutationFn: async (analysisIds: string[]) => {
-      const results = await Promise.allSettled(
-        analysisIds.map((analysisId) =>
-          apiClient.delete(`/contracts/${id}/analysis/${analysisId}`),
-        ),
-      );
-      const failed = results.filter((r) => r.status === "rejected").length;
-      return { total: analysisIds.length, failed };
+    mutationFn: async () => {
+      if (!latestAnalysisRecord) return;
+      await apiClient.delete(`/contracts/${id}/analysis?keep=${latestAnalysisRecord.id}`);
     },
-    onSuccess: ({ total, failed }) => {
-      // Always refresh — some deletes may have succeeded even if others failed.
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["contract", id] });
       queryClient.invalidateQueries({ queryKey: ["contracts"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["project"] });
-      if (failed > 0) {
-        toast.error(
-          `Deleted ${total - failed} of ${total}; ${failed} could not be deleted.`,
-        );
-      } else {
-        toast.success("Older analyses deleted");
-      }
+      toast.success("Older analyses deleted");
     },
     onError: (error: ApiError) => {
       toast.error(getApiErrorMessage(error, "Failed to delete older analyses"));
@@ -352,7 +332,7 @@ const ContractDetails = () => {
     }
   }, [selectedAnalysisId, sortedAnalyses]);
 
-  if (isLoading) {
+  if (isLoading || (viewingOlder && historicalAnalysisQuery.isPending)) {
     return (
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <Skeleton className="h-8 w-48 mb-6" />
@@ -366,6 +346,10 @@ const ContractDetails = () => {
         </Card>
       </div>
     );
+  }
+
+  if (viewingOlder && historicalAnalysisQuery.isError) {
+    return <div className="app-page p-8"><p>Could not load this historical analysis.</p><Button variant="outline" onClick={() => setSelectedAnalysisId(null)}>Return to latest analysis</Button></div>;
   }
 
   if (isError) {
@@ -515,6 +499,13 @@ const ContractDetails = () => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
+                  {coverageNotices.length > 0 && <div role="status" className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                    <p className="font-medium">Analysis coverage</p>
+                    <ul className="mt-2 list-disc pl-5">{coverageNotices.map((notice) => <li key={notice}>{notice}</li>)}</ul>
+                  </div>}
+                  {contract.status !== "ANALYZED" && (
+                    <p role="status" className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">This analysis uses older evidence. The contract or project context has changed; analyze again for a current result.</p>
+                  )}
                   {keyFindings.length > 0 ? (
                     <ul className="space-y-4">
                       {keyFindings.map((point: string, idx: number) => (
@@ -883,7 +874,7 @@ const ContractDetails = () => {
                     Analysis in progress
                   </h3>
                   <p className="text-sm text-muted-foreground max-w-sm mt-2">
-                    This can take up to a minute. We’ll refresh automatically
+                    This can take a few minutes. We’ll refresh automatically
                     when it’s ready.
                   </p>
                 </>
@@ -930,9 +921,7 @@ const ContractDetails = () => {
                     `Delete ${olderAnalyses.length} older analysis(es)? This cannot be undone.`,
                   );
                   if (!ok) return;
-                  deleteOlderAnalysesMutation.mutate(
-                    olderAnalyses.map((a) => a.id),
-                  );
+                  deleteOlderAnalysesMutation.mutate();
                 }}
               >
                 Delete older analyses

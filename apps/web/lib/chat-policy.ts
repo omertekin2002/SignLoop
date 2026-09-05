@@ -234,6 +234,7 @@ export function boundCanonicalChatHistory(
   const selected: ChatMessage[] = [];
 
   for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (selected.length >= MAX_CHAT_MESSAGES) break;
     const message = messages[index];
     if (!message || (message.role !== "user" && message.role !== "assistant"))
       continue;
@@ -250,4 +251,19 @@ export function boundCanonicalChatHistory(
   }
 
   return selected.reverse();
+}
+
+/** Bound history for transport; the runtime retains the full text for display. */
+export function boundTemporaryChatHistory(messages: readonly ChatMessage[]): ChatMessage[] {
+  const latest = messages.at(-1);
+  if (!latest) return [];
+  // Never silently truncate the user's new request; server validation gives a useful error.
+  const history = boundCanonicalChatHistory(messages.slice(-MAX_CHAT_MESSAGES, -1), latest.content.length);
+  const encoder = new TextEncoder();
+  const result = [...history, latest];
+  // Reserve framing space for thread/mode fields and account for Unicode and JSON escaping.
+  while (result.length > 1 && encoder.encode(JSON.stringify({ messages: result })).byteLength > MAX_CHAT_REQUEST_BODY_BYTES - 2048) {
+    result.shift();
+  }
+  return result;
 }

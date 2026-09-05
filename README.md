@@ -34,14 +34,14 @@ This repo uses:
 
 1. Frontend creates a contract record (`POST /api/contracts`).
 2. File upload endpoint receives the file (`POST /api/contracts/:id/upload`).
-3. Server validates MIME type and size (20MB max).
+3. Server validates MIME type and size (4 MiB max, with bounded multipart overhead).
 4. Text extraction is chosen by type:
    - PDF: `unpdf` (with scanned-PDF low-density fallback marker)
    - Images: `tesseract.js` OCR
    - Word: `word-extractor`
    - TXT: direct decode
 5. Binary is stored in:
-   - Vercel Blob if `BLOB_READ_WRITE_TOKEN` exists, or
+   - Vercel Blob if `BLOB_READ_WRITE_TOKEN` or `BLOB_STORE_ID` exists, or
    - local filesystem (`apps/web/uploads` by default).
 6. Extracted text is saved into `contracts.text_content`.
 
@@ -49,7 +49,7 @@ This repo uses:
 
 1. Analysis runs via `POST /api/contracts/:id/analyze`.
 2. `analyzeText()` builds a strict JSON-oriented prompt and calls the primary OpenAI-compatible endpoint.
-3. If primary fails, it falls back to OpenRouter models.
+3. Transport failures can fall back to OpenRouter. Semantic validation failures remain on the original provider and are rejected.
 4. Output is parsed, repaired (if malformed), normalized, and validated against Zod schemas.
 5. Result is stored in `analyses.result_json`, and contract status moves to `ANALYZED`.
 
@@ -107,6 +107,9 @@ Primary tables:
 - `user_settings` (preferred primary model + personality)
 - `chat_threads`
 - `chat_messages`
+- `chat_attachments` (image bytes fetched separately through an ownership-checked route)
+- `generation_operations` (expiring leases for overlapping inference)
+- `storage_deletions` (durable object cleanup outbox)
 
 Migrations live in `apps/web/db/migrations`, and a migration runner exists at `apps/web/db/migrate.js`.
 
@@ -129,11 +132,10 @@ Primary LLM endpoint (OpenAI-compatible):
 - `PRIMARY_LLM_MODEL` (default: `gemini-3-flash`)
 - `PRIMARY_LLM_API_KEY` (optional if endpoint does not require auth)
 
-SignLoop refreshes the provider's `/models` list before opening a model selector, creating a saved
-chat, entering Settings, saving a model, starting contract analysis, or generating an authenticated
-chat response. A saved model that disappears is replaced by the first currently available primary
-model for that operation; if none are available, the normal OpenRouter fallback behavior remains in
-effect.
+SignLoop caches model discovery for 60 seconds (10 seconds after failure). Normal chat and analysis
+reuse that cache. Opening the selector or explicitly refreshing settings can request fresh discovery.
+Creating an empty chat does not contact a provider. When no primary model is available, inference
+skips primary and uses the configured OpenRouter fallback.
 
 Fallback LLM endpoint (OpenRouter):
 
@@ -152,7 +154,8 @@ Model-independent web search:
 
 Storage:
 
-- `BLOB_READ_WRITE_TOKEN` (if set, enables Vercel Blob)
+- `BLOB_READ_WRITE_TOKEN` or `BLOB_STORE_ID` (enables Vercel Blob; store-ID authentication uses Vercel OIDC)
+- `BLOB_ACCESS` (defaults to `private`; existing public stores must explicitly set `public`)
 - `LOCAL_STORAGE_PATH` (optional local fallback path)
 - `LOCAL_STORAGE_BUCKET` (optional local fallback bucket label)
 
@@ -163,8 +166,8 @@ App URL metadata:
 Schema bootstrap:
 
 - `SKIP_SCHEMA_BOOTSTRAP` (set to `1` in deployments where `bun run db:migrate` is applied at
-  deploy time; skips the runtime schema bootstrap and its ~30 DDL statements per serverless cold
-  start. Leave unset in dev for zero-setup first runs.)
+  deploy time; skips runtime migration checks. When unset, startup and the command run the same
+  automatically discovered migrations under a database advisory lock.)
 
 ---
 
@@ -227,3 +230,50 @@ bun run db:migrate
 
 - Root `vercel.json` builds only the web app using Turbo filters.
 - Bun is the expected package manager in CI/deploy environments.
+
+
+## Audit fixes and rollout
+
+Apply `bun run db:migrate` before deploying with `SKIP_SCHEMA_BOOTSTRAP=1`. Migration 012 installs
+foreign keys/cascades, deletion outbox triggers, context invalidation, and generation leases.
+It validates existing relationships where possible; legacy orphan rows are retained and generate
+warnings, rather than being silently deleted. Migrations 013–014 add chat attachments and persisted
+extraction warnings. The runtime includes these migration files in its deployment trace.
+
+Analysis has a 270-second operation deadline and chat a 155-second deadline, leaving time for
+persistence within their route budgets. SDK retries are disabled; fallback streaming attempts are
+bounded to 45 seconds. Contract and context changes invalidate previous analyses. The detail page
+shows evidence limitations and fetches historical result bodies only when selected.
+
+Dashboard collections load in pages of 50. Saved chats initially load the most recent 50 messages,
+with older history on demand. Successful turns update the cache from the newly persisted message
+pair. New saved images live in `chat_attachments`; older inline images remain readable via the same
+authenticated image route. Temporary chats retain images only in browser conversation state.
+
+Database deletion records object cleanup work atomically, including concurrent uploads committed
+before the cascade. Delete requests process the outbox after responding. Failed cleanup remains
+queued for subsequent delete requests or this command (from `apps/web`):
+
+```bash
+bun run storage:cleanup
+```
+
+The command processes bounded batches. It does not create a recurring job; deployments that need
+cleanup retries without subsequent traffic should schedule this command in their operations setup.
+
+Run concurrency and migration regression tests against a disposable local PostgreSQL instance:
+
+```bash
+cd apps/web
+bun run test:integration
+```
+
+The script defaults to Homebrew PostgreSQL 16. Set `POSTGRES_BIN` to another installation's `bin`
+directory if needed. It creates a temporary database using a Unix socket, applies every migration,
+runs ownership/concurrency tests, then stops and removes that database. It never uses `POSTGRES_URL`.
+
+Remaining architectural work: direct-to-storage uploads above 4 MiB, automatic retries for cleanup
+without traffic, admission/spending quotas for anonymous inference, process isolation for document
+parsers, and pagination of very large per-project collections and analysis-history metadata. These
+require separate storage/product/operations choices; the current fixes preserve existing chat and
+web-search policy. No production migration or deployment is performed by the test commands.

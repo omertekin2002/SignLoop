@@ -26,6 +26,16 @@ const validPayload: AnalysisResult = {
 };
 
 describe("parseStrictJson", () => {
+  it.each(["2 months", "1 year", "15-30 days", "10 business days", "about 30 days", "1.5 days"])("rejects ambiguous calendar-day conversion: %s", (notice) => {
+    const payload = { ...validPayload, summary: { ...validPayload.summary, cancellation: { how: "Email", notice_period: notice } } };
+    expect(() => parseStrictJson(JSON.stringify(payload))).toThrow(/omitted or unusable/);
+  });
+
+  it("repairs syntax without altering quoted commas or escaped quotes", () => {
+    const keyPoints = ['Literal clause: A, }', 'Quoted ": B, ]', 'Backslash \\ and comma, }'];
+    const payload = JSON.stringify({ ...validPayload, key_points: keyPoints }).replace(/}$/, ",}");
+    expect(parseStrictJson<AnalysisResult>(payload).key_points).toEqual(keyPoints);
+  });
   it("parses valid schema-compliant JSON", () => {
     const result = parseStrictJson<AnalysisResult>(
       JSON.stringify(validPayload),

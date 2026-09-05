@@ -10,7 +10,9 @@
     "lint": "eslint --max-warnings 0",
     "check-types": "next typegen && tsc --noEmit",
     "test": "vitest run",
-    "db:migrate": "node ./db/migrate.js"
+    "db:migrate": "node ./db/migrate.js",
+    "test:integration": "bash ./db/test-integration.sh",
+    "storage:cleanup": "bun ./db/cleanup-storage.ts"
   },
   "dependencies": {
     "@assistant-ui/react": "0.12.22",
@@ -42,7 +44,7 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "sonner": "^2.0.7",
-    "tailwind-merge": "^3.6.0",
+    "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
     "tesseract.js": "^7.0.0",
     "unpdf": "^1.6.2",

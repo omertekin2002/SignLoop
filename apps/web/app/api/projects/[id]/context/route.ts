@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
 import {
   addContextDocumentToProject,
-  getProjectByIdForUser,
+  listProjectContextDocumentsForUser,
   isProjectOwnedByUser,
 } from "@/lib/server-db";
 import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
@@ -33,15 +33,12 @@ export async function GET(
   if (!isUuid(id)) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
-  const project = await getProjectByIdForUser(userId, id);
-  if (!project) {
+  if (!await isProjectOwnedByUser(userId, id)) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  return NextResponse.json({
-    data: project.contextDocuments,
-    total: project.contextDocuments.length,
-  });
+  const data = await listProjectContextDocumentsForUser(userId, id);
+  return NextResponse.json({ data, total: data.length });
 }
 
 export async function POST(
@@ -135,6 +132,7 @@ export async function POST(
       contentType: prepared.mimeType,
       sizeBytes: prepared.file.size,
       extractedText: prepared.text,
+      extractionWarning: prepared.extractionWarning,
       wordCount,
     });
   } catch (error: unknown) {

@@ -26,6 +26,8 @@ import {
   resolveAvailablePrimaryModel,
 } from "@/lib/model-settings";
 import {
+  type ChatMessageRecord,
+  claimGenerationOperation,
   appendChatMessagesToThread,
   getRecentChatMessagesForThreadForUser,
   getUserSettingsByUserId,
@@ -144,16 +146,16 @@ async function persistChatMessages(input: {
   assistantModel: string | null;
   assistantProvider: string | null;
   temporary: boolean;
-}): Promise<void> {
+}): Promise<ChatMessageRecord[]> {
   if (input.temporary) {
-    return;
+    return [];
   }
 
   if (!input.userId) {
     throw new Error("Unauthorized");
   }
 
-  await appendChatMessagesToThread({
+  return appendChatMessagesToThread({
     userId: input.userId,
     threadId: input.threadId,
     messages: [
@@ -176,11 +178,13 @@ function toDoneStreamEvent(input: {
   message: string;
   temporary: boolean;
   persisted?: boolean;
+  storedMessages: ChatMessageRecord[];
 }): Record<string, unknown> {
   const { reply, message, temporary, persisted = true } = input;
 
   return {
     type: "done",
+    storedMessages: input.storedMessages,
     message,
     provider: reply.provider,
     model: reply.model,
@@ -194,6 +198,10 @@ function toDoneStreamEvent(input: {
 }
 
 export async function POST(req: Request) {
+  let release: (() => Promise<void>) | null = null;
+  let streaming = false;
+  let storedMessages: ChatMessageRecord[] = [];
+  const operationSignal = AbortSignal.any([req.signal, AbortSignal.timeout(155_000)]);
   try {
     const declaredContentLength = Number(req.headers.get("content-length"));
     if (
@@ -259,6 +267,11 @@ export async function POST(req: Request) {
     let conversationMessages = parsedMessages.messages;
     const latestUserMessage = conversationMessages.at(-1)!;
 
+    if (userId && !isTemporaryChat) {
+      release = await claimGenerationOperation(userId, "chat", threadId, 240);
+      if (!release) return NextResponse.json({ error: "A reply is already running in this chat." }, { status: 409 });
+    }
+
     const [settings, persistedMessages, modelSnapshot] = await Promise.all([
       userId ? getUserSettingsByUserId(userId) : Promise.resolve(null),
       userId && !isTemporaryChat
@@ -272,7 +285,7 @@ export async function POST(req: Request) {
       // call below. Anonymous *text* chat does not: it uses the configured default model, so it
       // skips the upstream /models round-trip rather than blocking on a 5s timeout for nothing.
       userId || isImageMode
-        ? getModelAvailabilitySnapshot({ forceRefresh: true })
+        ? getModelAvailabilitySnapshot()
         : Promise.resolve({
             availablePrimaryModels: [],
             imageGenerationAvailable: false,
@@ -284,7 +297,7 @@ export async function POST(req: Request) {
           settings?.primaryModel,
           modelSnapshot.availablePrimaryModels,
         )
-      : null;
+      : undefined;
 
     if (!isTemporaryChat) {
       if (persistedMessages === null) {
@@ -318,14 +331,14 @@ export async function POST(req: Request) {
       }
 
       const reply = await generateImageReply(latestUserMessage.content, {
-        signal: req.signal,
+        signal: operationSignal,
         userId,
       });
       let persisted = true;
 
       if (!isTemporaryChat) {
         try {
-          await persistChatMessages({
+          storedMessages = await persistChatMessages({
             userId,
             threadId,
             latestUserMessage,
@@ -345,6 +358,8 @@ export async function POST(req: Request) {
 
       return NextResponse.json({
         ...reply,
+        message: storedMessages.at(-1)?.content ?? reply.message,
+        storedMessages,
         mode: isTemporaryChat ? "temporary-chat" : "chat",
         persisted: isTemporaryChat ? undefined : persisted,
       });
@@ -367,6 +382,7 @@ export async function POST(req: Request) {
 
     const wantsStream = isRecord(body) && body.stream === true;
     if (wantsStream) {
+      streaming = true;
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
           let sentDone = false;
@@ -374,7 +390,7 @@ export async function POST(req: Request) {
           try {
             for await (const chunk of generateChatReplyStream(promptMessages, {
               primaryModel: selectedPrimaryModel,
-              signal: req.signal,
+              signal: operationSignal,
               enableWebSearch,
             })) {
               if (req.signal.aborted) {
@@ -398,7 +414,7 @@ export async function POST(req: Request) {
               // Log it, mark the done event as unpersisted, and still finalize the turn.
               let persisted = true;
               try {
-                await persistChatMessages({
+                storedMessages = await persistChatMessages({
                   userId,
                   threadId,
                   latestUserMessage,
@@ -422,6 +438,7 @@ export async function POST(req: Request) {
                     message: assistantMessage,
                     temporary: isTemporaryChat,
                     persisted,
+                    storedMessages,
                   }),
                 ),
               );
@@ -449,6 +466,7 @@ export async function POST(req: Request) {
               }),
             );
           } finally {
+            await release?.().catch((error) => console.error("Chat lease release failed", error));
             controller.close();
           }
         },
@@ -467,7 +485,7 @@ export async function POST(req: Request) {
       promptMessages,
       {
         primaryModel: selectedPrimaryModel,
-        signal: req.signal,
+        signal: operationSignal,
         enableWebSearch,
       },
     );
@@ -483,7 +501,7 @@ export async function POST(req: Request) {
       }
 
       try {
-        await persistChatMessages({
+        storedMessages = await persistChatMessages({
           userId,
           threadId,
           latestUserMessage,
@@ -502,6 +520,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       message: assistantMessage,
+      storedMessages,
       provider,
       model,
       mode: isTemporaryChat ? "temporary-chat" : "chat",
@@ -517,5 +536,7 @@ export async function POST(req: Request) {
       { error: getPublicChatErrorMessage(error) },
       { status: 500 },
     );
+  } finally {
+    if (!streaming) await release?.().catch((error) => console.error("Chat lease release failed", error));
   }
 }

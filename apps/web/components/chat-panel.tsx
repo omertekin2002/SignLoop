@@ -1,5 +1,8 @@
 "use client";
 
+import { toast } from "sonner";
+import { boundTemporaryChatHistory } from "@/lib/chat-policy";
+
 import {
   forwardRef,
   memo,
@@ -82,6 +85,7 @@ type ChatApiSuccess = {
   provider?: string;
   model?: string;
   persisted?: boolean;
+  storedMessages?: ChatThreadMessage[];
 };
 
 type ChatApiStreamEvent =
@@ -108,6 +112,7 @@ type ChatCapabilities = {
 
 type ChatThreadMessage = {
   id: string;
+  position: number;
   role: "system" | "user" | "assistant";
   content: string;
   createdAt: string;
@@ -119,6 +124,7 @@ type ChatThreadDetail = {
   id: string;
   title: string;
   messages: ChatThreadMessage[];
+  hasMore: boolean;
 };
 
 function extractMessageText(message: ThreadMessage): string {
@@ -167,13 +173,9 @@ function extractMessageText(message: ThreadMessage): string {
 }
 
 function toApiMessages(messages: readonly ThreadMessage[]): ChatApiMessage[] {
-  return messages
-    .map((message) => ({
-      role: message.role,
-      content: extractMessageText(message),
-    }))
-    .filter((message) => message.content.length > 0)
-    .slice(-30);
+  return boundTemporaryChatHistory(messages.slice(-30)
+    .map((message) => ({ role: message.role, content: extractMessageText(message) }))
+    .filter((message) => message.content.length > 0));
 }
 
 function parseError(payload: unknown, status: number): string {
@@ -200,6 +202,7 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
 
   return {
     message,
+    storedMessages: Array.isArray(payload.storedMessages) ? payload.storedMessages.filter((message): message is ChatThreadMessage => isRecord(message) && typeof message.id === "string" && typeof message.content === "string" && typeof message.position === "number" && (message.role === "user" || message.role === "assistant")) : undefined,
     provider:
       typeof payload.provider === "string" ? payload.provider : undefined,
     model: typeof payload.model === "string" ? payload.model : undefined,
@@ -362,19 +365,6 @@ function toRuntimeMessages(messages: ChatThreadMessage[]): ThreadMessageLike[] {
   }));
 }
 
-function createRuntimeMessage(
-  role: "user" | "assistant",
-  content: string,
-  idPrefix: string,
-): ThreadMessageLike {
-  return {
-    id: `${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    role,
-    content,
-    createdAt: new Date(),
-  };
-}
-
 const UserTextPart = () => (
   <MessagePartPrimitive.Text
     component="p"
@@ -521,7 +511,8 @@ const MarkdownImage = ({
 
   const isInlineImage =
     /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(src) ||
-    /^blob:/i.test(src);
+    /^blob:/i.test(src) ||
+    /^\/api\/chat\/threads\/[a-f0-9-]{36}\/images\/[a-f0-9-]{36}$/.test(src);
 
   // Model-authored remote image URLs must not become automatic browser requests. A non-anchor
   // placeholder also stays valid when Markdown wraps the image in a link.
@@ -847,10 +838,10 @@ export function ChatPanel({
   const { isLoaded: isUserLoaded, user } = useUser();
   const queryClient = useQueryClient();
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
-  const [isRunningInitialPrompt, setIsRunningInitialPrompt] = useState(false);
   const [persistenceWarning, setPersistenceWarning] = useState(false);
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [imageMode, setImageMode] = useState(false);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const hydratedSignatureRef = useRef<string | null>(null);
   const initialPromptSignatureRef = useRef<string | null>(null);
   const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
@@ -872,6 +863,7 @@ export function ChatPanel({
 
   const activeThreadQuery = useQuery({
     queryKey: ["chat-thread", activeThreadId],
+    refetchOnWindowFocus: false,
     enabled: !temporary && Boolean(activeThreadId),
     queryFn: async () => {
       const response = await fetch(`/api/chat/threads/${activeThreadId}`);
@@ -1035,9 +1027,15 @@ export function ChatPanel({
         if (!temporary) {
           setPersistenceWarning(completedSnapshot.persisted === false);
           queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
-          queryClient.invalidateQueries({
-            queryKey: ["chat-thread", threadId],
-          });
+          if (completedSnapshot.persisted !== false && completedSnapshot.storedMessages?.length) {
+            const stored = completedSnapshot.storedMessages;
+            queryClient.setQueryData<ChatThreadDetail>(["chat-thread", threadId], (previous) => {
+              const ids = new Set(stored.map((message) => message.id));
+              const messages = [...(previous?.messages ?? []).filter((message) => !ids.has(message.id)), ...stored];
+              hydratedSignatureRef.current = `${threadId}:${messages.length}:${messages.at(-1)?.id ?? "none"}`;
+              return { id: threadId!, title: previous?.title ?? "Chat", hasMore: previous?.hasMore ?? false, messages };
+            });
+          }
         }
       },
     }),
@@ -1092,107 +1090,17 @@ export function ChatPanel({
 
   useEffect(() => {
     const prompt = initialPrompt?.trim();
-    if (!temporary || !prompt || !privacyAcknowledged) {
-      return;
-    }
-
-    const signature = `temporary-prompt:${temporarySessionKey}:${prompt}`;
-    if (initialPromptSignatureRef.current === signature) {
-      return;
-    }
-
-    initialPromptSignatureRef.current = signature;
-    const abortController = new AbortController();
-    let settled = false;
-    const userMessage = createRuntimeMessage("user", prompt, "url-prompt");
-
-    runtime.thread.reset([userMessage]);
-    setIsRunningInitialPrompt(true);
-
-    void (async () => {
-      try {
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            temporary: true,
-            messages: [{ role: "user", content: prompt }],
-            stream: true,
-          }),
-          signal: abortController.signal,
-        });
-
-        const assistantMessage = createRuntimeMessage(
-          "assistant",
-          "",
-          "url-answer",
-        );
-        let completedSnapshot: ChatApiStreamSnapshot | null = null;
-
-        for await (const snapshot of readChatApiResponse(response)) {
-          if (abortController.signal.aborted) {
-            return;
-          }
-
-          completedSnapshot = snapshot.done ? snapshot : completedSnapshot;
-          runtime.thread.reset([
-            userMessage,
-            {
-              ...assistantMessage,
-              content: snapshot.message,
-              ...(snapshot.done
-                ? {
-                    metadata: {
-                      custom: {
-                        provider: snapshot.provider ?? null,
-                        model: snapshot.model ?? null,
-                      },
-                    },
-                  }
-                : {}),
-            },
-          ]);
-        }
-
-        if (!completedSnapshot) {
-          throw new Error("Chat stream ended before completion.");
-        }
-      } catch (error) {
-        if (abortController.signal.aborted) {
-          return;
-        }
-
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Failed to generate a response.";
-        runtime.thread.reset([
-          userMessage,
-          createRuntimeMessage("assistant", message, "url-answer-error"),
-        ]);
-      } finally {
-        settled = true;
-        if (!abortController.signal.aborted) {
-          setIsRunningInitialPrompt(false);
-        }
-      }
-    })();
-
-    return () => {
-      abortController.abort();
-      if (!settled && initialPromptSignatureRef.current === signature) {
-        initialPromptSignatureRef.current = null;
-      }
-    };
-  }, [
-    initialPrompt,
-    privacyAcknowledged,
-    runtime,
-    temporary,
-    temporarySessionKey,
-  ]);
+    if (!temporary || !prompt || !privacyAcknowledged) return;
+    const signature = `temporary-prompt:${prompt}`;
+    let canceled = false;
+    // Defer past Strict Mode's setup/cleanup replay; use the normal cancellable adapter.
+    queueMicrotask(() => {
+      if (canceled || initialPromptSignatureRef.current === signature) return;
+      initialPromptSignatureRef.current = signature;
+      runtime.thread.append({ role: "user", content: [{ type: "text", text: prompt }] });
+    });
+    return () => { canceled = true; };
+  }, [initialPrompt, privacyAcknowledged, runtime, temporary]);
 
   useEffect(() => {
     if (temporary) {
@@ -1255,6 +1163,22 @@ export function ChatPanel({
     [runtime],
   );
 
+  const loadOlderMessages = async () => {
+    const first = activeThreadQuery.data?.messages[0];
+    if (!first || !activeThreadId || runtime.thread.getState().isRunning) return;
+    setIsLoadingOlder(true);
+    try {
+      const response = await fetch(`/api/chat/threads/${activeThreadId}?before=${first.position}`);
+      if (!response.ok) throw new Error("Could not load older messages");
+      const { data } = await response.json() as { data: ChatThreadDetail };
+      queryClient.setQueryData<ChatThreadDetail>(["chat-thread", activeThreadId], (previous) => previous ? { ...previous, hasMore: data.hasMore, messages: [...data.messages, ...previous.messages] } : data);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load older messages");
+    } finally {
+      setIsLoadingOlder(false);
+    }
+  };
+
   const restorePersistedConversation = async () => {
     if (!activeThreadId) return;
 
@@ -1272,7 +1196,6 @@ export function ChatPanel({
   const composerDisabled =
     !privacyAcknowledged ||
     isHydratingThread ||
-    isRunningInitialPrompt ||
     isThreadUnavailable ||
     persistenceWarning;
 
@@ -1288,7 +1211,12 @@ export function ChatPanel({
       {temporary && landingHero ? <LandingGridBackdrop /> : null}
       <CardContent className="flex h-full min-h-0 flex-1 flex-col p-0 sm:p-0">
         <AssistantRuntimeProvider runtime={runtime}>
-          <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col overflow-hidden">
+          {!temporary && activeThreadQuery.data?.hasMore && (
+        <Button variant="ghost" size="sm" disabled={isLoadingOlder} onClick={() => void loadOlderMessages()}>
+          {isLoadingOlder ? "Loading…" : "Load older messages"}
+        </Button>
+      )}
+      <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col overflow-hidden">
             <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth">
               {isHydratingThread ? (
                 <div className="flex h-full flex-col items-center justify-center space-y-4 pb-20 text-center">
@@ -1434,8 +1362,6 @@ export function ChatPanel({
                       ? "Loading conversation..."
                       : isThreadUnavailable
                         ? "Conversation unavailable"
-                        : isRunningInitialPrompt
-                          ? "Answering..."
                           : imageMode
                             ? "Describe the image you want..."
                             : "Ask SignLoop..."
@@ -1477,8 +1403,6 @@ export function ChatPanel({
               <div className="mx-auto mt-1.5 max-w-3xl text-center text-xs text-muted-foreground/80">
                 {isHydratingThread
                   ? "Conversation history is loading. Sending is disabled until it finishes."
-                  : isRunningInitialPrompt
-                    ? "Answering the temporary prompt from the URL."
                     : temporary
                       ? imageMode
                         ? "Image mode uses gpt-image-2. Temporary chat is not saved."

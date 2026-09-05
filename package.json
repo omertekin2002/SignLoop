@@ -11,6 +11,8 @@
     "db:migrate": "bun --filter web db:migrate"
   },
   "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.0",
     "prettier": "^3.9.5",
     "turbo": "^2.10.4",
     "typescript": "5.9.2"

@@ -138,3 +138,23 @@ describe("parseBoundedJsonRequest", () => {
     expect(oversized).toMatchObject({ ok: false, status: 413 });
   });
 });
+
+
+describe("temporary history transport", () => {
+  it("keeps long answers in the UI while bounding history for a follow-up", async () => {
+    const { boundTemporaryChatHistory } = await import("./chat-policy");
+    const full = "a".repeat(8000);
+    const input = [{ role: "assistant" as const, content: full }, { role: "user" as const, content: "Follow up" }];
+    const bounded = boundTemporaryChatHistory(input);
+    expect(input[0]!.content).toBe(full);
+    expect(bounded[0]!.content).toHaveLength(4000);
+    expect(parseClientChatMessages({ messages: bounded }).ok).toBe(true);
+  });
+  it("accounts for Unicode and JSON escaping before sending history", async () => {
+    const { boundTemporaryChatHistory, MAX_CHAT_REQUEST_BODY_BYTES } = await import("./chat-policy");
+    const history = Array.from({ length: 29 }, () => ({ role: "assistant" as const, content: "中\\\n".repeat(2000) }));
+    const messages = boundTemporaryChatHistory([...history, { role: "user", content: "Next" }]);
+    expect(new TextEncoder().encode(JSON.stringify({ messages })).byteLength).toBeLessThan(MAX_CHAT_REQUEST_BODY_BYTES - 2048);
+    expect(parseClientChatMessages({ messages }).ok).toBe(true);
+  });
+});

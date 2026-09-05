@@ -177,6 +177,9 @@ function resolveStreamedContent(input: {
   finalizedText: string | null;
   chunks: string[];
 }): string {
+  if (!input.completedResponse || input.completedResponse.status !== "completed") {
+    throw new Error("AI stream ended before successful completion");
+  }
   const completedText = input.completedResponse
     ? extractResponseOutputText(input.completedResponse)
     : null;
@@ -206,6 +209,9 @@ async function runChatWithResponsesModel(
     options,
   );
 
+  if (response.status !== "completed") {
+    throw new Error(extractResponseFailureMessage(response) ?? "AI response did not complete");
+  }
   const content = extractResponseOutputText(response);
   if (!content) {
     throw new Error("Empty response from AI");
@@ -238,7 +244,7 @@ async function* runOpenRouterResponsesModelStream(
       max_output_tokens: MAX_CHAT_OUTPUT_TOKENS,
       stream: true,
     }),
-    signal: options?.signal,
+    signal: AbortSignal.any([...(options?.signal ? [options.signal] : []), AbortSignal.timeout(45_000)]),
   });
 
   if (!response.ok) {
@@ -469,6 +475,8 @@ export async function* generateChatReplyStream(
   let primaryEmittedContent = false;
 
   try {
+    if (selectedPrimaryModel === null) throw new Error("No primary model is available");
+    options?.signal?.throwIfAborted();
     const primaryClient = createOpenAiCompatibleClient(
       PRIMARY_LLM_BASE_URL,
       PRIMARY_LLM_API_KEY,

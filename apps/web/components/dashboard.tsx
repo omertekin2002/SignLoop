@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useWorkspaceList } from "@/lib/use-workspace-list";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUser, useClerk } from "@clerk/nextjs";
 import {
@@ -234,53 +235,17 @@ const Dashboard = ({
   const [isRefreshingModels, setIsRefreshingModels] = useState(false);
   const modelRefreshPromiseRef = useRef<Promise<boolean> | null>(null);
 
-  const {
-    data: contracts,
-    isLoading: loadingContracts,
-    isLoadingError: contractsFailed,
-    refetch: refetchContracts,
-  } = useQuery({
-    queryKey: ["contracts"],
-    queryFn: async () => {
-      const response = await apiClient.get<{ data: Contract[] }>(
-        "/contracts?limit=200",
-      );
-      return response.data.data || [];
-    },
-    enabled: canUseSavedWorkspace,
-  });
-
-  const {
-    data: projects,
-    isLoading: loadingProjects,
-    isLoadingError: projectsFailed,
-    refetch: refetchProjects,
-  } = useQuery({
-    queryKey: ["projects"],
-    queryFn: async () => {
-      const response = await apiClient.get<{ data: Project[] }>(
-        "/projects?limit=200",
-      );
-      return response.data.data || [];
-    },
-    enabled: canUseSavedWorkspace,
-  });
-
-  const {
-    data: chatThreads,
-    isLoading: loadingChatThreads,
-    isLoadingError: chatThreadsFailed,
-    refetch: refetchChatThreads,
-  } = useQuery({
-    queryKey: ["chat-threads"],
-    queryFn: async () => {
-      const response = await apiClient.get<{ data?: ChatThreadSummary[] }>(
-        "/chat/threads?limit=200",
-      );
-      return response.data.data || [];
-    },
-    enabled: canUseSavedWorkspace,
-  });
+  const contractList = useWorkspaceList<Contract>("contracts", "/contracts?standalone=true", canUseSavedWorkspace && (activeTab === "contracts" || (sidebarOpen && openSections.contracts)));
+  const projectList = useWorkspaceList<Project>("projects", "/projects", canUseSavedWorkspace && (activeTab === "projects" || (sidebarOpen && openSections.projects)));
+  const threadList = useWorkspaceList<ChatThreadSummary>("chat-threads", "/chat/threads", canUseSavedWorkspace && (!isTemporaryChatSelected || (sidebarOpen && openSections.chat)));
+  const { data: contracts, isLoading: loadingContracts, isLoadingError: contractsFailed, refetch: refetchContracts } = contractList;
+  const { data: projects, isLoading: loadingProjects, isLoadingError: projectsFailed, refetch: refetchProjects } = projectList;
+  const { data: chatThreads, isLoading: loadingChatThreads, isLoadingError: chatThreadsFailed, refetch: refetchChatThreads } = threadList;
+  const renderLoadMore = (list: { hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: () => Promise<unknown> }) => list.hasNextPage ? (
+    <Button variant="ghost" size="sm" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
+      {list.isFetchingNextPage ? "Loading…" : "Load more"}
+    </Button>
+  ) : null;
 
   const { data: settingsData } = useQuery({
     queryKey: ["settings"],
@@ -337,21 +302,6 @@ const Dashboard = ({
     setSelectedChatThreadId(null);
     setIsTemporaryChatSelected(true);
     setTemporaryChatKey((key) => key + 1);
-  };
-
-  const addChatThreadToCache = (thread: ChatThreadSummary) => {
-    queryClient.setQueryData<ChatThreadSummary[]>(
-      ["chat-threads"],
-      (current) => {
-        const existingThreads = current || [];
-        return [
-          thread,
-          ...existingThreads.filter(
-            (existingThread) => existingThread.id !== thread.id,
-          ),
-        ];
-      },
-    );
   };
 
   const renderLoginRequired = (resource: "contracts" | "projects") => {
@@ -472,7 +422,6 @@ const Dashboard = ({
     },
     onSuccess: (thread) => {
       setRecentlyDeletedChatThreadId(null);
-      addChatThreadToCache(thread);
       selectNewChatThread(thread.id);
       setActiveTab("chat");
       setOpenSections((previous) => ({ ...previous, chat: true }));
@@ -489,7 +438,6 @@ const Dashboard = ({
       return;
     }
 
-    if (!(await refreshAvailableModels())) return;
     createChatMutation.mutate();
   };
 
@@ -645,6 +593,7 @@ const Dashboard = ({
                         </Link>
                       ))
                     )}
+                    {renderLoadMore(contractList)}
                   </CollapsibleContent>
                 </Collapsible>
 
@@ -713,6 +662,7 @@ const Dashboard = ({
                         </Link>
                       ))
                     )}
+                    {renderLoadMore(projectList)}
                   </CollapsibleContent>
                 </Collapsible>
 
@@ -867,6 +817,7 @@ const Dashboard = ({
                         </div>
                       ))
                     )}
+                    {renderLoadMore(threadList)}
                   </CollapsibleContent>
                 </Collapsible>
               </div>
@@ -1225,7 +1176,7 @@ const Dashboard = ({
               temporary={isTemporaryChatSelected}
               temporarySessionKey={temporaryChatKey}
               landingHero={landingHero}
-              initialPrompt={initialTemporaryPrompt}
+              initialPrompt={temporaryChatKey === 0 ? initialTemporaryPrompt : undefined}
               onThreadSelected={(threadId) => {
                 if (threadId) {
                   selectNewChatThread(threadId);
@@ -1237,6 +1188,8 @@ const Dashboard = ({
             />
           </div>
         </div>
+        {activeTab === "contracts" && renderLoadMore(contractList)}
+        {activeTab === "projects" && renderLoadMore(projectList)}
       </main>
 
       <AlertDialog

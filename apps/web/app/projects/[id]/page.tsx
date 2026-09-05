@@ -1,5 +1,7 @@
 "use client";
 
+import { uploadContract } from "@/lib/upload-contract";
+
 import { useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -118,6 +120,7 @@ const ProjectDetails = () => {
     },
     onSuccess: () => {
       toast.success("Project deleted");
+      queryClient.invalidateQueries({ queryKey: ["contracts"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.removeQueries({ queryKey: ["project", id] });
       router.push("/dashboard");
@@ -159,30 +162,7 @@ const ProjectDetails = () => {
   };
 
   const uploadContractMutation = useMutation({
-    mutationFn: async () => {
-      // 1. Create the contract with project association.
-      const createRes = await apiClient.post("/contracts", {
-        title: contractName.trim(),
-        projectId: id,
-      });
-      const contractId = createRes.data.id;
-
-      // 2. Upload the file; if this fails, roll back the just-created contract so we don't
-      // leave an empty, file-less contract behind.
-      try {
-        const formData = new FormData();
-        formData.append("file", selectedContractFile as File);
-        const uploadResponse = await apiClient.post<{
-          warning?: string;
-        }>(`/contracts/${contractId}/upload`, formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-        return uploadResponse.data;
-      } catch (uploadError) {
-        await apiClient.delete(`/contracts/${contractId}`).catch(() => {});
-        throw uploadError;
-      }
-    },
+    mutationFn: () => uploadContract({ file: selectedContractFile, title: contractName, projectId: id }),
     onSuccess: (result) => {
       if (result.warning) {
         toast.warning(`Contract uploaded. ${result.warning}`);
@@ -400,7 +380,8 @@ const ProjectDetails = () => {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          {contract.analyses?.[0]?.riskBadge && (
+                          {contract.status !== "ANALYZED" && Boolean(contract.analyses?.length) && <Badge variant="secondary">Needs re-analysis</Badge>}
+                          {contract.status === "ANALYZED" && contract.analyses?.[0]?.riskBadge && (
                             <Badge
                               className={getRiskColor(
                                 contract.analyses[0].riskBadge,

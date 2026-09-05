@@ -9,7 +9,7 @@ export async function GET(req: Request) {
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
 
-  const result = await listContractsByUserId(userId, parsePaginationParams(req));
+  const result = await listContractsByUserId(userId, parsePaginationParams(req), new URL(req.url).searchParams.get("standalone") === "true");
   return NextResponse.json(result);
 }
 

@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
 import {
   deleteContextDocumentFromProject,
-  getContextDocumentStorageKey,
 } from "@/lib/server-db";
-import { deleteObject } from "@/lib/object-storage";
+import { flushStorageDeletions } from "@/lib/storage-cleanup";
+import { after } from "next/server";
 import { isUuid } from "@/lib/utils";
 
 export async function DELETE(
@@ -23,24 +23,6 @@ export async function DELETE(
     );
   }
 
-  // Delete storage while DB reference still exists so a crash leaves a
-  // retryable DB record instead of a permanently orphaned file.
-  const storageKey = await getContextDocumentStorageKey(userId, id, docId);
-  if (storageKey) {
-    try {
-      await deleteObject(storageKey);
-    } catch (error: unknown) {
-      console.error(
-        "Failed to delete context storage before database cleanup:",
-        error,
-      );
-      return NextResponse.json(
-        { error: "Could not remove the context document file. Please retry." },
-        { status: 502 },
-      );
-    }
-  }
-
   const result = await deleteContextDocumentFromProject({
     userId,
     projectId: id,
@@ -54,5 +36,6 @@ export async function DELETE(
     );
   }
 
+  after(() => flushStorageDeletions().then(() => {}));
   return NextResponse.json({ success: true });
 }

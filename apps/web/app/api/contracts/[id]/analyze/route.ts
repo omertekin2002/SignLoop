@@ -3,6 +3,7 @@ import { requireUserId } from "@/lib/api-auth";
 import { isUuid } from "@/lib/utils";
 import { analyzeText } from "@/lib/analysis";
 import {
+  claimGenerationOperation,
   createAnalysisForContract,
   getContractWithLatestAnalysisForUser,
   getProjectContextForAnalysis,
@@ -14,9 +15,7 @@ import {
   resolveAvailablePrimaryModel,
 } from "@/lib/model-settings";
 
-// Analysis drives a primary-model call (60s client timeout, one retry) and, on failure, an ordered
-// OpenRouter fallback chain plus a JSON repair pass. The platform default would kill that mid-call
-// after the LLM cost was already paid, so the budget is stated explicitly.
+// Reserve 30 seconds of the route budget for persistence and response completion.
 export const maxDuration = 300;
 
 export async function POST(
@@ -33,6 +32,11 @@ export async function POST(
   }
   const force = new URL(req.url).searchParams.get("force") === "true";
 
+  const release = await claimGenerationOperation(userId, "contract", id, 360);
+  if (!release) return NextResponse.json({ error: "Analysis is already running for this contract." }, { status: 409 });
+  const operationSignal = AbortSignal.any([req.signal, AbortSignal.timeout(270_000)]);
+  const startedAt = Date.now();
+  try {
   const contract = await getContractWithLatestAnalysisForUser(userId, id);
 
   if (!contract) {
@@ -62,7 +66,7 @@ export async function POST(
       contract.projectId
         ? getProjectContextForAnalysis(userId, contract.projectId)
         : Promise.resolve([]),
-      getModelAvailabilitySnapshot({ forceRefresh: true }),
+      getModelAvailabilitySnapshot(),
     ]);
     const selectedPrimaryModel = resolveAvailablePrimaryModel(
       settings?.primaryModel,
@@ -73,7 +77,7 @@ export async function POST(
       undefined,
       {
         primaryModel: selectedPrimaryModel,
-        signal: req.signal,
+        signal: operationSignal,
         contextDocuments: contextDocuments.map((document) => ({
           title: document.title,
           documentType: document.documentType,
@@ -82,6 +86,8 @@ export async function POST(
         })),
       },
     );
+    const qualityWarnings = [contract.extractionWarning, ...contextDocuments.map((document) => document.extractionWarning ? `${document.title}: ${document.extractionWarning}` : null)].filter((warning): warning is string => Boolean(warning));
+    result.coverage_notices = [...qualityWarnings, ...(result.coverage_notices ?? [])];
     const created = await createAnalysisForContract({
       userId,
       contractId: contract.id,
@@ -91,6 +97,7 @@ export async function POST(
       resultJson: result as Record<string, unknown>,
       llmProvider: provider ?? null,
       llmModel: model ?? null,
+      processingTimeMs: Date.now() - startedAt,
     });
 
     return NextResponse.json({
@@ -113,5 +120,8 @@ export async function POST(
       { error: "Analysis failed. Please try again." },
       { status: 500 },
     );
+  }
+  } finally {
+    await release().catch((error) => console.error("Analysis lease release failed", error));
   }
 }

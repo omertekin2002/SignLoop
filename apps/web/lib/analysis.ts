@@ -306,13 +306,21 @@ function toNumberOrNull(value: unknown): number | null {
     return value;
   }
   if (typeof value === "string") {
-    const numericMatch = value.match(/-?\d+(\.\d+)?/);
+    const numericMatch = value.trim().match(/^-?\d+(?:\.\d+)?$/);
     if (numericMatch) {
       const parsed = Number(numericMatch[0]);
       if (Number.isFinite(parsed)) return parsed;
     }
   }
   return null;
+}
+
+// A month, range, or business-day deadline cannot safely be presented as calendar days.
+function toNoticeDays(value: unknown): number | null {
+  const parsed = typeof value === "string"
+    ? toNumberOrNull(value.trim().replace(/\s+(?:calendar\s+)?days?$/i, ""))
+    : toNumberOrNull(value);
+  return parsed !== null && Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
 function toClampedNumberOrNull(
@@ -360,7 +368,7 @@ function hasExplicitCriticalSummaryFields(parsed: unknown): boolean {
 
   if (!renewal || !cancellation) return false;
 
-  const noticePeriodDays = toNumberOrNull(
+  const noticePeriodDays = toNoticeDays(
     pickFirst(cancellation, [
       "notice_period_days",
       "noticeDays",
@@ -642,14 +650,13 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
         notice_period_days: Math.max(
           0,
           Math.round(
-            toNumber(
+            toNoticeDays(
               pickFirst(cancellation, [
                 "notice_period_days",
                 "noticeDays",
                 "notice_period",
               ]),
-              0,
-            ),
+            ) ?? 0,
           ),
         ),
         penalties: toStringArray(
@@ -682,7 +689,25 @@ function stripCodeFences(value: string): string {
 }
 
 function removeTrailingCommas(value: string): string {
-  return value.replace(/,\s*([}\]])/g, "$1");
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+    } else if (char === '"') {
+      inString = true;
+    } else if (char === ",") {
+      let next = index + 1;
+      while (/\s/.test(value[next] ?? "") && next < value.length) next += 1;
+      if (value[next] === "}" || value[next] === "]") continue;
+    }
+    result += char;
+  }
+  return result;
 }
 
 function extractBalancedJsonObject(value: string): string | null {
@@ -958,42 +983,19 @@ export function parseStrictJson<T>(content: string): T {
     return normalizedStrictResult.data as T;
   }
 
-  const normalizedLenientResult =
-    PartialAnalysisResultSchema.safeParse(normalizedParsed);
-  if (normalizedLenientResult.success) {
-    console.warn(
-      "LLM response required normalization before passing lenient validation",
-      {
-        strictIssues: formatValidationIssues(strictResult.error.issues).slice(
-          0,
-          10,
-        ),
-        lenientIssues: formatValidationIssues(lenientResult.error.issues).slice(
-          0,
-          10,
-        ),
-      },
-    );
-    return normalizedLenientResult.data as T;
-  }
-
   const strictIssues = formatValidationIssues(strictResult.error.issues);
   const lenientIssues = formatValidationIssues(lenientResult.error.issues);
   const normalizedStrictIssues = formatValidationIssues(
     normalizedStrictResult.error.issues,
   );
-  const normalizedLenientIssues = formatValidationIssues(
-    normalizedLenientResult.error.issues,
-  );
   const firstIssue =
     normalizedStrictIssues[0] ||
-    normalizedLenientIssues[0] ||
     lenientIssues[0] ||
     strictIssues[0] ||
     "Unknown schema mismatch";
 
   if (
-    normalizedLenientIssues.some((issue) =>
+    normalizedStrictIssues.some((issue) =>
       issue.includes("Analysis contains no substantive contract observations"),
     )
   ) {
@@ -1006,7 +1008,6 @@ export function parseStrictJson<T>(content: string): T {
     strictIssues,
     lenientIssues,
     normalizedStrictIssues,
-    normalizedLenientIssues,
   });
 
   throw new Error(`LLM response failed validation: ${firstIssue}`);
@@ -1044,6 +1045,7 @@ export async function analyzeText(
   const resultWithCoverageNotices = coverageNotices.length
     ? {
         ...result,
+        coverage_notices: coverageNotices,
         key_points: Array.from(
           new Set([...coverageNotices, ...result.key_points]),
         ),

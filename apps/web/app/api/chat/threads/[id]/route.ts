@@ -19,7 +19,9 @@ export async function GET(
     if (!isUuid(id)) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
-    const thread = await getChatThreadByIdForUser(userId, id);
+    const before = Number(new URL(_req.url).searchParams.get("before") ?? 2147483647);
+    if (!Number.isSafeInteger(before) || before < 1 || before > 2147483647) return NextResponse.json({ error: "Invalid history cursor" }, { status: 400 });
+    const thread = await getChatThreadByIdForUser(userId, id, before);
     if (!thread) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }

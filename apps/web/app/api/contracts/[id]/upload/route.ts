@@ -85,6 +85,7 @@ export async function POST(
       userId,
       contractId: id,
       text: prepared.text,
+      extractionWarning: prepared.extractionWarning,
       projectId: contract.projectId,
       title: contract.title,
       fileName: prepared.file.name,

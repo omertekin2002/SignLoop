@@ -30,6 +30,7 @@ vi.mock("@/lib/llm-client", () => ({
 import {
   generateChatReply,
   generateChatReplyStream,
+  type ChatReplyStreamChunk,
   type ChatMessage,
 } from "@/lib/chat";
 import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
@@ -82,7 +83,7 @@ beforeEach(() => {
   vi.setSystemTime(fixedNow);
   vi.resetAllMocks();
   mocks.resolvePrimaryModel.mockImplementation(
-    (model: string | null | undefined) => model?.trim() || "default/model",
+    (model: string | null | undefined) => model === null ? null : model?.trim() || "default/model",
   );
   mocks.extractResponseOutputText.mockImplementation(
     (response: { output_text?: unknown }) =>
@@ -104,7 +105,7 @@ afterEach(() => {
 
 describe("generateChatReply", () => {
   it("gives every model authoritative current time when search is disabled", async () => {
-    const create = vi.fn().mockResolvedValue({ output_text: "Plain answer" });
+    const create = vi.fn().mockResolvedValue({ status: "completed", output_text: "Plain answer" });
     const client = { responses: { create } };
     mocks.runWithPrimaryAndOpenRouterFallback.mockImplementation(
       async (selectedModel: string, run: RunChat) => ({
@@ -143,6 +144,7 @@ describe("generateChatReply", () => {
   it("gives any model Gemini-grounded evidence without native provider tools", async () => {
     const controller = new AbortController();
     const create = vi.fn().mockResolvedValue({
+      status: "completed",
       output_text: "Answer written by the selected model",
     });
     const client = { responses: { create } };
@@ -176,7 +178,7 @@ describe("generateChatReply", () => {
   });
 
   it("prepends trusted time context when no system message exists", async () => {
-    const create = vi.fn().mockResolvedValue({ output_text: "Timed answer" });
+    const create = vi.fn().mockResolvedValue({ status: "completed", output_text: "Timed answer" });
     const client = { responses: { create } };
     mocks.runWithPrimaryAndOpenRouterFallback.mockImplementation(
       async (selectedModel: string, run: RunChat) => ({
@@ -214,7 +216,7 @@ describe("generateChatReply", () => {
     const primaryCreate = vi.fn().mockRejectedValue(new Error("primary down"));
     const fallbackCreate = vi
       .fn()
-      .mockResolvedValue({ output_text: "Fallback answer" });
+      .mockResolvedValue({ status: "completed", output_text: "Fallback answer" });
     const primaryClient = { responses: { create: primaryCreate } };
     const fallbackClient = { responses: { create: fallbackCreate } };
 
@@ -264,11 +266,32 @@ describe("generateChatReply", () => {
 });
 
 describe("generateChatReplyStream", () => {
+  it.each(["primary", "fallback"])("rejects %s EOF after deltas without persisting a completed reply", async (provider) => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    async function* incomplete() { yield { type: "response.output_text.delta", delta: "Partial" }; }
+    mocks.createOpenAiCompatibleClient.mockReturnValue({ responses: { create: provider === "primary" ? vi.fn().mockResolvedValue(incomplete()) : vi.fn().mockRejectedValue(new Error("offline")) } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('data: {"type":"response.output_text.delta","delta":"Partial"}\n\n')));
+    const chunks: ChatReplyStreamChunk[] = [];
+    await expect((async () => {
+      for await (const chunk of generateChatReplyStream(originalMessages)) chunks.push(chunk);
+    })()).rejects.toThrow(/before successful completion/);
+    expect(chunks).toEqual([{ type: "delta", text: "Partial" }]);
+  });
+
+  it("skips primary when availability explicitly resolves to null", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('data: {"type":"response.completed","response":{"status":"completed","output_text":"Fallback"}}\n\n')));
+    const chunks: ChatReplyStreamChunk[] = [];
+    for await (const chunk of generateChatReplyStream(originalMessages, { primaryModel: null })) chunks.push(chunk);
+    expect(mocks.createOpenAiCompatibleClient).not.toHaveBeenCalled();
+    expect(chunks.at(-1)).toMatchObject({ type: "done", reply: { provider: "openrouter" } });
+  });
   it("preserves token streaming and attaches Gemini metadata for any primary model", async () => {
     async function* responseStream() {
       yield { type: "response.output_text.delta", delta: "Live " };
       yield { type: "response.output_text.delta", delta: "answer" };
       yield { type: "response.output_text.done", text: "Live answer" };
+      yield { type: "response.completed", response: { status: "completed", output_text: "Live answer" } };
     }
 
     const create = vi.fn().mockResolvedValue(responseStream());
@@ -276,7 +299,7 @@ describe("generateChatReplyStream", () => {
       responses: { create },
     });
 
-    const chunks = [];
+    const chunks: ChatReplyStreamChunk[] = [];
     for await (const chunk of generateChatReplyStream(originalMessages, {
       primaryModel: "arbitrary/non-native-model",
       enableWebSearch: true,
@@ -318,6 +341,7 @@ describe("generateChatReplyStream", () => {
       'data: {"type":"response.output_text.delta","delta":"Fallback "}\n\n',
       'data: {"type":"response.output_text.delta","delta":"answer"}\n\n',
       'data: {"type":"response.output_text.done","text":"Fallback answer"}\n\n',
+      'data: {"type":"response.completed","response":{"status":"completed","output_text":"Fallback answer"}}\n\n',
       "data: [DONE]\n\n",
     ].join("");
     const fetchMock = vi.fn<typeof fetch>(
@@ -329,7 +353,7 @@ describe("generateChatReplyStream", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const chunks = [];
+    const chunks: ChatReplyStreamChunk[] = [];
     for await (const chunk of generateChatReplyStream(originalMessages, {
       primaryModel: "primary/model",
       enableWebSearch: true,

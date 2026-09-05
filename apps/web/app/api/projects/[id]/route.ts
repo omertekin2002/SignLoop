@@ -3,9 +3,9 @@ import { requireUserId } from "@/lib/api-auth";
 import {
   deleteProjectForUser,
   getProjectByIdForUser,
-  getProjectStorageKeys,
 } from "@/lib/server-db";
-import { deleteObjects } from "@/lib/object-storage";
+import { flushStorageDeletions } from "@/lib/storage-cleanup";
+import { after } from "next/server";
 import { isUuid } from "@/lib/utils";
 
 export async function GET(
@@ -42,28 +42,12 @@ export async function DELETE(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  // Delete storage objects while DB references still exist, so a crash
-  // between storage and DB cleanup leaves retryable DB records rather
-  // than permanently orphaned files.
-  const storageKeys = await getProjectStorageKeys(userId, id);
-  try {
-    await deleteObjects(storageKeys);
-  } catch (error: unknown) {
-    console.error(
-      "Failed to delete project storage before database cleanup:",
-      error,
-    );
-    return NextResponse.json(
-      { error: "Could not remove every project file. Please retry." },
-      { status: 502 },
-    );
-  }
-
   const result = await deleteProjectForUser({ userId, projectId: id });
 
   if (!result.deleted) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
+  after(() => flushStorageDeletions().then(() => {}));
   return NextResponse.json({ success: true });
 }

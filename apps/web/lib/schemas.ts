@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const BaseAnalysisResultSchema = z.object({
+  coverage_notices: z.array(z.string()).optional(),
   risk_badge: z.enum(["LOW", "MEDIUM", "HIGH"]),
 
   key_points: z.array(z.string()),

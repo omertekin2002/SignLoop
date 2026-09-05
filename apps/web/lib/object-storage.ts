@@ -29,8 +29,8 @@ function isBlobEnabled(): boolean {
 
 function getBlobAccess(): "public" | "private" {
   const configuredAccess = process.env.BLOB_ACCESS?.trim().toLowerCase();
-  if (!configuredAccess || configuredAccess === "public") return "public";
-  if (configuredAccess === "private") return "private";
+  if (configuredAccess === "public") return "public";
+  if (!configuredAccess || configuredAccess === "private") return "private";
   throw new Error('BLOB_ACCESS must be either "public" or "private"');
 }
 
@@ -66,8 +66,7 @@ export async function uploadObject(
 
   if (isBlobEnabled()) {
     const blob = await put(cleanKey, buffer, {
-      // Private storage is strongly preferred for legal documents. Keep public as the compatibility
-      // default because this option must match the access mode of the provisioned Blob store.
+      // Existing public stores must opt in explicitly with BLOB_ACCESS=public.
       access: getBlobAccess(),
       addRandomSuffix: false,
       allowOverwrite: false,

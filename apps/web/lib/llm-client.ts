@@ -67,7 +67,7 @@ export function createOpenAiCompatibleClient(
     apiKey: resolvedApiKey,
     baseURL: resolvedBaseUrl,
     timeout: options?.timeoutMs ?? 60_000,
-    maxRetries: 1,
+    maxRetries: 0,
     defaultHeaders: {
       "HTTP-Referer": SITE_URL,
       "X-Title": APP_NAME,
@@ -112,7 +112,8 @@ export function extractResponseOutputText(
 
 // Resolve the model to call: honor a caller-requested non-empty model, otherwise fall back to
 // the configured default.
-export function resolvePrimaryModel(requested?: string | null): string {
+export function resolvePrimaryModel(requested?: string | null): string | null {
+  if (requested === null) return null;
   return typeof requested === "string" && requested.trim()
     ? requested.trim()
     : PRIMARY_LLM_MODEL;
@@ -121,7 +122,7 @@ export function resolvePrimaryModel(requested?: string | null): string {
 // Run `run` against the primary endpoint, and on failure iterate the ordered OpenRouter
 // fallback models. Aborts (via options.signal) are re-thrown without triggering fallback.
 export async function runWithPrimaryAndOpenRouterFallback<T>(
-  selectedPrimaryModel: string,
+  selectedPrimaryModel: string | null,
   run: (client: OpenAI, model: string) => Promise<T>,
   options?: {
     signal?: AbortSignal;
@@ -131,6 +132,8 @@ export async function runWithPrimaryAndOpenRouterFallback<T>(
   let primaryError: unknown;
 
   try {
+    if (selectedPrimaryModel === null) throw new Error("No primary model is available");
+    options?.signal?.throwIfAborted();
     const primaryClient = createOpenAiCompatibleClient(
       PRIMARY_LLM_BASE_URL,
       PRIMARY_LLM_API_KEY,
@@ -170,6 +173,7 @@ export async function runWithPrimaryAndOpenRouterFallback<T>(
 
     for (const fallbackModel of OPENROUTER_MODELS) {
       try {
+        options?.signal?.throwIfAborted();
         const result = await run(fallbackClient, fallbackModel);
         if (fallbackModel !== OPENROUTER_MODELS[0]) {
           console.warn(

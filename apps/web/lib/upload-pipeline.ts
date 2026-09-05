@@ -14,7 +14,7 @@ import {
   MAX_UPLOAD_FILE_SIZE_MB,
 } from "@/lib/upload-constants";
 
-const MAX_MULTIPART_OVERHEAD = 1024 * 1024;
+const MAX_MULTIPART_OVERHEAD = 64 * 1024;
 const MAX_EXTRACTED_TEXT_LENGTH = 2_000_000;
 const LOW_OCR_CONFIDENCE = 60;
 
@@ -79,7 +79,23 @@ export async function prepareUpload(
 
   let formData: FormData;
   try {
-    formData = await req.formData();
+    const reader = req.body?.getReader();
+    if (!reader) return { ok: false, status: 400, error: "Missing upload body" };
+    const chunks: Uint8Array<ArrayBuffer>[] = [];
+    let bytes = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > MAX_UPLOAD_FILE_SIZE + MAX_MULTIPART_OVERHEAD) {
+        await reader.cancel();
+        return { ok: false, status: 413, error: "Upload request is too large." };
+      }
+      chunks.push(new Uint8Array(value));
+    }
+    formData = await new Response(new Blob(chunks), {
+      headers: { "content-type": req.headers.get("content-type") ?? "" },
+    }).formData();
   } catch {
     return { ok: false, status: 400, error: "Invalid multipart upload" };
   }
