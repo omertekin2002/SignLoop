@@ -37,4 +37,5 @@ Turborepo monorepo with npm-style workspaces (`apps/*`, `packages/*`):
 
 - Deployed on Vercel. Config lives in root `vercel.json`.
 - Build command: `bunx turbo build --filter=web`
-- Vercel auto-detects bun from `bun.lock` and runs `bun install` automatically.
+- Vercel uses `bun install --frozen-lockfile --linker hoisted` from `vercel.json`.
+- Keep the hoisted linker for this repository-root deployment: Vercel must resolve Next.js from root `node_modules` before running the filtered web build. Bun's default isolated workspace layout does not expose it there.
