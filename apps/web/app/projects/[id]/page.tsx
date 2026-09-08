@@ -122,6 +122,10 @@ const ProjectDetails = () => {
       toast.success("Project deleted");
       queryClient.invalidateQueries({ queryKey: ["contracts"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
+      for (const contract of project?.contracts ?? []) {
+        queryClient.removeQueries({ queryKey: ["contract", contract.id] });
+        queryClient.removeQueries({ queryKey: ["analysis", contract.id] });
+      }
       queryClient.removeQueries({ queryKey: ["project", id] });
       router.push("/dashboard");
     },
@@ -138,6 +142,8 @@ const ProjectDetails = () => {
       toast.success("Context document deleted");
       queryClient.invalidateQueries({ queryKey: ["project", id] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["contract"] });
+      queryClient.invalidateQueries({ queryKey: ["contracts"] });
       setDocToDelete(null);
     },
     onError: (error: unknown) => {
@@ -208,6 +214,8 @@ const ProjectDetails = () => {
       setContextTitle("");
       setContextType("other");
       if (contextFileRef.current) contextFileRef.current.value = "";
+      queryClient.invalidateQueries({ queryKey: ["contract"] });
+      queryClient.invalidateQueries({ queryKey: ["contracts"] });
       queryClient.invalidateQueries({ queryKey: ["project", id] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
     },

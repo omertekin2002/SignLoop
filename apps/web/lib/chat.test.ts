@@ -266,6 +266,40 @@ describe("generateChatReply", () => {
 });
 
 describe("generateChatReplyStream", () => {
+  it.each(["done", "error", "consumer-return"])(
+    "cancels and unlocks the provider stream on %s",
+    async (exit) => {
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const cancel = vi.fn();
+      const events = ['data: {"type":"response.output_text.delta","delta":"Answer"}\n\n'];
+      if (exit === "done") {
+        events.push('data: {"type":"response.completed","response":{"status":"completed","output_text":"Answer"}}\n\n', "data: [DONE]\n\n");
+      } else if (exit === "error") {
+        events.push('data: {"type":"error","message":"Provider failed"}\n\n');
+      }
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(events.join("")));
+          // The connection stays open until the reader explicitly cancels it.
+        },
+        cancel,
+      });
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body)));
+      const iterator = generateChatReplyStream(originalMessages, { primaryModel: null });
+      expect((await iterator.next()).value).toEqual({ type: "delta", text: "Answer" });
+      if (exit === "consumer-return") {
+        await iterator.return();
+      } else if (exit === "error") {
+        await expect(iterator.next()).rejects.toThrow("Provider failed");
+      } else {
+        expect((await iterator.next()).value).toMatchObject({ type: "done" });
+        await iterator.next();
+      }
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(body.locked).toBe(false);
+    },
+  );
+
   it.each(["primary", "fallback"])("rejects %s EOF after deltas without persisting a completed reply", async (provider) => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     async function* incomplete() { yield { type: "response.output_text.delta", delta: "Partial" }; }

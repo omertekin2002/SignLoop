@@ -266,20 +266,6 @@ function toStringOrNull(value: unknown): string | null {
   return null;
 }
 
-function toNumber(value: unknown, fallback = 0): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string") {
-    const numericMatch = value.match(/-?\d+(\.\d+)?/);
-    if (numericMatch) {
-      const parsed = Number(numericMatch[0]);
-      if (Number.isFinite(parsed)) return parsed;
-    }
-  }
-  return fallback;
-}
-
 function toBoolean(value: unknown, fallback = false): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value !== 0;
@@ -837,6 +823,15 @@ async function createResponsesPreferringJson(
   }
 }
 
+function requireCompletedAnalysisResponse(response: OpenAI.Responses.Response): void {
+  if (response.status !== "completed") {
+    const reason = response.incomplete_details?.reason;
+    throw new LlmResponseValidationError(
+      `Analysis response did not complete (${response.status ?? "missing status"}${reason ? `: ${reason}` : ""})`,
+    );
+  }
+}
+
 async function repairJsonWithResponsesModel(
   openai: OpenAI,
   model: string,
@@ -872,6 +867,7 @@ ${malformedContent.slice(0, MAX_REPAIR_INPUT_CHARS)}
     requestOptions,
   );
 
+  requireCompletedAnalysisResponse(response);
   const repairedContent = extractResponseOutputText(response);
   if (!repairedContent) {
     throw new Error("Empty response from AI during JSON repair");
@@ -893,6 +889,7 @@ async function runAnalysisWithResponsesModel(
     requestOptions,
   );
 
+  requireCompletedAnalysisResponse(response);
   const content = extractResponseOutputText(response);
   if (!content) {
     throw new LlmResponseValidationError("Empty analysis response from AI");

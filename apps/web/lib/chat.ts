@@ -135,36 +135,46 @@ async function* readSseDataPayloads(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (value) {
-      buffer += decoder.decode(value, { stream: !done });
-      buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    }
-    if (done) {
-      buffer += decoder.decode();
-      buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    }
-
-    let separatorIndex = buffer.indexOf("\n\n");
-    while (separatorIndex >= 0) {
-      const block = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + 2);
-
-      const payload = extractSseDataPayload(block);
-      if (payload) {
-        yield payload;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (value) {
+        buffer += decoder.decode(value, { stream: !done });
+        buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      }
+      if (done) {
+        buffer += decoder.decode();
+        buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
       }
 
-      separatorIndex = buffer.indexOf("\n\n");
-    }
+      let separatorIndex = buffer.indexOf("\n\n");
+      while (separatorIndex >= 0) {
+        const block = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + 2);
 
-    if (done) {
-      const trailingPayload = extractSseDataPayload(buffer);
-      if (trailingPayload) {
-        yield trailingPayload;
+        const payload = extractSseDataPayload(block);
+        if (payload) {
+          yield payload;
+        }
+
+        separatorIndex = buffer.indexOf("\n\n");
       }
-      return;
+
+      if (done) {
+        const trailingPayload = extractSseDataPayload(buffer);
+        if (trailingPayload) {
+          yield trailingPayload;
+        }
+        return;
+      }
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // Cleanup must not replace the original stream error.
+    } finally {
+      reader.releaseLock();
     }
   }
 }

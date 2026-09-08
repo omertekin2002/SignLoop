@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, getApiErrorMessage, type ApiError } from "@/lib/api-client";
-import { coerceDate, formatDate, getRiskColor } from "@/lib/utils";
+import { formatDate, getRiskColor } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -944,11 +944,6 @@ const ContractDetails = () => {
                         <span className="text-sm text-muted-foreground">
                           {formatDate(a.createdAt, "MMM d, HH:mm")}
                         </span>
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {a.resultJson?.key_points?.length
-                          ? `${a.resultJson.key_points.length} key point(s)`
-                          : "No key points"}
                       </div>
                       {!!a.llmModel && (
                         <div className="text-xs text-muted-foreground">
