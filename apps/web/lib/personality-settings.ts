@@ -5,7 +5,7 @@ export const PERSONALITY_OPTIONS = [
 
 export type PersonalityMode = (typeof PERSONALITY_OPTIONS)[number];
 
-export const DEFAULT_PERSONALITY_MODE: PersonalityMode = "signloop-assistant";
+export const DEFAULT_PERSONALITY_MODE: PersonalityMode = "bare-llm";
 
 const personalitySet = new Set<string>(PERSONALITY_OPTIONS);
 

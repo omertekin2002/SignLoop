@@ -1,3 +1,5 @@
+import { toPublicChatMessage } from "@/lib/chat-public-message";
+import { appendWebSourcesToMessage } from "@/lib/web-citations";
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import {
@@ -76,55 +78,6 @@ function getPublicChatErrorMessage(error: unknown): string {
     : DEFAULT_CHAT_ERROR_MESSAGE;
 }
 
-type SearchSource = {
-  title: string;
-  url: string;
-};
-
-function appendWebSourcesToMessage(
-  message: string,
-  sources: readonly SearchSource[],
-): string {
-  if (!sources.length) {
-    return message;
-  }
-
-  const trimmed = message.trim();
-  if (!trimmed) {
-    return message;
-  }
-
-  // Consider a URL already cited only when it appears followed by a non-URL character (or the end
-  // of the text), so a short URL isn't treated as "present" just because it is a prefix of a
-  // longer one in the prose. Then list only the sources that aren't already cited.
-  const isAlreadyCited = (url: string): boolean => {
-    let from = 0;
-    for (;;) {
-      const idx = trimmed.indexOf(url, from);
-      if (idx === -1) return false;
-      const next = trimmed.charAt(idx + url.length);
-      if (next === "" || !/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]/.test(next)) {
-        return true;
-      }
-      from = idx + url.length;
-    }
-  };
-
-  const missingSources = sources
-    .map((source, index) => ({ source, index }))
-    .filter(({ source }) => !isAlreadyCited(source.url));
-  if (!missingSources.length) {
-    return message;
-  }
-
-  const lines: string[] = ["Sources:"];
-  for (const { source, index } of missingSources) {
-    lines.push(`${index + 1}. [${source.title}](<${source.url}>)`);
-  }
-
-  return `${trimmed}\n\n${lines.join("\n")}`;
-}
-
 function isAbortError(error: unknown): boolean {
   return (
     error instanceof Error &&
@@ -145,6 +98,9 @@ async function persistChatMessages(input: {
   assistantMessage: string;
   assistantModel: string | null;
   assistantProvider: string | null;
+  agentMessages?: ChatReply["agentMessages"];
+  webSources?: ChatMessage["webSources"];
+  toolActivity?: ChatReply["toolActivity"];
   temporary: boolean;
 }): Promise<ChatMessageRecord[]> {
   if (input.temporary) {
@@ -167,6 +123,9 @@ async function persistChatMessages(input: {
         metadata: {
           model: input.assistantModel,
           provider: input.assistantProvider,
+          agentMessages: JSON.parse(JSON.stringify(input.agentMessages ?? [])),
+          webSources: JSON.parse(JSON.stringify(input.webSources ?? [])),
+          toolActivity: JSON.parse(JSON.stringify(input.toolActivity ?? [])),
         },
       },
     ],
@@ -184,7 +143,7 @@ function toDoneStreamEvent(input: {
 
   return {
     type: "done",
-    storedMessages: input.storedMessages,
+    storedMessages: input.storedMessages.map(toPublicChatMessage),
     message,
     provider: reply.provider,
     model: reply.model,
@@ -194,6 +153,7 @@ function toDoneStreamEvent(input: {
     webSearchAttempts: reply.webSearch?.attemptedQueries ?? [],
     webSearchSuccessfulCount: reply.webSearch?.successfulSearches ?? 0,
     webSources: reply.webSearch?.sources ?? [],
+    toolActivity: reply.toolActivity ?? [],
   };
 }
 
@@ -201,7 +161,8 @@ export async function POST(req: Request) {
   let release: (() => Promise<void>) | null = null;
   let streaming = false;
   let storedMessages: ChatMessageRecord[] = [];
-  const operationSignal = AbortSignal.any([req.signal, AbortSignal.timeout(155_000)]);
+  const disconnect = new AbortController();
+  const operationSignal = AbortSignal.any([req.signal, disconnect.signal, AbortSignal.timeout(155_000)]);
   try {
     const declaredContentLength = Number(req.headers.get("content-length"));
     if (
@@ -316,6 +277,8 @@ export async function POST(req: Request) {
           .map((message): ChatMessage => ({
             role: message.role,
             content: message.content,
+            agentMessages: message.agentMessages,
+            webSources: message.webSources,
           })),
         latestUserMessage.content.length,
       );
@@ -348,7 +311,7 @@ export async function POST(req: Request) {
             temporary: false,
           });
         } catch (persistError) {
-          if (req.signal.aborted || isAbortError(persistError)) {
+          if (req.signal.aborted || disconnect.signal.aborted || isAbortError(persistError)) {
             throw persistError;
           }
           persisted = false;
@@ -359,7 +322,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ...reply,
         message: storedMessages.at(-1)?.content ?? reply.message,
-        storedMessages,
+        storedMessages: storedMessages.map(toPublicChatMessage),
         mode: isTemporaryChat ? "temporary-chat" : "chat",
         persisted: isTemporaryChat ? undefined : persisted,
       });
@@ -384,6 +347,7 @@ export async function POST(req: Request) {
     if (wantsStream) {
       streaming = true;
       const stream = new ReadableStream<Uint8Array>({
+        cancel() { disconnect.abort(); },
         async start(controller) {
           let sentDone = false;
 
@@ -393,7 +357,7 @@ export async function POST(req: Request) {
               signal: operationSignal,
               enableWebSearch,
             })) {
-              if (req.signal.aborted) {
+              if (req.signal.aborted || disconnect.signal.aborted) {
                 return;
               }
 
@@ -401,6 +365,11 @@ export async function POST(req: Request) {
                 controller.enqueue(
                   streamEvent({ type: "delta", text: chunk.text }),
                 );
+                continue;
+              }
+
+              if (chunk.type === "tool") {
+                controller.enqueue(streamEvent(chunk));
                 continue;
               }
 
@@ -419,12 +388,15 @@ export async function POST(req: Request) {
                   threadId,
                   latestUserMessage,
                   assistantMessage,
+                  agentMessages: chunk.reply.agentMessages,
+                  webSources: chunk.reply.webSearch?.sources,
+                  toolActivity: chunk.reply.toolActivity,
                   assistantModel: chunk.reply.model ?? null,
                   assistantProvider: chunk.reply.provider ?? null,
                   temporary: isTemporaryChat,
                 });
               } catch (persistError) {
-                if (req.signal.aborted || isAbortError(persistError)) {
+                if (req.signal.aborted || disconnect.signal.aborted || isAbortError(persistError)) {
                   return;
                 }
                 persisted = false;
@@ -445,7 +417,7 @@ export async function POST(req: Request) {
               sentDone = true;
             }
 
-            if (!sentDone && !req.signal.aborted) {
+            if (!sentDone && !req.signal.aborted && !disconnect.signal.aborted) {
               controller.enqueue(
                 streamEvent({
                   type: "error",
@@ -454,7 +426,7 @@ export async function POST(req: Request) {
               );
             }
           } catch (streamError) {
-            if (req.signal.aborted || isAbortError(streamError)) {
+            if (req.signal.aborted || disconnect.signal.aborted || isAbortError(streamError)) {
               return;
             }
 
@@ -467,7 +439,7 @@ export async function POST(req: Request) {
             );
           } finally {
             await release?.().catch((error) => console.error("Chat lease release failed", error));
-            controller.close();
+            if (!disconnect.signal.aborted) controller.close();
           }
         },
       });
@@ -481,7 +453,7 @@ export async function POST(req: Request) {
       });
     }
 
-    const { message, provider, model, webSearch } = await generateChatReply(
+    const { message, provider, model, webSearch, agentMessages, toolActivity } = await generateChatReply(
       promptMessages,
       {
         primaryModel: selectedPrimaryModel,
@@ -506,6 +478,9 @@ export async function POST(req: Request) {
           threadId,
           latestUserMessage,
           assistantMessage,
+          agentMessages,
+          webSources: webSearch?.sources,
+          toolActivity,
           assistantModel: model ?? null,
           assistantProvider: provider ?? null,
           temporary: false,
@@ -520,11 +495,12 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       message: assistantMessage,
-      storedMessages,
+      storedMessages: storedMessages.map(toPublicChatMessage),
       provider,
       model,
       mode: isTemporaryChat ? "temporary-chat" : "chat",
       persisted: isTemporaryChat ? undefined : persisted,
+      toolActivity: toolActivity ?? [],
       webSearchQuery: webSearch?.query ?? null,
       webSearchAttempts: webSearch?.attemptedQueries ?? [],
       webSearchSuccessfulCount: webSearch?.successfulSearches ?? 0,

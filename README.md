@@ -67,9 +67,12 @@ This repo uses:
   - `chat_threads`
   - `chat_messages` (ordered by transactional position locking)
 - Chat uses a configurable persona (`signloop-assistant` or `bare-llm`).
-- Every authenticated chat turn performs one Google-grounded Gemini research pass before
-  generation. The same bounded research brief is supplied to the selected primary model or any
-  OpenRouter fallback, and source links are appended to the reply.
+- Chat runs a bounded AI SDK tool loop: the selected model decides whether to answer directly or
+  invoke `search_web`, sees the results, and can issue follow-up searches before answering.
+- Signed-in sessions expose search; anonymous temporary chat uses the same loop without search access.
+  There is no greeting list or preprocessing classifier. Saved replies retain tool exchanges and
+  source catalogs in message metadata, within the existing history size budget.
+- Search progress streams to the UI. Only sources cited by the answer receive appended links.
 
 ---
 
@@ -145,12 +148,18 @@ Fallback LLM endpoint (OpenRouter):
 
 Model-independent web search:
 
-- `GEMINI_API_KEY` (required for authenticated chat)
+- `GEMINI_API_KEY` (needed when the model invokes web search)
 - `GEMINI_SEARCH_MODEL` (optional; defaults to `gemini-2.5-flash`)
-- Search is always on for signed-in users, runs once per turn, and is reused across
-  primary/OpenRouter retries. Anonymous temporary chat remains unsearched. If Gemini does not
-  return grounded web sources, the request fails instead of silently returning an unsearched
-  answer.
+- Gemini executes the chat model's query and returns a grounded brief plus sources as a tool result.
+  A search failure is returned to the model as a tool error result so it can retry or explain the limitation.
+- Each user request permits six model steps and three distinct search executions, with duplicate-query
+  caching, a 145-second deadline, and cancellation. The final step disables tools to request an answer.
+- Provider fallback can occur while opening a model step, retaining completed tool results. Once a
+  provider stream starts it is not replayed on another provider. Incomplete runs are not persisted.
+- Requires Node.js 22+ (AI SDK 7). Model endpoints must support Responses function tools and tool-result
+  continuation. Validation includes mocked wire-level tests and a successful synthetic OpenRouter
+  tool-call/continuation probe. The primary endpoint and live Gemini search still require verification
+  with the deployed credentials.
 
 Storage:
 

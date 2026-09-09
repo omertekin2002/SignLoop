@@ -1,3 +1,4 @@
+import { toPublicChatMessage } from "@/lib/chat-public-message";
 import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
 import {
@@ -26,7 +27,7 @@ export async function GET(
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ data: thread });
+    return NextResponse.json({ data: { ...thread, messages: thread.messages.map(toPublicChatMessage) } });
   } catch (error) {
     console.error("Failed to fetch chat thread:", error);
     return NextResponse.json({ error: "Failed to fetch chat thread" }, { status: 500 });

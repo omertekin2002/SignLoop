@@ -246,8 +246,14 @@ export function boundCanonicalChatHistory(
     if (!content) continue;
     if (content.length > remainingCharacters) break;
 
-    selected.push({ role: message.role, content });
-    remainingCharacters -= content.length;
+    const agentStateSize = JSON.stringify({ agentMessages: message.agentMessages, webSources: message.webSources }).length;
+    const includeAgentState = message.role === "assistant" && message.agentMessages?.length &&
+      agentStateSize + content.length <= remainingCharacters;
+    selected.push({ role: message.role, content, ...(includeAgentState ? {
+      agentMessages: message.agentMessages,
+      webSources: message.webSources,
+    } : {}) });
+    remainingCharacters -= content.length + (includeAgentState ? agentStateSize : 0);
   }
 
   return selected.reverse();

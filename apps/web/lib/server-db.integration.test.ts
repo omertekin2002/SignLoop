@@ -39,6 +39,24 @@ describe.skipIf(!connectionString)("database integration", () => {
     return createAnalysisForContract({ userId: "owner", contractId: id, expectedRevision: snapshot!.revision, riskBadge: "LOW", resultJson: result, llmProvider: "test", llmModel: "test" });
   }
 
+  it("persists and reloads bounded agent tool exchanges in message metadata", async () => {
+    const thread = await createChatThreadForUser({ userId: "owner", title: "Agent" });
+    const agentMessages = [
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "call1", toolName: "search_web", input: { query: "rates" } }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "call1", toolName: "search_web", output: { type: "json", value: { brief: "Evidence" } } }] },
+      { role: "assistant", content: [{ type: "text", text: "Answer [1]" }] },
+    ];
+    const webSources = [{ title: "Source", url: "https://source.test" }];
+    await appendChatMessagesToThread({ userId: "owner", threadId: thread.id, messages: [
+      { role: "user", content: "Research rates" },
+      { role: "assistant", content: "Answer [1]", metadata: { agentMessages, webSources, toolActivity: [{ id: "call1", query: "rates", status: "complete" }] } },
+    ] });
+    const loaded = await getChatThreadByIdForUser("owner", thread.id);
+    expect(loaded?.messages.at(-1)?.agentMessages).toEqual(agentMessages);
+    expect(loaded?.messages.at(-1)?.webSources).toEqual(webSources);
+    expect(await getChatThreadByIdForUser("another-user", thread.id)).toBeNull();
+  });
+
   it("applies every discovered migration, including indexes and referential constraints", async () => {
     const { rows } = await pool.current!.query("SELECT filename FROM schema_migrations ORDER BY filename");
     expect(rows.map((row) => row.filename)).toContain("011_fix_index_coverage.sql");

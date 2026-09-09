@@ -1,5 +1,7 @@
 "use client";
 
+import type { ChatToolActivity } from "@/lib/chat";
+
 import { toast } from "sonner";
 import { boundTemporaryChatHistory } from "@/lib/chat-policy";
 
@@ -81,6 +83,7 @@ type ChatApiMessage = {
 };
 
 type ChatApiSuccess = {
+  toolActivity?: ChatToolActivity[];
   message: string;
   provider?: string;
   model?: string;
@@ -89,6 +92,7 @@ type ChatApiSuccess = {
 };
 
 type ChatApiStreamEvent =
+  | { type: "tool"; activity: ChatToolActivity }
   | {
       type: "delta";
       text: string;
@@ -111,6 +115,7 @@ type ChatCapabilities = {
 };
 
 type ChatThreadMessage = {
+  toolActivity?: ChatToolActivity[];
   id: string;
   position: number;
   role: "system" | "user" | "assistant";
@@ -202,6 +207,7 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
 
   return {
     message,
+    toolActivity: parseToolActivity(payload.toolActivity),
     storedMessages: Array.isArray(payload.storedMessages) ? payload.storedMessages.filter((message): message is ChatThreadMessage => isRecord(message) && typeof message.id === "string" && typeof message.content === "string" && typeof message.position === "number" && (message.role === "user" || message.role === "assistant")) : undefined,
     provider:
       typeof payload.provider === "string" ? payload.provider : undefined,
@@ -211,9 +217,21 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
   };
 }
 
+function parseToolActivity(value: unknown): ChatToolActivity[] {
+  return Array.isArray(value) ? value.filter((item): item is ChatToolActivity =>
+    isRecord(item) && typeof item.id === "string" && typeof item.query === "string" &&
+    (item.status === "running" || item.status === "complete" || item.status === "error")) : [];
+}
+
 function parseStreamEvent(payload: unknown): ChatApiStreamEvent {
   if (!isRecord(payload) || typeof payload.type !== "string") {
     throw new Error("Chat stream included an invalid event.");
+  }
+
+  if (payload.type === "tool") {
+    const activity = parseToolActivity([payload.activity])[0];
+    if (!activity) throw new Error("Invalid tool activity");
+    return { type: "tool", activity };
   }
 
   if (payload.type === "delta") {
@@ -281,6 +299,7 @@ async function* readChatApiResponse(
   const decoder = new TextDecoder();
   let buffer = "";
   let accumulatedMessage = "";
+  const toolActivity = new Map<string, ChatToolActivity>();
 
   // The `finally` releases the reader on every exit path — normal completion, a thrown stream
   // error, and (importantly) the implicit generator return when the consumer aborts mid-turn.
@@ -313,11 +332,18 @@ async function* readChatApiResponse(
           throw new Error(event.error);
         }
 
+        if (event.type === "tool") {
+          toolActivity.set(event.activity.id, event.activity);
+          yield { message: accumulatedMessage, done: false, toolActivity: [...toolActivity.values()] };
+          continue;
+        }
+
         if (event.type === "delta") {
           if (!event.text) continue;
           accumulatedMessage += event.text;
           yield {
             message: accumulatedMessage,
+            toolActivity: [...toolActivity.values()],
             done: false,
           };
           continue;
@@ -358,6 +384,7 @@ function toRuntimeMessages(messages: ChatThreadMessage[]): ThreadMessageLike[] {
             custom: {
               model: message.model ?? null,
               provider: message.provider ?? null,
+              toolActivity: parseToolActivity(message.toolActivity),
             },
           },
         }
@@ -685,6 +712,17 @@ const AssistantModelLabel = () => {
   );
 };
 
+const SearchActivity = () => {
+  const rawActivity = useMessage(message => message.metadata?.custom?.toolActivity);
+  const activities = parseToolActivity(rawActivity);
+  if (!activities.length) return null;
+  return <div className="space-y-1 text-xs text-muted-foreground" aria-live="polite">
+    {activities.map(activity => <div key={activity.id}>
+      {activity.status === "running" ? "Searching" : activity.status === "error" ? "Search unavailable" : "Searched"}: {activity.query}
+    </div>)}
+  </div>;
+};
+
 const ChatMessage = () => {
   return (
     <MessagePrimitive.Root className="group relative flex w-full flex-col gap-2 mb-6">
@@ -705,6 +743,7 @@ const ChatMessage = () => {
             <AssistantModelLabel />
           </div>
           <div className="flex w-full flex-col gap-1 rounded-2xl rounded-tl-sm border bg-card px-5 py-4 shadow-sm">
+            <SearchActivity />
             <MessagePrimitive.Content
               components={{
                 Text: AssistantTextPart,
@@ -1009,14 +1048,13 @@ export function ChatPanel({
             status: snapshot.done
               ? ({ type: "complete", reason: "stop" } as const)
               : undefined,
-            metadata: snapshot.done
-              ? {
-                  custom: {
-                    provider: snapshot.provider ?? null,
-                    model: snapshot.model ?? null,
-                  },
-                }
-              : undefined,
+            metadata: {
+              custom: {
+                provider: snapshot.provider ?? null,
+                model: snapshot.model ?? null,
+                toolActivity: snapshot.toolActivity ?? [],
+              },
+            },
           };
         }
 

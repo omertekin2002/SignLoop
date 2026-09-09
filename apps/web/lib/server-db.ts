@@ -1,3 +1,4 @@
+import { parseAgentMessages, parseWebSources } from "@/lib/chat-agent-history";
 import { runMigrations } from "../db/migrations.js";
 import { sql } from "@vercel/postgres";
 import { randomUUID } from "node:crypto";
@@ -176,6 +177,9 @@ export type UserSettingsRecord = {
 export type ChatMessageRole = "system" | "user" | "assistant";
 
 export type ChatMessageRecord = {
+  agentMessages?: import("ai").ModelMessage[];
+  webSources?: import("@/lib/gemini-search").WebSearchSource[];
+  toolActivity?: unknown;
   id: string;
   threadId: string;
   role: ChatMessageRole;
@@ -1267,6 +1271,9 @@ function mapChatMessageRow(row: {
     content: row.content,
     position: row.position,
     createdAt: row.createdAt,
+    agentMessages: parseAgentMessages(metadata.agentMessages),
+    webSources: parseWebSources(metadata.webSources),
+    toolActivity: metadata.toolActivity,
     model,
     provider,
   };
