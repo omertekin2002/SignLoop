@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: () => ({ responses: mocks.responses }),
 }));
-vi.mock("@/lib/gemini-search", () => ({ searchWeb: mocks.search }));
+vi.mock("@/lib/web-search", () => ({ searchWeb: mocks.search }));
 vi.mock("@/lib/url-reader", () => ({ readUrl: mocks.readUrl }));
 vi.mock("@/lib/image-generation", () => ({ generateImageReply: mocks.generateImage }));
 vi.mock("@/lib/server-db", () => ({
@@ -126,19 +126,16 @@ function scriptedModel(queries: string[] = []) {
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.search.mockImplementation(async (query: string) => ({
-    brief: `Evidence for ${query}`,
-    metadata: {
-      query,
-      attemptedQueries: [query],
-      successfulSearches: 1,
-      sources: [
-        {
-          title: "Source",
-          url: "https://source.test",
-          snippet: "Supported fact",
-        },
-      ],
-    },
+    provider: "brave",
+    query,
+    brief: null,
+    results: [
+      {
+        title: "Source",
+        url: "https://source.test",
+        snippet: `Evidence for ${query}`,
+      },
+    ],
   }));
 });
 afterEach(() => {
@@ -182,7 +179,8 @@ describe("agentic chat", () => {
     const done = chunks.at(-1);
     expect(done?.type).toBe("done");
     if (done?.type === "done") {
-      expect(done.reply.webSearch?.sources).toHaveLength(1);
+      // Search returns leads, so nothing is citable until a page is actually read.
+      expect(done.reply.webSearch).toBeNull();
       expect(
         done.reply.agentMessages?.some((message) => message.role === "tool"),
       ).toBe(true);
@@ -203,7 +201,7 @@ describe("agentic chat", () => {
   });
 
   it("deduplicates repeated queries and bounds total search executions", async () => {
-    const model = scriptedModel(["A", "a", "B", "C", "D", "E", "F"]);
+    const model = scriptedModel(["A", "a", "B", "C", "D", "E", "F", "G", "H"]);
     mocks.responses.mockReturnValue(model);
     await generateChatReply(messages, { enableWebSearch: true });
     expect(mocks.search.mock.calls.map((call) => call[0])).toEqual([
@@ -211,10 +209,10 @@ describe("agentic chat", () => {
       "B",
       "C",
     ]);
-    // Eight steps: seven tool rounds, then the final step is forced to answer without tools.
-    expect(model.doStreamCalls).toHaveLength(8);
-    expect(model.doStreamCalls[7]?.toolChoice).toEqual({ type: "none" });
-    expect(JSON.stringify(model.doStreamCalls[7]?.prompt)).toContain(
+    // Ten steps: nine tool rounds, then the final step is forced to answer without tools.
+    expect(model.doStreamCalls).toHaveLength(10);
+    expect(model.doStreamCalls[9]?.toolChoice).toEqual({ type: "none" });
+    expect(JSON.stringify(model.doStreamCalls[9]?.prompt)).toContain(
       "budget exhausted",
     );
   });
@@ -277,8 +275,31 @@ describe("agentic chat", () => {
     expect(JSON.stringify(next.doStreamCalls[0]?.prompt)).toContain(
       "Evidence for query",
     );
-    expect(nextReply.webSearch?.sources).toEqual(first.webSearch?.sources);
-    expect(nextReply.webSearch?.successfulSearches).toBe(0);
+    expect(first.webSearch).toBeNull();
+    expect(nextReply.webSearch).toBeNull();
+  });
+
+  it("makes a searched page citable only after it is read", async () => {
+    mocks.readUrl.mockResolvedValue({
+      title: "Source",
+      url: "https://source.test",
+      content: "Supported fact",
+      truncated: false,
+      provider: "jina",
+    });
+    const model = sequencedModel([
+      toolStep(0, "search_web", { query: "isctr close" }),
+      toolStep(1, "read_url", { url: "https://source.test" }),
+    ]);
+    mocks.responses.mockReturnValue(model);
+    const reply = await generateChatReply(messages, {
+      enableWebSearch: true,
+      enableUrlReader: true,
+    });
+    // One source, contributed by the read rather than by the eight-result search.
+    expect(reply.webSearch?.sources).toEqual([
+      { title: "Source", url: "https://source.test" },
+    ]);
   });
 
   it("includes authoritative time and the selected personality without mutating input", async () => {

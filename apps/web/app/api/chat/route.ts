@@ -10,6 +10,7 @@ import {
   type ChatReply,
 } from "@/lib/chat";
 import { GeminiWebSearchError } from "@/lib/gemini-search";
+import { WebSearchError } from "@/lib/web-search";
 import {
   boundCanonicalChatHistory,
   MAX_CHAT_MESSAGES,
@@ -66,7 +67,7 @@ const ROUTE_TIMEOUT_MS = 275_000;
 const CHAT_LEASE_SECONDS = 360;
 
 function getPublicChatErrorMessage(error: unknown): string {
-  return error instanceof GeminiWebSearchError
+  return error instanceof GeminiWebSearchError || error instanceof WebSearchError
     ? error.publicMessage
     : DEFAULT_CHAT_ERROR_MESSAGE;
 }

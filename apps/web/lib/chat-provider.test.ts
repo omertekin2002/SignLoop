@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ search: vi.fn() }));
-vi.mock("@/lib/gemini-search", () => ({ searchWeb: mocks.search }));
+vi.mock("@/lib/web-search", () => ({ searchWeb: mocks.search }));
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -47,13 +47,12 @@ it("uses real Responses serialization for tools and continuation", async () => {
   vi.stubEnv("PRIMARY_LLM_API_KEY", "test");
   vi.stubEnv("OPENROUTER_API_KEY", "");
   mocks.search.mockResolvedValue({
-    brief: "Verified evidence",
-    metadata: {
-      query: "current rates",
-      attemptedQueries: ["current rates"],
-      successfulSearches: 1,
-      sources: [{ title: "Source", url: "https://source.test" }],
-    },
+    provider: "brave",
+    query: "current rates",
+    brief: null,
+    results: [
+      { title: "Source", url: "https://source.test", snippet: "Verified evidence" },
+    ],
   });
   const fn = {
     type: "function_call",

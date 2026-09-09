@@ -69,8 +69,9 @@ This repo uses:
 - Chat uses a configurable persona (`signloop-assistant` or `bare-llm`).
 - Chat runs a bounded AI SDK tool loop: the selected model decides whether to answer directly or
   call tools, sees the results, and can issue follow-up calls before answering. Tools: `search_web`
-  (Gemini grounding), `read_url` (page or PDF text via Firecrawl or Jina Reader, cited like a search
-  result), `http_get` (a direct GET to any public address, returning the raw response body for
+  (a ranked list of pages to open, via Brave, Firecrawl, or Gemini grounding), `read_url` (page or
+  PDF text via Firecrawl or Jina Reader, which is what makes a page citable),
+  `http_get` (a direct GET to any public address, returning the raw response body for
   questions with one correct value), `list_contracts` / `read_contract` (the signed-in user's own
   uploaded contract text, paged by offset or excerpted around `find` keywords), and `generate_image`
   (gpt-image-2, offered only while the primary endpoint lists that model; the image is spliced into
@@ -157,13 +158,27 @@ Fallback LLM endpoint (OpenRouter):
 
 Model-independent web search:
 
-- `GEMINI_API_KEY` (needed when the model invokes web search)
-- `GEMINI_SEARCH_MODEL` (optional; defaults to `gemini-2.5-flash`)
-- Gemini executes the chat model's query and returns a grounded brief plus sources as a tool result.
-  A search failure is returned to the model as a tool error result so it can retry or explain the limitation.
-- Each user request permits eight model steps, three distinct search executions, and three page reads,
-  with duplicate-query caching, a 260-second deadline inside a 300-second route, and cancellation. The
-  final step disables tools to request an answer.
+`search_web` returns a ranked list of pages — title, address, and snippet — rather than a written
+answer. Results are **leads, not evidence**: they carry no citation numbers, and a page becomes a
+numbered, citable source only once `read_url` or `http_get` has actually fetched it. This is
+deliberate. A synthesized brief reads as finished evidence, which both ends the research early and
+lets the model cite a page it never opened.
+
+The provider is whichever key is configured, and `WEB_SEARCH_PROVIDER` (`brave` | `firecrawl` |
+`gemini`) overrides the choice:
+
+- `BRAVE_SEARCH_API_KEY` — independent index, preferred when set. A Firecrawl key is often present
+  only for `read_url`, so an explicit Brave key is treated as the clearer signal of intent.
+- `FIRECRAWL_API_KEY` — `POST /v2/search`, reusing the page-reader key. Requested without
+  `scrapeOptions`, so the search stays cheap and the read stays a separate, explicit step.
+- `GEMINI_API_KEY` + optional `GEMINI_SEARCH_MODEL` (defaults to `gemini-2.5-flash`) — the Vertex
+  grounding fallback, kept so deployments without a dedicated search key keep working. It is the
+  only provider that returns a `brief`, and its sources are still leads rather than citations.
+
+A search failure is returned to the model as a tool error result so it can retry or explain the
+limitation. Each user request permits ten model steps, three distinct search executions, five page
+reads, and five HTTP fetches, with duplicate-query caching, a 260-second deadline inside a
+300-second route, and cancellation. The final step disables tools to request an answer.
 - Provider fallback can occur while opening a model step, or when a provider accepts the request but
   sends nothing within 20 seconds; completed tool results are retained. Once a provider stream has
   delivered content it is not replayed on another provider. Incomplete runs are not persisted.

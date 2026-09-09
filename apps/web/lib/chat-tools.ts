@@ -7,7 +7,9 @@ import { generateImageReply } from "@/lib/image-generation";
 import { getContractTextForUser, listContractsForChat } from "@/lib/server-db";
 import { isUuid } from "@/lib/utils";
 
-export const MAX_URL_READS = 3;
+// Reading is now the step that turns a search result into evidence, so the budget has to cover
+// several results from one search rather than the occasional link a user pasted.
+export const MAX_URL_READS = 5;
 export const MAX_HTTP_FETCHES = 5;
 export const MAX_IMAGE_GENERATIONS = 2;
 export const CONTRACT_WINDOW_CHARACTERS = 12_000;

@@ -18,7 +18,8 @@ import {
   SITE_URL,
   resolvePrimaryModel,
 } from "@/lib/llm-client";
-import { searchWeb, type WebSearchMetadata } from "@/lib/gemini-search";
+import type { WebSearchMetadata } from "@/lib/gemini-search";
+import { searchWeb } from "@/lib/web-search";
 import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
 import {
   createContractTools,
@@ -28,8 +29,9 @@ import {
 } from "@/lib/chat-tools";
 import { isRecord } from "@/lib/utils";
 
-// Listing, reading, and searching before the final answer needs more room than a search-only loop.
-const MAX_STEPS = 8;
+// Search now returns leads rather than a brief, so a normal run is search -> several reads ->
+// answer. That needs more steps than a loop whose search already came back answer-shaped.
+const MAX_STEPS = 10;
 const MAX_SEARCHES = 3;
 const MAX_SOURCES = 512;
 // Budget chain: route maxDuration 300s > route abort 275s > this deadline > per-step first-chunk guard.
@@ -40,7 +42,7 @@ const FIRST_CHUNK_TIMEOUT_MS = 20_000;
 const RECORD_TELEMETRY_CONTENT = process.env.LANGFUSE_RECORD_CONTENT !== "false";
 const TOOL_NOTES = {
   search_web:
-    "Use search_web for current facts, verification, or research. You may refine a query after inspecting results.",
+    "Use search_web to find pages about a topic. It returns a ranked list of titles, addresses, and snippets — leads, not evidence. Open the promising ones with read_url (or http_get for an API) and answer from what you read; a snippet alone is not enough to state a fact. Refine the keywords and search again when the results are off-target.",
   read_url:
     "Use read_url to read a specific page or PDF when you know its address, including links the user shares and results from search_web. Each page read becomes a numbered source.",
   http_get:
@@ -350,7 +352,7 @@ export async function* generateChatReplyStream(
     toolNotes.push(TOOL_NOTES.search_web);
     tools.search_web = tool({
       description:
-        "Search the web for external evidence. Provide a focused search query; results contain a research brief and numbered sources. You may search again to clarify or verify findings.",
+        "Search the web and get back a ranked list of pages: title, address, and a short snippet for each. These are unread leads, not verified evidence and not citable on their own — open the relevant ones with read_url, or with http_get when the source is an API. You may search again with different keywords to find better pages.",
       inputSchema: z.object({ query: z.string().trim().min(1).max(2000) }),
       execute: async ({ query }) => {
         const key = query.toLowerCase().replace(/\s+/g, " ").trim();
@@ -365,13 +367,15 @@ export async function* generateChatReplyStream(
         const pending = (async () => {
           try {
             const result = await searchWeb(query, { signal });
-            queries.push(...result.metadata.attemptedQueries);
-            successfulSearches += result.metadata.successfulSearches;
-            const numberedSources = result.metadata.sources.map((source) => ({
-              number: addSource(source),
-              ...source,
-            }));
-            return { brief: result.brief, sources: numberedSources };
+            queries.push(result.query);
+            successfulSearches += 1;
+            // Results are not passed through addSource: a page becomes a numbered, citable source
+            // only once read_url or http_get has actually fetched it.
+            return {
+              results: result.results,
+              ...(result.brief ? { brief: result.brief } : {}),
+              next: "These pages have not been read. Open the relevant ones with read_url (or http_get for an API) before relying on or citing them.",
+            };
           } catch (error) {
             signal.throwIfAborted();
             return {
