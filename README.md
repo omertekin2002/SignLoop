@@ -70,8 +70,10 @@ This repo uses:
 - Chat runs a bounded AI SDK tool loop: the selected model decides whether to answer directly or
   call tools, sees the results, and can issue follow-up calls before answering. Tools: `search_web`
   (Gemini grounding), `read_url` (page or PDF text via Firecrawl or Jina Reader, cited like a search
-  result), and `list_contracts` / `read_contract` (the signed-in user's own uploaded contract text,
-  paged by offset or excerpted around `find` keywords).
+  result), `list_contracts` / `read_contract` (the signed-in user's own uploaded contract text,
+  paged by offset or excerpted around `find` keywords), and `generate_image` (gpt-image-2, offered
+  only while the primary endpoint lists that model; the image is spliced into the streamed reply and
+  its bytes never enter the model transcript).
 - Signed-in sessions expose every tool; anonymous temporary chat uses the same loop with no tools.
   Page and document text is fenced with untrusted-content markers before the model sees it.
   There is no greeting list or preprocessing classifier. Saved replies retain tool exchanges and

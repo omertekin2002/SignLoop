@@ -1605,12 +1605,21 @@ export async function appendChatMessagesToThread(input: {
       throw new ChatThreadNotFoundError();
     }
 
+    // Move every inline generated image out of the transcript text into chat_attachments, so a
+    // reply that mixes prose and images stays small and each image is served by its own route.
+    const inlineImage = /!\[Generated image\]\(data:image\/png;base64,([A-Za-z0-9+/=]+)\)/g;
     for (const message of cleanedMessages) {
-      const image = message.role === "assistant" && message.content.match(/^!\[Generated image\]\(data:image\/png;base64,([A-Za-z0-9+/=]+)\)$/);
-      if (!image) continue;
-      const imageId = randomUUID();
-      await client.query("INSERT INTO chat_attachments(id, thread_id, image_data) VALUES ($1, $2, decode($3, 'base64'))", [imageId, input.threadId, image[1]]);
-      message.content = `![Generated image](/api/chat/threads/${input.threadId}/images/${imageId})`;
+      if (message.role !== "assistant") continue;
+      const images = [...message.content.matchAll(inlineImage)];
+      if (!images.length) continue;
+      const replacements = new Map<string, string>();
+      for (const image of images) {
+        if (replacements.has(image[0])) continue;
+        const imageId = randomUUID();
+        await client.query("INSERT INTO chat_attachments(id, thread_id, image_data) VALUES ($1, $2, decode($3, 'base64'))", [imageId, input.threadId, image[1]!]);
+        replacements.set(image[0], `![Generated image](/api/chat/threads/${input.threadId}/images/${imageId})`);
+      }
+      message.content = message.content.replace(inlineImage, (match) => replacements.get(match) ?? match);
     }
 
     const posResult = await client.query(

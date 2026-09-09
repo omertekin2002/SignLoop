@@ -8,12 +8,14 @@ const mocks = vi.hoisted(() => ({
   readUrl: vi.fn(),
   listContracts: vi.fn(),
   getContractText: vi.fn(),
+  generateImage: vi.fn(),
 }));
 vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: () => ({ responses: mocks.responses }),
 }));
 vi.mock("@/lib/gemini-search", () => ({ searchWeb: mocks.search }));
 vi.mock("@/lib/url-reader", () => ({ readUrl: mocks.readUrl }));
+vi.mock("@/lib/image-generation", () => ({ generateImageReply: mocks.generateImage }));
 vi.mock("@/lib/server-db", () => ({
   listContractsForChat: mocks.listContracts,
   getContractTextForUser: mocks.getContractText,
@@ -481,5 +483,43 @@ describe("agentic chat", () => {
     const reply = await generateChatReply(messages, { contractsUserId: "user-1" });
     expect(reply.toolActivity?.[0]?.status).toBe("error");
     expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain("Contract not found");
+  });
+
+  it("streams a generated image into the reply without putting bytes in the transcript", async () => {
+    const markdown = "![Generated image](data:image/png;base64,AAAA)";
+    mocks.generateImage.mockResolvedValue({ message: markdown, model: "gpt-image-2", provider: "primary-openai-compatible" });
+    const model = sequencedModel([toolStep(0, "generate_image", { prompt: "a signed contract on a desk" })]);
+    mocks.responses.mockReturnValue(model);
+    const chunks: ChatReplyStreamChunk[] = [];
+    for await (const chunk of generateChatReplyStream(messages, { enableImageGeneration: true, userId: "user-1" })) chunks.push(chunk);
+    expect(mocks.generateImage).toHaveBeenCalledWith("a signed contract on a desk", expect.objectContaining({ userId: "user-1" }));
+    const deltas = chunks.filter((chunk) => chunk.type === "delta").map((chunk) => chunk.text);
+    expect(deltas[0]).toBe(markdown);
+    const done = chunks.at(-1);
+    if (done?.type !== "done") throw new Error("missing done");
+    expect(done.reply.message).toBe(`${markdown}\n\nAnswer [1]`);
+    expect(JSON.stringify(done.reply.agentMessages)).not.toContain("base64");
+    expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain('"attached"');
+    expect(done.reply.toolActivity).toEqual([
+      { id: "call-0", tool: "generate_image", query: "a signed contract on a desk", status: "complete" },
+    ]);
+
+    const withoutImages = scriptedModel();
+    mocks.responses.mockReturnValue(withoutImages);
+    await generateChatReply(messages, { enableWebSearch: true });
+    expect(withoutImages.doStreamCalls[0]?.tools?.map((item) => item.name)).toEqual(["search_web"]);
+  });
+
+  it("returns image failures to the model as tool errors", async () => {
+    mocks.generateImage.mockRejectedValue(new Error("upstream 500 with secret details"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const model = sequencedModel([toolStep(0, "generate_image", { prompt: "anything" })]);
+    mocks.responses.mockReturnValue(model);
+    const reply = await generateChatReply(messages, { enableImageGeneration: true });
+    expect(reply.message).toBe("Answer [1]");
+    expect(reply.toolActivity?.[0]?.status).toBe("error");
+    const continuation = JSON.stringify(model.doStreamCalls[1]?.prompt);
+    expect(continuation).toContain("Image generation failed");
+    expect(continuation).not.toContain("secret details");
   });
 });

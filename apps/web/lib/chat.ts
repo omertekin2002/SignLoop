@@ -19,7 +19,11 @@ import {
 } from "@/lib/llm-client";
 import { searchWeb, type WebSearchMetadata } from "@/lib/gemini-search";
 import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
-import { createContractTools, createUrlReaderTool } from "@/lib/chat-tools";
+import {
+  createContractTools,
+  createImageTool,
+  createUrlReaderTool,
+} from "@/lib/chat-tools";
 import { isRecord } from "@/lib/utils";
 
 // Listing, reading, and searching before the final answer needs more room than a search-only loop.
@@ -39,6 +43,8 @@ const TOOL_NOTES = {
     "Use read_url to read a specific page or PDF when you know its address, including links the user shares and results from search_web. Each page read becomes a numbered source.",
   contracts:
     "The user's uploaded contracts are available: call list_contracts to find them, then read_contract to read the text. Page with offset, or pass find with keywords to locate clauses. Quote clause text precisely and name the contract it comes from.",
+  generate_image:
+    "Use generate_image when the user asks for a picture, illustration, diagram, or other visual. Write a detailed prompt. The image is inserted into your reply automatically, so never embed or link it yourself; briefly describe what you generated.",
 };
 const NO_TOOLS_INSTRUCTIONS =
   "No tools are available in this session. Do not claim to search, read pages, or open documents.";
@@ -67,12 +73,14 @@ export type ChatToolName =
   | "search_web"
   | "read_url"
   | "read_contract"
-  | "list_contracts";
+  | "list_contracts"
+  | "generate_image";
 const CHAT_TOOL_NAMES = new Set<string>([
   "search_web",
   "read_url",
   "read_contract",
   "list_contracts",
+  "generate_image",
 ]);
 export function isChatToolName(value: string): value is ChatToolName {
   return CHAT_TOOL_NAMES.has(value);
@@ -106,6 +114,10 @@ export function describeToolInput(tool: ChatToolName, input: unknown): string {
         .join(" ");
     case "list_contracts":
       return "";
+    case "generate_image": {
+      const prompt = typeof record.prompt === "string" ? record.prompt.trim() : "";
+      return prompt.length > 80 ? `${prompt.slice(0, 79)}…` : prompt;
+    }
   }
 }
 export type ChatReply = {
@@ -127,6 +139,10 @@ type ChatGenerationOptions = {
   enableUrlReader?: boolean;
   /** Enables list_contracts and read_contract scoped to this user's own documents. */
   contractsUserId?: string | null;
+  /** Enables generate_image; the route sets this from the live model availability snapshot. */
+  enableImageGeneration?: boolean;
+  /** Passed through to the image endpoint's `user` field for abuse attribution. */
+  userId?: string | null;
   firstChunkTimeoutMs?: number;
 };
 
@@ -368,6 +384,18 @@ export async function* generateChatReplyStream(
       createContractTools({ userId: options.contractsUserId, signal }),
     );
   }
+  const generatedImages = new Map<string, string>();
+  if (options?.enableImageGeneration) {
+    toolNotes.push(TOOL_NOTES.generate_image);
+    Object.assign(
+      tools,
+      createImageTool({
+        signal,
+        userId: options.userId,
+        onImage: (toolCallId, markdown) => generatedImages.set(toolCallId, markdown),
+      }),
+    );
+  }
   const agent = new ToolLoopAgent({
     model: routed.model,
     instructions: `${messages
@@ -427,6 +455,14 @@ export async function* generateChatReplyStream(
         yield { type: "tool", activity };
       }
       if (part.type === "tool-result" || part.type === "tool-error") {
+        // Splice a finished image into the reply as it lands; the next step's text follows it.
+        const image = generatedImages.get(part.toolCallId);
+        if (image) {
+          generatedImages.delete(part.toolCallId);
+          const text = `${answer && !answer.endsWith("\n\n") ? "\n\n" : ""}${image}`;
+          answer += text;
+          yield { type: "delta", text };
+        }
         const previous = activities.get(part.toolCallId);
         if (previous) {
           const failed =

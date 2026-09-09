@@ -144,4 +144,17 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(await getContractTextForUser("intruder", created.id)).toBeNull();
     expect(await listContractsForChat("intruder")).toEqual([]);
   });
+
+  it("moves inline images out of mixed prose replies into attachments", async () => {
+    const thread = await createChatThreadForUser({ userId: "owner", title: "Images" });
+    const png = Buffer.from("tool image").toString("base64");
+    const [, stored] = await appendChatMessagesToThread({ userId: "owner", threadId: thread.id, messages: [
+      { role: "user", content: "Draw it" },
+      { role: "assistant", content: `![Generated image](data:image/png;base64,${png})\n\nHere is the diagram you asked for.` },
+    ] });
+    expect(stored!.content).toMatch(/^!\[Generated image\]\(\/api\/chat\/threads\/[a-f0-9-]+\/images\/[a-f0-9-]+\)\n\nHere is the diagram you asked for\.$/);
+    const imageId = stored!.content.match(/images\/([a-f0-9-]+)/)![1]!;
+    expect((await getChatImageForUser("owner", thread.id, imageId))?.toString()).toBe("tool image");
+    expect((await getChatThreadByIdForUser("owner", thread.id))?.messages.at(-1)?.content).toBe(stored!.content);
+  });
 });

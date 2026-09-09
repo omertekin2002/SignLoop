@@ -10,7 +10,6 @@ import {
   type ChatReply,
 } from "@/lib/chat";
 import { GeminiWebSearchError } from "@/lib/gemini-search";
-import { generateImageReply } from "@/lib/image-generation";
 import {
   boundCanonicalChatHistory,
   MAX_CHAT_MESSAGES,
@@ -25,7 +24,6 @@ import {
 } from "@/lib/personality-settings";
 import {
   getModelAvailabilitySnapshot,
-  IMAGE_GENERATION_MODEL,
   resolveAvailablePrimaryModel,
 } from "@/lib/model-settings";
 import {
@@ -66,17 +64,6 @@ export const maxDuration = 300;
 const ROUTE_TIMEOUT_MS = 275_000;
 // The lease must outlive the longest possible request so a stuck run cannot be double-started.
 const CHAT_LEASE_SECONDS = 360;
-
-export async function GET() {
-  const snapshot = await getModelAvailabilitySnapshot();
-
-  return NextResponse.json({
-    imageGenerationAvailable: snapshot.imageGenerationAvailable,
-    imageGenerationModel: snapshot.imageGenerationAvailable
-      ? IMAGE_GENERATION_MODEL
-      : null,
-  });
-}
 
 function getPublicChatErrorMessage(error: unknown): string {
   return error instanceof GeminiWebSearchError
@@ -192,7 +179,6 @@ export async function POST(req: Request) {
     }
     const body = parsedBody.value;
     const isTemporaryChat = isRecord(body) && body.temporary === true;
-    const isImageMode = isRecord(body) && body.imageMode === true;
     const { userId } = await auth();
     // Search and page reading are server-side invariants for authenticated chats, so clients cannot
     // disable them. Anonymous temporary chats get neither, to protect the private search quotas.
@@ -251,10 +237,9 @@ export async function POST(req: Request) {
             MAX_CHAT_MESSAGES - 1,
           )
         : Promise.resolve([]),
-      // Anonymous image requests still need the snapshot, since imageGenerationAvailable gates the
-      // call below. Anonymous *text* chat does not: it uses the configured default model, so it
-      // skips the upstream /models round-trip rather than blocking on a 5s timeout for nothing.
-      userId || isImageMode
+      // Anonymous chat uses the configured default model and gets no image tool, so it skips the
+      // upstream /models round-trip rather than blocking on a 5s timeout for nothing.
+      userId
         ? getModelAvailabilitySnapshot()
         : Promise.resolve({
             availablePrimaryModels: [],
@@ -294,49 +279,6 @@ export async function POST(req: Request) {
       conversationMessages = [...canonicalMessages, latestUserMessage];
     }
 
-    if (isImageMode) {
-      if (!modelSnapshot.imageGenerationAvailable) {
-        return NextResponse.json(
-          { error: "Image generation is not currently available." },
-          { status: 409 },
-        );
-      }
-
-      const reply = await generateImageReply(latestUserMessage.content, {
-        signal: operationSignal,
-        userId,
-      });
-      let persisted = true;
-
-      if (!isTemporaryChat) {
-        try {
-          storedMessages = await persistChatMessages({
-            userId,
-            threadId,
-            latestUserMessage,
-            assistantMessage: reply.message,
-            assistantModel: reply.model,
-            assistantProvider: reply.provider,
-            temporary: false,
-          });
-        } catch (persistError) {
-          if (req.signal.aborted || disconnect.signal.aborted || isAbortError(persistError)) {
-            throw persistError;
-          }
-          persisted = false;
-          console.error("Image chat persist failed:", persistError);
-        }
-      }
-
-      return NextResponse.json({
-        ...reply,
-        message: storedMessages.at(-1)?.content ?? reply.message,
-        storedMessages: storedMessages.map(toPublicChatMessage),
-        mode: isTemporaryChat ? "temporary-chat" : "chat",
-        persisted: isTemporaryChat ? undefined : persisted,
-      });
-    }
-
     const personality =
       settings?.personality && isAllowedPersonalityMode(settings.personality)
         ? settings.personality
@@ -367,6 +309,8 @@ export async function POST(req: Request) {
               enableWebSearch,
               enableUrlReader: enableWebSearch,
               contractsUserId: userId,
+              enableImageGeneration: modelSnapshot.imageGenerationAvailable,
+              userId,
             })) {
               if (req.signal.aborted || disconnect.signal.aborted) {
                 return;
@@ -472,6 +416,8 @@ export async function POST(req: Request) {
         enableWebSearch,
         enableUrlReader: enableWebSearch,
         contractsUserId: userId,
+        enableImageGeneration: modelSnapshot.imageGenerationAvailable,
+        userId,
       },
     );
     const assistantMessage = appendWebSourcesToMessage(

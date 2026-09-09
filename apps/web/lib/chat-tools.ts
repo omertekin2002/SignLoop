@@ -2,10 +2,12 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import type { WebSearchSource } from "@/lib/gemini-search";
 import { readUrl } from "@/lib/url-reader";
+import { generateImageReply } from "@/lib/image-generation";
 import { getContractTextForUser, listContractsForChat } from "@/lib/server-db";
 import { isUuid } from "@/lib/utils";
 
 export const MAX_URL_READS = 3;
+export const MAX_IMAGE_GENERATIONS = 2;
 export const CONTRACT_WINDOW_CHARACTERS = 12_000;
 const EXCERPT_RADIUS = 300;
 const MAX_EXCERPTS = 8;
@@ -176,6 +178,48 @@ export function createContractTools(deps: {
           ...(excerpt.matchCount !== undefined ? { matchCount: excerpt.matchCount } : {}),
           content: fenceUntrusted(excerpt.content),
         };
+      },
+    }),
+  };
+}
+
+/**
+ * Image bytes never enter the model transcript: the tool hands the rendered markdown to `onImage`
+ * keyed by tool call, and the chat loop splices it into the streamed reply when the result arrives.
+ */
+export function createImageTool(deps: {
+  signal: AbortSignal;
+  userId?: string | null;
+  onImage: (toolCallId: string, markdown: string) => void;
+}): ToolSet {
+  let generations = 0;
+  return {
+    generate_image: tool({
+      description:
+        "Generate one image from a detailed text prompt when the user asks for a picture, illustration, diagram, or other visual. The finished image is inserted into your reply automatically; do not embed or link it yourself. Describe the prompt you used briefly.",
+      inputSchema: z.object({ prompt: z.string().trim().min(1).max(4000) }),
+      execute: async ({ prompt }, { toolCallId }) => {
+        if (generations >= MAX_IMAGE_GENERATIONS)
+          return {
+            error:
+              "Image budget for this reply is exhausted. Describe what you would generate instead.",
+          };
+        generations++;
+        try {
+          const image = await generateImageReply(prompt, {
+            signal: deps.signal,
+            userId: deps.userId,
+          });
+          deps.onImage(toolCallId, image.message);
+          return { status: "attached", prompt, model: image.model };
+        } catch (error) {
+          deps.signal.throwIfAborted();
+          console.error("Image generation tool failed:", error);
+          return {
+            error:
+              "Image generation failed. Tell the user the image could not be produced and continue without it.",
+          };
+        }
       },
     }),
   };

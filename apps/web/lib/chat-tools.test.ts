@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/url-reader", () => ({ readUrl: vi.fn() }));
 vi.mock("@/lib/server-db", () => ({ listContractsForChat: vi.fn(), getContractTextForUser: vi.fn() }));
+vi.mock("@/lib/image-generation", () => ({ generateImageReply: vi.fn() }));
 import { CONTRACT_WINDOW_CHARACTERS, excerptContract, fenceUntrusted } from "./chat-tools";
 
 describe("excerptContract", () => {
