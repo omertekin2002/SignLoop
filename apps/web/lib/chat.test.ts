@@ -28,6 +28,7 @@ vi.mock("@/lib/llm-client", () => ({
   OPENROUTER_BASE_URL: "https://fallback.test/v1",
   OPENROUTER_API_KEY: "test",
   OPENROUTER_MODELS: ["fallback"],
+  isOpenRouterModel: (model: unknown) => model === "openrouter/free",
   resolvePrimaryModel: (value: string | null | undefined) =>
     value === null ? null : (value ?? "primary"),
 }));
@@ -521,5 +522,13 @@ describe("agentic chat", () => {
     const continuation = JSON.stringify(model.doStreamCalls[1]?.prompt);
     expect(continuation).toContain("Image generation failed");
     expect(continuation).not.toContain("secret details");
+  });
+
+  it("skips the primary endpoint when the user pins an OpenRouter model", async () => {
+    const model = scriptedModel();
+    mocks.responses.mockReturnValue(model);
+    const reply = await generateChatReply(messages, { primaryModel: "openrouter/free" });
+    expect(mocks.responses.mock.calls.map((call) => call[0])).toEqual(["openrouter/free", "fallback"]);
+    expect(reply).toMatchObject({ provider: "openrouter", model: "openrouter/free" });
   });
 });

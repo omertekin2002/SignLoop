@@ -9,6 +9,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import {
   APP_NAME,
+  isOpenRouterModel,
   OPENROUTER_API_KEY,
   OPENROUTER_BASE_URL,
   OPENROUTER_MODELS,
@@ -232,8 +233,13 @@ export function createRoutedModel(
   primaryModel: string | null,
   firstChunkTimeoutMs = FIRST_CHUNK_TIMEOUT_MS,
 ) {
+  // A pinned OpenRouter model skips the primary endpoint and heads the OpenRouter chain.
+  const pinnedFallback = isOpenRouterModel(primaryModel);
+  const openRouterModels = pinnedFallback
+    ? [primaryModel, ...OPENROUTER_MODELS.filter((model) => model !== primaryModel)]
+    : OPENROUTER_MODELS;
   const candidates = [
-    ...(primaryModel && PRIMARY_LLM_BASE_URL
+    ...(primaryModel && !pinnedFallback && PRIMARY_LLM_BASE_URL
       ? [
           {
             model: primaryModel,
@@ -244,7 +250,7 @@ export function createRoutedModel(
         ]
       : []),
     ...(OPENROUTER_API_KEY
-      ? OPENROUTER_MODELS.map((model) => ({
+      ? openRouterModels.map((model) => ({
           model,
           provider: "openrouter" as const,
           url: OPENROUTER_BASE_URL,

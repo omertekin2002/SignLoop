@@ -109,4 +109,20 @@ describe("resolveAvailablePrimaryModel", () => {
     expect(resolveAvailablePrimaryModel("removed", available)).toBe("model-a");
     expect(resolveAvailablePrimaryModel("removed", [])).toBeNull();
   });
+
+  it("lets a user pin the OpenRouter free model only when OpenRouter is configured", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-test");
+    const configured = await import("./model-settings");
+    expect(configured.SELECTABLE_FALLBACK_MODELS).toEqual(["openrouter/free"]);
+    expect(configured.resolveAvailablePrimaryModel("openrouter/free", ["model-a"])).toBe("openrouter/free");
+    expect(configured.resolveAvailablePrimaryModel("openrouter/free", [])).toBe("openrouter/free");
+    expect(configured.orderOpenRouterModels("openrouter/free")[0]).toBe("openrouter/free");
+    expect(configured.orderOpenRouterModels(null)).toEqual(configured.OPENROUTER_MODELS);
+
+    vi.resetModules();
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    const unconfigured = await import("./model-settings");
+    expect(unconfigured.SELECTABLE_FALLBACK_MODELS).toEqual([]);
+    expect(unconfigured.resolveAvailablePrimaryModel("openrouter/free", ["model-a"])).toBe("model-a");
+  });
 });

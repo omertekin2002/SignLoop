@@ -151,6 +151,8 @@ Fallback LLM endpoint (OpenRouter):
 - `OPENROUTER_API_KEY` (required for fallback)
 - `OPENROUTER_BASE_URL` (default: `https://openrouter.ai/api/v1`)
 - Fallback model order is fixed in code: `google/gemma-4-31b-it:free`, then `openai/gpt-oss-120b:free`, then `openrouter/free`
+- When OpenRouter is configured, `openrouter/free` is also offered in the model selector. Picking it
+  skips the primary endpoint for chat and analysis and starts the OpenRouter chain at that model.
 
 Model-independent web search:
 

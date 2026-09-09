@@ -3,6 +3,7 @@ import { parseJsonBody, requireUserId } from "@/lib/api-auth";
 import {
   getModelAvailabilitySnapshot,
   resolveAvailablePrimaryModel,
+  SELECTABLE_FALLBACK_MODELS,
   type PrimaryModel,
 } from "@/lib/model-settings";
 import {
@@ -45,6 +46,7 @@ export async function GET(req: Request) {
         ? settings.personality
         : DEFAULT_PERSONALITY_MODE,
     availablePrimaryModels,
+    availableFallbackModels: SELECTABLE_FALLBACK_MODELS,
     availablePersonalities: PERSONALITY_OPTIONS,
   });
 }
@@ -71,7 +73,10 @@ export async function PUT(req: Request) {
   }
 
   let model: PrimaryModel | null = null;
-  if (modelInput) {
+  if (SELECTABLE_FALLBACK_MODELS.includes(modelInput)) {
+    // Pinning OpenRouter needs no primary availability check, so skip the upstream round-trip.
+    model = modelInput;
+  } else if (modelInput) {
     const { availablePrimaryModels } = await getModelAvailabilitySnapshot({
       forceRefresh: true,
     });
@@ -81,6 +86,7 @@ export async function PUT(req: Request) {
         {
           error: "Selected primary model is not currently available",
           availablePrimaryModels,
+          availableFallbackModels: SELECTABLE_FALLBACK_MODELS,
         },
         { status: 409 },
       );

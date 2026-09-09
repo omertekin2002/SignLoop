@@ -7,6 +7,8 @@ export type SettingsResponse = {
   primaryModel: string | null;
   personality: string;
   availablePrimaryModels: string[];
+  /** OpenRouter models the user may pin even while primary models are available. */
+  availableFallbackModels?: string[];
   availablePersonalities: string[];
 };
 

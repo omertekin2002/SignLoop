@@ -1,5 +1,10 @@
 import OpenAI from "openai";
-import { PRIMARY_LLM_BASE_URL } from "@/lib/model-settings";
+import {
+  isOpenRouterModel,
+  OPENROUTER_MODELS,
+  orderOpenRouterModels,
+  PRIMARY_LLM_BASE_URL,
+} from "@/lib/model-settings";
 import { getErrorMessage } from "@/lib/utils";
 
 // Shared LLM provider configuration and the primary -> OpenRouter fallback used by
@@ -7,17 +12,12 @@ import { getErrorMessage } from "@/lib/utils";
 // Keeping it here prevents the provider config, client factory, and fallback loop from
 // drifting between the two callers.
 
-export { PRIMARY_LLM_BASE_URL };
+export { PRIMARY_LLM_BASE_URL, OPENROUTER_MODELS, isOpenRouterModel };
 
 export const OPENROUTER_API_KEY =
   process.env.OPENROUTER_API_KEY?.trim() || undefined;
 export const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
-export const OPENROUTER_MODELS = [
-  "google/gemma-4-31b-it:free",
-  "openai/gpt-oss-120b:free",
-  "openrouter/free",
-];
 export const PRIMARY_LLM_MODEL =
   process.env.PRIMARY_LLM_MODEL?.trim() || "gemini-3-flash";
 export const PRIMARY_LLM_API_KEY =
@@ -120,7 +120,8 @@ export function resolvePrimaryModel(requested?: string | null): string | null {
 }
 
 // Run `run` against the primary endpoint, and on failure iterate the ordered OpenRouter
-// fallback models. Aborts (via options.signal) are re-thrown without triggering fallback.
+// fallback models. A pinned OpenRouter model skips the primary endpoint entirely. Aborts (via
+// options.signal) are re-thrown without triggering fallback.
 export async function runWithPrimaryAndOpenRouterFallback<T>(
   selectedPrimaryModel: string | null,
   run: (client: OpenAI, model: string) => Promise<T>,
@@ -129,10 +130,18 @@ export async function runWithPrimaryAndOpenRouterFallback<T>(
     shouldFallback?: (error: unknown) => boolean;
   },
 ): Promise<{ result: T; provider: LlmProvider; model: string }> {
-  let primaryError: unknown;
+  if (selectedPrimaryModel === null || isOpenRouterModel(selectedPrimaryModel)) {
+    return runOpenRouterChain(
+      orderOpenRouterModels(selectedPrimaryModel),
+      run,
+      options,
+      selectedPrimaryModel === null
+        ? "No primary model is available"
+        : `${selectedPrimaryModel} was selected explicitly`,
+    );
+  }
 
   try {
-    if (selectedPrimaryModel === null) throw new Error("No primary model is available");
     options?.signal?.throwIfAborted();
     const primaryClient = createOpenAiCompatibleClient(
       PRIMARY_LLM_BASE_URL,
@@ -145,7 +154,6 @@ export async function runWithPrimaryAndOpenRouterFallback<T>(
       model: selectedPrimaryModel,
     };
   } catch (error) {
-    primaryError = error;
     if (options?.signal?.aborted) {
       throw error;
     }
@@ -158,54 +166,62 @@ export async function runWithPrimaryAndOpenRouterFallback<T>(
       model: selectedPrimaryModel,
       error: primaryErrorMessage,
     });
+    return runOpenRouterChain(OPENROUTER_MODELS, run, options, primaryErrorMessage);
+  }
+}
 
-    if (!OPENROUTER_API_KEY) {
-      throw new Error(
-        `Primary endpoint failed and OpenRouter fallback is not configured. Primary error: ${primaryErrorMessage}`,
-      );
-    }
-
-    const fallbackClient = createOpenAiCompatibleClient(
-      OPENROUTER_BASE_URL,
-      OPENROUTER_API_KEY,
-    );
-    const fallbackFailures: string[] = [];
-
-    for (const fallbackModel of OPENROUTER_MODELS) {
-      try {
-        options?.signal?.throwIfAborted();
-        const result = await run(fallbackClient, fallbackModel);
-        if (fallbackModel !== OPENROUTER_MODELS[0]) {
-          console.warn(
-            "OpenRouter fallback model succeeded after earlier model failed",
-            {
-              firstFallbackModel: OPENROUTER_MODELS[0],
-              successfulFallbackModel: fallbackModel,
-            },
-          );
-        }
-        return { result, provider: "openrouter", model: fallbackModel };
-      } catch (fallbackError) {
-        if (options?.signal?.aborted) {
-          throw fallbackError;
-        }
-        if (options?.shouldFallback && !options.shouldFallback(fallbackError)) {
-          throw fallbackError;
-        }
-
-        const fallbackErrorMessage = getErrorMessage(fallbackError);
-        fallbackFailures.push(`${fallbackModel}: ${fallbackErrorMessage}`);
-        console.warn("OpenRouter fallback model failed", {
-          model: fallbackModel,
-          error: fallbackErrorMessage,
-        });
-      }
-    }
-
+async function runOpenRouterChain<T>(
+  models: readonly string[],
+  run: (client: OpenAI, model: string) => Promise<T>,
+  options: { signal?: AbortSignal; shouldFallback?: (error: unknown) => boolean } | undefined,
+  reason: string,
+): Promise<{ result: T; provider: LlmProvider; model: string }> {
+  if (!OPENROUTER_API_KEY) {
     throw new Error(
-      `Primary endpoint failed (${getErrorMessage(primaryError)}) and OpenRouter fallback failed (${fallbackFailures.join(
-        " | ",
-      )})`,
+      `Primary endpoint failed and OpenRouter fallback is not configured. Primary error: ${reason}`,
     );
   }
+
+  const fallbackClient = createOpenAiCompatibleClient(
+    OPENROUTER_BASE_URL,
+    OPENROUTER_API_KEY,
+  );
+  const fallbackFailures: string[] = [];
+
+  for (const fallbackModel of models) {
+    try {
+      options?.signal?.throwIfAborted();
+      const result = await run(fallbackClient, fallbackModel);
+      if (fallbackModel !== models[0]) {
+        console.warn(
+          "OpenRouter fallback model succeeded after earlier model failed",
+          {
+            firstFallbackModel: models[0],
+            successfulFallbackModel: fallbackModel,
+          },
+        );
+      }
+      return { result, provider: "openrouter", model: fallbackModel };
+    } catch (fallbackError) {
+      if (options?.signal?.aborted) {
+        throw fallbackError;
+      }
+      if (options?.shouldFallback && !options.shouldFallback(fallbackError)) {
+        throw fallbackError;
+      }
+
+      const fallbackErrorMessage = getErrorMessage(fallbackError);
+      fallbackFailures.push(`${fallbackModel}: ${fallbackErrorMessage}`);
+      console.warn("OpenRouter fallback model failed", {
+        model: fallbackModel,
+        error: fallbackErrorMessage,
+      });
+    }
+  }
+
+  throw new Error(
+    `Primary endpoint failed (${reason}) and OpenRouter fallback failed (${fallbackFailures.join(
+      " | ",
+    )})`,
+  );
 }

@@ -4,6 +4,30 @@ export type PrimaryModel = string;
 
 export const IMAGE_GENERATION_MODEL = "gpt-image-2";
 
+// OpenRouter chain, tried in order when the primary endpoint fails or when the user pins one.
+export const OPENROUTER_FREE_MODEL = "openrouter/free";
+export const OPENROUTER_MODELS = [
+  "google/gemma-4-31b-it:free",
+  "openai/gpt-oss-120b:free",
+  OPENROUTER_FREE_MODEL,
+];
+const OPENROUTER_CONFIGURED = Boolean(process.env.OPENROUTER_API_KEY?.trim());
+/** Models a user may pin explicitly even while primary models are available. */
+export const SELECTABLE_FALLBACK_MODELS: readonly string[] = OPENROUTER_CONFIGURED
+  ? [OPENROUTER_FREE_MODEL]
+  : [];
+
+export function isOpenRouterModel(model: string | null | undefined): model is string {
+  return typeof model === "string" && OPENROUTER_MODELS.includes(model);
+}
+
+/** The OpenRouter chain with a pinned model moved to the front. */
+export function orderOpenRouterModels(pinned: string | null | undefined): string[] {
+  return isOpenRouterModel(pinned)
+    ? [pinned, ...OPENROUTER_MODELS.filter((model) => model !== pinned)]
+    : [...OPENROUTER_MODELS];
+}
+
 export const PRIMARY_LLM_BASE_URL =
   process.env.PRIMARY_LLM_BASE_URL?.trim() ?? "";
 const PRIMARY_LLM_API_KEY = process.env.PRIMARY_LLM_API_KEY?.trim() ?? "";
@@ -144,6 +168,10 @@ export function resolveAvailablePrimaryModel(
   availablePrimaryModels: readonly PrimaryModel[],
 ): PrimaryModel | null {
   const normalized = typeof requested === "string" ? requested.trim() : "";
+  // An explicitly pinned OpenRouter model stays selected regardless of what the primary offers.
+  if (normalized && SELECTABLE_FALLBACK_MODELS.includes(normalized)) {
+    return normalized;
+  }
   if (normalized && availablePrimaryModels.includes(normalized)) {
     return normalized;
   }

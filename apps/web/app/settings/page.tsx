@@ -58,9 +58,13 @@ export default function SettingsPage() {
     });
   };
 
+  const fallbackModels = useMemo(
+    () => data?.availableFallbackModels ?? [],
+    [data?.availableFallbackModels],
+  );
   const availableModels = useMemo(
-    () => data?.availablePrimaryModels ?? [],
-    [data?.availablePrimaryModels],
+    () => [...(data?.availablePrimaryModels ?? []), ...fallbackModels],
+    [data?.availablePrimaryModels, fallbackModels],
   );
   const availablePersonalities = useMemo(
     () => data?.availablePersonalities ?? [],
@@ -155,8 +159,9 @@ export default function SettingsPage() {
               Analysis Model
             </CardTitle>
             <CardDescription>
-              Choose which primary model SignLoop should use first for analysis. If it fails, SignLoop
-              automatically falls back to the configured OpenRouter model.
+              Choose which model SignLoop should use first for analysis and chat. If a primary model
+              fails, SignLoop falls back to OpenRouter automatically. Pick an OpenRouter model to skip
+              the primary endpoint entirely.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -195,7 +200,7 @@ export default function SettingsPage() {
                     <SelectContent>
                       {availableModels.map((model) => (
                         <SelectItem key={model} value={model}>
-                          {model}
+                          {fallbackModels.includes(model) ? `${model} (OpenRouter)` : model}
                         </SelectItem>
                       ))}
                     </SelectContent>

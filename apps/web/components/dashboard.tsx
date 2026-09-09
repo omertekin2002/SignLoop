@@ -102,6 +102,7 @@ const tabLabels: Record<DashboardTab, string> = {
 type ModelSelectorProps = {
   activeModel: string;
   availableModels: string[];
+  fallbackModels: string[];
   disabled: boolean;
   refreshing: boolean;
   onBeforeOpen: () => Promise<boolean>;
@@ -125,6 +126,7 @@ function SignLoopWordmark({ className }: { className?: string }) {
 function ModelSelector({
   activeModel,
   availableModels,
+  fallbackModels,
   disabled,
   refreshing,
   onBeforeOpen,
@@ -143,6 +145,20 @@ function ModelSelector({
       if (refreshed) setOpen(true);
     });
   };
+
+  const renderModelItem = (model: string) => (
+    <DropdownMenuItem
+      key={model}
+      onClick={() => onSelect(model)}
+      disabled={disabled}
+      className="flex items-center justify-between px-3 py-2 focus:bg-muted/80"
+    >
+      <span className="truncate pr-4">{model}</span>
+      {activeModel === model ? (
+        <Check className="h-4 w-4 shrink-0 text-primary" />
+      ) : null}
+    </DropdownMenuItem>
+  );
 
   return (
     <DropdownMenu open={open} onOpenChange={handleOpenChange}>
@@ -171,20 +187,19 @@ function ModelSelector({
         align="start"
         className="mt-1 w-64 border border-border/50 bg-background/95 backdrop-blur-sm"
       >
-        {availableModels.length > 0 ? (
-          availableModels.map((model: string) => (
-            <DropdownMenuItem
-              key={model}
-              onClick={() => onSelect(model)}
-              disabled={disabled}
-              className="flex items-center justify-between px-3 py-2 focus:bg-muted/80"
-            >
-              <span className="truncate pr-4">{model}</span>
-              {activeModel === model ? (
-                <Check className="h-4 w-4 shrink-0 text-primary" />
-              ) : null}
-            </DropdownMenuItem>
-          ))
+        {availableModels.length > 0 || fallbackModels.length > 0 ? (
+          <>
+            {availableModels.map(renderModelItem)}
+            {fallbackModels.length > 0 ? (
+              <DropdownMenuItem
+                disabled
+                className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+              >
+                OpenRouter
+              </DropdownMenuItem>
+            ) : null}
+            {fallbackModels.map(renderModelItem)}
+          </>
         ) : (
           <DropdownMenuItem disabled className="px-3 py-2">
             <span className="text-muted-foreground">OpenRouter</span>
@@ -279,6 +294,7 @@ const Dashboard = ({
   };
 
   const availableModels = settingsData?.availablePrimaryModels || [];
+  const fallbackModels = settingsData?.availableFallbackModels || [];
   const activeModel = canUseSavedWorkspace
     ? settingsData?.primaryModel || availableModels[0] || "OpenRouter"
     : "Temporary chat";
@@ -930,6 +946,7 @@ const Dashboard = ({
               <ModelSelector
                 activeModel={activeModel}
                 availableModels={availableModels}
+          fallbackModels={fallbackModels}
                 disabled={
                   !canUseSavedWorkspace ||
                   updateModelMutation.isPending ||
