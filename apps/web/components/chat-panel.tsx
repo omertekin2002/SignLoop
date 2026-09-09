@@ -32,6 +32,8 @@ import {
 } from "@assistant-ui/react";
 import {
   Bot,
+  Check,
+  Copy,
   Download,
   FileText,
   Loader2,
@@ -126,7 +128,7 @@ type ChatThreadDetail = {
   hasMore: boolean;
 };
 
-function extractMessageText(message: ThreadMessage): string {
+function extractMessageText(message: Pick<ThreadMessage, "content">): string {
   const chunks: string[] = [];
 
   for (const part of message.content) {
@@ -739,14 +741,73 @@ const SearchActivity = () => {
   </div>;
 };
 
+// Copies the message the same way it is sent to the API, so a generated image becomes a short
+// placeholder instead of a megabyte of base64 on the clipboard.
+const MessageCopyButton = ({ className }: { className?: string }) => {
+  const content = useMessage((message) => message.content);
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    },
+    [],
+  );
+
+  // Runs on every stream delta, so keep it to a scan; the full extraction happens only on click.
+  const hasText = content.some(
+    (part) =>
+      (part.type === "text" || part.type === "reasoning") &&
+      part.text.trim().length > 0,
+  );
+  if (!hasText) return null;
+
+  const handleCopy = async () => {
+    const text = extractMessageText({ content });
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+      resetTimer.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Denied permission or a non-secure context; neither is recoverable from here.
+      toast.error("Could not copy to the clipboard.");
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      aria-label={copied ? "Copied to clipboard" : "Copy message"}
+      title={copied ? "Copied" : "Copy"}
+      className={cn(
+        "inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        className,
+      )}
+    >
+      {copied ? (
+        <Check className="h-3.5 w-3.5" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" />
+      )}
+    </button>
+  );
+};
+
 const ChatMessage = () => {
   return (
     <MessagePrimitive.Root className="group relative flex w-full flex-col gap-2 mb-6">
       <MessagePrimitive.If user>
-        <div className="ml-auto relative flex max-w-[85%] items-end gap-2 md:max-w-[75%]">
-          <div className="flex w-full flex-col gap-1 rounded-2xl rounded-br-sm bg-primary px-5 py-3.5 text-primary-foreground shadow-sm">
-            <MessagePrimitive.Content components={{ Text: UserTextPart }} />
+        <div className="ml-auto flex max-w-[85%] flex-col items-end gap-1 md:max-w-[75%]">
+          <div className="relative flex w-full items-end gap-2">
+            <div className="flex w-full flex-col gap-1 rounded-2xl rounded-br-sm bg-primary px-5 py-3.5 text-primary-foreground shadow-sm">
+              <MessagePrimitive.Content components={{ Text: UserTextPart }} />
+            </div>
           </div>
+          <MessageCopyButton />
         </div>
       </MessagePrimitive.If>
 
@@ -773,6 +834,7 @@ const ChatMessage = () => {
               </div>
             </MessagePrimitive.Error>
           </div>
+          <MessageCopyButton className="self-start" />
         </div>
       </MessagePrimitive.If>
     </MessagePrimitive.Root>
