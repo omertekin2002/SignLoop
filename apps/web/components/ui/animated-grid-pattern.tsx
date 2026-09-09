@@ -41,7 +41,10 @@ export function AnimatedGridPattern({
     return Array.from({ length: numSquares }, (_, index) => {
       const column = Math.floor(seededValue(index + 1) * columns);
       const row = Math.floor(seededValue(index + 29) * rows);
-      const delay = seededValue(index + 83) * (duration + repeatDelay);
+      // Round to a precision the browser will not reformat: a full-precision float serializes
+      // differently once it round-trips through CSSOM, which React reports as a hydration mismatch.
+      const delay =
+        Math.round(seededValue(index + 83) * (duration + repeatDelay) * 1000) / 1000;
 
       return {
         id: `${column}-${row}-${index}`,
@@ -87,7 +90,8 @@ export function AnimatedGridPattern({
             style={{
               animationDelay: `${square.delay}s`,
               animationDuration: `${duration + repeatDelay}s`,
-              "--grid-square-opacity": maxOpacity,
+              // Custom properties must be strings; a number is serialized inconsistently.
+              "--grid-square-opacity": String(maxOpacity),
             } as CSSProperties}
           />
         ))}
