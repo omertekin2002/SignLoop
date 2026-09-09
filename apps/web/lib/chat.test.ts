@@ -463,9 +463,9 @@ describe("agentic chat", () => {
 
   it("reads the user's contracts only when a user is attached", async () => {
     const contractId = "11111111-1111-4111-8111-111111111111";
-    mocks.listContracts.mockResolvedValue([
+    mocks.listContracts.mockResolvedValue({ contracts: [
       { id: contractId, title: "NDA", status: "DRAFT", projectId: null, updatedAt: "2026-01-01", characterCount: 44, extractionWarning: null },
-    ]);
+    ], nextOffset: null });
     mocks.getContractText.mockResolvedValue({
       id: contractId,
       title: "NDA",
@@ -479,7 +479,7 @@ describe("agentic chat", () => {
     ]);
     mocks.responses.mockReturnValue(model);
     const reply = await generateChatReply(messages, { contractsUserId: "user-1" });
-    expect(mocks.listContracts).toHaveBeenCalledWith("user-1");
+    expect(mocks.listContracts).toHaveBeenCalledWith("user-1", { offset: undefined, query: undefined });
     expect(mocks.getContractText).toHaveBeenCalledWith("user-1", contractId);
     expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain("NDA");
     expect(JSON.stringify(model.doStreamCalls[2]?.prompt)).toContain("Confidentiality lasts");

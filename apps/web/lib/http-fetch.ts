@@ -1,14 +1,15 @@
 import { getErrorMessage } from "@/lib/utils";
 import { validatePublicHttpUrl } from "@/lib/url-reader";
+import { fetch, type Response } from "undici/index.js";
+import { createPublicHttpDispatcher } from "@/lib/public-http-dispatcher";
 
 // Raw HTTP GET for the chat agent. Unlike lib/url-reader.ts, which proxies through a hosted
 // reader and returns readability-extracted prose, this contacts the target host directly and
 // returns the response body verbatim — the shape APIs answer in, and the shape a model can quote
 // a single field out of instead of paraphrasing a summary.
 //
-// Because the request leaves this server (not Firecrawl's), every hop is re-validated against
-// validatePublicHttpUrl. A 302 to a link-local or private address would otherwise walk straight
-// past the check performed on the model-supplied URL.
+// Every hop passes the URL guard, and the dispatcher validates DNS addresses at
+// connection time. Connections use those verified addresses without a second lookup.
 
 export const MAX_FETCH_RESPONSE_CHARACTERS = 12_000;
 const FETCH_TIMEOUT_MS = 30_000;
@@ -94,10 +95,12 @@ export async function httpGet(
     ...(options?.signal ? [options.signal] : []),
   ]);
   let target = validatePublicHttpUrl(input);
+  const dispatcher = createPublicHttpDispatcher();
 
   try {
     for (let hop = 0; ; hop++) {
       const response = await fetch(target, {
+        dispatcher,
         method: "GET",
         redirect: "manual",
         headers: {
@@ -145,5 +148,8 @@ export async function httpGet(
         : "That address could not be fetched. Check the URL or try a different source.",
       { cause: error },
     );
+  } finally {
+    // Also close sockets for cancelled, redirected, oversized, or failed responses.
+    await dispatcher.destroy();
   }
 }

@@ -1,4 +1,6 @@
 import { getErrorMessage } from "@/lib/utils";
+import { isIP } from "node:net";
+import { isPublicIpAddress } from "@/lib/public-ip";
 
 export const MAX_PAGE_CHARACTERS = 12_000;
 const READ_TIMEOUT_MS = 30_000;
@@ -27,10 +29,8 @@ export class UrlReadError extends Error {
 
 const INVALID_ADDRESS = "Only public http(s) web addresses can be read.";
 const BLOCKED_HOST = /^(localhost|.*\.localhost|.*\.local|.*\.internal)$/i;
-const PRIVATE_IPV4 =
-  /^(0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/;
 
-/** Accepts only routable public http(s) URLs so the reader cannot be pointed at internal services. */
+/** Syntactic URL guard. Direct requests must also validate DNS at connection time. */
 export function validatePublicHttpUrl(input: string): URL {
   let url: URL;
   try {
@@ -42,13 +42,11 @@ export function validatePublicHttpUrl(input: string): URL {
     throw new UrlReadError(`Unsupported URL: ${url.protocol}`, INVALID_ADDRESS);
   if (url.username || url.password)
     throw new UrlReadError("URLs with credentials are not allowed", INVALID_ADDRESS);
-  const host = url.hostname.replace(/^\[|\]$/g, "");
-  const isIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+  const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const isAddress = isIP(host) !== 0;
   if (
     BLOCKED_HOST.test(host) ||
-    (isIpv4 && PRIVATE_IPV4.test(host)) ||
-    (!isIpv4 && host.includes(":")) ||
-    !host.includes(".")
+    (isAddress ? !isPublicIpAddress(host) : !host.includes("."))
   )
     throw new UrlReadError(`Blocked host: ${host}`, INVALID_ADDRESS);
   return url;

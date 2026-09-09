@@ -86,7 +86,18 @@ This repo uses:
   transcripts are client-supplied, so they are structurally validated, capped at 20,000 serialized
   characters, and dropped whole rather than partially replayed when anything is unexpected. They
   are only ever fed back to the model inside that same anonymous session.
-- Search progress streams to the UI. Only sources cited by the answer receive appended links.
+- Search progress streams to the UI.
+- The `Sources:` footer is built from server-side ground truth, not from the model's prose: every
+  page fetched during the turn is listed whether or not the answer cited it, so a missing or
+  malformed citation can no longer hide which pages an answer came from. Sources carried over from
+  earlier turns (kept so citation numbers stay stable) are listed only where this answer cites them.
+  Citation markers in OpenAI's `【1†L23-L26】` format are rewritten to `[1]` before linking, since
+  models trained on it emit that instead of the format the prompt asks for.
+- Measured figures — decimals and grouped thousands, not bare integers or years — are checked
+  against the text actually fetched. An answer that states figures with no page read, or whose
+  figures appear nowhere in what was read, gets an italic notice appended. The check is deliberately
+  one-sided: substring presence proves provenance but never meaning, so only a wholly ungrounded
+  answer is flagged and a derived value alongside a grounded one is not.
 
 ---
 

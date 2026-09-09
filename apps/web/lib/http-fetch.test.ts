@@ -1,5 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { httpGet, MAX_FETCH_RESPONSE_CHARACTERS } from "./http-fetch";
+// Keep response/redirect tests deterministic; DNS/socket enforcement is covered separately.
+vi.mock("undici/index.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("undici/index.js")>(),
+  fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args),
+}));
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -16,10 +21,15 @@ it("rejects addresses that are not public http(s) endpoints without fetching", a
   for (const url of [
     "ftp://files.test/a",
     "http://localhost:8317/v1/models",
+    "http://localhost.:8317/v1/models",
+    "http://service.internal./",
     "http://127.0.0.1/",
     "http://10.0.0.1/",
     "http://169.254.169.254/latest/meta-data",
     "http://[::1]/",
+    "http://[::ffff:127.0.0.1]/",
+    "http://224.0.0.1/",
+    "http://198.18.0.1/",
     "http://user:pw@site.test/",
     "http://intranet/",
     "not a url",
@@ -69,10 +79,10 @@ it("follows redirects and reports the address that actually answered", async () 
   expect(result.url).toBe("https://api.test/v2/quote");
 });
 
-it("re-validates every redirect hop, so a 302 cannot reach a private address", async () => {
+it.each(["http://169.254.169.254/latest/meta-data", "http://localhost.:3000/"])("rejects a redirect to %s", async (destination) => {
   const fetchMock = vi
     .fn()
-    .mockResolvedValueOnce(redirect("http://169.254.169.254/latest/meta-data"));
+    .mockResolvedValueOnce(redirect(destination));
   vi.stubGlobal("fetch", fetchMock);
   await expect(httpGet("https://api.test/quote")).rejects.toMatchObject({
     publicMessage: expect.stringMatching(/http\(s\) web addresses/),

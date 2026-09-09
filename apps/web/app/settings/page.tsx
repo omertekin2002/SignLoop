@@ -7,7 +7,7 @@ import { useClerk, useUser } from "@clerk/nextjs";
 import { ArrowLeft, Loader2, Settings as SettingsIcon } from "lucide-react";
 import { useTheme } from "next-themes";
 import { apiClient, getApiErrorMessage } from "@/lib/api-client";
-import { fetchSettings, getSettingsErrorMessage } from "@/lib/settings";
+import { fetchSettings, getModelSelection, getSettingsErrorMessage } from "@/lib/settings";
 import { DEFAULT_PERSONALITY_MODE } from "@/lib/personality-settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -70,14 +70,9 @@ export default function SettingsPage() {
     () => data?.availablePersonalities ?? [],
     [data?.availablePersonalities],
   );
-  const effectiveModel = useMemo(() => {
-    if (selectedModel && availableModels.includes(selectedModel)) {
-      return selectedModel;
-    }
-    if (data?.primaryModel && availableModels.includes(data.primaryModel))
-      return data.primaryModel;
-    return availableModels[0] ?? "";
-  }, [availableModels, data?.primaryModel, selectedModel]);
+  const { model: effectiveModel, hasChanges: hasModelChanges } = getModelSelection(
+    selectedModel, data?.primaryModel, availableModels,
+  );
   const effectivePersonality = useMemo(() => {
     if (selectedPersonality) return selectedPersonality;
     if (data?.personality) return data.personality;
@@ -119,11 +114,6 @@ export default function SettingsPage() {
     },
   });
 
-  const initialModel =
-    data?.primaryModel && availableModels.includes(data.primaryModel)
-      ? data.primaryModel
-      : availableModels[0] ?? "";
-  const hasModelChanges = Boolean(effectiveModel && effectiveModel !== initialModel);
   const initialPersonality = data?.personality ?? DEFAULT_PERSONALITY_MODE;
   const hasPersonalityChanges = Boolean(
     effectivePersonality && effectivePersonality !== initialPersonality
@@ -195,7 +185,7 @@ export default function SettingsPage() {
                     disabled={isFetching || saveModelMutation.isPending}
                   >
                     <SelectTrigger id="primary-model">
-                      <SelectValue placeholder="Select a primary model" />
+                      <SelectValue placeholder="Automatic fallback" />
                     </SelectTrigger>
                     <SelectContent>
                       {availableModels.map((model) => (
@@ -235,7 +225,7 @@ export default function SettingsPage() {
                   <Button
                     variant="outline"
                     disabled={saveModelMutation.isPending}
-                    onClick={() => setSelectedModel(initialModel)}
+                    onClick={() => setSelectedModel("")}
                   >
                     Reset
                   </Button>

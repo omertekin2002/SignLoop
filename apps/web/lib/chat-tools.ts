@@ -83,9 +83,21 @@ function publicToolError(error: unknown, fallback: string): { error: string } {
   };
 }
 
+function urlCacheKey(input: string): string {
+  try {
+    // URL normalizes the scheme and host; paths, query values, and trailing slashes
+    // must retain their meaning. Leave invalid input for the reader's error handling.
+    return new URL(input.trim()).href;
+  } catch {
+    return input.trim();
+  }
+}
+
 export function createUrlReaderTool(deps: {
   signal: AbortSignal;
   addSource: (source: WebSearchSource) => number;
+  /** Raw fetched text, kept so the finished answer can be checked against what was actually read. */
+  onEvidence?: (text: string) => void;
 }): ToolSet {
   const cache = new Map<string, Promise<unknown>>();
   let reads = 0;
@@ -95,7 +107,7 @@ export function createUrlReaderTool(deps: {
         "Read the main text of a specific public web page or PDF by its address. The page becomes a numbered source you can cite as [n]. Use it for links the user shares or pages found with search_web.",
       inputSchema: z.object({ url: z.string().trim().min(1).max(2048) }),
       execute: async ({ url }) => {
-        const key = url.replace(/\/+$/, "").toLowerCase();
+        const key = urlCacheKey(url);
         const existing = cache.get(key);
         if (existing) return existing;
         if (reads >= MAX_URL_READS)
@@ -108,6 +120,7 @@ export function createUrlReaderTool(deps: {
           try {
             const page = await readUrl(url, { signal: deps.signal });
             const number = deps.addSource({ title: page.title, url: page.url });
+            deps.onEvidence?.(page.content);
             return {
               number,
               title: page.title,
@@ -133,6 +146,7 @@ export function createUrlReaderTool(deps: {
 export function createHttpGetTool(deps: {
   signal: AbortSignal;
   addSource: (source: WebSearchSource) => number;
+  onEvidence?: (text: string) => void;
 }): ToolSet {
   const cache = new Map<string, Promise<unknown>>();
   let fetches = 0;
@@ -142,7 +156,7 @@ export function createHttpGetTool(deps: {
         "Send an HTTP GET to any public URL and return the raw response body — JSON, CSV, XML, or plain text. Use this for APIs and structured data endpoints when you need an exact value (a price, a count, a status, a record field), and prefer it over read_url whenever a machine-readable source exists. Build the full URL yourself, including query parameters. The response becomes a numbered source you can cite as [n]. Quote values from the body verbatim; never fill in a field the response did not contain.",
       inputSchema: z.object({ url: z.string().trim().min(1).max(2048) }),
       execute: async ({ url }) => {
-        const key = url.trim().toLowerCase();
+        const key = urlCacheKey(url);
         const existing = cache.get(key);
         if (existing) return existing;
         if (fetches >= MAX_HTTP_FETCHES)
@@ -159,6 +173,7 @@ export function createHttpGetTool(deps: {
               title: `${target.hostname}${target.pathname === "/" ? "" : target.pathname}`,
               url: response.url,
             });
+            deps.onEvidence?.(response.body);
             return {
               number,
               url: response.url,
@@ -189,12 +204,17 @@ export function createContractTools(deps: {
   return {
     list_contracts: tool({
       description:
-        "List the user's uploaded contracts with their ids, titles, status, and extracted text length. Call this before read_contract when you do not know the contract id.",
-      inputSchema: z.object({}),
-      execute: async () => {
+        "List the user's uploaded contracts with their ids, titles, status, and extracted text length. Call this before read_contract when you do not know the contract id. Use query to search titles across all contracts. If nextOffset is present, pass it as offset with the same query to get the next page.",
+      inputSchema: z.object({
+        offset: z.number().int().min(0).max(2_147_483_647).optional(),
+        query: z.string().trim().min(1).max(200).optional(),
+      }),
+      execute: async ({ offset, query }) => {
         deps.signal.throwIfAborted();
-        const contracts = await listContractsForChat(deps.userId);
+        const { contracts, nextOffset } = await listContractsForChat(deps.userId, { offset, query });
         return {
+          nextOffset,
+          hasMore: nextOffset !== null,
           contracts: contracts.map((contract) => ({
             id: contract.id,
             title: contract.title,

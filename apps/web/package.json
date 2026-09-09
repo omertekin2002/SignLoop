@@ -37,6 +37,7 @@
     "axios": "^1.18.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "ipaddr.js": "^2.5.0",
     "katex": "^0.16.47",
     "lucide-react": "^0.562.0",
     "marked": "^18.0.6",
@@ -53,6 +54,7 @@
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
     "tesseract.js": "^7.0.0",
+    "undici": "^6.27.0",
     "unpdf": "^1.6.2",
     "word-extractor": "^1.0.4",
     "zod": "^4.4.3"

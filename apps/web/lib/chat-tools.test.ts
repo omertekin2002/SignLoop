@@ -4,9 +4,13 @@ vi.mock("@/lib/server-db", () => ({ listContractsForChat: vi.fn(), getContractTe
 vi.mock("@/lib/image-generation", () => ({ generateImageReply: vi.fn() }));
 vi.mock("@/lib/http-fetch", () => ({ httpGet: vi.fn() }));
 import { httpGet } from "@/lib/http-fetch";
+import { readUrl } from "@/lib/url-reader";
+import { listContractsForChat } from "@/lib/server-db";
 import {
   CONTRACT_WINDOW_CHARACTERS,
   createHttpGetTool,
+  createUrlReaderTool,
+  createContractTools,
   excerptContract,
   fenceUntrusted,
   MAX_HTTP_FETCHES,
@@ -34,6 +38,52 @@ describe("excerptContract", () => {
     expect(result.content.length).toBeLessThan(2_000);
     expect(excerptContract(text, { find: "arbitration" })).toMatchObject({ matchCount: 0, content: "" });
   });
+});
+
+describe.each(["http_get", "read_url"] as const)("%s URL cache", (name) => {
+  beforeEach(() => {
+    vi.mocked(httpGet).mockReset();
+    vi.mocked(readUrl).mockReset();
+    vi.mocked(httpGet).mockImplementation(async (url) => ({ url, body: url, status: 200, contentType: null, truncated: false }));
+    vi.mocked(readUrl).mockImplementation(async (url) => ({ url, content: url, title: url, provider: "jina", truncated: false }));
+  });
+
+  it.each([
+    ["https://site.test/ABC", "https://site.test/abc"],
+    ["https://site.test/item?key=ABC", "https://site.test/item?key=abc"],
+    ["https://site.test/item", "https://site.test/item/"],
+  ])("fetches distinct addresses separately: %s and %s", async (firstUrl, secondUrl) => {
+    const deps = { signal: new AbortController().signal, addSource: () => 1 };
+    const tools = name === "http_get" ? createHttpGetTool(deps) : createUrlReaderTool(deps);
+    const execute = tools[name]!.execute!;
+    const first = await execute({ url: firstUrl }, { toolCallId: "a", messages: [], context: undefined });
+    const second = await execute({ url: secondUrl }, { toolCallId: "b", messages: [], context: undefined });
+    expect(name === "http_get" ? httpGet : readUrl).toHaveBeenCalledTimes(2);
+    expect(first).toMatchObject({ url: firstUrl });
+    expect(second).toMatchObject({ url: secondUrl });
+  });
+
+  it("still deduplicates differences in hostname casing", async () => {
+    const deps = { signal: new AbortController().signal, addSource: () => 1 };
+    const tools = name === "http_get" ? createHttpGetTool(deps) : createUrlReaderTool(deps);
+    const execute = tools[name]!.execute!;
+    const first = await execute({ url: "https://SITE.test/ABC" }, { toolCallId: "a", messages: [], context: undefined });
+    const second = await execute({ url: "https://site.test/ABC" }, { toolCallId: "b", messages: [], context: undefined });
+    expect(second).toEqual(first);
+    expect(name === "http_get" ? httpGet : readUrl).toHaveBeenCalledOnce();
+  });
+});
+
+it("passes contract pagination and title search to the owner-scoped query", async () => {
+  vi.mocked(listContractsForChat).mockResolvedValueOnce({ contracts: [], nextOffset: 50 })
+    .mockResolvedValueOnce({ contracts: [], nextOffset: null });
+  const tools = createContractTools({ userId: "owner", signal: new AbortController().signal });
+  const execute = tools.list_contracts!.execute!;
+  expect(await execute({ query: "NDA" }, { toolCallId: "a", messages: [], context: undefined }))
+    .toMatchObject({ hasMore: true, nextOffset: 50 });
+  expect(await execute({ query: "NDA", offset: 50 }, { toolCallId: "b", messages: [], context: undefined }))
+    .toMatchObject({ hasMore: false, nextOffset: null });
+  expect(listContractsForChat).toHaveBeenLastCalledWith("owner", { query: "NDA", offset: 50 });
 });
 
 it("fences untrusted content with explicit delimiters", () => {

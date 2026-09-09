@@ -12,6 +12,19 @@ export type SettingsResponse = {
   availablePersonalities: string[];
 };
 
+export function getModelSelection(
+  selectedModel: string,
+  savedModel: string | null | undefined,
+  availableModels: readonly string[],
+): { model: string; hasChanges: boolean } {
+  const model = availableModels.includes(selectedModel)
+    ? selectedModel
+    : savedModel && availableModels.includes(savedModel)
+      ? savedModel
+      : "";
+  return { model, hasChanges: Boolean(model && model !== savedModel) };
+}
+
 export async function fetchSettings(options?: {
   refreshModels?: boolean;
 }): Promise<SettingsResponse> {

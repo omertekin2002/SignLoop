@@ -139,10 +139,30 @@ describe.skipIf(!connectionString)("database integration", () => {
   it("exposes contract text to chat tools for the owner only", async () => {
     const created = await createContractForUser({ userId: "chat-owner", title: "NDA" });
     await pool.current!.query("update contracts set text_content = $1 where id = $2", ["Clause 1. Confidential.", created.id]);
-    expect((await listContractsForChat("chat-owner")).map((row) => [row.id, row.title, row.characterCount])).toEqual([[created.id, "NDA", 23]]);
+    expect((await listContractsForChat("chat-owner")).contracts.map((row) => [row.id, row.title, row.characterCount])).toEqual([[created.id, "NDA", 23]]);
     expect((await getContractTextForUser("chat-owner", created.id))?.text).toBe("Clause 1. Confidential.");
     expect(await getContractTextForUser("intruder", created.id)).toBeNull();
-    expect(await listContractsForChat("intruder")).toEqual([]);
+    expect(await listContractsForChat("intruder")).toEqual({ contracts: [], nextOffset: null });
+  });
+
+  it("discovers contracts beyond 50 and searches all titles within the owner scope", async () => {
+    const userId = "chat-pagination-owner";
+    const oldest = await createContractForUser({ userId, title: "Legacy 100%_NDA" });
+    for (let index = 0; index < 50; index++) {
+      await createContractForUser({ userId, title: `Recent ${index}` });
+    }
+    await pool.current!.query("update contracts set updated_at = '2020-01-01' where id = $1", [oldest.id]);
+    const first = await listContractsForChat(userId);
+    expect(first.contracts).toHaveLength(50);
+    expect(first.nextOffset).toBe(50);
+    expect(first.contracts.some(({ id }) => id === oldest.id)).toBe(false);
+    const second = await listContractsForChat(userId, { offset: first.nextOffset! });
+    expect(second.contracts.map(({ id }) => id)).toEqual([oldest.id]);
+    expect(second.nextOffset).toBeNull();
+    const found = await listContractsForChat(userId, { query: "100%_nda" });
+    expect(found.contracts.map(({ id }) => id)).toEqual([oldest.id]);
+    expect(await listContractsForChat("intruder", { query: "100%_nda" }))
+      .toEqual({ contracts: [], nextOffset: null });
   });
 
   it("moves inline images out of mixed prose replies into attachments", async () => {

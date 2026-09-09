@@ -507,9 +507,12 @@ export type ChatContractSummaryRecord = {
 // Bounded listing for the chat agent's list_contracts tool: metadata only, newest first.
 export async function listContractsForChat(
   userId: string,
-  limit = 50,
-): Promise<ChatContractSummaryRecord[]> {
+  options: { offset?: number; query?: string } = {},
+): Promise<{ contracts: ChatContractSummaryRecord[]; nextOffset: number | null }> {
   await ensureSchema();
+  const limit = 50;
+  const offset = Math.max(0, Math.trunc(options.offset ?? 0));
+  const query = options.query?.trim() ?? "";
 
   const { rows } = await sql<ChatContractSummaryRecord>`
     select
@@ -522,11 +525,16 @@ export async function listContractsForChat(
       extraction_warning as "extractionWarning"
     from contracts
     where user_id = ${userId}
-    order by updated_at desc
-    limit ${Math.min(Math.max(1, Math.trunc(limit)), 100)}
+      and strpos(lower(title), lower(${query})) > 0
+    order by updated_at desc, id desc
+    limit ${limit + 1}
+    offset ${offset}
   `;
 
-  return rows;
+  return {
+    contracts: rows.slice(0, limit),
+    nextOffset: rows.length > limit ? offset + limit : null,
+  };
 }
 
 export type ChatContractTextRecord = {

@@ -27,6 +27,7 @@ import {
   createImageTool,
   createUrlReaderTool,
 } from "@/lib/chat-tools";
+import { verifyFigures, type FigureVerification } from "@/lib/web-citations";
 import { isRecord } from "@/lib/utils";
 
 // Search now returns leads rather than a brief, so a normal run is search -> several reads ->
@@ -136,6 +137,10 @@ export type ChatReply = {
   webSearch: WebSearchMetadata | null;
   agentMessages?: ModelMessage[];
   toolActivity?: ChatToolActivity[];
+  /** 1-based catalog numbers of the pages fetched during this turn. */
+  readSources?: number[];
+  /** Whether the answer's measured figures trace back to the text that was fetched. */
+  figures?: FigureVerification;
 };
 export type ChatReplyStreamChunk =
   | { type: "delta"; text: string }
@@ -330,6 +335,10 @@ export async function* generateChatReplyStream(
     ...([...messages].reverse().find((message) => message.webSources?.length)
       ?.webSources ?? []),
   ];
+  // Pages fetched during THIS turn, as 1-based catalog numbers. The catalog itself is seeded from
+  // earlier turns to keep citation numbers stable, so "in the catalog" is not "read just now".
+  const readThisTurn = new Set<number>();
+  const evidence: string[] = [];
   const queries: string[] = [];
   let successfulSearches = 0;
   let searches = 0;
@@ -344,6 +353,7 @@ export async function* generateChatReplyStream(
       index = sources.length;
       sources.push(source);
     }
+    readThisTurn.add(index + 1);
     return index + 1;
   };
   const toolNotes: string[] = [];
@@ -393,11 +403,25 @@ export async function* generateChatReplyStream(
   }
   if (options?.enableUrlReader) {
     toolNotes.push(TOOL_NOTES.read_url);
-    Object.assign(tools, createUrlReaderTool({ signal, addSource }));
+    Object.assign(
+      tools,
+      createUrlReaderTool({
+        signal,
+        addSource,
+        onEvidence: (text) => evidence.push(text),
+      }),
+    );
   }
   if (options?.enableHttpFetch) {
     toolNotes.push(TOOL_NOTES.http_get);
-    Object.assign(tools, createHttpGetTool({ signal, addSource }));
+    Object.assign(
+      tools,
+      createHttpGetTool({
+        signal,
+        addSource,
+        onEvidence: (text) => evidence.push(text),
+      }),
+    );
   }
   if (options?.contractsUserId) {
     toolNotes.push(TOOL_NOTES.contracts);
@@ -526,6 +550,8 @@ export async function* generateChatReplyStream(
           : null,
         agentMessages,
         toolActivity: [...activities.values()],
+        readSources: [...readThisTurn],
+        figures: verifyFigures(answer, evidence),
       },
     };
   } finally {

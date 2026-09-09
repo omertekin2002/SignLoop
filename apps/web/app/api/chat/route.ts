@@ -352,6 +352,10 @@ export async function POST(req: Request) {
               const assistantMessage = appendWebSourcesToMessage(
                 chunk.reply.message,
                 chunk.reply.webSearch?.sources ?? [],
+                {
+                  readThisTurn: chunk.reply.readSources,
+                  figures: chunk.reply.figures,
+                },
               );
 
               // The full answer has already been streamed to (and rendered by) the client, so a
@@ -429,7 +433,7 @@ export async function POST(req: Request) {
       });
     }
 
-    const { message, provider, model, webSearch, agentMessages, toolActivity } = await generateChatReply(
+    const { message, provider, model, webSearch, agentMessages, toolActivity, readSources, figures } = await generateChatReply(
       promptMessages,
       {
         primaryModel: selectedPrimaryModel,
@@ -445,6 +449,7 @@ export async function POST(req: Request) {
     const assistantMessage = appendWebSourcesToMessage(
       message,
       webSearch?.sources ?? [],
+      { readThisTurn: readSources, figures },
     );
 
     let persisted = true;
