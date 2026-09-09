@@ -1,5 +1,6 @@
 "use client";
 
+import type { ModelMessage } from "ai";
 import type { ChatToolActivity, ChatToolName } from "@/lib/chat";
 
 import { toast } from "sonner";
@@ -55,7 +56,10 @@ import { TypingAnimation } from "@/components/typing-animation";
 import { AnimatedGridPattern } from "@/components/ui/animated-grid-pattern";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { compactInlineImageDataUris } from "@/lib/chat-policy";
+import {
+  compactInlineImageDataUris,
+  MAX_AGENT_STATE_CHARACTERS,
+} from "@/lib/chat-policy";
 import { cn, isRecord } from "@/lib/utils";
 import {
   hasPrivacyConsent,
@@ -81,10 +85,13 @@ const landingStats = [
 type ChatApiMessage = {
   role: "system" | "user" | "assistant";
   content: string;
+  agentMessages?: unknown[];
 };
 
 type ChatApiSuccess = {
   toolActivity?: ChatToolActivity[];
+  /** Temporary chat keeps its tool exchanges here; saved threads reload them from the database. */
+  agentMessages?: unknown[];
   message: string;
   provider?: string;
   model?: string;
@@ -173,9 +180,33 @@ function extractMessageText(message: Pick<ThreadMessage, "content">): string {
   return chunks.join("\n").trim();
 }
 
+/**
+ * Temporary chat has no server-side history, so the tool exchange only survives to the next turn
+ * if the browser sends it back. Bounded here as well as on the server: an oversized transcript
+ * should cost its own replay, not 413 the whole request.
+ */
+function readAgentMessages(message: ThreadMessage): ModelMessage[] | undefined {
+  const custom = (
+    message.metadata as { custom?: { agentMessages?: unknown } } | undefined
+  )?.custom;
+  const agentMessages = custom?.agentMessages;
+  if (!Array.isArray(agentMessages) || !agentMessages.length) return undefined;
+  return JSON.stringify(agentMessages).length <= MAX_AGENT_STATE_CHARACTERS
+    ? (agentMessages as ModelMessage[])
+    : undefined;
+}
+
 function toApiMessages(messages: readonly ThreadMessage[]): ChatApiMessage[] {
   return boundTemporaryChatHistory(messages.slice(-30)
-    .map((message) => ({ role: message.role, content: extractMessageText(message) }))
+    .map((message) => {
+      const agentMessages =
+        message.role === "assistant" ? readAgentMessages(message) : undefined;
+      return {
+        role: message.role,
+        content: extractMessageText(message),
+        ...(agentMessages ? { agentMessages } : {}),
+      };
+    })
     .filter((message) => message.content.length > 0));
 }
 
@@ -204,6 +235,9 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
   return {
     message,
     toolActivity: parseToolActivity(payload.toolActivity),
+    agentMessages: Array.isArray(payload.agentMessages)
+      ? payload.agentMessages
+      : undefined,
     storedMessages: Array.isArray(payload.storedMessages) ? payload.storedMessages.filter((message): message is ChatThreadMessage => isRecord(message) && typeof message.id === "string" && typeof message.content === "string" && typeof message.position === "number" && (message.role === "user" || message.role === "assistant")) : undefined,
     provider:
       typeof payload.provider === "string" ? payload.provider : undefined,
@@ -1094,6 +1128,8 @@ export function ChatPanel({
                 provider: snapshot.provider ?? null,
                 model: snapshot.model ?? null,
                 toolActivity: snapshot.toolActivity ?? [],
+                // Retained so the next temporary turn can replay this turn's tool exchange.
+                agentMessages: snapshot.agentMessages ?? [],
               },
             },
           };

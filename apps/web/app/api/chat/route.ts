@@ -13,6 +13,7 @@ import { GeminiWebSearchError } from "@/lib/gemini-search";
 import { WebSearchError } from "@/lib/web-search";
 import {
   boundCanonicalChatHistory,
+  MAX_AGENT_STATE_CHARACTERS,
   MAX_CHAT_MESSAGES,
   MAX_CHAT_REQUEST_BODY_BYTES,
   parseBoundedJsonRequest,
@@ -126,6 +127,22 @@ async function persistChatMessages(input: {
   });
 }
 
+/**
+ * Saved threads reload their tool exchanges from the database, so only temporary chat needs them
+ * echoed back — it has no server-side history, and without this the next turn sees a transcript
+ * with no record that any tool ran. Oversized transcripts are dropped here rather than sent for
+ * the client to discard.
+ */
+function toTemporaryAgentMessages(
+  reply: ChatReply,
+  temporary: boolean,
+): ChatReply["agentMessages"] | undefined {
+  if (!temporary || !reply.agentMessages?.length) return undefined;
+  return JSON.stringify(reply.agentMessages).length <= MAX_AGENT_STATE_CHARACTERS
+    ? reply.agentMessages
+    : undefined;
+}
+
 function toDoneStreamEvent(input: {
   reply: ChatReply;
   message: string;
@@ -143,6 +160,7 @@ function toDoneStreamEvent(input: {
     model: reply.model,
     mode: temporary ? "temporary-chat" : "chat",
     persisted: temporary ? undefined : persisted,
+    agentMessages: toTemporaryAgentMessages(reply, temporary),
     webSearchQuery: reply.webSearch?.query ?? null,
     webSearchAttempts: reply.webSearch?.attemptedQueries ?? [],
     webSearchSuccessfulCount: reply.webSearch?.successfulSearches ?? 0,
@@ -463,6 +481,10 @@ export async function POST(req: Request) {
       model,
       mode: isTemporaryChat ? "temporary-chat" : "chat",
       persisted: isTemporaryChat ? undefined : persisted,
+      agentMessages: toTemporaryAgentMessages(
+        { agentMessages } as ChatReply,
+        isTemporaryChat,
+      ),
       toolActivity: toolActivity ?? [],
       webSearchQuery: webSearch?.query ?? null,
       webSearchAttempts: webSearch?.attemptedQueries ?? [],

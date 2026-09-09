@@ -80,6 +80,12 @@ This repo uses:
   Page and document text is fenced with untrusted-content markers before the model sees it.
   There is no greeting list or preprocessing classifier. Saved replies retain tool exchanges and
   source catalogs in message metadata, within the existing history size budget.
+- Temporary chat keeps the same tool exchanges without a database: the reply carries them back to
+  the browser, which returns them on the next turn. Without this the model sees its own previous
+  answer as bare prose and will report, accurately but uselessly, that it called no tools. Replayed
+  transcripts are client-supplied, so they are structurally validated, capped at 20,000 serialized
+  characters, and dropped whole rather than partially replayed when anything is unexpected. They
+  are only ever fed back to the model inside that same anonymous session.
 - Search progress streams to the UI. Only sources cited by the answer receive appended links.
 
 ---

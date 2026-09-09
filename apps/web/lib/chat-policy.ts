@@ -1,3 +1,4 @@
+import type { ModelMessage } from "ai";
 import type { ChatMessage, ChatRole } from "@/lib/chat";
 import { isRecord } from "@/lib/utils";
 
@@ -5,6 +6,38 @@ export const MAX_CHAT_MESSAGES = 30;
 export const MAX_CHAT_MESSAGE_LENGTH = 4_000;
 export const MAX_CHAT_TOTAL_MESSAGE_LENGTH = 60_000;
 export const MAX_CHAT_REQUEST_BODY_BYTES = 128 * 1024;
+/** Serialized cap on one replayed tool transcript, applied on both the client and the server. */
+export const MAX_AGENT_STATE_CHARACTERS = 20_000;
+const MAX_AGENT_MESSAGES = 40;
+// The agent loop only ever emits assistant (tool-call) and tool (tool-result) messages here.
+const AGENT_MESSAGE_ROLES = new Set(["assistant", "tool"]);
+
+/**
+ * Temporary chat has no server-side history, so a replayed tool transcript arrives from the
+ * browser. It is only ever fed back to the model inside that same anonymous session — there is no
+ * privilege or other user's data behind it — but it still has to be structurally sound so a
+ * malformed shape cannot fault the SDK or the provider call. Anything unexpected drops the whole
+ * transcript rather than replaying part of it, which degrades to a text-only turn.
+ */
+export function parseClientAgentMessages(
+  value: unknown,
+): ModelMessage[] | undefined {
+  if (!Array.isArray(value) || !value.length) return undefined;
+  if (value.length > MAX_AGENT_MESSAGES) return undefined;
+  if (JSON.stringify(value).length > MAX_AGENT_STATE_CHARACTERS) return undefined;
+
+  for (const entry of value) {
+    if (!isRecord(entry)) return undefined;
+    if (typeof entry.role !== "string" || !AGENT_MESSAGE_ROLES.has(entry.role)) {
+      return undefined;
+    }
+    if (typeof entry.content !== "string" && !Array.isArray(entry.content)) {
+      return undefined;
+    }
+  }
+
+  return value as ModelMessage[];
+}
 
 /** Replace generated image payloads before a message is sent back to a text model. */
 export function compactInlineImageDataUris(text: string): string {
@@ -101,7 +134,13 @@ export function parseClientChatMessages(payload: unknown): ParsedChatMessages {
       };
     }
 
-    normalized.push({ role, content: trimmed });
+    const agentMessages =
+      role === "assistant" ? parseClientAgentMessages(item.agentMessages) : undefined;
+    normalized.push({
+      role,
+      content: trimmed,
+      ...(agentMessages ? { agentMessages } : {}),
+    });
   }
 
   if (!normalized.length) {
