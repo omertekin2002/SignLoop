@@ -215,6 +215,7 @@ const TOOL_ACTIVITY_LABELS: Record<ChatToolName, { running: string; complete: st
   search_web: { running: "Searching", complete: "Searched", error: "Search unavailable" },
   generate_image: { running: "Generating image", complete: "Generated image", error: "Image unavailable" },
   read_url: { running: "Reading page", complete: "Read page", error: "Page unavailable" },
+  http_get: { running: "Fetching", complete: "Fetched", error: "Fetch failed" },
   read_contract: { running: "Reading contract", complete: "Read contract", error: "Contract unavailable" },
   list_contracts: { running: "Listing contracts", complete: "Listed contracts", error: "Contract list unavailable" },
 };

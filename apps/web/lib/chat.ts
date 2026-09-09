@@ -22,6 +22,7 @@ import { searchWeb, type WebSearchMetadata } from "@/lib/gemini-search";
 import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
 import {
   createContractTools,
+  createHttpGetTool,
   createImageTool,
   createUrlReaderTool,
 } from "@/lib/chat-tools";
@@ -42,6 +43,8 @@ const TOOL_NOTES = {
     "Use search_web for current facts, verification, or research. You may refine a query after inspecting results.",
   read_url:
     "Use read_url to read a specific page or PDF when you know its address, including links the user shares and results from search_web. Each page read becomes a numbered source.",
+  http_get:
+    "Use http_get to call a public API or data endpoint directly and read its raw response. Prefer it over search_web and read_url for any question with one correct value — prices, rates, counts, dates, record fields — since search returns a summary you would have to paraphrase, and this returns the source data itself. Report values exactly as the response gives them, and if the response lacks a field, say so rather than supplying it from memory.",
   contracts:
     "The user's uploaded contracts are available: call list_contracts to find them, then read_contract to read the text. Page with offset, or pass find with keywords to locate clauses. Quote clause text precisely and name the contract it comes from.",
   generate_image:
@@ -73,12 +76,14 @@ export type ChatMessage = {
 export type ChatToolName =
   | "search_web"
   | "read_url"
+  | "http_get"
   | "read_contract"
   | "list_contracts"
   | "generate_image";
 const CHAT_TOOL_NAMES = new Set<string>([
   "search_web",
   "read_url",
+  "http_get",
   "read_contract",
   "list_contracts",
   "generate_image",
@@ -101,6 +106,7 @@ export function describeToolInput(tool: ChatToolName, input: unknown): string {
     case "search_web":
       return typeof record.query === "string" ? record.query : "";
     case "read_url":
+    case "http_get":
       return typeof record.url === "string" ? record.url : "";
     case "read_contract":
       return [
@@ -138,6 +144,8 @@ type ChatGenerationOptions = {
   signal?: AbortSignal;
   enableWebSearch?: boolean;
   enableUrlReader?: boolean;
+  /** Enables http_get: direct GETs to any public address, returned as raw response bodies. */
+  enableHttpFetch?: boolean;
   /** Enables list_contracts and read_contract scoped to this user's own documents. */
   contractsUserId?: string | null;
   /** Enables generate_image; the route sets this from the live model availability snapshot. */
@@ -382,6 +390,10 @@ export async function* generateChatReplyStream(
   if (options?.enableUrlReader) {
     toolNotes.push(TOOL_NOTES.read_url);
     Object.assign(tools, createUrlReaderTool({ signal, addSource }));
+  }
+  if (options?.enableHttpFetch) {
+    toolNotes.push(TOOL_NOTES.http_get);
+    Object.assign(tools, createHttpGetTool({ signal, addSource }));
   }
   if (options?.contractsUserId) {
     toolNotes.push(TOOL_NOTES.contracts);

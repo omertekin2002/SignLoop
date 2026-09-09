@@ -180,8 +180,9 @@ export async function POST(req: Request) {
     const body = parsedBody.value;
     const isTemporaryChat = isRecord(body) && body.temporary === true;
     const { userId } = await auth();
-    // Search and page reading are server-side invariants for authenticated chats, so clients cannot
-    // disable them. Anonymous temporary chats get neither, to protect the private search quotas.
+    // Search, page reading, and direct HTTP fetches are server-side invariants for authenticated
+    // chats, so clients cannot disable them. Anonymous temporary chats get none of them, to protect
+    // the private search quotas and to keep unauthenticated traffic off outbound fetches.
     // Contract tools follow the signed-in user, since they only ever expose that user's own files.
     const enableWebSearch = Boolean(userId);
 
@@ -308,6 +309,7 @@ export async function POST(req: Request) {
               signal: operationSignal,
               enableWebSearch,
               enableUrlReader: enableWebSearch,
+              enableHttpFetch: enableWebSearch,
               contractsUserId: userId,
               enableImageGeneration: modelSnapshot.imageGenerationAvailable,
               userId,
@@ -415,6 +417,7 @@ export async function POST(req: Request) {
         signal: operationSignal,
         enableWebSearch,
         enableUrlReader: enableWebSearch,
+        enableHttpFetch: enableWebSearch,
         contractsUserId: userId,
         enableImageGeneration: modelSnapshot.imageGenerationAvailable,
         userId,

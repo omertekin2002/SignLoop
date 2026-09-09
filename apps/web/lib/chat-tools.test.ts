@@ -1,8 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/url-reader", () => ({ readUrl: vi.fn() }));
 vi.mock("@/lib/server-db", () => ({ listContractsForChat: vi.fn(), getContractTextForUser: vi.fn() }));
 vi.mock("@/lib/image-generation", () => ({ generateImageReply: vi.fn() }));
-import { CONTRACT_WINDOW_CHARACTERS, excerptContract, fenceUntrusted } from "./chat-tools";
+vi.mock("@/lib/http-fetch", () => ({ httpGet: vi.fn() }));
+import { httpGet } from "@/lib/http-fetch";
+import {
+  CONTRACT_WINDOW_CHARACTERS,
+  createHttpGetTool,
+  excerptContract,
+  fenceUntrusted,
+  MAX_HTTP_FETCHES,
+} from "./chat-tools";
 
 describe("excerptContract", () => {
   const text = `${"a".repeat(CONTRACT_WINDOW_CHARACTERS)}Clause 9. Indemnification survives termination. ${"b".repeat(700)}Clause 12. Indemnification cap applies.`;
@@ -30,4 +38,85 @@ describe("excerptContract", () => {
 
 it("fences untrusted content with explicit delimiters", () => {
   expect(fenceUntrusted("hello")).toMatch(/^<<<BEGIN UNTRUSTED CONTENT.*\nhello\n<<<END UNTRUSTED CONTENT>>>$/s);
+});
+
+describe("createHttpGetTool", () => {
+  beforeEach(() => {
+    vi.mocked(httpGet).mockReset();
+  });
+
+  type Executor = (input: { url: string }) => Promise<Record<string, unknown>>;
+
+  function build() {
+    const addSource = vi.fn().mockReturnValue(1);
+    const tools = createHttpGetTool({ signal: new AbortController().signal, addSource });
+    const execute = ((input: { url: string }) =>
+      (tools.http_get!.execute as unknown as (
+        i: { url: string },
+        o: Record<string, unknown>,
+      ) => Promise<Record<string, unknown>>)(input, { toolCallId: "t", messages: [] })) as Executor;
+    return { addSource, execute };
+  }
+
+  it("registers a citable source and fences the body", async () => {
+    vi.mocked(httpGet).mockResolvedValue({
+      url: "https://api.test/v1/quote?symbol=ISCTR",
+      status: 200,
+      contentType: "application/json",
+      body: '{"close":13.38}',
+      truncated: false,
+    });
+    const { addSource, execute } = build();
+    const result = await execute({ url: "https://api.test/v1/quote?symbol=ISCTR" });
+    expect(addSource).toHaveBeenCalledWith({
+      title: "api.test/v1/quote",
+      url: "https://api.test/v1/quote?symbol=ISCTR",
+    });
+    expect(result).toMatchObject({ number: 1, status: 200, truncated: false });
+    expect(result.body).toBe(fenceUntrusted('{"close":13.38}'));
+  });
+
+  it("serves a repeated address from cache without refetching", async () => {
+    vi.mocked(httpGet).mockResolvedValue({
+      url: "https://api.test/a",
+      status: 200,
+      contentType: null,
+      body: "{}",
+      truncated: false,
+    });
+    const { execute } = build();
+    await execute({ url: "https://api.test/a" });
+    await execute({ url: "https://API.test/a" });
+    expect(httpGet).toHaveBeenCalledOnce();
+  });
+
+  it("reports an exhausted budget instead of fetching further", async () => {
+    vi.mocked(httpGet).mockImplementation(async (url: string) => ({
+      url,
+      status: 200,
+      contentType: null,
+      body: "{}",
+      truncated: false,
+    }));
+    const { execute } = build();
+    for (let index = 0; index < MAX_HTTP_FETCHES; index++) {
+      await execute({ url: `https://api.test/${index}` });
+    }
+    expect(await execute({ url: "https://api.test/overflow" })).toMatchObject({
+      error: expect.stringMatching(/budget exhausted/),
+    });
+    expect(httpGet).toHaveBeenCalledTimes(MAX_HTTP_FETCHES);
+  });
+
+  it("converts a blocked address into a public-safe tool error", async () => {
+    vi.mocked(httpGet).mockRejectedValue(
+      Object.assign(new Error("Blocked host: 169.254.169.254"), {
+        publicMessage: "Only public http(s) web addresses can be read.",
+      }),
+    );
+    const { execute } = build();
+    expect(await execute({ url: "http://169.254.169.254/" })).toEqual({
+      error: "Only public http(s) web addresses can be read.",
+    });
+  });
 });

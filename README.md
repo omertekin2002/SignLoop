@@ -70,10 +70,11 @@ This repo uses:
 - Chat runs a bounded AI SDK tool loop: the selected model decides whether to answer directly or
   call tools, sees the results, and can issue follow-up calls before answering. Tools: `search_web`
   (Gemini grounding), `read_url` (page or PDF text via Firecrawl or Jina Reader, cited like a search
-  result), `list_contracts` / `read_contract` (the signed-in user's own uploaded contract text,
-  paged by offset or excerpted around `find` keywords), and `generate_image` (gpt-image-2, offered
-  only while the primary endpoint lists that model; the image is spliced into the streamed reply and
-  its bytes never enter the model transcript).
+  result), `http_get` (a direct GET to any public address, returning the raw response body for
+  questions with one correct value), `list_contracts` / `read_contract` (the signed-in user's own
+  uploaded contract text, paged by offset or excerpted around `find` keywords), and `generate_image`
+  (gpt-image-2, offered only while the primary endpoint lists that model; the image is spliced into
+  the streamed reply and its bytes never enter the model transcript).
 - Signed-in sessions expose every tool; anonymous temporary chat uses the same loop with no tools.
   Page and document text is fenced with untrusted-content markers before the model sees it.
   There is no greeting list or preprocessing classifier. Saved replies retain tool exchanges and
@@ -175,6 +176,20 @@ Page reader (optional; `read_url` tool):
 
 - `FIRECRAWL_API_KEY` enables Firecrawl scraping with PDF parsing. Without it the app falls back to
   Jina Reader, which works keyless at a low rate limit; `JINA_API_KEY` raises that limit.
+
+Direct HTTP fetches (`http_get` tool; no configuration):
+
+- The model composes the full URL itself, including query parameters. There is no host allowlist:
+  any public http(s) address is reachable, and the response body is returned raw (JSON, CSV, XML,
+  or text) rather than summarized, so exact values can be quoted instead of paraphrased.
+- Unlike `read_url`, which proxies through a hosted reader, this leaves the server directly. Private
+  and link-local addresses stay blocked by the shared `validatePublicHttpUrl` guard, and redirects
+  are followed manually so every hop is re-validated — a 302 cannot reach cloud metadata or a
+  service on localhost.
+- Bounded per reply: five distinct addresses (duplicates cached), 2 MiB read per response, 12,000
+  characters returned, 30-second timeout, at most five redirects. Non-2xx responses are returned to
+  the model with their status rather than raised, so it can adapt instead of retrying blindly.
+  Bodies are fenced as untrusted content, and each fetch becomes a numbered, citable source.
 
 Observability (optional):
 

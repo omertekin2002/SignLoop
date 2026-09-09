@@ -2,11 +2,13 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import type { WebSearchSource } from "@/lib/gemini-search";
 import { readUrl } from "@/lib/url-reader";
+import { httpGet } from "@/lib/http-fetch";
 import { generateImageReply } from "@/lib/image-generation";
 import { getContractTextForUser, listContractsForChat } from "@/lib/server-db";
 import { isUuid } from "@/lib/utils";
 
 export const MAX_URL_READS = 3;
+export const MAX_HTTP_FETCHES = 5;
 export const MAX_IMAGE_GENERATIONS = 2;
 export const CONTRACT_WINDOW_CHARACTERS = 12_000;
 const EXCERPT_RADIUS = 300;
@@ -116,6 +118,58 @@ export function createUrlReaderTool(deps: {
             return publicToolError(
               error,
               "That page could not be read. Try another address or search instead.",
+            );
+          }
+        })();
+        cache.set(key, pending);
+        return pending;
+      },
+    }),
+  };
+}
+
+export function createHttpGetTool(deps: {
+  signal: AbortSignal;
+  addSource: (source: WebSearchSource) => number;
+}): ToolSet {
+  const cache = new Map<string, Promise<unknown>>();
+  let fetches = 0;
+  return {
+    http_get: tool({
+      description:
+        "Send an HTTP GET to any public URL and return the raw response body — JSON, CSV, XML, or plain text. Use this for APIs and structured data endpoints when you need an exact value (a price, a count, a status, a record field), and prefer it over read_url whenever a machine-readable source exists. Build the full URL yourself, including query parameters. The response becomes a numbered source you can cite as [n]. Quote values from the body verbatim; never fill in a field the response did not contain.",
+      inputSchema: z.object({ url: z.string().trim().min(1).max(2048) }),
+      execute: async ({ url }) => {
+        const key = url.trim().toLowerCase();
+        const existing = cache.get(key);
+        if (existing) return existing;
+        if (fetches >= MAX_HTTP_FETCHES)
+          return {
+            error:
+              "HTTP request budget exhausted. Answer using the responses already fetched and disclose remaining uncertainty.",
+          };
+        fetches++;
+        const pending = (async () => {
+          try {
+            const response = await httpGet(url, { signal: deps.signal });
+            const target = new URL(response.url);
+            const number = deps.addSource({
+              title: `${target.hostname}${target.pathname === "/" ? "" : target.pathname}`,
+              url: response.url,
+            });
+            return {
+              number,
+              url: response.url,
+              status: response.status,
+              contentType: response.contentType,
+              truncated: response.truncated,
+              body: fenceUntrusted(response.body),
+            };
+          } catch (error) {
+            deps.signal.throwIfAborted();
+            return publicToolError(
+              error,
+              "That address could not be fetched. Check the URL or try a different source.",
             );
           }
         })();
