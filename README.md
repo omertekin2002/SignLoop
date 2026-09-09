@@ -68,8 +68,12 @@ This repo uses:
   - `chat_messages` (ordered by transactional position locking)
 - Chat uses a configurable persona (`signloop-assistant` or `bare-llm`).
 - Chat runs a bounded AI SDK tool loop: the selected model decides whether to answer directly or
-  invoke `search_web`, sees the results, and can issue follow-up searches before answering.
-- Signed-in sessions expose search; anonymous temporary chat uses the same loop without search access.
+  call tools, sees the results, and can issue follow-up calls before answering. Tools: `search_web`
+  (Gemini grounding), `read_url` (page or PDF text via Firecrawl or Jina Reader, cited like a search
+  result), and `list_contracts` / `read_contract` (the signed-in user's own uploaded contract text,
+  paged by offset or excerpted around `find` keywords).
+- Signed-in sessions expose every tool; anonymous temporary chat uses the same loop with no tools.
+  Page and document text is fenced with untrusted-content markers before the model sees it.
   There is no greeting list or preprocessing classifier. Saved replies retain tool exchanges and
   source catalogs in message metadata, within the existing history size budget.
 - Search progress streams to the UI. Only sources cited by the answer receive appended links.
@@ -152,14 +156,28 @@ Model-independent web search:
 - `GEMINI_SEARCH_MODEL` (optional; defaults to `gemini-2.5-flash`)
 - Gemini executes the chat model's query and returns a grounded brief plus sources as a tool result.
   A search failure is returned to the model as a tool error result so it can retry or explain the limitation.
-- Each user request permits six model steps and three distinct search executions, with duplicate-query
-  caching, a 145-second deadline, and cancellation. The final step disables tools to request an answer.
-- Provider fallback can occur while opening a model step, retaining completed tool results. Once a
-  provider stream starts it is not replayed on another provider. Incomplete runs are not persisted.
+- Each user request permits eight model steps, three distinct search executions, and three page reads,
+  with duplicate-query caching, a 260-second deadline inside a 300-second route, and cancellation. The
+  final step disables tools to request an answer.
+- Provider fallback can occur while opening a model step, or when a provider accepts the request but
+  sends nothing within 20 seconds; completed tool results are retained. Once a provider stream has
+  delivered content it is not replayed on another provider. Incomplete runs are not persisted.
 - Requires Node.js 22+ (AI SDK 7). Model endpoints must support Responses function tools and tool-result
   continuation. Validation includes mocked wire-level tests and a successful synthetic OpenRouter
   tool-call/continuation probe. The primary endpoint and live Gemini search still require verification
   with the deployed credentials.
+
+Page reader (optional; `read_url` tool):
+
+- `FIRECRAWL_API_KEY` enables Firecrawl scraping with PDF parsing. Without it the app falls back to
+  Jina Reader, which works keyless at a low rate limit; `JINA_API_KEY` raises that limit.
+
+Observability (optional):
+
+- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` enable AI SDK tracing to Langfuse
+  via `instrumentation.ts`. Unset means no tracing and no OpenTelemetry setup at all.
+- `LANGFUSE_RECORD_CONTENT=false` keeps prompt and completion text out of traces while still
+  recording steps, tool calls, latency, and token usage.
 
 Storage:
 

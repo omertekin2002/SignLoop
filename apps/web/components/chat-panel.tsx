@@ -1,6 +1,6 @@
 "use client";
 
-import type { ChatToolActivity } from "@/lib/chat";
+import type { ChatToolActivity, ChatToolName } from "@/lib/chat";
 
 import { toast } from "sonner";
 import { boundTemporaryChatHistory } from "@/lib/chat-policy";
@@ -217,10 +217,30 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
   };
 }
 
+const TOOL_ACTIVITY_LABELS: Record<ChatToolName, { running: string; complete: string; error: string }> = {
+  search_web: { running: "Searching", complete: "Searched", error: "Search unavailable" },
+  read_url: { running: "Reading page", complete: "Read page", error: "Page unavailable" },
+  read_contract: { running: "Reading contract", complete: "Read contract", error: "Contract unavailable" },
+  list_contracts: { running: "Listing contracts", complete: "Listed contracts", error: "Contract list unavailable" },
+};
+
 function parseToolActivity(value: unknown): ChatToolActivity[] {
-  return Array.isArray(value) ? value.filter((item): item is ChatToolActivity =>
+  return Array.isArray(value) ? value.flatMap((item): ChatToolActivity[] =>
     isRecord(item) && typeof item.id === "string" && typeof item.query === "string" &&
-    (item.status === "running" || item.status === "complete" || item.status === "error")) : [];
+    (item.status === "running" || item.status === "complete" || item.status === "error")
+      ? [{
+          id: item.id,
+          query: item.query,
+          status: item.status,
+          ...(typeof item.tool === "string" && item.tool in TOOL_ACTIVITY_LABELS ? { tool: item.tool as ChatToolName } : {}),
+        }]
+      : []) : [];
+}
+
+function describeToolActivity(activity: ChatToolActivity): string {
+  // Rows saved before other tools existed carry no tool name and were always searches.
+  const label = TOOL_ACTIVITY_LABELS[activity.tool ?? "search_web"][activity.status];
+  return activity.query ? `${label}: ${activity.query}` : label;
 }
 
 function parseStreamEvent(payload: unknown): ChatApiStreamEvent {
@@ -718,7 +738,7 @@ const SearchActivity = () => {
   if (!activities.length) return null;
   return <div className="space-y-1 text-xs text-muted-foreground" aria-live="polite">
     {activities.map(activity => <div key={activity.id}>
-      {activity.status === "running" ? "Searching" : activity.status === "error" ? "Search unavailable" : "Searched"}: {activity.query}
+      {describeToolActivity(activity)}
     </div>)}
   </div>;
 };

@@ -494,6 +494,72 @@ export async function getContractMetaForUser(
   return rows[0] ?? null;
 }
 
+export type ChatContractSummaryRecord = {
+  id: string;
+  title: string;
+  status: string;
+  projectId: string | null;
+  updatedAt: string;
+  characterCount: number;
+  extractionWarning: string | null;
+};
+
+// Bounded listing for the chat agent's list_contracts tool: metadata only, newest first.
+export async function listContractsForChat(
+  userId: string,
+  limit = 50,
+): Promise<ChatContractSummaryRecord[]> {
+  await ensureSchema();
+
+  const { rows } = await sql<ChatContractSummaryRecord>`
+    select
+      id,
+      title,
+      status,
+      project_id as "projectId",
+      updated_at as "updatedAt",
+      coalesce(char_length(text_content), 0)::integer as "characterCount",
+      extraction_warning as "extractionWarning"
+    from contracts
+    where user_id = ${userId}
+    order by updated_at desc
+    limit ${Math.min(Math.max(1, Math.trunc(limit)), 100)}
+  `;
+
+  return rows;
+}
+
+export type ChatContractTextRecord = {
+  id: string;
+  title: string;
+  status: string;
+  text: string | null;
+  extractionWarning: string | null;
+};
+
+// Owner-scoped text read for the chat agent's read_contract tool.
+export async function getContractTextForUser(
+  userId: string,
+  contractId: string,
+): Promise<ChatContractTextRecord | null> {
+  await ensureSchema();
+
+  const { rows } = await sql<ChatContractTextRecord>`
+    select
+      id,
+      title,
+      status,
+      text_content as "text",
+      extraction_warning as "extractionWarning"
+    from contracts
+    where id = ${contractId}
+      and user_id = ${userId}
+    limit 1
+  `;
+
+  return rows[0] ?? null;
+}
+
 export type ContractWithLatestAnalysisRecord = ContractSummaryRecord & {
   text: string | null;
   extractionWarning: string | null;

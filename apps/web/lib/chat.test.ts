@@ -2,11 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
 import { simulateReadableStream } from "ai";
 
-const mocks = vi.hoisted(() => ({ search: vi.fn(), responses: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  search: vi.fn(),
+  responses: vi.fn(),
+  readUrl: vi.fn(),
+  listContracts: vi.fn(),
+  getContractText: vi.fn(),
+}));
 vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: () => ({ responses: mocks.responses }),
 }));
 vi.mock("@/lib/gemini-search", () => ({ searchWeb: mocks.search }));
+vi.mock("@/lib/url-reader", () => ({ readUrl: mocks.readUrl }));
+vi.mock("@/lib/server-db", () => ({
+  listContractsForChat: mocks.listContracts,
+  getContractTextForUser: mocks.getContractText,
+}));
 vi.mock("@/lib/llm-client", () => ({
   APP_NAME: "SignLoop",
   SITE_URL: "https://signloop.test",
@@ -19,6 +30,7 @@ vi.mock("@/lib/llm-client", () => ({
     value === null ? null : (value ?? "primary"),
 }));
 import {
+  createRoutedModel,
   generateChatReply,
   generateChatReplyStream,
   type ChatReplyStreamChunk,
@@ -65,6 +77,38 @@ function streamStep(
       ],
     }),
   };
+}
+function toolStep(
+  index: number,
+  toolName: string,
+  input: Record<string, unknown>,
+) {
+  return {
+    stream: simulateReadableStream({
+      initialDelayInMs: null,
+      chunkDelayInMs: null,
+      chunks: [
+        {
+          type: "tool-call",
+          toolCallId: `call-${index}`,
+          toolName,
+          input: JSON.stringify(input),
+        },
+        {
+          type: "finish",
+          finishReason: { unified: "tool-calls", raw: undefined },
+          usage,
+        },
+      ],
+    }),
+  };
+}
+type StepResult = Awaited<ReturnType<MockLanguageModelV4["doStream"]>>;
+function sequencedModel(steps: Array<ReturnType<typeof toolStep>>) {
+  const queue = [...steps];
+  return new MockLanguageModelV4({
+    doStream: async () => (queue.shift() ?? streamStep(99)) as StepResult,
+  });
 }
 function scriptedModel(queries: string[] = []) {
   let index = 0;
@@ -156,7 +200,7 @@ describe("agentic chat", () => {
   });
 
   it("deduplicates repeated queries and bounds total search executions", async () => {
-    const model = scriptedModel(["A", "a", "B", "C", "D"]);
+    const model = scriptedModel(["A", "a", "B", "C", "D", "E", "F"]);
     mocks.responses.mockReturnValue(model);
     await generateChatReply(messages, { enableWebSearch: true });
     expect(mocks.search.mock.calls.map((call) => call[0])).toEqual([
@@ -164,9 +208,10 @@ describe("agentic chat", () => {
       "B",
       "C",
     ]);
-    expect(model.doStreamCalls).toHaveLength(6);
-    expect(model.doStreamCalls[5]?.toolChoice).toEqual({ type: "none" });
-    expect(JSON.stringify(model.doStreamCalls[5]?.prompt)).toContain(
+    // Eight steps: seven tool rounds, then the final step is forced to answer without tools.
+    expect(model.doStreamCalls).toHaveLength(8);
+    expect(model.doStreamCalls[7]?.toolChoice).toEqual({ type: "none" });
+    expect(JSON.stringify(model.doStreamCalls[7]?.prompt)).toContain(
       "budget exhausted",
     );
   });
@@ -295,5 +340,146 @@ describe("agentic chat", () => {
     await iterator.next();
     await iterator.return();
     expect(model.doStreamCalls[0]?.abortSignal?.aborted).toBe(true);
+  });
+
+  it("fails over when the primary accepts the request but never starts a stream", async () => {
+    const primary = new MockLanguageModelV4({
+      doStream: () => new Promise(() => {}),
+    });
+    const fallback = scriptedModel();
+    mocks.responses.mockImplementation((name: string) =>
+      name === "primary" ? primary : fallback,
+    );
+    const reply = await generateChatReply(messages, { firstChunkTimeoutMs: 20 });
+    expect(reply.provider).toBe("openrouter");
+    expect(reply.message).toBe("Answer [1]");
+    expect(primary.doStreamCalls[0]?.abortSignal?.aborted).toBe(true);
+  });
+
+  it("fails over when the primary opens a stream that never delivers content", async () => {
+    const primary = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue({ type: "stream-start", warnings: [] });
+          },
+        }),
+      }),
+    });
+    const fallback = scriptedModel();
+    mocks.responses.mockImplementation((name: string) =>
+      name === "primary" ? primary : fallback,
+    );
+    const reply = await generateChatReply(messages, { firstChunkTimeoutMs: 20 });
+    expect(reply.provider).toBe("openrouter");
+    expect(fallback.doStreamCalls).toHaveLength(1);
+  });
+
+  it("surfaces the timeout when every provider stays silent", async () => {
+    mocks.responses.mockReturnValue(
+      new MockLanguageModelV4({ doStream: () => new Promise(() => {}) }),
+    );
+    await expect(
+      generateChatReply(messages, { firstChunkTimeoutMs: 20 }),
+    ).rejects.toThrow(/no response within 20ms/);
+  });
+
+  it("falls back for non-streaming generation as well", async () => {
+    const primary = new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw new Error("primary down");
+      },
+    });
+    const fallback = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: "text", text: "from fallback" }],
+        finishReason: { unified: "stop", raw: undefined },
+        usage,
+        warnings: [],
+      }),
+    });
+    mocks.responses.mockImplementation((name: string) =>
+      name === "primary" ? primary : fallback,
+    );
+    const routed = createRoutedModel("primary");
+    const result = await routed.model.doGenerate({ prompt: [] });
+    expect(result.content).toEqual([{ type: "text", text: "from fallback" }]);
+    expect(routed.selected().provider).toBe("openrouter");
+    expect(primary.doGenerateCalls).toHaveLength(1);
+  });
+
+  it("reads a page on request and numbers it as a citable source", async () => {
+    mocks.readUrl.mockResolvedValue({
+      title: "Statute",
+      url: "https://law.test/statute",
+      content: "Section 1. Text of the statute.",
+      truncated: false,
+      provider: "jina",
+    });
+    const model = sequencedModel([
+      toolStep(0, "read_url", { url: "https://law.test/statute" }),
+    ]);
+    mocks.responses.mockReturnValue(model);
+    const reply = await generateChatReply(messages, { enableUrlReader: true });
+    expect(mocks.readUrl).toHaveBeenCalledWith(
+      "https://law.test/statute",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(reply.webSearch?.sources).toEqual([
+      { title: "Statute", url: "https://law.test/statute" },
+    ]);
+    const continuation = JSON.stringify(model.doStreamCalls[1]?.prompt);
+    expect(continuation).toContain("UNTRUSTED CONTENT");
+    expect(continuation).toContain("Text of the statute");
+    expect(reply.toolActivity).toEqual([
+      { id: "call-0", tool: "read_url", query: "https://law.test/statute", status: "complete" },
+    ]);
+    expect(JSON.stringify(model.doStreamCalls[0]?.prompt)).toContain("read_url");
+  });
+
+  it("reads the user's contracts only when a user is attached", async () => {
+    const contractId = "11111111-1111-4111-8111-111111111111";
+    mocks.listContracts.mockResolvedValue([
+      { id: contractId, title: "NDA", status: "DRAFT", projectId: null, updatedAt: "2026-01-01", characterCount: 44, extractionWarning: null },
+    ]);
+    mocks.getContractText.mockResolvedValue({
+      id: contractId,
+      title: "NDA",
+      status: "DRAFT",
+      text: "Clause 1. Confidentiality lasts five years.",
+      extractionWarning: null,
+    });
+    const model = sequencedModel([
+      toolStep(0, "list_contracts", {}),
+      toolStep(1, "read_contract", { contractId, find: "confidentiality" }),
+    ]);
+    mocks.responses.mockReturnValue(model);
+    const reply = await generateChatReply(messages, { contractsUserId: "user-1" });
+    expect(mocks.listContracts).toHaveBeenCalledWith("user-1");
+    expect(mocks.getContractText).toHaveBeenCalledWith("user-1", contractId);
+    expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain("NDA");
+    expect(JSON.stringify(model.doStreamCalls[2]?.prompt)).toContain("Confidentiality lasts");
+    expect(reply.toolActivity?.map((activity) => [activity.tool, activity.status])).toEqual([
+      ["list_contracts", "complete"],
+      ["read_contract", "complete"],
+    ]);
+    expect(reply.webSearch).toBeNull();
+
+    const anonymous = scriptedModel();
+    mocks.responses.mockReturnValue(anonymous);
+    await generateChatReply(messages, {});
+    expect(anonymous.doStreamCalls[0]?.tools ?? []).toHaveLength(0);
+    expect(JSON.stringify(anonymous.doStreamCalls[0]?.prompt)).toContain("No tools are available");
+  });
+
+  it("reports contract lookups that fail as tool errors", async () => {
+    mocks.getContractText.mockResolvedValue(null);
+    const model = sequencedModel([
+      toolStep(0, "read_contract", { contractId: "11111111-1111-4111-8111-111111111111" }),
+    ]);
+    mocks.responses.mockReturnValue(model);
+    const reply = await generateChatReply(messages, { contractsUserId: "user-1" });
+    expect(reply.toolActivity?.[0]?.status).toBe("error");
+    expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain("Contract not found");
   });
 });

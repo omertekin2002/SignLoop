@@ -1,6 +1,7 @@
 import { toPublicChatMessage } from "@/lib/chat-public-message";
 import { appendWebSourcesToMessage } from "@/lib/web-citations";
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
+import { flushTelemetry, isTelemetryEnabled } from "@/lib/telemetry";
 import { auth } from "@clerk/nextjs/server";
 import {
   generateChatReply,
@@ -59,7 +60,12 @@ Guidelines:
 
 const DEFAULT_CHAT_ERROR_MESSAGE = "Chat request failed. Please try again.";
 
-export const maxDuration = 180;
+// Vercel allows 300s on every plan with Fluid compute (the analyze route already relies on it).
+// Keep the chain ordered: maxDuration > ROUTE_TIMEOUT_MS > the generator's own deadline.
+export const maxDuration = 300;
+const ROUTE_TIMEOUT_MS = 275_000;
+// The lease must outlive the longest possible request so a stuck run cannot be double-started.
+const CHAT_LEASE_SECONDS = 360;
 
 export async function GET() {
   const snapshot = await getModelAvailabilitySnapshot();
@@ -162,7 +168,9 @@ export async function POST(req: Request) {
   let streaming = false;
   let storedMessages: ChatMessageRecord[] = [];
   const disconnect = new AbortController();
-  const operationSignal = AbortSignal.any([req.signal, disconnect.signal, AbortSignal.timeout(155_000)]);
+  const operationSignal = AbortSignal.any([req.signal, disconnect.signal, AbortSignal.timeout(ROUTE_TIMEOUT_MS)]);
+  // Spans buffer in memory; export them once the response (including a stream) has finished.
+  if (isTelemetryEnabled) after(flushTelemetry);
   try {
     const declaredContentLength = Number(req.headers.get("content-length"));
     if (
@@ -186,8 +194,9 @@ export async function POST(req: Request) {
     const isTemporaryChat = isRecord(body) && body.temporary === true;
     const isImageMode = isRecord(body) && body.imageMode === true;
     const { userId } = await auth();
-    // Search is a server-side invariant for authenticated chats, so clients cannot disable it.
-    // Anonymous temporary chats stay unsearched to protect the private Gemini quota.
+    // Search and page reading are server-side invariants for authenticated chats, so clients cannot
+    // disable them. Anonymous temporary chats get neither, to protect the private search quotas.
+    // Contract tools follow the signed-in user, since they only ever expose that user's own files.
     const enableWebSearch = Boolean(userId);
 
     if (!userId && !isTemporaryChat) {
@@ -229,7 +238,7 @@ export async function POST(req: Request) {
     const latestUserMessage = conversationMessages.at(-1)!;
 
     if (userId && !isTemporaryChat) {
-      release = await claimGenerationOperation(userId, "chat", threadId, 240);
+      release = await claimGenerationOperation(userId, "chat", threadId, CHAT_LEASE_SECONDS);
       if (!release) return NextResponse.json({ error: "A reply is already running in this chat." }, { status: 409 });
     }
 
@@ -356,6 +365,8 @@ export async function POST(req: Request) {
               primaryModel: selectedPrimaryModel,
               signal: operationSignal,
               enableWebSearch,
+              enableUrlReader: enableWebSearch,
+              contractsUserId: userId,
             })) {
               if (req.signal.aborted || disconnect.signal.aborted) {
                 return;
@@ -459,6 +470,8 @@ export async function POST(req: Request) {
         primaryModel: selectedPrimaryModel,
         signal: operationSignal,
         enableWebSearch,
+        enableUrlReader: enableWebSearch,
+        contractsUserId: userId,
       },
     );
     const assistantMessage = appendWebSourcesToMessage(

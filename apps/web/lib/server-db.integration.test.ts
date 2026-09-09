@@ -17,8 +17,8 @@ import {
   appendChatMessagesToThread, claimGenerationOperation, createAnalysisForContract,
   createChatThreadForUser, createContractForUser, createProjectForUser,
   deleteAnalysisForContract, deleteContractForUser, deleteProjectForUser,
-  getChatImageForUser, getChatThreadByIdForUser, getContractWithLatestAnalysisForUser,
-  listContractsByUserId, saveContractUploadForUser,
+  getChatImageForUser, getChatThreadByIdForUser, getContractTextForUser, getContractWithLatestAnalysisForUser,
+  listContractsByUserId, listContractsForChat, saveContractUploadForUser,
 } from "./server-db";
 
 describe.skipIf(!connectionString)("database integration", () => {
@@ -134,5 +134,14 @@ describe.skipIf(!connectionString)("database integration", () => {
     const standalone = await createContractForUser({ userId: "scope-user", title: "Standalone" });
     await createContractForUser({ userId: "scope-user", title: "Newer project contract", projectId: project.id });
     expect((await listContractsByUserId("scope-user", { limit: 1 }, true)).data[0]?.id).toBe(standalone.id);
+  });
+
+  it("exposes contract text to chat tools for the owner only", async () => {
+    const created = await createContractForUser({ userId: "chat-owner", title: "NDA" });
+    await pool.current!.query("update contracts set text_content = $1 where id = $2", ["Clause 1. Confidential.", created.id]);
+    expect((await listContractsForChat("chat-owner")).map((row) => [row.id, row.title, row.characterCount])).toEqual([[created.id, "NDA", 23]]);
+    expect((await getContractTextForUser("chat-owner", created.id))?.text).toBe("Clause 1. Confidential.");
+    expect(await getContractTextForUser("intruder", created.id)).toBeNull();
+    expect(await listContractsForChat("intruder")).toEqual([]);
   });
 });
