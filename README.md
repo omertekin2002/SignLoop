@@ -123,7 +123,7 @@ Scanned PDFs are detected through low text density; their pages are **not** rast
 
 `POST /api/contracts/:id/analyze` performs analysis inside the request. It claims a generation lease, loads the owner-scoped contract, and reuses a current result unless forced. Project context is included in the prompt.
 
-The prompt includes up to 15,000 contract characters, preserving the beginning and end when shortened. Context is limited to eight documents, up to 3,000 characters each within an 8,000-character total text budget. Coverage and extraction warnings are retained with the result; this is not full-document coverage for long inputs.
+The prompt includes up to 15,000 contract characters, preserving the beginning and end when shortened. Context is limited to eight documents, up to 3,000 characters each within an 8,000-character total text budget; the per-document bound is applied in SQL, so the prompt builder assembles rather than re-trims. Coverage and extraction warnings are retained with the result; this is not full-document coverage for long inputs.
 
 Output passes through JSON parsing, schema validation, supported normalization, and a bounded repair path. Provider/request failures can use OpenRouter fallback; semantic validation failures do not trigger another provider solely to retry invalid analysis. The final database transaction checks the contract revision before storing the analysis and marking it `ANALYZED`. Contract/context changes invalidate previous results as current, while historical analyses remain accessible.
 
@@ -153,7 +153,7 @@ New saved images are stored in `chat_attachments` and served through an ownershi
 
 | Operation               | Current implementation                                                                                                                                            |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Analysis                | 270-second operation deadline; 300-second route budget.                                                                                                           |
+| Analysis                | 120-second per-request client timeout; 270-second operation deadline; 300-second route budget.                                                                                                           |
 | Chat                    | 260-second generation deadline; 275-second request deadline; 300-second route budget.                                                                             |
 | Chat tool loop          | Ten model steps; final step disables tools. Per-turn limits: three search executions, five page reads, five direct HTTP fetches, two image generations.           |
 | Provider stream opening | 20-second deadline per candidate; currently cleared by the first event other than `stream-start`, including metadata. It is not a guaranteed first-text deadline. |
@@ -167,7 +167,7 @@ Budget sources: [chat.ts](apps/web/lib/chat.ts), [chat route](apps/web/app/api/c
 
 Primary tables are `projects`, `contracts`, `analyses`, `context_documents`, `contract_files`, `user_settings`, `chat_threads`, `chat_messages`, and `chat_attachments`. `generation_operations` holds expiring inference leases; `storage_deletions` is the object-deletion outbox; `schema_migrations` tracks applied SQL files.
 
-The [migration runner](apps/web/db/migrations.js) discovers numbered SQL files, uses an advisory lock, and records each migration in the same transaction as its changes. Runtime bootstrap and the standalone command use that runner. Migration 012 adds relationship constraints/cascades, revision invalidation, the deletion outbox, and generation leases; 013 adds attachments; 014 adds extraction warnings. Legacy relationship violations can leave constraints unvalidated with warnings rather than deleting old rows.
+The [migration runner](apps/web/db/migrations.js) discovers numbered SQL files, uses an advisory lock, and records each migration in the same transaction as its changes. Runtime bootstrap and the standalone command use that runner. Migration 012 adds relationship constraints/cascades, revision invalidation, the deletion outbox, and generation leases; 013 adds attachments; 014 adds extraction warnings; 015 adds index coverage for the chat contract listing and the deletion outbox. Legacy relationship violations can leave constraints unvalidated with warnings rather than deleting old rows.
 
 Database deletion enqueues object cleanup transactionally. Delete routes attempt cleanup after responding; failed items remain queued. From `apps/web`, using configured database and storage credentials:
 

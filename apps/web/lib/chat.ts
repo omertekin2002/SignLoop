@@ -183,26 +183,27 @@ async function openStreamWithDeadline(
   timeoutMs: number,
 ): Promise<StreamResult> {
   const outer = options.abortSignal;
-  const controller = new AbortController();
-  const forwardAbort = () => controller.abort(outer?.reason);
-  outer?.addEventListener("abort", forwardAbort, { once: true });
+  const deadline = new AbortController();
+  // Compose instead of forwarding the outer abort through a hand-attached listener. That listener
+  // has to outlive this function — it is what cancels an in-flight provider request once the
+  // stream is already being consumed — so it could never be detached here, and `outer` is the one
+  // per-request signal shared by every step of the tool loop: each step left another listener, and
+  // another retained AbortController, on it. AbortSignal.any keeps its link to the sources weak,
+  // so the composite and the link are collected with the stream that uses them.
+  const signal = outer ? AbortSignal.any([outer, deadline.signal]) : deadline.signal;
   const aborted = new Promise<never>((_, reject) => {
-    controller.signal.addEventListener(
-      "abort",
-      () => reject(controller.signal.reason),
-      { once: true },
-    );
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
   });
   aborted.catch(() => {});
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    controller.abort(new FirstChunkTimeoutError(timeoutMs));
+    deadline.abort(new FirstChunkTimeoutError(timeoutMs));
   }, timeoutMs);
   let reader: ReadableStreamDefaultReader<StreamPart> | undefined;
   try {
     const result = await Promise.race([
-      candidate.doStream({ ...options, abortSignal: controller.signal }),
+      candidate.doStream({ ...options, abortSignal: signal }),
       aborted,
     ]);
     reader = result.stream.getReader();
@@ -232,7 +233,6 @@ async function openStreamWithDeadline(
     });
     return { ...result, stream };
   } catch (error) {
-    outer?.removeEventListener("abort", forwardAbort);
     reader?.cancel().catch(() => {});
     if (timedOut && !outer?.aborted) throw new FirstChunkTimeoutError(timeoutMs);
     throw error;

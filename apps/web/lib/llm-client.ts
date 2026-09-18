@@ -128,6 +128,12 @@ export async function runWithPrimaryAndOpenRouterFallback<T>(
   options?: {
     signal?: AbortSignal;
     shouldFallback?: (error: unknown) => boolean;
+    /**
+     * Per-request client timeout. Callers whose operation budget is longer than the client
+     * default must set this, or a healthy-but-slow model is abandoned mid-answer and the whole
+     * fallback chain is walked chasing a failure that was only impatience.
+     */
+    timeoutMs?: number;
   },
 ): Promise<{ result: T; provider: LlmProvider; model: string }> {
   if (selectedPrimaryModel === null || isOpenRouterModel(selectedPrimaryModel)) {
@@ -146,6 +152,7 @@ export async function runWithPrimaryAndOpenRouterFallback<T>(
     const primaryClient = createOpenAiCompatibleClient(
       PRIMARY_LLM_BASE_URL,
       PRIMARY_LLM_API_KEY,
+      { timeoutMs: options?.timeoutMs },
     );
     const result = await run(primaryClient, selectedPrimaryModel);
     return {
@@ -173,7 +180,13 @@ export async function runWithPrimaryAndOpenRouterFallback<T>(
 async function runOpenRouterChain<T>(
   models: readonly string[],
   run: (client: OpenAI, model: string) => Promise<T>,
-  options: { signal?: AbortSignal; shouldFallback?: (error: unknown) => boolean } | undefined,
+  options:
+    | {
+        signal?: AbortSignal;
+        shouldFallback?: (error: unknown) => boolean;
+        timeoutMs?: number;
+      }
+    | undefined,
   reason: string,
 ): Promise<{ result: T; provider: LlmProvider; model: string }> {
   if (!OPENROUTER_API_KEY) {
@@ -185,6 +198,7 @@ async function runOpenRouterChain<T>(
   const fallbackClient = createOpenAiCompatibleClient(
     OPENROUTER_BASE_URL,
     OPENROUTER_API_KEY,
+    { timeoutMs: options?.timeoutMs },
   );
   const fallbackFailures: string[] = [];
 

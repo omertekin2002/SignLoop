@@ -18,8 +18,10 @@ import {
   createChatThreadForUser, createContractForUser, createProjectForUser,
   deleteAnalysisForContract, deleteContractForUser, deleteProjectForUser,
   getChatImageForUser, getChatThreadByIdForUser, getContractTextForUser, getContractWithLatestAnalysisForUser,
+  getProjectContextForAnalysis, getRecentChatMessagesForThreadForUser,
   listContractsByUserId, listContractsForChat, saveContractUploadForUser,
 } from "./server-db";
+import { buildAnalysisPrompt } from "./analysis";
 
 describe.skipIf(!connectionString)("database integration", () => {
   beforeAll(async () => {
@@ -51,15 +53,35 @@ describe.skipIf(!connectionString)("database integration", () => {
       { role: "user", content: "Research rates" },
       { role: "assistant", content: "Answer [1]", metadata: { agentMessages, webSources, toolActivity: [{ id: "call1", query: "rates", status: "complete" }] } },
     ] });
+    // Assert the round-trip on the read that actually consumes the transcript. The thread-detail
+    // read deliberately omits it: its response drops replay state, so hydrating it there was pure
+    // cost. Detail still has to carry the rendered fields and enforce ownership.
+    const replayed = await getRecentChatMessagesForThreadForUser("owner", thread.id, 10);
+    expect(replayed?.at(-1)?.agentMessages).toEqual(agentMessages);
+    expect(replayed?.at(-1)?.webSources).toEqual(webSources);
+    expect(await getRecentChatMessagesForThreadForUser("another-user", thread.id, 10)).toBeNull();
+
     const loaded = await getChatThreadByIdForUser("owner", thread.id);
-    expect(loaded?.messages.at(-1)?.agentMessages).toEqual(agentMessages);
-    expect(loaded?.messages.at(-1)?.webSources).toEqual(webSources);
+    expect(loaded?.messages.at(-1)?.agentMessages).toBeUndefined();
+    expect(loaded?.messages.at(-1)?.toolActivity).toEqual([
+      { id: "call1", query: "rates", status: "complete" },
+    ]);
     expect(await getChatThreadByIdForUser("another-user", thread.id)).toBeNull();
   });
 
   it("applies every discovered migration, including indexes and referential constraints", async () => {
     const { rows } = await pool.current!.query("SELECT filename FROM schema_migrations ORDER BY filename");
     expect(rows.map((row) => row.filename)).toContain("011_fix_index_coverage.sql");
+    // The suite runs runMigrations twice, so this also covers re-run idempotency: 015 must add its
+    // indexes and 009-011 must not resurrect the ones they dropped.
+    const indexes = await pool.current!.query("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'");
+    const indexNames = indexes.rows.map((row) => row.indexname);
+    expect(indexNames).toEqual(expect.arrayContaining([
+      "contracts_user_id_updated_at_idx", "storage_deletions_created_at_idx",
+      "contracts_user_id_created_at_idx", "chat_threads_user_id_updated_at_idx",
+    ]));
+    expect(indexNames).not.toContain("contracts_user_id_idx");
+    expect(indexNames).not.toContain("chat_threads_user_id_idx");
     const constraints = await pool.current!.query("SELECT convalidated FROM pg_constraint WHERE conname LIKE '%_fk'");
     expect(constraints.rows).toHaveLength(5);
     expect(constraints.rows.every((row) => row.convalidated)).toBe(true);
@@ -93,6 +115,36 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(await deleteContractForUser({ userId: "intruder", contractId: item.id })).toEqual({ deleted: false });
     expect(await deleteContractForUser({ userId: "owner", contractId: item.id })).toEqual({ deleted: true });
     expect((await pool.current!.query("SELECT storage_key FROM storage_deletions WHERE storage_key = 'uploads/test'")).rowCount).toBe(1);
+  });
+
+  it("bounds context excerpts to the prompt's own per-document budget", async () => {
+    const project = await createProjectForUser({ userId: "owner", title: "Budget" });
+    // Distinct head/tail sentinels so a wrong slice direction can't pass by coincidence.
+    const long = `HEAD_SENTINEL${"a".repeat(20_000)}TAIL_SENTINEL`;
+    await pool.current!.query(
+      "INSERT INTO context_documents(project_id, title, extracted_text) VALUES ($1, 'Long', $2), ($1, 'Short', 'Brief evidence')",
+      [project.id, long],
+    );
+
+    const rows = await getProjectContextForAnalysis("owner", project.id);
+    const excerpt = rows.find((row) => row.title === "Long")!;
+    // Exactly the budget, marker included -- one character over and buildAnalysisPrompt would
+    // trim it a second time and stack a second marker on the same gap.
+    expect(excerpt.extractedText).toHaveLength(3_000);
+    expect(excerpt.extractedText.startsWith("HEAD_SENTINEL")).toBe(true);
+    expect(excerpt.extractedText.endsWith("TAIL_SENTINEL")).toBe(true);
+    expect(excerpt.originalCharacterCount).toBe(long.length);
+    // Short documents pass through untouched.
+    expect(rows.find((row) => row.title === "Short")?.extractedText).toBe("Brief evidence");
+
+    const { prompt } = buildAnalysisPrompt("Contract body", undefined, rows.map((row) => ({
+      title: row.title, documentType: row.documentType,
+      text: row.extractedText, originalCharacterCount: row.originalCharacterCount,
+    })));
+    expect(prompt.split("[Context excerpt omitted from the middle]")).toHaveLength(2);
+    expect(prompt).not.toContain("omitted from the middle of project context document");
+
+    expect(await getProjectContextForAnalysis("intruder", project.id)).toEqual([]);
   });
 
   it("invalidates current and in-flight analyses when project evidence changes", async () => {

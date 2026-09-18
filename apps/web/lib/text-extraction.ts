@@ -252,6 +252,9 @@ export function validateFileSignature(buffer: Buffer, mimeType: string): void {
     throw new Error("The uploaded file is empty");
   }
 
+  // Callers pass the canonical type validateMimeType already resolved (processFile does exactly
+  // that), so re-running the filename-aware resolution here would apply a *different* rule set --
+  // this call has no fileName to cross-check against. Canonicalize only what was handed in.
   const supportedMimeType = validateMimeType(mimeType);
   let matches = false;
 

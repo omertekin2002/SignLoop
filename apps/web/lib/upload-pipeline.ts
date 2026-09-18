@@ -91,7 +91,8 @@ export async function prepareUpload(
         await reader.cancel();
         return { ok: false, status: 413, error: "Upload request is too large." };
       }
-      chunks.push(new Uint8Array(value));
+      // No defensive copy: Blob copies each chunk when it takes ownership below.
+      chunks.push(value);
     }
     formData = await new Response(new Blob(chunks), {
       headers: { "content-type": req.headers.get("content-type") ?? "" },

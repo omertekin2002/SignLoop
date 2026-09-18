@@ -352,6 +352,10 @@ async function* readChatApiResponse(
   let buffer = "";
   let accumulatedMessage = "";
   const toolActivity = new Map<string, ChatToolActivity>();
+  // Rebuilt only when a tool event actually changes the map. Spreading it per delta allocated a
+  // fresh array per token and changed the metadata identity on every one, which made
+  // SearchActivity re-validate the whole list on each render of a streaming reply.
+  let toolActivitySnapshot: ChatToolActivity[] = [];
 
   // The `finally` releases the reader on every exit path — normal completion, a thrown stream
   // error, and (importantly) the implicit generator return when the consumer aborts mid-turn.
@@ -386,7 +390,8 @@ async function* readChatApiResponse(
 
         if (event.type === "tool") {
           toolActivity.set(event.activity.id, event.activity);
-          yield { message: accumulatedMessage, done: false, toolActivity: [...toolActivity.values()] };
+          toolActivitySnapshot = [...toolActivity.values()];
+          yield { message: accumulatedMessage, done: false, toolActivity: toolActivitySnapshot };
           continue;
         }
 
@@ -395,7 +400,7 @@ async function* readChatApiResponse(
           accumulatedMessage += event.text;
           yield {
             message: accumulatedMessage,
-            toolActivity: [...toolActivity.values()],
+            toolActivity: toolActivitySnapshot,
             done: false,
           };
           continue;

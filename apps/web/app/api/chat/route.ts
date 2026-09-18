@@ -115,12 +115,16 @@ async function persistChatMessages(input: {
         role: "assistant",
         content: input.assistantMessage,
         // Persist the generating model/provider so the label survives re-hydration and reloads.
+        // These values are handed straight through: appendChatMessagesToThread serializes the
+        // metadata itself, and JSON.stringify already drops undefined properties, so the
+        // parse(stringify(…)) round-trip these fields used to take produced a byte-identical
+        // result at the cost of cloning the largest object in the turn one extra time.
         metadata: {
           model: input.assistantModel,
           provider: input.assistantProvider,
-          agentMessages: JSON.parse(JSON.stringify(input.agentMessages ?? [])),
-          webSources: JSON.parse(JSON.stringify(input.webSources ?? [])),
-          toolActivity: JSON.parse(JSON.stringify(input.toolActivity ?? [])),
+          agentMessages: input.agentMessages ?? [],
+          webSources: input.webSources ?? [],
+          toolActivity: input.toolActivity ?? [],
         },
       },
     ],

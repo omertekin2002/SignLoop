@@ -13,6 +13,11 @@ import {
 } from "@/lib/llm-client";
 import { getErrorMessage, isRecord } from "@/lib/utils";
 
+// Per-request ceiling for one analysis call, sized against the route's 270s operation deadline so
+// two candidates can be tried in full before it fires. The OpenAI client's own default is 60s,
+// which silently abandoned a slow-but-healthy model and then spent the rest of the budget walking
+// the fallback chain. The operation signal remains the hard ceiling for the chain as a whole.
+const ANALYSIS_REQUEST_TIMEOUT_MS = 120_000;
 const MAX_CONTRACT_PROMPT_CHARS = 15000;
 const MAX_ANALYSIS_OUTPUT_TOKENS = 8_192;
 const MAX_PROJECT_CONTEXT_PROMPT_CHARS = 8000;
@@ -1036,6 +1041,7 @@ export async function analyzeText(
     {
       signal: options?.signal,
       shouldFallback: (error) => !(error instanceof LlmResponseValidationError),
+      timeoutMs: ANALYSIS_REQUEST_TIMEOUT_MS,
     },
   );
 

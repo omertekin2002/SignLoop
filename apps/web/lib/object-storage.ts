@@ -96,23 +96,6 @@ export async function deleteObject(storageKey: string): Promise<void> {
   await fs.rm(`${absolutePath}.meta.json`, { force: true });
 }
 
-export async function deleteObjects(
-  storageKeys: readonly string[],
-): Promise<void> {
-  const remoteKeys = storageKeys.filter(isRemoteObjectUrl);
-  const localKeys = storageKeys.filter((key) => !isRemoteObjectUrl(key));
-
-  // Blob accepts URL arrays. Use bounded batches instead of launching one retried HTTP operation
-  // per object, then remove local files sequentially to avoid an unbounded file-descriptor burst.
-  const remoteBatchSize = 100;
-  for (let index = 0; index < remoteKeys.length; index += remoteBatchSize) {
-    await del(remoteKeys.slice(index, index + remoteBatchSize));
-  }
-  for (const key of localKeys) {
-    await deleteObject(key);
-  }
-}
-
 export function getStorageBucketName(): string {
   if (isBlobEnabled()) {
     return "vercel-blob";

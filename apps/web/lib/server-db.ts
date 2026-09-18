@@ -198,8 +198,6 @@ export type ChatThreadSummaryRecord = {
   title: string;
   createdAt: string;
   updatedAt: string;
-  lastMessagePreview: string | null;
-  lastMessageAt: string | null;
   messageCount: number;
 };
 
@@ -1112,9 +1110,18 @@ export async function getProjectContextForAnalysis(
 ): Promise<ProjectContextForAnalysisRecord[]> {
   await ensureSchema();
 
-  const maxDocumentCharacters = 6_000;
-  const headCharacters = 3_900;
-  const tailCharacters = maxDocumentCharacters - headCharacters;
+  // Match the analysis prompt's per-document budget (MAX_CONTEXT_DOCUMENT_PROMPT_CHARS in
+  // lib/analysis.ts) exactly. Selecting more only moved bytes that buildBoundedExcerpt trimmed
+  // again on arrival — and that second trim stacked a second "omitted from the middle" marker
+  // describing the same gap. The marker is counted against the budget here so the returned value
+  // lands on the limit rather than just over it, which would re-trigger the trim it replaces.
+  const omissionMarker = "\n\n[Context excerpt omitted from the middle]\n\n";
+  const maxDocumentCharacters = 3_000;
+  const headCharacters = Math.ceil(
+    (maxDocumentCharacters - omissionMarker.length) * 0.65,
+  );
+  const tailCharacters =
+    maxDocumentCharacters - omissionMarker.length - headCharacters;
   // Fetch one sentinel row beyond the prompt's eight-document cap so the prompt can disclose that
   // additional context was omitted without counting or transferring the whole project collection.
   const maxDocuments = 9;
@@ -1127,7 +1134,7 @@ export async function getProjectContextForAnalysis(
       case
         when char_length(cd.extracted_text) > ${maxDocumentCharacters}
           then left(cd.extracted_text, ${headCharacters})
-            || E'\n\n[Context excerpt omitted from the middle]\n\n'
+            || ${omissionMarker}
             || right(cd.extracted_text, ${tailCharacters})
         else cd.extracted_text
       end as "extractedText",
@@ -1316,15 +1323,25 @@ export async function upsertUserPersonality(input: {
   return saved;
 }
 
-function mapChatMessageRow(row: {
-  id: string;
-  threadId: string;
-  role: string;
-  content: string;
-  position: number;
-  createdAt: string;
-  metadata?: unknown;
-}): ChatMessageRecord {
+/**
+ * `replayState` controls hydration of agentMessages/webSources — the server-only tool transcript
+ * the chat loop replays into the next turn. Validating it is the most expensive work on the row
+ * (a full stringify to size-check, then a Zod parse of the largest object stored), so reads whose
+ * response drops it anyway — everything that goes out through toPublicChatMessage — pass "omit".
+ * The default stays "include" so a missed call site costs work rather than losing the transcript.
+ */
+function mapChatMessageRow(
+  row: {
+    id: string;
+    threadId: string;
+    role: string;
+    content: string;
+    position: number;
+    createdAt: string;
+    metadata?: unknown;
+  },
+  replayState: "include" | "omit" = "include",
+): ChatMessageRecord {
   const role: ChatMessageRole =
     row.role === "system" || row.role === "assistant" ? row.role : "user";
 
@@ -1345,8 +1362,12 @@ function mapChatMessageRow(row: {
     content: row.content,
     position: row.position,
     createdAt: row.createdAt,
-    agentMessages: parseAgentMessages(metadata.agentMessages),
-    webSources: parseWebSources(metadata.webSources),
+    ...(replayState === "include"
+      ? {
+          agentMessages: parseAgentMessages(metadata.agentMessages),
+          webSources: parseWebSources(metadata.webSources),
+        }
+      : {}),
     toolActivity: metadata.toolActivity,
     model,
     provider,
@@ -1376,8 +1397,6 @@ export async function createChatThreadForUser(input: {
       title,
       created_at as "createdAt",
       updated_at as "updatedAt",
-      null::text as "lastMessagePreview",
-      null::timestamptz as "lastMessageAt",
       0::integer as "messageCount"
   `;
 
@@ -1405,8 +1424,6 @@ export async function listChatThreadsByUserId(
         t.title,
         t.created_at as "createdAt",
         t.updated_at as "updatedAt",
-        null::text as "lastMessagePreview",
-        null::timestamptz as "lastMessageAt",
         (
           select count(*)::integer
           from chat_messages m
@@ -1505,7 +1522,10 @@ export async function getRecentChatMessagesForThreadForUser(
         row.position !== null &&
         row.createdAt !== null,
     )
-    .map(mapChatMessageRow);
+    // The chat loop replays this transcript into the next turn, so this is the one read that
+    // genuinely needs it. Wrapped rather than passed by reference: Array.map supplies the index
+    // as the second argument, which would silently select the wrong hydration mode.
+    .map((row) => mapChatMessageRow(row, "include"));
 }
 
 export async function getChatThreadByIdForUser(
@@ -1567,7 +1587,10 @@ export async function getChatThreadByIdForUser(
 
   return {
     ...thread,
-    messages: messageRows.slice(0, 50).reverse().map(mapChatMessageRow),
+    messages: messageRows
+      .slice(0, 50)
+      .reverse()
+      .map((row) => mapChatMessageRow(row, "omit")),
     hasMore: messageRows.length > 50,
   };
 }
@@ -1663,7 +1686,7 @@ export async function appendChatMessagesToThread(input: {
     );
 
     await client.query("COMMIT");
-    return inserted.rows.map(mapChatMessageRow);
+    return inserted.rows.map((row) => mapChatMessageRow(row, "omit"));
   } catch (err) {
     // Swallow rollback failures: when the try failed because the connection died, ROLLBACK throws
     // too and would replace `err` with a generic connection error, hiding the real cause.

@@ -87,7 +87,6 @@ interface ChatThreadSummary {
   id: string;
   title: string;
   updatedAt: string;
-  lastMessagePreview: string | null;
   messageCount: number;
 }
 
@@ -493,8 +492,9 @@ const Dashboard = ({
     },
   });
 
-  const standaloneContracts =
-    contracts?.filter((contract) => !contract.projectId) || [];
+  // The request already asks for ?standalone=true, which the server answers with
+  // `project_id is null` -- re-filtering here only risked drifting from that predicate.
+  const standaloneContracts = contracts ?? [];
 
   const setSectionOpen = (section: DashboardTab, open: boolean) => {
     setOpenSections((previous) => ({

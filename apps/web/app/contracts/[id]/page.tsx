@@ -160,10 +160,11 @@ const ContractDetails = () => {
     },
   });
 
-  const sortedAnalyses = useMemo<AnalysisRecord[]>(() => {
-    const list = Array.isArray(contract?.analyses) ? contract.analyses : [];
-    return list;
-  }, [contract?.analyses]);
+  // Already ordered by the query (created_at desc, id desc); this only guards the shape.
+  const sortedAnalyses = useMemo<AnalysisRecord[]>(
+    () => (Array.isArray(contract?.analyses) ? contract.analyses : []),
+    [contract?.analyses],
+  );
   const latestAnalysisRecord = sortedAnalyses[0] ?? null;
   const selectedAnalysis = selectedAnalysisId
     ? (sortedAnalyses.find((a) => a.id === selectedAnalysisId) ?? null)
