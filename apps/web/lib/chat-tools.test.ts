@@ -5,7 +5,7 @@ vi.mock("@/lib/image-generation", () => ({ generateImageReply: vi.fn() }));
 vi.mock("@/lib/http-fetch", () => ({ httpGet: vi.fn() }));
 import { httpGet } from "@/lib/http-fetch";
 import { readUrl } from "@/lib/url-reader";
-import { listContractsForChat } from "@/lib/server-db";
+import { getContractTextForUser, listContractsForChat } from "@/lib/server-db";
 import {
   CONTRACT_WINDOW_CHARACTERS,
   createHttpGetTool,
@@ -36,8 +36,64 @@ describe("excerptContract", () => {
     expect(result.content).toContain("Clause 12. Indemnification cap applies.");
     expect(result.content.split("[...]")).toHaveLength(2);
     expect(result.content.length).toBeLessThan(2_000);
+    expect(result.nextOffset).toBeNull();
+    expect(result.truncated).toBeUndefined();
     expect(excerptContract(text, { find: "arbitration" })).toMatchObject({ matchCount: 0, content: "" });
   });
+
+  it("bounds a large merged excerpt and resumes without skipping document text", () => {
+    const document = Array.from({ length: 40 }, () => "indemnification " + "x".repeat(480)).join("\n");
+    const first = excerptContract(document, { find: "indemnification" });
+
+    expect(first.content.length).toBeLessThanOrEqual(CONTRACT_WINDOW_CHARACTERS);
+    expect(first.truncated).toBe(true);
+    expect(first.nextOffset).not.toBeNull();
+    const rest = excerptContract(document, { offset: first.nextOffset! });
+    expect(first.content.replace(/^@0: /, "") + rest.content).toBe(document);
+  });
+
+  it("shares the character budget across separate merged excerpts and their labels", () => {
+    const block = (term: string) => Array.from({ length: 20 }, () => term + "x".repeat(480)).join("\n");
+    const document = block("alpha ") + "z".repeat(1_000) + block("beta ");
+    const result = excerptContract(document, { find: "alpha beta" });
+
+    expect(result.content).toContain("\n[...]\n@");
+    expect(result.content).toContain("beta");
+    expect(result.content.length).toBeLessThanOrEqual(CONTRACT_WINDOW_CHARACTERS);
+    expect(result.truncated).toBe(true);
+    expect(result.nextOffset).toBeGreaterThan(document.indexOf("beta"));
+    expect(excerptContract(document, { offset: result.nextOffset! }).content)
+      .toBe(document.slice(result.nextOffset!, result.nextOffset! + CONTRACT_WINDOW_CHARACTERS));
+  });
+
+  it("provides continuation when the excerpt-count limit omits another match", () => {
+    const document = Array.from({ length: 9 }, () => "indemnification " + "x".repeat(1_000)).join("\n");
+    const result = excerptContract(document, { find: "indemnification" });
+
+    expect(result.content.split("\n[...]\n")).toHaveLength(8);
+    expect(result.truncated).toBe(true);
+    expect(result.nextOffset).toBe(document.lastIndexOf("indemnification") - 300);
+    expect(excerptContract(document, { offset: result.nextOffset! }).content).toContain("indemnification");
+  });
+});
+
+it("exposes truncated keyword results and continuation through read_contract", async () => {
+  const contractId = "11111111-1111-4111-8111-111111111111";
+  vi.mocked(getContractTextForUser).mockResolvedValueOnce({
+    id: contractId,
+    title: "Long contract",
+    status: "DRAFT",
+    extractionWarning: null,
+    text: Array.from({ length: 40 }, () => "indemnification " + "x".repeat(480)).join("\n"),
+  });
+  const tools = createContractTools({ userId: "owner", signal: new AbortController().signal });
+  const result = await tools.read_contract!.execute!(
+    { contractId, find: "indemnification" },
+    { toolCallId: "read", messages: [], context: undefined },
+  );
+
+  expect(result).toMatchObject({ truncated: true, nextOffset: expect.any(Number) });
+  expect(getContractTextForUser).toHaveBeenLastCalledWith("owner", contractId);
 });
 
 describe.each(["http_get", "read_url"] as const)("%s URL cache", (name) => {
