@@ -1,41 +1,67 @@
 # AGENTS
 
-## Package Manager
+## Toolchain and Package Manager
 
-This project uses **bun** (not npm/yarn/pnpm). Always use `bun` for installing dependencies and running scripts.
+- Use **Bun** for dependency operations and scripts; do not use npm, yarn, pnpm, or npx.
+- Root `package.json` pins `bun@1.3.11` and requires **Node.js 22+**. Some scripts invoke Node directly.
+- Install dependencies from the repository root: `bun install`.
+- Add app dependencies from `apps/web`: `bun add <package>` (or `bun add -d <package>`).
+- Run scripts with `bun run <script>` and package binaries with `bunx <command>`.
 
-- Install deps: `bun install`
-- Add a dep: `bun add <package>` (use `-d` for dev deps)
-- Run scripts: `bun run <script>`
-- Execute binaries: `bunx <command>` (not `npx`)
+## Commands and Validation
 
-The `packageManager` field in root `package.json` is set to `bun@1.3.11`.
+From the repository root:
 
-## Build and Validation
+| Command               | Behavior                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------- |
+| `bun run dev`         | Starts the Next.js web app on port 3000 through Turbo.                                |
+| `bun run build`       | Runs workspace build tasks; currently the web app is the only buildable workspace.    |
+| `bun run lint`        | Runs workspace linting; the web script rejects warnings.                              |
+| `bun run check-types` | Generates Next.js route types and checks TypeScript.                                  |
+| `bun run test`        | Runs workspace Vitest tests through Turbo.                                            |
+| `bun run db:migrate`  | Applies migrations to the configured database; this is not a validation-only command. |
 
-- Build: `bun run build` from repo root to validate all workspaces compile.
-- Dev server: `bun run dev` from repo root (web on :3000).
-- Lint: `bun run lint` from repo root to run workspace linting.
-- Type check: `bun run check-types` from repo root to verify TypeScript types.
-- Tests: `bun run test` from `apps/web` to run vitest.
-- DB migrations: `bun run db:migrate` from repo root.
+From `apps/web`:
 
-## Project Structure
+- `bun run test` runs Vitest directly. Pass a file to focus a run, e.g. `bun run test lib/chat-tools.test.ts`.
+- `bun run test:integration` creates a disposable local PostgreSQL database, applies migrations, runs database regressions, and removes it. Set `POSTGRES_BIN` if PostgreSQL binaries are not in `/opt/homebrew/opt/postgresql@16/bin`.
+- Database integration tests skip in ordinary test runs unless `SIGNLOOP_TEST_DATABASE_URL` is set. The disposable-database script sets this itself and does not use `POSTGRES_URL`.
+- `bun run storage:cleanup` processes the real storage-deletion outbox using configured database/storage credentials.
 
-Turborepo monorepo with npm-style workspaces (`apps/*`, `packages/*`):
+For application changes, run appropriate tests and the root build, lint, and type checks. Turbo can reuse cached results; use `bun run build --force` when a fresh build is needed. Run build and `check-types` sequentially because both generate `.next` files. Documentation-only edits need command/link/configuration checks rather than an application rebuild.
 
-- `apps/web` - Main Next.js 16 app (port 3000)
-- `packages/eslint-config` - Shared ESLint config
-- `packages/typescript-config` - Shared TypeScript configs
+## Repository Map
 
-## TypeScript Notes
+This is a Turborepo with workspaces in `apps/*` and `packages/*`:
 
-- Next.js apps use `declaration: false` and `declarationMap: false` in `packages/typescript-config/nextjs.json` to avoid TS2742 errors caused by bun's symlinked node_modules layout.
-- Do not re-enable `declaration` for Next.js apps unless you also address bun's module resolution paths.
+- `apps/web/app`: Next.js 16 App Router pages and API Route Handlers.
+- `apps/web/components`: dashboard, chat, upload, privacy, and shared UI components.
+- `apps/web/lib`: analysis/chat orchestration, extraction, provider clients, SQL operations, and shared helpers.
+- `apps/web/db`: migration runner, ordered SQL migrations, cleanup command, and integration-test setup.
+- `packages/eslint-config`: shared ESLint presets.
+- `packages/typescript-config`: shared TypeScript configurations.
+
+`@/` resolves to `apps/web`. Tests live alongside libraries as `lib/**/*.test.ts`. See the root README for setup and current behavior; package manifests and implementation files are the source of truth for commands and limits.
+
+## Data and Configuration
+
+- Put local web configuration in `apps/web/.env.local`; start from `apps/web/.env.local.example`.
+- Runtime SQL uses `POSTGRES_URL`; the standalone migration client uses `POSTGRES_URL_NON_POOLING`. Both commands need their variables in the process environment. From the root, `bun --env-file=apps/web/.env.local run db:migrate` explicitly loads local migration credentials.
+- Migrations are tracked by filename. Add a new numbered SQL file for schema changes; do not rewrite an applied migration.
+- Unless `SKIP_SCHEMA_BOOTSTRAP=1`, the first database operation runs pending migrations through the shared runner. Apply migrations before enabling that flag.
+- Preserve owner-scoped SQL, transactional writes, generation leases, revision checks, and deletion-outbox behavior when changing persistence paths.
+- Keep secrets and generated uploads out of source control. When adding environment variables, check the example file and Turbo's environment configuration.
+
+## TypeScript
+
+The shared Next.js config disables `declaration` and `declarationMap` and uses `noEmit`. Keep those settings: declaration generation previously caused TS2742 errors with Bun's symlinked dependencies.
 
 ## Deployment
 
-- Deployed on Vercel. Config lives in root `vercel.json`.
-- Build command: `bunx turbo build --filter=web`
-- Vercel uses `bun install --frozen-lockfile --linker hoisted` from `vercel.json`.
-- Keep the hoisted linker for this repository-root deployment: Vercel must resolve Next.js from root `node_modules` before running the filtered web build. Bun's default isolated workspace layout does not expose it there.
+The repository is configured for Vercel in root `vercel.json`:
+
+- Install: `bun install --frozen-lockfile --linker hoisted`.
+- Build: `bunx turbo build --filter=web`.
+- Output: `apps/web/.next`.
+
+Keep the hoisted linker for repository-root deployment so Vercel can resolve Next.js from root `node_modules`. The build does not run migrations. SQL migration files are included in API deployment traces through `apps/web/next.config.js`. Cleanup scheduling is not configured in this repository.

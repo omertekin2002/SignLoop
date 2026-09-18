@@ -1,357 +1,200 @@
 # SignLoop
 
-SignLoop is a Bun + Turborepo monorepo centered around an AI-assisted contract workspace.
+SignLoop is an AI-assisted contract workspace built with Next.js 16, React, Clerk, PostgreSQL, and OpenAI-compatible model providers. Users can upload contracts, request structured analysis, organize supporting documents in projects, and use temporary or saved chat.
 
-The main app lets users:
+The Bun/Turborepo repository contains one application, `apps/web`, plus shared ESLint and TypeScript configuration packages. There is no separate API server or background inference worker: API Route Handlers perform extraction, analysis, and chat orchestration.
 
-- upload contracts and extract text from PDF, Word, plain text, and image files,
-- run structured AI analysis with normalized legal-risk output,
-- organize work in projects with supporting context documents,
-- chat in either temporary (not persisted) or saved thread mode.
+## Local setup
 
----
+Requirements: **Node.js 22+** and **Bun 1.3.11**, the version pinned in [package.json](package.json).
 
-## What Is In This Repository
-
-- `apps/web`: the production product (`Next.js 16`, App Router) running on `:3000`
-- `packages/eslint-config`: shared ESLint presets
-- `packages/typescript-config`: shared TypeScript configs
-
-This repo uses:
-
-- `bun` as the package manager and script runner
-- `turbo` for workspace orchestration
-- `@vercel/postgres` for data
-- `@vercel/blob` with local filesystem fallback for object storage
-- Clerk for authentication
-- OpenAI-compatible providers for analysis/chat generation
-
----
-
-## Core Product Flows
-
-### 1) Contract upload and text extraction
-
-1. Frontend creates a contract record (`POST /api/contracts`).
-2. File upload endpoint receives the file (`POST /api/contracts/:id/upload`).
-3. Server validates MIME type and size (4 MiB max, with bounded multipart overhead).
-4. Text extraction is chosen by type:
-   - PDF: `unpdf` (with scanned-PDF low-density fallback marker)
-   - Images: `tesseract.js` OCR
-   - Word: `word-extractor`
-   - TXT: direct decode
-5. Binary is stored in:
-   - Vercel Blob if `BLOB_READ_WRITE_TOKEN` or `BLOB_STORE_ID` exists, or
-   - local filesystem (`apps/web/uploads` by default).
-6. Extracted text is saved into `contracts.text_content`.
-
-### 2) Contract analysis
-
-1. Analysis runs via `POST /api/contracts/:id/analyze`.
-2. `analyzeText()` builds a strict JSON-oriented prompt and calls the primary OpenAI-compatible endpoint.
-3. Transport failures can fall back to OpenRouter. Semantic validation failures remain on the original provider and are rejected.
-4. Output is parsed, repaired (if malformed), normalized, and validated against Zod schemas.
-5. Result is stored in `analyses.result_json`, and contract status moves to `ANALYZED`.
-
-### 3) Project-aware contract work
-
-- Projects are created under the authenticated user.
-- Contracts can be linked to a project.
-- Context documents are uploaded to projects (`/api/projects/:id/context`), extracted when possible, and persisted with metadata (type, word count, storage key).
-- Project detail pages combine contract analyses + context inventory for legal-review workflows.
-
-### 4) Chat (temporary + persisted threads)
-
-- Temporary chat works without login and is not saved.
-- Saved chat requires auth and persists:
-  - `chat_threads`
-  - `chat_messages` (ordered by transactional position locking)
-- Chat uses a configurable persona (`signloop-assistant` or `bare-llm`).
-- Chat runs a bounded AI SDK tool loop: the selected model decides whether to answer directly or
-  call tools, sees the results, and can issue follow-up calls before answering. Tools: `search_web`
-  (a ranked list of pages to open, via Brave, Firecrawl, or Gemini grounding), `read_url` (page or
-  PDF text via Firecrawl or Jina Reader, which is what makes a page citable),
-  `http_get` (a direct GET to any public address, returning the raw response body for
-  questions with one correct value), `list_contracts` / `read_contract` (the signed-in user's own
-  uploaded contract text, paged by offset or excerpted around `find` keywords), and `generate_image`
-  (gpt-image-2, offered only while the primary endpoint lists that model; the image is spliced into
-  the streamed reply and its bytes never enter the model transcript).
-- Signed-in sessions expose every tool; anonymous temporary chat uses the same loop with no tools.
-  Page and document text is fenced with untrusted-content markers before the model sees it.
-  There is no greeting list or preprocessing classifier. Saved replies retain tool exchanges and
-  source catalogs in message metadata, within the existing history size budget.
-- Temporary chat keeps the same tool exchanges without a database: the reply carries them back to
-  the browser, which returns them on the next turn. Without this the model sees its own previous
-  answer as bare prose and will report, accurately but uselessly, that it called no tools. Replayed
-  transcripts are client-supplied, so they are structurally validated, capped at 20,000 serialized
-  characters, and dropped whole rather than partially replayed when anything is unexpected. They
-  are only ever fed back to the model inside that same anonymous session.
-- Search progress streams to the UI.
-- The `Sources:` footer is built from server-side ground truth, not from the model's prose: every
-  page fetched during the turn is listed whether or not the answer cited it, so a missing or
-  malformed citation can no longer hide which pages an answer came from. Sources carried over from
-  earlier turns (kept so citation numbers stay stable) are listed only where this answer cites them.
-  Citation markers in OpenAI's `【1†L23-L26】` format are rewritten to `[1]` before linking, since
-  models trained on it emit that instead of the format the prompt asks for.
-- Measured figures — decimals and grouped thousands, not bare integers or years — are checked
-  against the text actually fetched. An answer that states figures with no page read, or whose
-  figures appear nowhere in what was read, gets an italic notice appended. The check is deliberately
-  one-sided: substring presence proves provenance but never meaning, so only a wholly ungrounded
-  answer is flagged and a derived value alongside a grounded one is not.
-
----
-
-## API Surface (Web App)
-
-Main route groups in `apps/web/app/api`:
-
-- `contracts`
-  - list/create contracts
-  - upload files
-  - run analysis
-  - delete analyses/contracts
-- `projects`
-  - list/create/delete projects
-  - upload/delete context docs
-- `chat`
-  - send chat completions
-  - create/list/delete/get threads
-- `settings`
-  - read and update model/personality preferences
-
-Most endpoints require Clerk auth; temporary chat is the main unauthenticated exception.
-
----
-
-## Data Model Overview
-
-Primary tables:
-
-- `projects`
-- `contracts` (contains extracted text and status)
-- `analyses` (structured AI output + provider/model metadata)
-- `context_documents`
-- `contract_files` (uploaded file metadata + storage keys)
-- `user_settings` (preferred primary model + personality)
-- `chat_threads`
-- `chat_messages`
-- `chat_attachments` (image bytes fetched separately through an ownership-checked route)
-- `generation_operations` (expiring leases for overlapping inference)
-- `storage_deletions` (durable object cleanup outbox)
-
-Migrations live in `apps/web/db/migrations`, and a migration runner exists at `apps/web/db/migrate.js`.
-
----
-
-## Environment Variables
-
-Set these in `.env.local` (or your deployment environment).
-
-Required for core authenticated app + persistence:
-
-- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
-- `CLERK_SECRET_KEY`
-- `POSTGRES_URL`
-- `POSTGRES_URL_NON_POOLING`
-
-Primary LLM endpoint (OpenAI-compatible):
-
-- `PRIMARY_LLM_BASE_URL` (required to enable the primary provider; include its `/v1` prefix)
-- `PRIMARY_LLM_MODEL` (default: `gemini-3-flash`)
-- `PRIMARY_LLM_API_KEY` (optional if endpoint does not require auth)
-
-SignLoop caches model discovery for 60 seconds (10 seconds after failure). Normal chat and analysis
-reuse that cache. Opening the selector or explicitly refreshing settings can request fresh discovery.
-Creating an empty chat does not contact a provider. When no primary model is available, inference
-skips primary and uses the configured OpenRouter fallback.
-
-Fallback LLM endpoint (OpenRouter):
-
-- `OPENROUTER_API_KEY` (required for fallback)
-- `OPENROUTER_BASE_URL` (default: `https://openrouter.ai/api/v1`)
-- Fallback model order is fixed in code: `google/gemma-4-31b-it:free`, then `openai/gpt-oss-120b:free`, then `openrouter/free`
-- When OpenRouter is configured, `openrouter/free` is also offered in the model selector. Picking it
-  skips the primary endpoint for chat and analysis and starts the OpenRouter chain at that model.
-
-Model-independent web search:
-
-`search_web` returns a ranked list of pages — title, address, and snippet — rather than a written
-answer. Results are **leads, not evidence**: they carry no citation numbers, and a page becomes a
-numbered, citable source only once `read_url` or `http_get` has actually fetched it. This is
-deliberate. A synthesized brief reads as finished evidence, which both ends the research early and
-lets the model cite a page it never opened.
-
-The provider is whichever key is configured, and `WEB_SEARCH_PROVIDER` (`brave` | `firecrawl` |
-`gemini`) overrides the choice:
-
-- `BRAVE_SEARCH_API_KEY` — independent index, preferred when set. A Firecrawl key is often present
-  only for `read_url`, so an explicit Brave key is treated as the clearer signal of intent.
-- `FIRECRAWL_API_KEY` — `POST /v2/search`, reusing the page-reader key. Requested without
-  `scrapeOptions`, so the search stays cheap and the read stays a separate, explicit step.
-- `GEMINI_API_KEY` + optional `GEMINI_SEARCH_MODEL` (defaults to `gemini-2.5-flash`) — the Vertex
-  grounding fallback, kept so deployments without a dedicated search key keep working. It is the
-  only provider that returns a `brief`, and its sources are still leads rather than citations.
-
-A search failure is returned to the model as a tool error result so it can retry or explain the
-limitation. Each user request permits ten model steps, three distinct search executions, five page
-reads, and five HTTP fetches, with duplicate-query caching, a 260-second deadline inside a
-300-second route, and cancellation. The final step disables tools to request an answer.
-- Provider fallback can occur while opening a model step, or when a provider accepts the request but
-  sends nothing within 20 seconds; completed tool results are retained. Once a provider stream has
-  delivered content it is not replayed on another provider. Incomplete runs are not persisted.
-- Requires Node.js 22+ (AI SDK 7). Model endpoints must support Responses function tools and tool-result
-  continuation. Validation includes mocked wire-level tests and a successful synthetic OpenRouter
-  tool-call/continuation probe. The primary endpoint and live Gemini search still require verification
-  with the deployed credentials.
-
-Page reader (optional; `read_url` tool):
-
-- `FIRECRAWL_API_KEY` enables Firecrawl scraping with PDF parsing. Without it the app falls back to
-  Jina Reader, which works keyless at a low rate limit; `JINA_API_KEY` raises that limit.
-
-Direct HTTP fetches (`http_get` tool; no configuration):
-
-- The model composes the full URL itself, including query parameters. There is no host allowlist:
-  any public http(s) address is reachable, and the response body is returned raw (JSON, CSV, XML,
-  or text) rather than summarized, so exact values can be quoted instead of paraphrased.
-- Unlike `read_url`, which proxies through a hosted reader, this leaves the server directly. Private
-  and link-local addresses stay blocked by the shared `validatePublicHttpUrl` guard, and redirects
-  are followed manually so every hop is re-validated — a 302 cannot reach cloud metadata or a
-  service on localhost.
-- Bounded per reply: five distinct addresses (duplicates cached), 2 MiB read per response, 12,000
-  characters returned, 30-second timeout, at most five redirects. Non-2xx responses are returned to
-  the model with their status rather than raised, so it can adapt instead of retrying blindly.
-  Bodies are fenced as untrusted content, and each fetch becomes a numbered, citable source.
-
-Observability (optional):
-
-- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` enable AI SDK tracing to Langfuse
-  via `instrumentation.ts`. Unset means no tracing and no OpenTelemetry setup at all.
-- `LANGFUSE_RECORD_CONTENT=false` keeps prompt and completion text out of traces while still
-  recording steps, tool calls, latency, and token usage.
-
-Storage:
-
-- `BLOB_READ_WRITE_TOKEN` or `BLOB_STORE_ID` (enables Vercel Blob; store-ID authentication uses Vercel OIDC)
-- `BLOB_ACCESS` (defaults to `private`; existing public stores must explicitly set `public`)
-- `LOCAL_STORAGE_PATH` (optional local fallback path)
-- `LOCAL_STORAGE_BUCKET` (optional local fallback bucket label)
-
-App URL metadata:
-
-- `NEXT_PUBLIC_APP_URL` (used in LLM request headers; defaults to `http://localhost:3000`)
-
-Schema bootstrap:
-
-- `SKIP_SCHEMA_BOOTSTRAP` (set to `1` in deployments where `bun run db:migrate` is applied at
-  deploy time; skips runtime migration checks. When unset, startup and the command run the same
-  automatically discovered migrations under a database advisory lock.)
-
----
-
-## Local Development
-
-### Prerequisites
-
-- Bun `1.3.11+`
-- Node `20.9+` (engine minimum, see root `package.json`)
-
-### Install
+From the repository root:
 
 ```bash
 bun install
+cp apps/web/.env.local.example apps/web/.env.local
 ```
 
-### Run dev mode
+Fill in the Clerk and database credentials, then configure a primary model endpoint and/or OpenRouter for inference. Optional integrations in the example are commented out; enable only those you intend to use. The environment file belongs in `apps/web`, not the repository root.
 
 ```bash
 bun run dev
 ```
 
-- Web: [http://localhost:3000](http://localhost:3000)
+Open [localhost:3000](http://localhost:3000). Running `bun run dev` from `apps/web` starts the same app directly, without Turbo.
 
-### Run one workspace only
-
-From `apps/web`:
+For an explicit local migration run, after configuring the environment file:
 
 ```bash
-bun run dev
+bun --env-file=apps/web/.env.local run db:migrate
 ```
 
----
+This changes the configured database. The migration entry point invokes Node and does not itself load Next.js environment files; the explicit Bun flag supplies those variables. When credentials are already exported or provided by deployment tooling, `bun run db:migrate` is sufficient.
 
-## Quality and Validation Commands
+## Commands
 
-From repository root:
+| From repository root  | Purpose                                                 |
+| --------------------- | ------------------------------------------------------- |
+| `bun run dev`         | Web development server on port 3000.                    |
+| `bun run build`       | Production web build through Turbo.                     |
+| `bun run lint`        | Workspace linting, rejecting warnings.                  |
+| `bun run check-types` | Next.js route type generation and TypeScript checking.  |
+| `bun run test`        | Workspace tests through Turbo.                          |
+| `bun run db:migrate`  | Apply pending migrations using the configured database. |
 
-```bash
-bun run lint
-bun run check-types
-bun run build
-```
+Turbo may return cached results. Use `bun run build --force` for a fresh build. Run build and type checking sequentially because both generate `.next` files.
 
-Web tests (from `apps/web`):
+From `apps/web`, `bun run test` invokes Vitest directly; a path narrows the run, for example `bun run test lib/chat-tools.test.ts`.
 
-```bash
-bun run test
-```
-
-Run database migrations (from repo root):
-
-```bash
-bun run db:migrate
-```
-
----
-
-## Deployment Notes
-
-- Root `vercel.json` builds only the web app using Turbo filters.
-- Bun is the expected package manager in CI/deploy environments.
-
-
-## Audit fixes and rollout
-
-Apply `bun run db:migrate` before deploying with `SKIP_SCHEMA_BOOTSTRAP=1`. Migration 012 installs
-foreign keys/cascades, deletion outbox triggers, context invalidation, and generation leases.
-It validates existing relationships where possible; legacy orphan rows are retained and generate
-warnings, rather than being silently deleted. Migrations 013–014 add chat attachments and persisted
-extraction warnings. The runtime includes these migration files in its deployment trace.
-
-Analysis has a 270-second operation deadline and chat a 155-second deadline, leaving time for
-persistence within their route budgets. SDK retries are disabled; fallback streaming attempts are
-bounded to 45 seconds. Contract and context changes invalidate previous analyses. The detail page
-shows evidence limitations and fetches historical result bodies only when selected.
-
-Dashboard collections load in pages of 50. Saved chats initially load the most recent 50 messages,
-with older history on demand. Successful turns update the cache from the newly persisted message
-pair. New saved images live in `chat_attachments`; older inline images remain readable via the same
-authenticated image route. Temporary chats retain images only in browser conversation state.
-
-Database deletion records object cleanup work atomically, including concurrent uploads committed
-before the cascade. Delete requests process the outbox after responding. Failed cleanup remains
-queued for subsequent delete requests or this command (from `apps/web`):
-
-```bash
-bun run storage:cleanup
-```
-
-The command processes bounded batches. It does not create a recurring job; deployments that need
-cleanup retries without subsequent traffic should schedule this command in their operations setup.
-
-Run concurrency and migration regression tests against a disposable local PostgreSQL instance:
+Database tests skip unless `SIGNLOOP_TEST_DATABASE_URL` is supplied. The supported disposable-database workflow is:
 
 ```bash
 cd apps/web
 bun run test:integration
 ```
 
-The script defaults to Homebrew PostgreSQL 16. Set `POSTGRES_BIN` to another installation's `bin`
-directory if needed. It creates a temporary database using a Unix socket, applies every migration,
-runs ownership/concurrency tests, then stops and removes that database. It never uses `POSTGRES_URL`.
+It initializes local PostgreSQL, applies migrations, runs database ownership/concurrency tests, and removes the temporary database. It never uses `POSTGRES_URL`. The default binary directory is `/opt/homebrew/opt/postgresql@16/bin`; set `POSTGRES_BIN` for another installation. This is separate from testing against production credentials or live model services.
 
-Remaining architectural work: direct-to-storage uploads above 4 MiB, automatic retries for cleanup
-without traffic, admission/spending quotas for anonymous inference, process isolation for document
-parsers, and pagination of very large per-project collections and analysis-history metadata. These
-require separate storage/product/operations choices; the current fixes preserve existing chat and
-web-search policy. No production migration or deployment is performed by the test commands.
+## Configuration
+
+Start with [apps/web/.env.local.example](apps/web/.env.local.example). Actual behavior is defined in the linked implementation files below.
+
+### Authentication and database
+
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` configure Clerk. The example also sets sign-in/sign-up routes and post-auth destinations.
+- `POSTGRES_URL` is used by runtime pooled SQL operations.
+- `POSTGRES_URL_NON_POOLING` is used by the standalone migration client.
+- `SKIP_SCHEMA_BOOTSTRAP=1` disables runtime migration checks. Otherwise the first database operation in a process runs pending migrations using the shared runner, with initialization reused by later operations. This is lazy initialization, not a startup job.
+
+The root page, sign-in/up pages, and `/api/chat` are public in [proxy.ts](apps/web/proxy.ts). The chat handler permits anonymous requests only in temporary mode. Other application APIs enforce authentication and owner-scoped data access.
+
+### Model providers
+
+- `PRIMARY_LLM_BASE_URL` enables the primary provider; include the API prefix, normally `/v1`.
+- `PRIMARY_LLM_API_KEY` may be empty only if that endpoint intentionally accepts unauthenticated requests.
+- `PRIMARY_LLM_MODEL` supplies the default for callers without an explicit model, including anonymous chat. Its current fallback is `gemini-3-flash`.
+- `OPENROUTER_API_KEY` enables fallback inference; `OPENROUTER_BASE_URL` defaults to `https://openrouter.ai/api/v1`.
+- `NEXT_PUBLIC_APP_URL` supplies app URL metadata in provider request headers, defaulting to `http://localhost:3000`.
+
+Signed-in chat and analysis select the saved model if available, otherwise the first eligible model returned by the primary `/models` endpoint. They do not use `PRIMARY_LLM_MODEL` as the selector's default. Discovery is cached per process for 60 seconds, or 10 seconds following failure; selector/settings actions can force a refresh. Anonymous chat skips discovery and uses the configured default.
+
+If no primary model is available to an authenticated request, it uses the configured OpenRouter chain. When OpenRouter is configured, users can also pin `openrouter/free`, which skips primary inference. The current fallback order and image-model identifier live in [model-settings.ts](apps/web/lib/model-settings.ts). Image generation is offered only to signed-in users when primary discovery advertises `gpt-image-2`.
+
+Chat endpoints must support Responses API function tools and tool-result continuation. Analysis uses Responses JSON output, with a compatibility retry when JSON mode is unsupported. Provider compatibility tests use mocks; passing them does not establish that deployed credentials or live providers work.
+
+### Search and page reading
+
+Search is model-selected during a chat turn; there is no mandatory pre-search on every request.
+
+- `WEB_SEARCH_PROVIDER` can explicitly select `brave`, `firecrawl`, or `gemini`.
+- Without an explicit selection, configured keys are preferred in this order: `BRAVE_SEARCH_API_KEY`, `FIRECRAWL_API_KEY`, then `GEMINI_API_KEY`.
+- Gemini search uses the Gemini Developer API with Google Search grounding. `GEMINI_SEARCH_MODEL` defaults to `gemini-2.5-flash`; it is independent of the model answering the user.
+- Provider selection is not a retry chain. Search failures become tool error results for the model to handle.
+- `read_url` uses Firecrawl when `FIRECRAWL_API_KEY` is set, otherwise Jina Reader. A Firecrawl failure can also fall back to Jina while the shared deadline remains. `JINA_API_KEY` is optional.
+- `http_get` requires no provider key. It fetches public HTTP(S) addresses directly, validating each redirect and DNS addresses at connection time; it returns bounded response bodies and status codes.
+
+See [web-search.ts](apps/web/lib/web-search.ts), [url-reader.ts](apps/web/lib/url-reader.ts), and [http-fetch.ts](apps/web/lib/http-fetch.ts).
+
+### Object storage
+
+- `BLOB_READ_WRITE_TOKEN` or `BLOB_STORE_ID` selects Vercel Blob. Store-ID authentication uses Vercel OIDC; a read-write token can be supplied locally.
+- `BLOB_ACCESS` defaults to `private` and must match the store. Public stores require explicit `BLOB_ACCESS=public`.
+- With neither Blob setting, local development stores files in `apps/web/uploads` when launched through the workspace scripts.
+- `LOCAL_STORAGE_PATH` overrides that directory; relative paths resolve from the process working directory. In production, local storage requires this explicit setting and a persistent writable filesystem. An ordinary Vercel function filesystem is not a durable local-storage setup.
+- `LOCAL_STORAGE_BUCKET` is a stored metadata label, defaulting to `local-filesystem`.
+
+See [object-storage.ts](apps/web/lib/object-storage.ts) and [upload-pipeline.ts](apps/web/lib/upload-pipeline.ts).
+
+### Observability
+
+`LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` enable optional AI SDK chat tracing; `LANGFUSE_BASE_URL` selects the Langfuse host. Without both keys, instrumentation is disabled. `LANGFUSE_RECORD_CONTENT=false` disables AI SDK input/output recording. This flag should not be treated as a general redaction guarantee for every tool argument or log. The separate OpenAI-client analysis pipeline does not use this chat telemetry configuration.
+
+## Product behavior
+
+### Uploads and extraction
+
+The UI creates a contract, then uploads its file to `/api/contracts/:id/upload`. Project context uploads use `/api/projects/:id/context`.
+
+The shared pipeline checks ownership at the route boundary, bounds multipart input, and validates file size, MIME type, and signatures. Files are limited to **4 MiB**. PDF text uses `unpdf`, `.doc`/`.docx` extraction uses `word-extractor`, images use Tesseract OCR, and plain text is decoded directly.
+
+Scanned PDFs are detected through low text density; their pages are **not** rasterized for OCR. Contract and context uploads reject extraction failures or empty text. Usable but low-quality extraction can be stored with a warning. Original bytes go to object storage, while extracted text and metadata go to PostgreSQL. Reuploads replace active contract text and invalidate current analysis state; prior file records remain until deletion.
+
+### Analysis and projects
+
+`POST /api/contracts/:id/analyze` performs analysis inside the request. It claims a generation lease, loads the owner-scoped contract, and reuses a current result unless forced. Project context is included in the prompt.
+
+The prompt includes up to 15,000 contract characters, preserving the beginning and end when shortened. Context is limited to eight documents, up to 3,000 characters each within an 8,000-character total text budget. Coverage and extraction warnings are retained with the result; this is not full-document coverage for long inputs.
+
+Output passes through JSON parsing, schema validation, supported normalization, and a bounded repair path. Provider/request failures can use OpenRouter fallback; semantic validation failures do not trigger another provider solely to retry invalid analysis. The final database transaction checks the contract revision before storing the analysis and marking it `ANALYZED`. Contract/context changes invalidate previous results as current, while historical analyses remain accessible.
+
+### Chat and tools
+
+Temporary chat does not persist a thread or messages to the application database. It can be used anonymously or while signed in; provider processing and optional tracing are separate from thread persistence. Saved chat requires authentication and persists ordered user/assistant message pairs. Its model history is reconstructed from the database rather than trusted browser copies.
+
+The default personality is `bare-llm`; signed-in users can select `signloop-assistant`. The answering model decides when to invoke tools:
+
+| Tool                               | Behavior                                                                                                                                                                        |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `search_web`                       | Returns search leads. Brave/Firecrawl return links and snippets; Gemini also returns a brief.                                                                                   |
+| `read_url`                         | Reads page/PDF text through a hosted reader and registers a numbered source.                                                                                                    |
+| `http_get`                         | Fetches a public URL directly and registers the response as a source.                                                                                                           |
+| `list_contracts` / `read_contract` | Lists and reads only the signed-in user's contracts. Sequential and keyword excerpts are bounded to 12,000 characters; truncated keyword results include a continuation offset. |
+| `generate_image`                   | Calls the available primary image model; image bytes are attached to the reply rather than replayed to the text model.                                                          |
+
+Signed-in temporary and saved chats expose the research and contract tools. Image availability is checked separately. Missing integration keys can still cause tool errors. Anonymous chat exposes no tools. Retrieved document/page text is marked as untrusted; those textual markers are not an authorization boundary.
+
+Saved replies retain tool exchanges and source catalogs in metadata, subject to replay limits. Temporary replies send tool exchanges back to the browser with a 20,000-character serialized replay cap. Temporary replay currently has shallow role/content validation and does not carry the source catalog end to end; follow-up citation numbering is therefore not guaranteed to remain stable.
+
+Text and tool activity stream as newline-delimited JSON. The final source footer lists fetched sources and any valid references to retained source numbers. Citation markers are normalized, but a source's presence does not prove that it supports the answer. The numerical check compares decimals/grouped thousands against web text fetched during the current turn. It does not cover contract evidence or earlier-turn evidence and does not verify the meaning of a numerical claim.
+
+New saved images are stored in `chat_attachments` and served through an ownership-checked route. Temporary images remain in browser conversation state. Saved chat initially loads the newest 50 messages, with older messages on demand; dashboard collections also use pages of 50.
+
+### Request budgets
+
+| Operation               | Current implementation                                                                                                                                            |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Analysis                | 270-second operation deadline; 300-second route budget.                                                                                                           |
+| Chat                    | 260-second generation deadline; 275-second request deadline; 300-second route budget.                                                                             |
+| Chat tool loop          | Ten model steps; final step disables tools. Per-turn limits: three search executions, five page reads, five direct HTTP fetches, two image generations.           |
+| Provider stream opening | 20-second deadline per candidate; currently cleared by the first event other than `stream-start`, including metadata. It is not a guaranteed first-text deadline. |
+| Direct HTTP             | 30 seconds, five redirects, 2 MiB response bytes, and 12,000 returned characters.                                                                                 |
+
+Provider fallback can occur when opening a model step fails; an already-opened step is not replayed on another provider. SDK automatic retries are disabled in chat and analysis; application-level fallback/repair still exists. Incomplete saved chat runs are not persisted. A completed answer whose persistence fails is shown with an unsaved warning.
+
+Budget sources: [chat.ts](apps/web/lib/chat.ts), [chat route](apps/web/app/api/chat/route.ts), [analysis route](apps/web/app/api/contracts/[id]/analyze/route.ts), and [chat-tools.ts](apps/web/lib/chat-tools.ts).
+
+## Persistence and operations
+
+Primary tables are `projects`, `contracts`, `analyses`, `context_documents`, `contract_files`, `user_settings`, `chat_threads`, `chat_messages`, and `chat_attachments`. `generation_operations` holds expiring inference leases; `storage_deletions` is the object-deletion outbox; `schema_migrations` tracks applied SQL files.
+
+The [migration runner](apps/web/db/migrations.js) discovers numbered SQL files, uses an advisory lock, and records each migration in the same transaction as its changes. Runtime bootstrap and the standalone command use that runner. Migration 012 adds relationship constraints/cascades, revision invalidation, the deletion outbox, and generation leases; 013 adds attachments; 014 adds extraction warnings. Legacy relationship violations can leave constraints unvalidated with warnings rather than deleting old rows.
+
+Database deletion enqueues object cleanup transactionally. Delete routes attempt cleanup after responding; failed items remain queued. From `apps/web`, using configured database and storage credentials:
+
+```bash
+bun run storage:cleanup
+```
+
+The worker processes the oldest 100 rows sequentially. The command continues only when all 100 complete, so a failed deletion can stop draining before later rows are reached; persistently failing rows can starve later work. The repository has no recurring cleanup schedule.
+
+## Deployment
+
+Root [vercel.json](vercel.json) configures:
+
+- Install: `bun install --frozen-lockfile --linker hoisted`.
+- Build: `bunx turbo build --filter=web`.
+- Output: `apps/web/.next`.
+
+Keep the hoisted linker so repository-root framework discovery can resolve Next.js. The build command does not apply migrations. Run migrations against the intended environment before setting `SKIP_SCHEMA_BOOTSTRAP=1`. API output traces include SQL migration files through [next.config.js](apps/web/next.config.js).
+
+The configured ignore command considers changes under `apps/web`, `packages`, and the listed root build/dependency configuration files; a root README/AGENTS-only commit is eligible to skip deployment. The repository configuration does not establish the current state of a live deployment.
+
+## Known limitations and remaining work
+
+- `/?q=...` currently submits a temporary-chat prompt after privacy acknowledgement, including previously stored acknowledgement. Signed-in runs retain private contract and outbound tool capabilities; a URL prompt does not require a separate Send action.
+- Temporary replay validation/source catalogs, metadata-only provider stalls, and cleanup draining have the limitations described above.
+- Anonymous inference has per-request bounds but no aggregate spending/admission quota.
+- Larger uploads, parser process isolation, and pagination of very large project collections and analysis-history metadata remain unimplemented.
+- Live provider credentials, extraction quality on real documents, and deployed infrastructure require verification outside the mocked/unit test suite.
+
+For contributor commands and persistence invariants, see [AGENTS.md](AGENTS.md).
