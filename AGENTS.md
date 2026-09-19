@@ -43,6 +43,10 @@ This is a Turborepo with workspaces in `apps/*` and `packages/*`:
 
 `@/` resolves to `apps/web`. Tests live alongside libraries as `lib/**/*.test.ts`. See the root README for setup and current behavior; package manifests and implementation files are the source of truth for commands and limits.
 
+## Design System
+
+UI follows `DESIGN.md` at the repository root: the Dala style reference plus a "SignLoop Implementation" section that governs SignLoop code. Tokens live in `apps/web/app/globals.css` and `apps/web/tailwind.config.ts` (Tailwind v3). The app is dark-only. Use semantic or Dala token classes rather than raw palette colours, and merge classes with `cn()` so the custom type scale survives.
+
 ## Data and Configuration
 
 - Put local web configuration in `apps/web/.env.local`; start from `apps/web/.env.local.example`.

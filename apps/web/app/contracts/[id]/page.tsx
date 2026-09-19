@@ -110,7 +110,7 @@ const ContractDetails = () => {
             <div className="rounded-full bg-destructive/10 p-3 mb-4">
               <XCircle className="h-8 w-8 text-destructive" />
             </div>
-            <h2 className="text-xl font-semibold text-foreground">{title}</h2>
+            <h2 className="text-heading-2xs">{title}</h2>
             <p className="text-sm text-muted-foreground mt-2">{description}</p>
             <Button asChild className="mt-6">
               <Link href="/dashboard">
@@ -368,20 +368,21 @@ const ContractDetails = () => {
   return (
     <div className="app-page pb-12">
       <div className="app-header">
-        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-7xl px-4 pb-6 pt-10 sm:px-6 lg:px-8">
           <Link
             href="/dashboard"
-            className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
+            className="mb-6 inline-flex items-center text-nav-label font-semibold uppercase text-muted-foreground transition-colors hover:text-foreground"
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Dashboard
           </Link>
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-foreground">
+              <p className="app-eyebrow">Contract</p>
+              <h1 className="app-title mt-3">
                 {contractTitle}
               </h1>
-              <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+              <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
                 <span>Uploaded {uploadedDateLabel}</span>
                 <span>•</span>
                 <Badge variant="outline">{contract.status || "UNKNOWN"}</Badge>
@@ -429,7 +430,7 @@ const ContractDetails = () => {
                       Cancel
                     </AlertDialogCancel>
                     <AlertDialogAction
-                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      variant="destructive"
                       disabled={deleteContractMutation.isPending}
                       onClick={() => deleteContractMutation.mutate()}
                     >
@@ -450,7 +451,7 @@ const ContractDetails = () => {
         {analysis ? (
           <>
             {isViewingHistoricalAnalysis && (
-              <Card className="border-amber-500/50 bg-amber-500/5">
+              <Card className="border-highlight/40 bg-highlight/[0.06]">
                 <CardContent className="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between">
                   <p className="text-sm text-foreground/90">
                     Viewing historical analysis from {analysisDateLabel}.
@@ -468,7 +469,7 @@ const ContractDetails = () => {
 
             <div className="grid gap-6 md:grid-cols-3">
               {/* Risk Score Card */}
-              <Card className="md:col-span-1 border-l-4 border-l-primary">
+              <Card className="md:col-span-1">
                 <CardHeader>
                   <CardTitle className="text-lg">Risk Assessment</CardTitle>
                   <CardDescription>Overall contract risk level</CardDescription>
@@ -500,12 +501,12 @@ const ContractDetails = () => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {coverageNotices.length > 0 && <div role="status" className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                    <p className="font-medium">Analysis coverage</p>
+                  {coverageNotices.length > 0 && <div role="status" className="mb-4 rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground">
+                    <p className="text-highlight">Analysis coverage</p>
                     <ul className="mt-2 list-disc pl-5">{coverageNotices.map((notice) => <li key={notice}>{notice}</li>)}</ul>
                   </div>}
                   {contract.status !== "ANALYZED" && (
-                    <p role="status" className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">This analysis uses older evidence. The contract or project context has changed; analyze again for a current result.</p>
+                    <p role="status" className="mb-4 rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground">This analysis uses older evidence. The contract or project context has changed; analyze again for a current result.</p>
                   )}
                   {keyFindings.length > 0 ? (
                     <ul className="space-y-4">
@@ -514,7 +515,7 @@ const ContractDetails = () => {
                           key={idx}
                           className="flex items-start gap-3 p-3 rounded-lg bg-muted/60"
                         >
-                          <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                          <AlertTriangle className="h-5 w-5 text-highlight shrink-0 mt-0.5" />
                           <span className="text-sm text-foreground/90 leading-relaxed">
                             {point}
                           </span>
@@ -659,7 +660,7 @@ const ContractDetails = () => {
 
             {/* Red Flags */}
             {redFlags.length > 0 && (
-              <Card className="mt-6 border-l-4 border-l-destructive">
+              <Card className="mt-6 border-destructive/40">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-destructive">
                     <Shield className="h-5 w-5" />
@@ -726,8 +727,8 @@ const ContractDetails = () => {
                                         severity >= 7
                                           ? "bg-destructive"
                                           : severity >= 4
-                                            ? "bg-amber-500"
-                                            : "bg-emerald-500"
+                                            ? "bg-highlight"
+                                            : "bg-success"
                                       }`}
                                       style={{ width: `${severity * 10}%` }}
                                     />
@@ -864,14 +865,14 @@ const ContractDetails = () => {
             )}
           </>
         ) : (
-          <Card className="bg-muted/40 border-dashed">
+          <Card>
             <CardContent className="flex flex-col items-center justify-center py-12 text-center">
               {analyzeMutation.isPending ? (
                 <>
-                  <div className="rounded-full bg-card p-4 shadow-sm mb-4">
+                  <div className="mb-4 rounded-full border p-4">
                     <Loader2 className="h-8 w-8 text-primary animate-spin" />
                   </div>
-                  <h3 className="text-lg font-semibold text-foreground">
+                  <h3 className="text-heading-2xs">
                     Analysis in progress
                   </h3>
                   <p className="text-sm text-muted-foreground max-w-sm mt-2">
@@ -881,10 +882,10 @@ const ContractDetails = () => {
                 </>
               ) : (
                 <>
-                  <div className="rounded-full bg-card p-4 shadow-sm mb-4">
+                  <div className="mb-4 rounded-full border p-4">
                     <Play className="h-8 w-8 text-primary" />
                   </div>
-                  <h3 className="text-lg font-semibold text-foreground">
+                  <h3 className="text-heading-2xs">
                     No Analysis Yet
                   </h3>
                   <p className="text-sm text-muted-foreground max-w-sm mt-2 mb-6">

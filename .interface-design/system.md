@@ -1,57 +1,30 @@
 # SignLoop Interface System
 
+The source of truth is `/DESIGN.md`: the Dala style reference plus the "SignLoop Implementation" section, which records every adaptation. This file is a quick orientation only.
+
 ## Direction and Feel
-- Product domain: legal review desk, case folders, filings, annotation layers, evidence boards.
-- User intent: quickly assess contract risk, compare context, and act from one operational view.
-- Visual tone: precise, editorial, calm pressure.
-- Signature element: thin top "ink rule" on cards plus squared components over parchment-inspired fields.
+- Dala, "constellation floating on black velvet": pure black void, one Electric Iris (`#8052ff`) accent for action, Saffron Spark (`#ffb829`) for emphasis labels.
+- Dark only. There is no light theme.
+- Hierarchy comes from scale and tracking, never weight: headings are 400, long-form body is 18px / 200.
+- Signature element: the particle constellation (`components/constellation.tsx`), used only in the landing hero.
 
 ## Depth Strategy
-- Primary strategy: borders-first with subtle surface shifts.
-- Shadows are secondary and low-contrast; used only to separate stacked surfaces.
-- Elevation hierarchy:
-  - `surface-base` = workspace layer.
-  - `surface-elevated` = card and list layer.
-  - `surface-inset` = form control well/input bed.
-- Border hierarchy:
-  - soft: `--surface-stroke-soft`
-  - default: `--surface-stroke`
-  - strong: `--surface-stroke-strong`
+- Flat. No shadows and no gradients in UI (the logo and the constellation are the exceptions).
+- Layers: void (`background`, `card`) → void-raised `#0c0c0c` (`popover`: menus, dialogs, toasts, composer).
+- Hairlines: `border` `#1f1f1f` for structure only; `input` `#333333` for form controls.
 
-## Spacing System
-- Base unit: `4px`.
-- Primary rhythm:
-  - component padding: `12/16/20/24`
-  - section spacing: `24`
-  - major layout spacing: `32`
-- Buttons: height-first scale (`h-9`, `h-11`, `h-12`) with compact uppercase labels.
-
-## Token Principles
-- Keep warm parchment/cocoa base in light mode and warm-charcoal inversion in dark mode.
-- Accent color is singular and action-driven (`--accent`), never used as decorative noise.
-- Background texture (aurora + grid + noise) remains low-opacity and never competes with content.
-- Avoid transparent interactive controls when readability is affected.
+## Spacing and Shape
+- Dala uses a 6px base unit. Use Tailwind's equivalent steps (`1.5`, `3`, `4.5`, `6`, `7.5`, `9`, `15`, `24`, `30`); the Dala spacing tokens are not mapped into Tailwind.
+- 24px radius for cards, dialogs, menus, and textareas (`rounded-card`); pills (`rounded-button` / `rounded-full`) for buttons, inputs, badges, and menu items.
 
 ## Core Component Patterns
-- **App Shell**
-  - Use `app-page`, `app-header`, `app-header-inner`, `app-main`.
-  - Header should carry context + action buttons, not decorative blocks.
-- **Cards**
-  - Square corners, thin border, subtle top highlight rule.
-  - Reuse for metrics, lists, settings, and detail sections.
-- **Tabs as Command Rail**
-  - Tabs sit in a bordered utility bar (`chrome-pane`) with actions aligned right.
-- **Forms**
-  - Inputs/selects/textareas are inset wells.
-  - Select menus and triggers use opaque surfaces for legibility.
-- **Badges**
-  - Small uppercase metadata chips; semantic color only when meaning is explicit.
-- **Chat**
-  - User bubbles use accent tint.
-  - Assistant bubbles stay neutral/elevated.
-  - Thread list and composer sit on the same border system as dashboard panes.
+- **Page header:** `.app-eyebrow` (Saffron uppercase label) → `.app-title` (36px, 42px from `md`) → `.app-lede`.
+- **Buttons:** one filled Iris pill per view; `outline` hairline pill for secondary actions; `destructive` is a red outline pill.
+- **Cards:** hairline, no fill, 24px radius; hover gets a lighter border plus a 3% white wash.
+- **Empty and error states:** left-aligned eyebrow + heading + lede + a single CTA, with no dashed boxes.
+- **Chat:** user messages in a Graphite bubble; assistant text floats with no container (`prose-dala`).
+- **Risk:** high = Signal Red, medium = Saffron, low = Verdant Glow via `getRiskColor`.
 
 ## Reuse Rules
-- New pages should start from shell classes and card patterns before custom styling.
-- Default to square corners and border-led hierarchy.
-- If a new component needs depth, use tokenized surface and stroke variables instead of ad-hoc RGBA.
+- Use semantic Tailwind tokens (`bg-background`, `text-muted-foreground`, `text-highlight`, and so on) or the Dala names (`text-saffron-spark`). Never raw palette classes (`text-amber-500`) or hex.
+- Use `cn()` from `lib/utils.ts` so custom size and radius classes merge correctly.

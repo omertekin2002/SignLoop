@@ -36,9 +36,7 @@ import {
   Check,
   Copy,
   Download,
-  FileText,
   Loader2,
-  MessagesSquare,
   Send,
   Sparkles,
   Square,
@@ -51,9 +49,9 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { marked } from "marked";
+import { Constellation } from "@/components/constellation";
 import { NumberTicker } from "@/components/number-ticker";
 import { TypingAnimation } from "@/components/typing-animation";
-import { AnimatedGridPattern } from "@/components/ui/animated-grid-pattern";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -73,12 +71,10 @@ const landingStats = [
   {
     label: "Contracts Analyzed",
     value: 150,
-    icon: FileText,
   },
   {
     label: "Chat Interactions",
     value: 2000,
-    icon: MessagesSquare,
   },
 ] as const;
 
@@ -616,14 +612,14 @@ const MarkdownImage = ({
         src={src}
         alt={alt ?? "Generated image"}
         className={cn(
-          "max-h-[32rem] w-auto max-w-full rounded-xl border object-contain shadow-sm",
+          "max-h-[32rem] w-auto max-w-full rounded-card border object-contain",
           className,
         )}
         {...props}
       />
       <button
         type="button"
-        className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-lg border bg-background/80 text-foreground shadow-sm backdrop-blur transition-all hover:bg-background/100"
+        className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full border bg-popover/90 text-foreground backdrop-blur transition-colors hover:bg-popover"
         onClick={() => {
           void downloadImageFromSrc(src);
         }}
@@ -710,13 +706,13 @@ const MarkdownMessage = forwardRef<
     <div
       ref={ref}
       className={cn(
-        "text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none text-foreground",
-        "prose-headings:font-semibold prose-headings:tracking-tight",
+        "text-sm leading-relaxed prose prose-sm prose-dala max-w-none text-foreground",
+        "prose-headings:font-normal prose-headings:tracking-tight",
         "prose-h1:text-xl prose-h2:text-lg prose-h3:text-base",
-        "prose-a:text-primary prose-a:underline-offset-4 hover:prose-a:text-primary/80",
-        "prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:bg-muted prose-code:text-muted-foreground prose-code:font-mono prose-code:text-[0.85em]",
-        "prose-pre:bg-muted/50 prose-pre:border prose-pre:rounded-xl prose-pre:p-4 prose-pre:shadow-sm",
-        "prose-blockquote:border-l-4 prose-blockquote:border-primary/50 prose-blockquote:pl-4 prose-blockquote:italic",
+        "prose-a:underline-offset-4 hover:prose-a:text-highlight/80",
+        "prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:bg-muted prose-code:text-subtle-foreground prose-code:font-mono prose-code:text-[0.85em]",
+        "prose-pre:border prose-pre:rounded-card prose-pre:p-4",
+        "prose-blockquote:border-l-2 prose-blockquote:border-primary prose-blockquote:pl-4 prose-blockquote:font-extralight prose-blockquote:not-italic",
         "prose-table:border-collapse prose-table:w-full",
         "prose-th:border-b prose-th:px-4 prose-th:py-2 prose-th:text-left",
         "prose-td:border-b prose-td:border-border/50 prose-td:px-4 prose-td:py-2",
@@ -823,7 +819,7 @@ const MessageCopyButton = ({ className }: { className?: string }) => {
       aria-label={copied ? "Copied to clipboard" : "Copy message"}
       title={copied ? "Copied" : "Copy"}
       className={cn(
-        "inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
     >
@@ -842,7 +838,7 @@ const ChatMessage = () => {
       <MessagePrimitive.If user>
         <div className="ml-auto flex max-w-[85%] flex-col items-end gap-1 md:max-w-[75%]">
           <div className="relative flex w-full items-end gap-2">
-            <div className="flex w-full flex-col gap-1 rounded-2xl rounded-br-sm bg-primary px-5 py-3.5 text-primary-foreground shadow-sm">
+            <div className="flex w-full flex-col gap-1 rounded-card rounded-br-[6px] bg-secondary px-5 py-3.5 text-secondary-foreground">
               <MessagePrimitive.Content components={{ Text: UserTextPart }} />
             </div>
           </div>
@@ -853,12 +849,13 @@ const ChatMessage = () => {
       <MessagePrimitive.If assistant>
         <div className="mr-auto relative flex w-full flex-col gap-2">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 select-none items-center justify-center rounded-lg border bg-background shadow-sm">
-              <Bot className="h-4 w-4 text-foreground/80" />
+            <div className="flex h-8 w-8 select-none items-center justify-center rounded-full border">
+              <Bot className="h-4 w-4 text-primary" />
             </div>
             <AssistantModelLabel />
           </div>
-          <div className="flex w-full flex-col gap-1 rounded-2xl rounded-tl-sm border bg-card px-5 py-4 shadow-sm">
+          {/* Dala: assistant copy floats on the void — no bubble, border, or shadow. */}
+          <div className="flex w-full flex-col gap-1 py-1 pl-10">
             <SearchActivity />
             <MessagePrimitive.Content
               components={{
@@ -867,7 +864,7 @@ const ChatMessage = () => {
               }}
             />
             <MessagePrimitive.Error>
-              <div className="mt-4 flex items-center gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <div className="mt-4 flex items-center gap-2 rounded-card border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">
                 <Square className="h-4 w-4" />
                 <p>Failed to generate a response. Please try again.</p>
               </div>
@@ -880,97 +877,73 @@ const ChatMessage = () => {
   );
 };
 
+// Dala hero: oversized left-aligned headline, Saffron label over ultra-light body copy, and the
+// particle constellation as the only imagery. On small screens the constellation becomes ambient.
 function LandingHeroEmpty() {
   const [isHeroTitleComplete, setIsHeroTitleComplete] = useState(false);
 
   return (
-    <div className="relative -mx-4 -my-6 flex min-h-[calc(100vh-8.5rem)] flex-col overflow-hidden px-4 py-12 text-center sm:px-8 lg:py-16">
-      <section className="mx-auto flex w-full max-w-[980px] flex-1 flex-col items-center justify-center gap-7">
-        <div className="inline-flex items-center rounded-full border border-white/40 bg-white/50 px-3 py-1 text-sm font-medium text-slate-950 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/10 dark:text-white">
-          <span className="mr-2 flex h-2 w-2 rounded-full bg-slate-700/70 dark:bg-white/60" />
-          SignLoop is now in Beta
-        </div>
+    <div className="relative -mx-4 -my-6 flex min-h-[calc(100vh-8.5rem)] flex-col justify-center overflow-hidden px-6 py-12 sm:px-10 lg:px-16">
+      <Constellation className="absolute inset-0 opacity-30 lg:hidden" />
 
-        <div className="space-y-5">
-          <h1 className="min-h-[5em] whitespace-pre-wrap bg-gradient-to-br from-indigo-950 to-slate-700 bg-clip-text pb-3 font-[family-name:var(--font-eb-garamond)] text-4xl font-normal leading-normal tracking-tight text-transparent drop-shadow-sm dark:from-white dark:to-slate-300 sm:min-h-[2.5em] sm:text-5xl md:min-h-[2em] md:text-6xl lg:text-7xl">
+      <div className="relative mx-auto grid w-full max-w-page items-center gap-12 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+        <section className="flex flex-col items-start text-left">
+          <h1 className="min-h-[4.8em] whitespace-pre-wrap text-heading-sm font-normal sm:min-h-[3.3em] sm:text-heading lg:text-heading-lg">
             <TypingAnimation
               text={"Review contracts with precision.\nNot guesswork."}
               initialDelay={250}
               typeSpeed={40}
               persistCursor={false}
               onComplete={() => setIsHeroTitleComplete(true)}
-              className="inline-block whitespace-pre-wrap bg-gradient-to-br from-indigo-950 to-slate-700 bg-clip-text pb-4 text-transparent dark:from-white dark:to-slate-300"
+              className="whitespace-pre-wrap"
+              cursorClassName="text-primary"
             />
           </h1>
+
           <div
             className={cn(
-              "mx-auto min-h-[4rem] max-w-[720px] text-lg leading-relaxed text-slate-600 opacity-0 dark:text-slate-300 sm:text-xl",
+              "mt-8 max-w-[480px] space-y-4 opacity-0",
               isHeroTitleComplete && "animate-fade-in-up",
             )}
             style={{ animationDelay: "0.1s" }}
           >
-            <p>
+            <p className="app-eyebrow">SignLoop is now in beta</p>
+            <p className="text-body font-extralight text-foreground">
               SignLoop combines document ingestion, structured analysis
               workflows, model routing, and chat into one legal workspace.
             </p>
           </div>
-        </div>
-      </section>
 
-      <section className="mx-auto w-full max-w-5xl pb-2">
-        <div className="grid grid-cols-2 gap-4">
-          {landingStats.map((stat, index) => (
-            <div
-              key={stat.label}
-              className={cn(
-                "flex flex-col items-center justify-center gap-5 opacity-0",
-                isHeroTitleComplete && "animate-fade-in-up",
-              )}
-              style={{ animationDelay: index === 0 ? "0.25s" : "0.35s" }}
-            >
-              <div className="flex items-baseline gap-1 font-[family-name:var(--font-eb-garamond)] text-6xl font-normal leading-none tracking-normal text-slate-900/85 dark:text-white/90 sm:text-7xl md:text-8xl">
-                <NumberTicker
-                  start={isHeroTitleComplete}
-                  delay={index * 140}
-                  useGrouping={stat.value >= 1000}
-                  value={stat.value}
-                />
-                <span className="ml-2 font-light text-slate-900/25 dark:text-white/20">
-                  +
-                </span>
+          <dl className="mt-14 grid w-full max-w-[480px] grid-cols-2 gap-8">
+            {landingStats.map((stat, index) => (
+              <div
+                key={stat.label}
+                className={cn(
+                  "flex flex-col gap-3 opacity-0",
+                  isHeroTitleComplete && "animate-fade-in-up",
+                )}
+                style={{ animationDelay: index === 0 ? "0.25s" : "0.35s" }}
+              >
+                <dt className="text-caption uppercase tracking-[0.04em] text-muted-foreground">
+                  {stat.label}
+                </dt>
+                <dd className="flex items-baseline text-heading-sm font-normal tabular-nums sm:text-heading">
+                  <NumberTicker
+                    start={isHeroTitleComplete}
+                    delay={index * 140}
+                    useGrouping={stat.value >= 1000}
+                    value={stat.value}
+                  />
+                  <span className="ml-1 text-primary">+</span>
+                </dd>
               </div>
-              <p className="text-xs font-medium uppercase tracking-[0.22em] text-slate-600 dark:text-slate-400 sm:text-sm">
-                {stat.label}
-              </p>
-            </div>
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
+            ))}
+          </dl>
+        </section>
 
-function LandingGridBackdrop() {
-  return (
-    <>
-      <AnimatedGridPattern
-        width={38}
-        height={38}
-        numSquares={90}
-        maxOpacity={0.14}
-        duration={3.4}
-        repeatDelay={0.8}
-        className={cn(
-          "-z-20 fill-slate-900/[0.045] stroke-slate-900/[0.07] dark:fill-white/[0.035] dark:stroke-white/[0.055]",
-          "[mask-image:radial-gradient(720px_circle_at_center,white,transparent)]",
-          "inset-x-0 inset-y-[-32%] h-[190%] skew-y-12",
-        )}
-      />
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_33%,rgba(255,218,185,0.55),rgba(255,218,185,0)_26%),radial-gradient(circle_at_27%_20%,rgba(125,149,255,0.35),rgba(125,149,255,0)_32%),radial-gradient(circle_at_76%_16%,rgba(217,139,255,0.30),rgba(217,139,255,0)_34%)] dark:bg-[radial-gradient(circle_at_50%_28%,rgba(80,62,137,0.28),rgba(80,62,137,0)_28%),radial-gradient(circle_at_25%_16%,rgba(42,84,143,0.30),rgba(42,84,143,0)_35%),radial-gradient(circle_at_80%_20%,rgba(96,50,108,0.26),rgba(96,50,108,0)_36%)]"
-      />
-    </>
+        <Constellation className="hidden h-[min(560px,62vh)] lg:block" />
+      </div>
+    </div>
   );
 }
 
@@ -1321,13 +1294,9 @@ export function ChatPanel({
   return (
     <Card
       className={cn(
-        "relative isolate flex h-full min-h-0 w-full flex-col overflow-hidden rounded-none border-0 bg-transparent shadow-none sm:bg-background/50 sm:backdrop-blur-md",
-        temporary &&
-          landingHero &&
-          "bg-[linear-gradient(180deg,#fbfbff_0%,#f7f3ff_44%,#eef4ff_100%)] dark:bg-[linear-gradient(180deg,#090a12_0%,#0d1020_48%,#080a10_100%)] sm:bg-[linear-gradient(180deg,#fbfbff_0%,#f7f3ff_44%,#eef4ff_100%)] sm:dark:bg-[linear-gradient(180deg,#090a12_0%,#0d1020_48%,#080a10_100%)]",
+        "relative isolate flex h-full min-h-0 w-full flex-col overflow-hidden rounded-none border-0 bg-transparent",
       )}
     >
-      {temporary && landingHero ? <LandingGridBackdrop /> : null}
       <CardContent className="flex h-full min-h-0 flex-1 flex-col p-0 sm:p-0">
         <AssistantRuntimeProvider runtime={runtime}>
           {!temporary && activeThreadQuery.data?.hasMore && (
@@ -1339,11 +1308,9 @@ export function ChatPanel({
             <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth">
               {isHydratingThread ? (
                 <div className="flex h-full flex-col items-center justify-center space-y-4 pb-20 text-center">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                    <Loader2 className="h-8 w-8 animate-spin" />
-                  </div>
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
                   <div className="space-y-2 max-w-[400px]">
-                    <h2 className="text-xl font-semibold tracking-tight">
+                    <h2 className="text-heading-2xs">
                       Loading conversation
                     </h2>
                     <p className="text-sm leading-relaxed text-muted-foreground">
@@ -1358,7 +1325,7 @@ export function ChatPanel({
                   role="alert"
                 >
                   <div className="max-w-[400px] space-y-2">
-                    <h2 className="text-xl font-semibold tracking-tight">
+                    <h2 className="text-heading-2xs">
                       Couldn&apos;t load this conversation
                     </h2>
                     <p className="text-sm leading-relaxed text-muted-foreground">
@@ -1382,11 +1349,9 @@ export function ChatPanel({
                       <LandingHeroEmpty />
                     ) : (
                       <div className="flex h-full flex-col items-center justify-center space-y-4 text-center pb-20">
-                        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                          <Sparkles className="h-8 w-8" />
-                        </div>
+                        <Sparkles className="h-6 w-6 text-primary" />
                         <div className="space-y-2 max-w-[400px]">
-                          <h2 className="text-xl font-semibold tracking-tight">
+                          <h2 className="text-heading-2xs">
                             How can I help you today?
                           </h2>
                           {activeThreadId ? (
@@ -1425,7 +1390,7 @@ export function ChatPanel({
             <ComposerPrimitive.Root className="shrink-0 bg-transparent px-4 pb-2 pt-1 sm:px-6 sm:pb-3 sm:pt-2">
               {persistenceWarning && !temporary ? (
                 <div
-                  className="mx-auto mb-2 max-w-3xl rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100"
+                  className="mx-auto mb-2 max-w-3xl rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground"
                   role="alert"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1444,7 +1409,7 @@ export function ChatPanel({
                   </div>
                 </div>
               ) : null}
-              <div className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-[1.75rem] border bg-background/80 p-1.5 shadow-sm backdrop-blur transition-colors focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20">
+              <div className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-card border border-input bg-popover p-1.5 transition-colors focus-within:border-primary/70">
                 <ComposerPrimitive.Input
                   className={cn(
                     "min-h-[40px] max-h-60 w-full resize-none bg-transparent px-4 py-2.5 text-[15px] text-foreground outline-none",
@@ -1471,7 +1436,7 @@ export function ChatPanel({
                         type="button"
                         size="icon"
                         disabled={composerDisabled}
-                        className="h-8 w-8 shrink-0 rounded-full transition-transform hover:scale-105"
+                        className="h-9 w-9 shrink-0"
                       >
                         <Send className="h-4 w-4" />
                         <span className="sr-only">Send message</span>
@@ -1485,7 +1450,7 @@ export function ChatPanel({
                         type="button"
                         variant="secondary"
                         size="icon"
-                        className="h-8 w-8 shrink-0 rounded-full"
+                        className="h-9 w-9 shrink-0"
                       >
                         <Square className="h-4 w-4 fill-current" />
                         <span className="sr-only">Cancel generation</span>
@@ -1494,7 +1459,7 @@ export function ChatPanel({
                   </ThreadPrimitive.If>
                 </div>
               </div>
-              <div className="mx-auto mt-1.5 max-w-3xl text-center text-xs text-muted-foreground/80">
+              <div className="mx-auto mt-2 max-w-3xl text-center text-caption text-muted-foreground">
                 {isHydratingThread
                   ? "Conversation history is loading. Sending is disabled until it finishes."
                     : temporary

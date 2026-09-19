@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useWorkspaceList } from "@/lib/use-workspace-list";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -109,14 +109,27 @@ type ModelSelectorProps = {
   showBrand?: boolean;
 };
 
+// Dala logo lockup: a sharp Electric Iris fragment fading to Deep Verdant, then a white wordmark.
+// The logo is the one UI element allowed a gradient.
 function SignLoopWordmark({ className }: { className?: string }) {
+  const gradientId = useId();
+
   return (
     <span
       className={cn(
-        "font-semibold tracking-tight text-foreground/90",
+        "inline-flex items-center gap-2 font-normal tracking-[-0.01em] text-foreground",
         className,
       )}
     >
+      <svg viewBox="0 0 20 20" aria-hidden="true" className="h-[18px] w-[18px] shrink-0">
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0.35" style={{ stopColor: "var(--color-electric-iris)" }} />
+            <stop offset="1" style={{ stopColor: "var(--color-deep-verdant)" }} />
+          </linearGradient>
+        </defs>
+        <path d="M10 1.5 18.5 18.5 10 13.4 1.5 18.5Z" fill={`url(#${gradientId})`} />
+      </svg>
       SignLoop
     </span>
   );
@@ -150,7 +163,7 @@ function ModelSelector({
       key={model}
       onClick={() => onSelect(model)}
       disabled={disabled}
-      className="flex items-center justify-between px-3 py-2 focus:bg-muted/80"
+      className="flex items-center justify-between"
     >
       <span className="truncate pr-4">{model}</span>
       {activeModel === model ? (
@@ -166,13 +179,13 @@ function ModelSelector({
           type="button"
           disabled={disabled}
           className={cn(
-            "group flex items-center gap-1.5 rounded-xl px-3 py-2 text-lg font-semibold transition-colors hover:bg-muted/50",
+            "group flex min-w-0 items-center gap-2 rounded-full px-2 py-2 text-[17px] transition-colors hover:bg-accent sm:px-3",
             !showBrand && "text-base",
             disabled && "cursor-default opacity-80 hover:bg-transparent",
           )}
         >
           {showBrand ? <SignLoopWordmark /> : null}
-          <span className="max-w-[180px] truncate font-medium text-muted-foreground">
+          <span className="max-w-[96px] truncate text-sm text-muted-foreground sm:max-w-[180px]">
             {activeModel}
           </span>
           {refreshing ? (
@@ -184,7 +197,7 @@ function ModelSelector({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        className="mt-1 w-64 border border-border/50 bg-background/95 backdrop-blur-sm"
+        className="mt-1 w-64"
       >
         {availableModels.length > 0 || fallbackModels.length > 0 ? (
           <>
@@ -192,7 +205,7 @@ function ModelSelector({
             {fallbackModels.length > 0 ? (
               <DropdownMenuItem
                 disabled
-                className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+                className="px-3 pb-1 pt-2 text-caption font-semibold uppercase tracking-[0.04em] text-muted-foreground"
               >
                 OpenRouter
               </DropdownMenuItem>
@@ -323,18 +336,19 @@ const Dashboard = ({
     const isContracts = resource === "contracts";
 
     return (
-      <div className="flex min-h-[400px] flex-col items-center justify-center rounded-xl border border-dashed bg-muted/10 px-4 text-center">
-        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+      <div className="flex min-h-[400px] max-w-xl flex-col items-start justify-center">
+        <p className="app-eyebrow flex items-center gap-2">
           {isContracts ? (
-            <FileText className="h-8 w-8 text-muted-foreground" />
+            <FileText className="h-4 w-4" />
           ) : (
-            <FolderOpen className="h-8 w-8 text-muted-foreground" />
+            <FolderOpen className="h-4 w-4" />
           )}
-        </div>
-        <h3 className="text-xl font-semibold text-foreground">
+          Account required
+        </p>
+        <h3 className="mt-4 text-heading-xs md:text-subheading">
           Log in to use {isContracts ? "contracts" : "projects"}
         </h3>
-        <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+        <p className="app-lede mt-4 max-w-md">
           Temporary chat works without an account. Saved{" "}
           {isContracts ? "contract analysis" : "project workspaces"} require
           login.
@@ -354,13 +368,16 @@ const Dashboard = ({
     retry: () => void,
   ) => (
     <div
-      className="mx-auto flex min-h-[400px] w-full max-w-2xl flex-col items-center justify-center rounded-xl border border-destructive/30 bg-destructive/5 px-4 text-center"
+      className="flex min-h-[400px] max-w-xl flex-col items-start justify-center"
       role="alert"
     >
-      <h3 className="text-xl font-semibold text-foreground">
+      <p className="text-nav-label font-semibold uppercase text-destructive">
+        Load error
+      </p>
+      <h3 className="mt-4 text-heading-xs md:text-subheading">
         Couldn&apos;t load {resource}
       </h3>
-      <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+      <p className="app-lede mt-4 max-w-md">
         Check your connection and try again. Your saved data has not been
         changed.
       </p>
@@ -508,17 +525,17 @@ const Dashboard = ({
       <aside
         aria-hidden={!sidebarOpen}
         className={cn(
-          "flex h-dvh shrink-0 flex-col overflow-hidden border-r bg-muted/20 transition-[width] duration-200",
+          "flex h-dvh shrink-0 flex-col overflow-hidden border-r bg-background transition-[width] duration-200",
           sidebarOpen ? "w-72" : "w-0 border-r-0",
         )}
       >
         {sidebarOpen ? (
           <>
-            <div className="flex h-14 items-center border-b px-3">
+            <div className="flex h-14 items-center px-3">
               <div className="flex w-full items-center justify-between gap-2">
                 <button
                   type="button"
-                  className="flex items-center rounded-xl px-2 py-1 text-left transition-colors hover:bg-muted/50"
+                  className="flex items-center rounded-full px-2 py-1 text-left transition-colors hover:bg-accent"
                   onClick={() => {
                     setActiveTab("chat");
                     if (!canUseSavedWorkspace) {
@@ -555,9 +572,9 @@ const Dashboard = ({
                       onClick={() => setActiveTab("contracts")}
                       aria-label="Contracts"
                       className={cn(
-                        "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
+                        "flex w-full items-center rounded-full px-3 py-2 text-left text-nav-label font-semibold uppercase transition-colors hover:text-foreground",
                         activeTab === "contracts"
-                          ? "bg-muted text-primary"
+                          ? "text-foreground"
                           : "text-muted-foreground",
                       )}
                     >
@@ -572,7 +589,7 @@ const Dashboard = ({
                       )}
                     </button>
                   </CollapsibleTrigger>
-                  <CollapsibleContent className="mt-1 ml-3.5 mb-2 space-y-1 border-l pl-[1.65rem]">
+                  <CollapsibleContent className="mb-2 mt-1 space-y-0.5 pl-7">
                     {!canUseSavedWorkspace ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">
                         Log in to view contracts
@@ -623,9 +640,9 @@ const Dashboard = ({
                       onClick={() => setActiveTab("projects")}
                       aria-label="Projects"
                       className={cn(
-                        "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
+                        "flex w-full items-center rounded-full px-3 py-2 text-left text-nav-label font-semibold uppercase transition-colors hover:text-foreground",
                         activeTab === "projects"
-                          ? "bg-muted text-primary"
+                          ? "text-foreground"
                           : "text-muted-foreground",
                       )}
                     >
@@ -640,7 +657,7 @@ const Dashboard = ({
                       )}
                     </button>
                   </CollapsibleTrigger>
-                  <CollapsibleContent className="mt-1 ml-3.5 mb-2 space-y-1 border-l pl-[1.65rem]">
+                  <CollapsibleContent className="mb-2 mt-1 space-y-0.5 pl-7">
                     {!canUseSavedWorkspace ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">
                         Log in to view projects
@@ -693,9 +710,9 @@ const Dashboard = ({
                         onClick={() => setActiveTab("chat")}
                         aria-label="Chat"
                         className={cn(
-                          "flex flex-1 items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted hover:text-foreground",
+                          "flex flex-1 items-center rounded-full px-3 py-2 text-left text-nav-label font-semibold uppercase transition-colors hover:text-foreground",
                           activeTab === "chat"
-                            ? "bg-muted text-primary"
+                            ? "text-foreground"
                             : "text-muted-foreground",
                         )}
                       >
@@ -714,7 +731,7 @@ const Dashboard = ({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
                       onClick={() => void startNewChat()}
                       disabled={
                         canUseSavedWorkspace &&
@@ -734,7 +751,7 @@ const Dashboard = ({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
                       onClick={selectTemporaryChat}
                       title="Temporary chat"
                       aria-label="Temporary chat"
@@ -742,7 +759,7 @@ const Dashboard = ({
                       <Clock className="h-4 w-4" />
                     </Button>
                   </div>
-                  <CollapsibleContent className="mt-1 ml-3.5 mb-2 space-y-1 border-l pl-[1.65rem]">
+                  <CollapsibleContent className="mb-2 mt-1 space-y-0.5 pl-7">
                     <button
                       type="button"
                       onClick={selectTemporaryChat}
@@ -839,7 +856,7 @@ const Dashboard = ({
               </div>
             </div>
 
-            <div className="border-t p-3">
+            <div className="p-3">
               <div className="space-y-1">
                 {canUseSavedWorkspace ? (
                   <>
@@ -888,8 +905,6 @@ const Dashboard = ({
           activeTab === "chat" ? "overflow-hidden" : "overflow-y-auto",
         )}
       >
-        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.1),rgba(255,255,255,0))] dark:bg-[radial-gradient(ellipse_60%_60%_at_50%_-20%,rgba(120,119,198,0.2),rgba(255,255,255,0))]" />
-
         <header className="relative z-20 flex h-14 shrink-0 items-center px-2 gap-0.5">
           {!sidebarOpen && (
             <div className="flex items-center gap-1">
@@ -897,7 +912,7 @@ const Dashboard = ({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10 text-muted-foreground hover:text-foreground hover:bg-muted"
+                className="h-10 w-10 text-muted-foreground hover:text-foreground"
                 onClick={() => setSidebarOpen(true)}
                 aria-label="Open sidebar"
               >
@@ -909,7 +924,7 @@ const Dashboard = ({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-10 w-10 text-muted-foreground hover:text-foreground hover:bg-muted"
+                    className="h-10 w-10 text-muted-foreground hover:text-foreground"
                     onClick={() => void startNewChat()}
                     disabled={
                       canUseSavedWorkspace &&
@@ -929,7 +944,7 @@ const Dashboard = ({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-10 w-10 text-muted-foreground hover:text-foreground hover:bg-muted"
+                    className="h-10 w-10 text-muted-foreground hover:text-foreground"
                     onClick={selectTemporaryChat}
                     title="Temporary chat"
                     aria-label="Temporary chat"
@@ -971,12 +986,13 @@ const Dashboard = ({
           )}
         >
           {activeTab !== "chat" && (
-            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-6 pt-2">
+            <div className="mb-10 flex flex-col gap-6 pt-6 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <h1 className="text-3xl font-bold tracking-tight">
+                <p className="app-eyebrow">Workspace</p>
+                <h1 className="app-title mt-3">
                   {tabLabels[activeTab]}
                 </h1>
-                <p className="mt-1 text-sm text-muted-foreground">
+                <p className="app-lede mt-3">
                   {canUseSavedWorkspace
                     ? `Welcome back, ${user?.firstName || "there"}`
                     : "Log in to create and manage saved workspace items."}
@@ -984,7 +1000,8 @@ const Dashboard = ({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {!canUseSavedWorkspace ? (
-                  <Button asChild>
+                  // The empty state below carries the filled pill; Dala allows one per view.
+                  <Button asChild variant="outline">
                     <Link href="/sign-in">
                       <LogIn className="mr-2 h-4 w-4" />
                       Log in
@@ -1017,22 +1034,23 @@ const Dashboard = ({
             ) : loadingContracts ? (
               <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {[1, 2, 3].map((item) => (
-                  <Skeleton key={item} className="h-44 w-full rounded-xl" />
+                  <Skeleton key={item} className="h-44 w-full" />
                 ))}
               </div>
             ) : standaloneContracts.length === 0 ? (
-              <div className="flex min-h-[400px] flex-col items-center justify-center rounded-xl border border-dashed text-center bg-muted/10 mx-auto w-full max-w-2xl px-4">
-                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-4">
-                  <FileText className="h-8 w-8 text-muted-foreground" />
-                </div>
-                <h3 className="text-xl font-semibold text-foreground">
+              <div className="flex min-h-[400px] max-w-xl flex-col items-start justify-center">
+                <p className="app-eyebrow flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  Nothing here yet
+                </p>
+                <h3 className="mt-4 text-heading-xs md:text-subheading">
                   No contracts found
                 </h3>
-                <p className="mt-2 text-sm text-muted-foreground max-w-sm">
+                <p className="app-lede mt-4 max-w-md">
                   Upload a contract to begin analyzing it instantly, or create a
                   project for context-aware reviews.
                 </p>
-                <div className="mt-8 flex flex-wrap justify-center gap-3">
+                <div className="mt-8 flex flex-wrap gap-3">
                   <UploadDialog>
                     <Button>
                       <Plus className="mr-2 h-4 w-4" />
@@ -1052,7 +1070,7 @@ const Dashboard = ({
                 {standaloneContracts.map((contract) => (
                   <Card
                     key={contract.id}
-                    className="group relative h-full overflow-hidden border-border/50 bg-background/50 backdrop-blur transition-colors hover:bg-muted/50 hover:border-border"
+                    className="group relative h-full overflow-hidden transition-colors hover:border-input hover:bg-foreground/[0.03]"
                   >
                     <Button
                       variant="ghost"
@@ -1069,7 +1087,7 @@ const Dashboard = ({
                       className="block h-full"
                     >
                       <CardHeader className="space-y-0 pb-4 pr-12">
-                        <CardTitle className="text-base font-semibold leading-tight line-clamp-2">
+                        <CardTitle className="line-clamp-2">
                           {contract.title}
                         </CardTitle>
                       </CardHeader>
@@ -1079,10 +1097,7 @@ const Dashboard = ({
                           {formatDate(contract.createdAt, "MMMM d, yyyy")}
                         </div>
                         <div className="flex items-end justify-between">
-                          <Badge
-                            variant="secondary"
-                            className="font-medium bg-secondary/50"
-                          >
+                          <Badge variant="secondary">
                             {contract.status || "DRAFT"}
                           </Badge>
                           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
@@ -1105,18 +1120,19 @@ const Dashboard = ({
             ) : loadingProjects ? (
               <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {[1, 2, 3].map((item) => (
-                  <Skeleton key={item} className="h-44 w-full rounded-xl" />
+                  <Skeleton key={item} className="h-44 w-full" />
                 ))}
               </div>
             ) : !projects || projects.length === 0 ? (
-              <div className="flex min-h-[400px] flex-col items-center justify-center rounded-xl border border-dashed text-center bg-muted/10 mx-auto w-full max-w-2xl px-4">
-                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-4">
-                  <FolderOpen className="h-8 w-8 text-muted-foreground" />
-                </div>
-                <h3 className="text-xl font-semibold text-foreground">
+              <div className="flex min-h-[400px] max-w-xl flex-col items-start justify-center">
+                <p className="app-eyebrow flex items-center gap-2">
+                  <FolderOpen className="h-4 w-4" />
+                  Nothing here yet
+                </p>
+                <h3 className="mt-4 text-heading-xs md:text-subheading">
                   No projects yet
                 </h3>
-                <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+                <p className="app-lede mt-4 max-w-md">
                   Projects let you analyze contracts with legal context. Upload
                   governing laws or reference documents.
                 </p>
@@ -1133,32 +1149,26 @@ const Dashboard = ({
               <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {projects.map((project) => (
                   <Link key={project.id} href={`/projects/${project.id}`}>
-                    <Card className="group h-full cursor-pointer overflow-hidden border-t-2 border-t-primary border-x-border/50 border-b-border/50 bg-background/50 backdrop-blur transition-all hover:bg-muted/50 hover:shadow-sm">
+                    <Card className="group h-full cursor-pointer overflow-hidden transition-colors hover:border-input hover:bg-foreground/[0.03]">
                       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-                        <CardTitle className="text-base font-semibold leading-tight line-clamp-2">
+                        <CardTitle className="line-clamp-2">
                           {project.title}
                         </CardTitle>
                         <FolderOpen className="h-4 w-4 text-primary shrink-0 ml-2" />
                       </CardHeader>
                       <CardContent>
                         {project.description ? (
-                          <p className="mb-4 line-clamp-2 text-sm text-muted-foreground leading-relaxed">
+                          <p className="mb-4 line-clamp-2 text-sm leading-relaxed text-subtle-foreground">
                             {project.description}
                           </p>
                         ) : null}
                         <div className="mb-4 flex flex-wrap gap-2">
-                          <Badge
-                            variant="outline"
-                            className="text-xs font-medium border-border/60 bg-background"
-                          >
+                          <Badge variant="outline">
                             <FileText className="mr-1.5 h-3 w-3 text-muted-foreground" />
                             {project.contractCount || 0} contract
                             {project.contractCount !== 1 ? "s" : ""}
                           </Badge>
-                          <Badge
-                            variant="outline"
-                            className="text-xs font-medium border-border/60 bg-background"
-                          >
+                          <Badge variant="outline">
                             <Book className="mr-1.5 h-3 w-3 text-muted-foreground" />
                             {project.contextDocumentCount || 0} context
                           </Badge>
@@ -1182,7 +1192,7 @@ const Dashboard = ({
 
           <div
             className={cn(
-              "min-h-0 flex-1 overflow-hidden h-full flex-col bg-background/50",
+              "min-h-0 flex-1 overflow-hidden h-full flex-col",
               activeTab === "chat" ? "flex" : "hidden",
             )}
           >
@@ -1231,7 +1241,7 @@ const Dashboard = ({
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
               disabled={deleteContractMutation.isPending || !contractToDelete}
               onClick={() => {
                 if (!contractToDelete) return;
@@ -1266,7 +1276,7 @@ const Dashboard = ({
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
               disabled={deleteChatMutation.isPending || !chatThreadToDelete}
               onClick={() => {
                 if (chatThreadToDelete) {

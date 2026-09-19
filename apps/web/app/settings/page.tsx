@@ -1,19 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useClerk, useUser } from "@clerk/nextjs";
 import { ArrowLeft, Loader2, Settings as SettingsIcon } from "lucide-react";
-import { useTheme } from "next-themes";
 import { apiClient, getApiErrorMessage } from "@/lib/api-client";
 import { fetchSettings, getModelSelection, getSettingsErrorMessage } from "@/lib/settings";
 import { DEFAULT_PERSONALITY_MODE } from "@/lib/personality-settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 
 const PERSONALITY_LABELS: Record<string, string> = {
@@ -24,16 +21,10 @@ const PERSONALITY_LABELS: Record<string, string> = {
 export default function SettingsPage() {
   const { user } = useUser();
   const { signOut } = useClerk();
-  const { resolvedTheme, setTheme } = useTheme();
   const queryClient = useQueryClient();
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectedPersonality, setSelectedPersonality] = useState<string>("");
-  const [themeMounted, setThemeMounted] = useState(false);
   const [modelSelectOpen, setModelSelectOpen] = useState(false);
-
-  useEffect(() => {
-    setThemeMounted(true);
-  }, []);
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["settings"],
@@ -122,9 +113,12 @@ export default function SettingsPage() {
   return (
     <div className="app-page">
       <header className="app-header">
-        <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-4 py-6 sm:px-6 lg:px-8">
-          <h1 className="app-title">Settings</h1>
-          <div className="flex items-center gap-3">
+        <div className="mx-auto flex max-w-4xl items-end justify-between gap-4 px-4 pb-6 pt-10 sm:px-6 lg:px-8">
+          <div className="space-y-3">
+            <p className="app-eyebrow">Workspace</p>
+            <h1 className="app-title">Settings</h1>
+          </div>
+          <div className="flex items-center gap-4">
             <span className="hidden text-sm text-muted-foreground sm:block">Welcome, {user?.firstName}</span>
             <Button variant="outline" onClick={() => signOut()}>
               Sign out
@@ -133,10 +127,10 @@ export default function SettingsPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
+      <main className="mx-auto max-w-4xl space-y-6 px-4 pb-16 pt-2 sm:px-6 lg:px-8">
         <Link
           href="/dashboard"
-          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-6"
+          className="mb-6 inline-flex items-center text-nav-label font-semibold uppercase text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back to Dashboard
@@ -159,7 +153,7 @@ export default function SettingsPage() {
               <div className="text-sm text-muted-foreground">Loading settings...</div>
             ) : availableModels.length === 0 ? (
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground" htmlFor="primary-model">
+                <label className="text-sm text-foreground" htmlFor="primary-model">
                   Primary model
                 </label>
                 <Select value="openrouter" disabled>
@@ -174,7 +168,7 @@ export default function SettingsPage() {
             ) : (
               <>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground" htmlFor="primary-model">
+                  <label className="text-sm text-foreground" htmlFor="primary-model">
                     Primary model
                   </label>
                   <Select
@@ -250,7 +244,7 @@ export default function SettingsPage() {
             ) : (
               <>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground" htmlFor="personality">
+                  <label className="text-sm text-foreground" htmlFor="personality">
                     Chat personality
                   </label>
                   <Select value={effectivePersonality} onValueChange={setSelectedPersonality}>
@@ -294,32 +288,6 @@ export default function SettingsPage() {
                 </div>
               </>
             )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Appearance</CardTitle>
-            <CardDescription>
-              Control the visual theme for SignLoop.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between gap-4 border border-[var(--surface-stroke)] bg-[var(--surface-elevated)] px-4 py-3">
-              <div className="space-y-1">
-                <Label htmlFor="dark-mode-toggle">Dark mode</Label>
-                <p className="text-xs text-muted-foreground">
-                  {themeMounted ? `Current theme: ${resolvedTheme === "dark" ? "Dark" : "Light"}` : "Loading theme..."}
-                </p>
-              </div>
-              <Switch
-                id="dark-mode-toggle"
-                checked={themeMounted ? resolvedTheme === "dark" : false}
-                onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")}
-                disabled={!themeMounted}
-                aria-label="Toggle dark mode"
-              />
-            </div>
           </CardContent>
         </Card>
       </main>

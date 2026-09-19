@@ -100,7 +100,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
             <Label htmlFor="file">Contract File</Label>
             <button
               type="button"
-              className="flex w-full cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-6 transition-colors hover:bg-muted/50"
+              className="flex w-full cursor-pointer flex-col items-center justify-center rounded-card border border-dashed border-input p-6 transition-colors hover:border-primary/60 hover:bg-foreground/[0.03]"
               onClick={() => fileInputRef.current?.click()}
               aria-label={
                 file

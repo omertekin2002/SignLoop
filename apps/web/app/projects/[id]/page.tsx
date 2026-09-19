@@ -249,13 +249,13 @@ const ProjectDetails = () => {
   const getDocTypeIcon = (type: string) => {
     switch (type) {
       case "legal_text":
-        return <Scale className="h-4 w-4 text-blue-500" />;
+        return <Scale className="h-4 w-4 text-primary" />;
       case "prior_contract":
-        return <FileText className="h-4 w-4 text-green-500" />;
+        return <FileText className="h-4 w-4 text-success" />;
       case "regulation":
-        return <Book className="h-4 w-4 text-purple-500" />;
+        return <Book className="h-4 w-4 text-highlight" />;
       default:
-        return <File className="h-4 w-4 text-gray-500" />;
+        return <File className="h-4 w-4 text-muted-foreground" />;
     }
   };
 
@@ -277,7 +277,7 @@ const ProjectDetails = () => {
         role="alert"
       >
         <div className="max-w-md text-center">
-          <h2 className="text-lg font-semibold">Unable to load project</h2>
+          <h2 className="text-heading-2xs">Unable to load project</h2>
           <p className="mt-2 text-sm text-muted-foreground">
             {getApiErrorMessage(
               error,
@@ -300,8 +300,8 @@ const ProjectDetails = () => {
     return (
       <div className="min-h-screen bg-transparent flex items-center justify-center">
         <div className="text-center">
-          <h2 className="text-lg font-semibold">Project not found</h2>
-          <Link href="/dashboard" className="text-primary hover:underline">
+          <h2 className="text-heading-2xs">Project not found</h2>
+          <Link href="/dashboard" className="mt-3 inline-block text-highlight underline-offset-4 hover:underline">
             Back to Dashboard
           </Link>
         </div>
@@ -315,25 +315,26 @@ const ProjectDetails = () => {
     <div className="app-page">
       {/* Header */}
       <div className="app-header">
-        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-2 mb-4">
+        <div className="mx-auto max-w-7xl px-4 pb-6 pt-10 sm:px-6 lg:px-8">
+          <div className="mb-6 flex items-center gap-2">
             <Link
               href="/dashboard"
-              className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1"
+              className="flex items-center gap-2 text-nav-label font-semibold uppercase text-muted-foreground transition-colors hover:text-foreground"
             >
               <ArrowLeft className="h-4 w-4" />
               Back to Dashboard
             </Link>
           </div>
-          <div className="flex justify-between items-start">
+          <div className="flex items-start justify-between gap-6">
             <div>
-              <h1 className="text-3xl font-bold">{project.title}</h1>
+              <p className="app-eyebrow">Project</p>
+              <h1 className="app-title mt-3">{project.title}</h1>
               {project.description && (
-                <p className="text-muted-foreground mt-1">
+                <p className="app-lede mt-3 max-w-2xl">
                   {project.description}
                 </p>
               )}
-              <div className="flex items-center gap-3 mt-2 text-sm text-muted-foreground">
+              <div className="mt-4 flex items-center gap-3 text-sm text-muted-foreground">
                 <span>
                   Created {formatDate(project.createdAt, "MMM d, yyyy")}
                 </span>
@@ -376,7 +377,7 @@ const ProjectDetails = () => {
                       <Link
                         key={contract.id}
                         href={`/contracts/${contract.id}`}
-                        className="flex items-center justify-between border border-[var(--surface-stroke-soft)] bg-[var(--surface-elevated)] p-3 transition-colors hover:border-[var(--surface-stroke)] hover:bg-[var(--surface-base)]"
+                        className="flex items-center justify-between rounded-card border px-4 py-3 transition-colors hover:border-input hover:bg-foreground/[0.03]"
                       >
                         <div className="flex items-center gap-3">
                           <FileText className="h-5 w-5 text-primary" />
@@ -406,7 +407,7 @@ const ProjectDetails = () => {
                 )}
 
                 {/* Upload New Contract */}
-                <div className="border border-dashed border-[var(--surface-stroke)] bg-[var(--surface-base)] p-4">
+                <div className="rounded-card border p-4">
                   <div className="space-y-3">
                     <div>
                       <Label htmlFor="contract-name">Contract Name</Label>
@@ -419,7 +420,7 @@ const ProjectDetails = () => {
                     </div>
                     <button
                       type="button"
-                      className="w-full cursor-pointer border border-[var(--surface-stroke-soft)] bg-[var(--surface-inset)] p-4 text-center transition-colors hover:border-[var(--surface-stroke)] hover:bg-[var(--surface-base)]"
+                      className="w-full cursor-pointer rounded-card border border-dashed border-input p-5 text-center transition-colors hover:border-primary/60 hover:bg-foreground/[0.03]"
                       onClick={() => contractFileRef.current?.click()}
                       aria-label={
                         selectedContractFile
@@ -503,7 +504,7 @@ const ProjectDetails = () => {
                     {project.contextDocuments.map((doc) => (
                       <div
                         key={doc.id}
-                        className="flex items-center justify-between border border-[var(--surface-stroke-soft)] bg-[var(--surface-elevated)] p-3"
+                        className="flex items-center justify-between rounded-card border px-4 py-3"
                       >
                         <div className="flex items-center gap-3">
                           {getDocTypeIcon(doc.documentType)}
@@ -532,7 +533,7 @@ const ProjectDetails = () => {
                 )}
 
                 {/* Upload New Context */}
-                <div className="border border-dashed border-[var(--surface-stroke)] bg-[var(--surface-base)] p-4">
+                <div className="rounded-card border p-4">
                   <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-2">
                       <div>
@@ -570,7 +571,7 @@ const ProjectDetails = () => {
                     </div>
                     <button
                       type="button"
-                      className="w-full cursor-pointer border border-[var(--surface-stroke-soft)] bg-[var(--surface-inset)] p-4 text-center transition-colors hover:border-[var(--surface-stroke)] hover:bg-[var(--surface-base)]"
+                      className="w-full cursor-pointer rounded-card border border-dashed border-input p-5 text-center transition-colors hover:border-primary/60 hover:bg-foreground/[0.03]"
                       onClick={() => contextFileRef.current?.click()}
                       aria-label={
                         selectedContextFile
@@ -630,7 +631,7 @@ const ProjectDetails = () => {
 
             {/* Run Analysis CTA */}
             {firstProjectContract && (
-              <Card className="mt-4 border-primary/30 bg-primary/5">
+              <Card className="mt-4 border-primary/40">
                 <CardContent className="py-4">
                   <div className="flex items-center justify-between">
                     <div>
@@ -668,7 +669,7 @@ const ProjectDetails = () => {
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
               disabled={deleteProjectMutation.isPending}
               onClick={() => deleteProjectMutation.mutate()}
             >
@@ -694,7 +695,7 @@ const ProjectDetails = () => {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground"
+              variant="destructive"
               onClick={() => {
                 if (docToDelete) {
                   deleteContextDocMutation.mutate(docToDelete);

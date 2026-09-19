@@ -25,7 +25,7 @@ export default function Error({
                         <div className="rounded-full bg-destructive/10 p-3 mb-4">
                             <XCircle className="h-8 w-8 text-destructive" />
                         </div>
-                        <h2 className="text-xl font-semibold text-foreground">Something went wrong</h2>
+                        <h2 className="text-heading-2xs">Something went wrong</h2>
                         <p className="text-sm text-muted-foreground mt-2">
                             We hit an unexpected error while loading this contract. You can try again or return to the dashboard.
                         </p>

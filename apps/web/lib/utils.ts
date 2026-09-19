@@ -1,5 +1,32 @@
 import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge } from "tailwind-merge";
+
+// Teach tailwind-merge the Dala type scale and radii from tailwind.config.ts. Unknown `text-*`
+// names are otherwise treated as colours, so `text-caption text-muted-foreground` would drop the size.
+const twMerge = extendTailwindMerge({
+  extend: {
+    classGroups: {
+      "font-size": [
+        {
+          text: [
+            "caption",
+            "nav-label",
+            "body",
+            "heading-2xs",
+            "heading-xs",
+            "subheading",
+            "heading-sm",
+            "heading",
+            "heading-lg",
+            "display",
+          ],
+        },
+      ],
+      rounded: [{ rounded: ["nav", "card", "button", "tag"] }],
+      tracking: [{ tracking: ["display"] }],
+    },
+  },
+});
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -123,12 +150,12 @@ export function getRiskColor(
         : "bg-destructive/15 text-destructive";
     case "medium":
       return hover
-        ? "bg-amber-500/15 text-amber-800 hover:bg-amber-500/20 dark:text-amber-200"
-        : "bg-amber-500/15 text-amber-800 dark:text-amber-200";
+        ? "bg-highlight/15 text-highlight hover:bg-highlight/20"
+        : "bg-highlight/15 text-highlight";
     case "low":
       return hover
-        ? "bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200"
-        : "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200";
+        ? "bg-success/15 text-success hover:bg-success/20"
+        : "bg-success/15 text-success";
     default:
       return hover
         ? "bg-muted text-muted-foreground hover:bg-muted"

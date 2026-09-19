@@ -12,7 +12,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { cn } from "@/lib/utils";
 import {
   acknowledgePrivacyConsent,
   hasPrivacyConsent,
@@ -25,7 +24,6 @@ export function PrivacyNotice() {
   const { isLoaded, user } = useUser();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const isLandingPage = pathname === "/";
   const isAuthPage =
     pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up");
 
@@ -47,7 +45,7 @@ export function PrivacyNotice() {
 
   return (
     <AlertDialog open={open}>
-      <AlertDialogContent className={cn(isLandingPage && "light")}>
+      <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>SignLoop Privacy Notice</AlertDialogTitle>
           <AlertDialogDescription>{NOTICE_TEXT}</AlertDialogDescription>

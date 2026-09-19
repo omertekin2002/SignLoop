@@ -31,7 +31,8 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+    // Dala is dark-only. Forcing the theme also overrides a "light" choice saved by the old toggle.
+    <ThemeProvider attribute="class" forcedTheme="dark" enableSystem={false}>
       <QueryClientProvider client={queryClient}>
         {/* Remount local component/runtime state as well as replacing the query cache. */}
         <Fragment key={identityKey}>{children}</Fragment>
