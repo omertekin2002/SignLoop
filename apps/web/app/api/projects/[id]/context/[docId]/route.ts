@@ -1,10 +1,9 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
 import {
   deleteContextDocumentFromProject,
 } from "@/lib/server-db";
 import { flushStorageDeletions } from "@/lib/storage-cleanup";
-import { after } from "next/server";
 import { isUuid } from "@/lib/utils";
 
 export async function DELETE(

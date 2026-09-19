@@ -4,24 +4,16 @@ import {
   getContractMetaForUser,
   saveContractUploadForUser,
 } from "@/lib/server-db";
-import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
-import { deleteObject } from "@/lib/object-storage";
+import {
+  discardStoredUpload,
+  prepareUpload,
+  storeUploadedFile,
+} from "@/lib/upload-pipeline";
 import { isUuid } from "@/lib/utils";
 
 // Image uploads run OCR, which budgets 60s for worker init plus 90s for recognition. The platform
 // default is well below that, so a scanned upload would be killed after the work was already done.
 export const maxDuration = 180;
-
-async function cleanupNewUpload(storageKey: string): Promise<void> {
-  try {
-    await deleteObject(storageKey);
-  } catch (cleanupError: unknown) {
-    console.error(
-      "Failed to clean up upload after persistence error:",
-      cleanupError,
-    );
-  }
-}
 
 export async function POST(
   req: Request,
@@ -59,7 +51,7 @@ export async function POST(
     );
   }
 
-  if (!prepared.text || prepared.text.length === 0) {
+  if (!prepared.text.trim()) {
     return NextResponse.json(
       { error: "Could not extract any text from the file" },
       { status: 400 },
@@ -97,7 +89,7 @@ export async function POST(
       extractionConfidence: prepared.confidence,
     });
     if (!saved) {
-      await cleanupNewUpload(stored.storageKey);
+      await discardStoredUpload(stored.storageKey);
       return NextResponse.json(
         { error: "Contract not found" },
         { status: 404 },
@@ -115,7 +107,7 @@ export async function POST(
         : {}),
     });
   } catch (error: unknown) {
-    await cleanupNewUpload(stored.storageKey);
+    await discardStoredUpload(stored.storageKey);
     console.error("Upload persistence failed:", error);
     return NextResponse.json(
       { error: "Failed to save the uploaded file. Please try again." },

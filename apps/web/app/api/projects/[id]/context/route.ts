@@ -5,21 +5,17 @@ import {
   listProjectContextDocumentsForUser,
   isProjectOwnedByUser,
 } from "@/lib/server-db";
-import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
-import { deleteObject } from "@/lib/object-storage";
+import {
+  discardStoredUpload,
+  prepareUpload,
+  storeUploadedFile,
+} from "@/lib/upload-pipeline";
 import { ProjectNotFoundError } from "@/lib/errors";
 import { isUuid } from "@/lib/utils";
 
-async function cleanupNewUpload(storageKey: string): Promise<void> {
-  try {
-    await deleteObject(storageKey);
-  } catch (cleanupError: unknown) {
-    console.error(
-      "Failed to clean up context upload after persistence error:",
-      cleanupError,
-    );
-  }
-}
+// Image uploads run OCR, which budgets 60s for worker init plus 90s for recognition. The platform
+// default is well below that, so a scanned context document would be killed mid-extraction.
+export const maxDuration = 180;
 
 export async function GET(
   req: Request,
@@ -136,7 +132,7 @@ export async function POST(
       wordCount,
     });
   } catch (error: unknown) {
-    await cleanupNewUpload(stored.storageKey);
+    await discardStoredUpload(stored.storageKey);
     if (error instanceof ProjectNotFoundError) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }

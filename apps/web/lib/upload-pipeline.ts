@@ -7,7 +7,11 @@ import {
   validateMimeType,
   type ExtractionMethod,
 } from "@/lib/text-extraction";
-import { getStorageBucketName, uploadObject } from "@/lib/object-storage";
+import {
+  deleteObject,
+  getStorageBucketName,
+  uploadObject,
+} from "@/lib/object-storage";
 import { getErrorMessage } from "@/lib/utils";
 import {
   MAX_UPLOAD_FILE_SIZE,
@@ -217,4 +221,18 @@ export async function storeUploadedFile(input: {
     input.mimeType,
   );
   return { storageKey, bucket };
+}
+
+// Best-effort removal of an object stored by storeUploadedFile when the follow-up database write
+// fails or finds nothing to attach it to. A cleanup failure is logged, never thrown, so the
+// caller's original error response still reaches the client.
+export async function discardStoredUpload(storageKey: string): Promise<void> {
+  try {
+    await deleteObject(storageKey);
+  } catch (cleanupError: unknown) {
+    console.error(
+      "Failed to clean up upload after persistence error:",
+      cleanupError,
+    );
+  }
 }
