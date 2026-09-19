@@ -110,7 +110,7 @@ type ModelSelectorProps = {
 };
 
 // Dala logo lockup: a sharp Electric Iris fragment fading to Deep Verdant, then a white wordmark.
-// The logo is the one UI element allowed a gradient.
+// The logo is the one UI element allowed a gradient. Same mark as app/icon.svg (the favicon).
 function SignLoopWordmark({ className }: { className?: string }) {
   const gradientId = useId();
 
