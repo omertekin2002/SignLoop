@@ -46,3 +46,6 @@ tmp/
 
 # graphify knowledge graph output
 graphify-out/
+
+# Claude Code local settings and launch configs
+.claude/
