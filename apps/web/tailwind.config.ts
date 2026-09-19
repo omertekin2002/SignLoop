@@ -9,7 +9,7 @@ const token = (name: string) =>
 
 // Tailwind v3 translation of DESIGN.md's Tailwind v4 `@theme` block. Spacing is intentionally not
 // mapped: Dala's `--spacing-6: 6px` would silently redefine the default `p-6` (24px) everywhere,
-// and every Dala step (6/12/18/24/30/36/60/96/120px) already exists on Tailwind's 4px scale.
+// so use the stock scale where available and explicit values for the missing Dala steps.
 export default {
   darkMode: "class",
   content: [

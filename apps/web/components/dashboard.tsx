@@ -1009,14 +1009,14 @@ const Dashboard = ({
                   </Button>
                 ) : activeTab === "contracts" ? (
                   <UploadDialog>
-                    <Button>
+                    <Button variant={standaloneContracts.length === 0 ? "outline" : "default"}>
                       <Plus className="mr-2 h-4 w-4" />
                       New Contract
                     </Button>
                   </UploadDialog>
                 ) : activeTab === "projects" ? (
                   <NewProjectDialog>
-                    <Button>
+                    <Button variant={!projects?.length ? "outline" : "default"}>
                       <Plus className="mr-2 h-4 w-4" />
                       New Project
                     </Button>

@@ -365,7 +365,7 @@ Everything above is the upstream Dala reference. This section records how SignLo
 
 Tailwind names match the v4 block: `bg-void`, `text-bone-white`, `text-ash-gray`, `text-silver-mist`, `bg-electric-iris`, `text-saffron-spark`, `bg-deep-verdant`; `text-caption` … `text-display` (the size tokens carry their line height and tracking); `font-ppneuemontreal`; `tracking-display` (-0.04em); `max-w-page`; `rounded-3xl`, `rounded-card`, `rounded-button`, `rounded-nav`, `rounded-tag`.
 
-**Spacing is deliberately not mapped.** In Tailwind, `--spacing-6: 6px` would redefine `p-6` from 24px to 6px across the whole app. Every Dala step (6/12/18/24/30/36/60/96/120px) already exists on Tailwind's 4px scale (`1.5`, `3`, `4.5`, `6`, `7.5`, `9`, `15`, `24`, `30`), and the raw values remain available as CSS variables.
+**Spacing is deliberately not mapped.** Mapping Dala's spacing names directly into Tailwind v3 would redefine `p-6` from 24px to 6px across the whole app. Use the stock scale for 6/12/24/36/96px (`1.5`, `3`, `6`, `9`, `24`). Tailwind v3 does **not** provide `4.5`, `7.5`, `15`, or `30`: use explicit values such as `gap-[18px]`, `p-[30px]`, `py-[60px]`, and `py-[120px]`, or the corresponding CSS variables, for those Dala steps.
 
 ### Typeface
 

@@ -27,6 +27,7 @@ import {
   ThreadPrimitive,
   useLocalRuntime,
   useMessage,
+  useThread,
   type ChatModelAdapter,
   type ThreadMessage,
   type ThreadMessageLike,
@@ -883,7 +884,7 @@ function LandingHeroEmpty() {
   const [isHeroTitleComplete, setIsHeroTitleComplete] = useState(false);
 
   return (
-    <div className="relative -mx-4 -my-6 flex min-h-[calc(100vh-8.5rem)] flex-col justify-center overflow-hidden px-6 py-12 sm:px-10 lg:px-16">
+    <div className="relative -mx-4 -my-6 flex min-h-[calc(100dvh-8.5rem)] flex-col justify-center overflow-hidden px-6 py-12 sm:px-10 lg:px-16">
       <Constellation className="absolute inset-0 opacity-30 lg:hidden" />
 
       <div className="relative mx-auto grid w-full max-w-page items-center gap-12 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
@@ -944,6 +945,22 @@ function LandingHeroEmpty() {
         <Constellation className="hidden h-[min(560px,62vh)] lg:block" />
       </div>
     </div>
+  );
+}
+
+// The landing composition starts at the top; only conversations follow new content to the bottom.
+function ChatViewport({ children }: { children: ReactNode }) {
+  const hasMessages = useThread((state) => state.messages.length > 0);
+
+  return (
+    <ThreadPrimitive.Viewport
+      autoScroll={hasMessages}
+      scrollToBottomOnInitialize={hasMessages}
+      scrollToBottomOnThreadSwitch={hasMessages}
+      className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth"
+    >
+      {children}
+    </ThreadPrimitive.Viewport>
   );
 }
 
@@ -1305,7 +1322,7 @@ export function ChatPanel({
         </Button>
       )}
       <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col overflow-hidden">
-            <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth">
+            <ChatViewport>
               {isHydratingThread ? (
                 <div className="flex h-full flex-col items-center justify-center space-y-4 pb-20 text-center">
                   <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -1385,7 +1402,7 @@ export function ChatPanel({
                   </div>
                 </>
               )}
-            </ThreadPrimitive.Viewport>
+            </ChatViewport>
 
             <ComposerPrimitive.Root className="shrink-0 bg-transparent px-4 pb-2 pt-1 sm:px-6 sm:pb-3 sm:pt-2">
               {persistenceWarning && !temporary ? (
