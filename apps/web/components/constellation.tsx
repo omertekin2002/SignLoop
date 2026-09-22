@@ -47,7 +47,7 @@ type Shape = {
 type Pose = { x: number; scale: number; alpha: number; yaw: number; pitch: number; sway: number };
 
 const DESKTOP_POSES: Pose[] = [
-  { x: 0.73, scale: 1, alpha: 1, yaw: -0.5, pitch: 0.25, sway: 0.45 },
+  { x: 0.73, scale: 1, alpha: 1, yaw: -0.25, pitch: 0.1, sway: 0.3 },
   { x: 0.5, scale: 1.05, alpha: 0.75, yaw: 0.4, pitch: 0.1, sway: 0.25 },
   { x: 0.72, scale: 0.95, alpha: 1, yaw: -0.45, pitch: 0.12, sway: 0.3 },
   { x: 0.29, scale: 0.9, alpha: 1, yaw: 0.65, pitch: 0.38, sway: 0.35 },
@@ -108,29 +108,55 @@ function dustPoint(random: () => number): Vec3 {
   return [random() * 5.2 - 2.6, random() * 3.2 - 1.6, random() * 2.4 - 1.2];
 }
 
-// Brain in normalised units (x front → back, y down, z left → right): two cerebral hemispheres
-// split by the longitudinal fissure, temporal lobes, cerebellum, and stem. Sampled mostly on the
-// surface shell, with sulci carved out as gaps so the folds read at any angle.
-const BRAIN_LOBES = [
-  { c: [-0.05, -0.1, 0.24], r: [1, 0.66, 0.46] },
-  { c: [-0.05, -0.1, -0.24], r: [1, 0.66, 0.46] },
-  { c: [0.02, 0.26, 0.3], r: [0.62, 0.3, 0.3] },
-  { c: [0.02, 0.26, -0.3], r: [0.62, 0.3, 0.3] },
-  { c: [0.6, 0.48, 0], r: [0.32, 0.2, 0.44] },
-  { c: [0.24, 0.72, 0], r: [0.11, 0.26, 0.12] },
+// Brain in normalised units (x front → back, y down, z left → right), modelled like an atlas
+// illustration so it reads as a brain at a glance: a domed cerebrum over a flatter base, a
+// temporal lobe hanging below the Sylvian fissure, a striped cerebellum tucked under the back,
+// and the stem. Each region carries its own colour; gyri are sampled as ridges with dark sulci.
+type BrainRegion = "frontal" | "parietal" | "occipital" | "temporal" | "cerebellum" | "stem";
+
+const BRAIN_PARTS = [
+  { region: "cerebrum", c: [-0.02, -0.14, 0.22], r: [1, 0.62, 0.42] },
+  { region: "cerebrum", c: [-0.02, -0.14, -0.22], r: [1, 0.62, 0.42] },
+  { region: "cerebrum", c: [-0.52, 0.06, 0.24], r: [0.46, 0.38, 0.32] },
+  { region: "cerebrum", c: [-0.52, 0.06, -0.24], r: [0.46, 0.38, 0.32] },
+  { region: "cerebrum", c: [0.66, -0.04, 0.2], r: [0.36, 0.4, 0.32] },
+  { region: "cerebrum", c: [0.66, -0.04, -0.2], r: [0.36, 0.4, 0.32] },
+  { region: "temporal", c: [-0.06, 0.28, 0.3], r: [0.62, 0.27, 0.26] },
+  { region: "temporal", c: [-0.06, 0.28, -0.3], r: [0.62, 0.27, 0.26] },
+  { region: "cerebellum", c: [0.56, 0.5, 0], r: [0.34, 0.19, 0.42] },
+  { region: "stem", c: [0.2, 0.66, 0], r: [0.14, 0.32, 0.15] },
 ] as const;
 
-function brainDistance(x: number, y: number, z: number) {
+const REGION_COLORS: Record<BrainRegion, [number, number]> = {
+  frontal: [IRIS, IRIS_LIFT],
+  parietal: [BLUE, IRIS],
+  occipital: [MAGENTA, IRIS],
+  temporal: [SAFFRON, SAFFRON],
+  cerebellum: [VERDANT, VERDANT],
+  stem: [IRIS_LIFT, BLUE],
+};
+
+// Sylvian fissure: the groove rising from the front of the temporal lobe toward the back.
+const sylvianY = (x: number) => 0.2 - 0.2 * (x + 0.6);
+
+function brainSample(x: number, y: number, z: number) {
   let best = Infinity;
-  for (const { c, r } of BRAIN_LOBES) {
+  let part: (typeof BRAIN_PARTS)[number] = BRAIN_PARTS[0];
+  for (const candidate of BRAIN_PARTS) {
+    const { c, r } = candidate;
     const dx = (x - c[0]) / r[0];
     const dy = (y - c[1]) / r[1];
     const dz = (z - c[2]) / r[2];
-    const angle = Math.atan2(dy, dx);
-    const wobble = 1 + 0.05 * Math.sin(angle * 7 + 0.4) + 0.03 * Math.sin(angle * 13 + 1.7 + dz * 2);
-    best = Math.min(best, Math.hypot(dx, dy, dz) / wobble);
+    const distance = Math.hypot(dx, dy, dz);
+    if (distance < best) {
+      best = distance;
+      part = candidate;
+    }
   }
-  return best;
+  let region: BrainRegion;
+  if (part.region === "cerebrum") region = x < -0.28 ? "frontal" : x < 0.42 ? "parietal" : "occipital";
+  else region = part.region;
+  return { distance: best, region };
 }
 
 function buildBrain(count: number, baseColors: Uint8Array, ambient: Uint8Array, dust: Float32Array): Shape {
@@ -141,32 +167,37 @@ function buildBrain(count: number, baseColors: Uint8Array, ambient: Uint8Array, 
 
   const points: [number, number, number, number][] = [];
   let guard = 0;
-  while (points.length < cloudCount && guard < count * 400) {
+  while (points.length < cloudCount && guard < count * 600) {
     guard += 1;
-    const x = random() * 2.2 - 1.1;
+    const x = random() * 2.3 - 1.15;
     const y = random() * 1.9 - 0.8;
-    const z = random() * 1.5 - 0.75;
-    const inside = brainDistance(x, y, z);
-    if (inside > 1) continue;
-    if (Math.abs(z) < 0.05 && y < 0.2 && x < 0.45) continue; // longitudinal fissure
-    const shell = inside > 0.86;
-    // A sparse core keeps the volume from looking hollow when it spins edge-on.
-    if (!shell && random() > 0.04) continue;
-    const wave = Math.sin(x * 7 + 3 * Math.sin(y * 4.5 + z * 3.5) + 1.6 * Math.sin(z * 6));
-    if (shell) {
-      // Sylvian fissure: the groove that separates the temporal lobe from the frontal lobe.
-      if (x > -0.75 && x < 0.35 && Math.abs(y - (0.16 - 0.32 * (x + 0.75))) < 0.035) continue;
-      if (y < 0.45 && Math.abs(wave) < 0.26) continue;
+    const z = random() * 1.4 - 0.7;
+    const { distance, region } = brainSample(x, y, z);
+    if (distance > 1) continue;
+    const shell = distance > 0.82;
+    // A faint core keeps the volume from looking hollow when it turns.
+    if (!shell && region !== "stem" && random() > 0.025) continue;
+
+    const cortex = region === "frontal" || region === "parietal" || region === "occipital";
+    if (cortex) {
+      if (Math.abs(z) < 0.06 && y < 0.15) continue; // longitudinal fissure between hemispheres
+      if (y > sylvianY(x) - 0.02 && x < 0.45) continue; // cortex stays above the Sylvian fissure
+      if (x > 0.3 && y > 0.3) continue; // leave a gap above the cerebellum
     }
-    // Colour by gyrus so the folds read as bands: warm crests, cool flanks, magenta core.
+    if (region === "temporal" && (y < sylvianY(x) + 0.05 || x > 0.5)) continue;
+    if (region === "cerebellum" && y < 0.37) continue;
+    if (region === "stem" && y < 0.5) continue;
+
+    if (shell && (cortex || region === "temporal")) {
+      // Gyri: keep sinuous ridges, drop the sulci between them.
+      const wave = Math.sin(x * 8 + 2.6 * Math.sin(y * 5 + z * 3) + 1.4 * Math.sin(z * 7 + x * 2));
+      if (wave < -0.15) continue;
+    }
+    if (region === "cerebellum" && Math.sin(y * 48 + x * 6) < -0.1) continue; // folia stripes
+
+    const [primary, secondary] = REGION_COLORS[region];
     const roll = random();
-    const color = !shell
-      ? MAGENTA
-      : wave > 0.8
-        ? roll < 0.6 ? SAFFRON : VERDANT
-        : wave > 0
-          ? roll < 0.7 ? IRIS : IRIS_LIFT
-          : roll < 0.6 ? BLUE : roll < 0.85 ? IRIS : MAGENTA;
+    const color = roll < 0.8 ? primary : roll < 0.93 ? secondary : IRIS_LIFT;
     points.push([x, y, z, color]);
   }
 
