@@ -105,7 +105,7 @@ class ShapeWriter {
 
 // Ambient dust shared by every shape, so a few particles always drift around the scene.
 function dustPoint(random: () => number): Vec3 {
-  return [random() * 5.2 - 2.6, random() * 3.2 - 1.6, random() * 2.4 - 1.2];
+  return [random() * 5.2 - 2.6, random() * 3.8 - 1.9, random() * 2.4 - 1.2];
 }
 
 // Brain in normalised units (x front → back, y down, z left → right), modelled like an atlas
@@ -634,6 +634,10 @@ export function Constellation({ className, stageRef, interactionRef }: Constella
     let field: Field | null = null;
     let width = 0;
     let height = 0;
+    // The canvas can extend past the scrolling slides (behind the composer); shapes stay centred on
+    // the slide viewport, which starts `viewTop` px down the canvas and is `viewHeight` px tall.
+    let viewTop = 0;
+    let viewHeight = 0;
     let frame = 0;
     let visible = true;
     let lastTime = 0;
@@ -646,11 +650,17 @@ export function Constellation({ className, stageRef, interactionRef }: Constella
     const point: Vec3 = [0, 0, 0];
     const next: Vec3 = [0, 0, 0];
 
+    const interaction = interactionRef?.current;
+    const scroller = interaction ? findScrollParent(interaction) : null;
+
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
       width = rect.width;
       height = rect.height;
+      const view = scroller?.getBoundingClientRect();
+      viewTop = view ? view.top - rect.top : 0;
+      viewHeight = view?.height || height;
       canvas.width = Math.max(1, Math.round(width * ratio));
       canvas.height = Math.max(1, Math.round(height * ratio));
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -703,9 +713,10 @@ export function Constellation({ className, stageRef, interactionRef }: Constella
       const cosPitch = Math.cos(pitch);
       const sinPitch = Math.sin(pitch);
 
-      const unit = Math.min(width >= 1024 ? width * 0.21 : width * 0.38, height * 0.36) * lerp(a.scale, b.scale, posed);
+      const unit =
+        Math.min(width >= 1024 ? width * 0.21 : width * 0.38, viewHeight * 0.36) * lerp(a.scale, b.scale, posed);
       const originX = width * lerp(a.x, b.x, posed);
-      const originY = height * 0.5;
+      const originY = viewTop + viewHeight * 0.5;
       const alphaScale = lerp(a.alpha, b.alpha, posed) * (light ? 1.35 : 1);
 
       const buckets = PALETTE.map(({ color }, index) =>
@@ -843,6 +854,7 @@ export function Constellation({ className, stageRef, interactionRef }: Constella
       requestDraw();
     });
     resizeObserver.observe(canvas);
+    if (scroller) resizeObserver.observe(scroller);
 
     const intersectionObserver = new IntersectionObserver(([entry]) => {
       visible = entry?.isIntersecting ?? true;
@@ -898,13 +910,11 @@ export function Constellation({ className, stageRef, interactionRef }: Constella
       }
     };
 
-    const interaction = interactionRef?.current;
     window.addEventListener("pointermove", onPointerMove, { passive: true });
     window.addEventListener("pointerup", onPointerUp);
     document.documentElement.addEventListener("pointerleave", onPointerLeave);
     interaction?.addEventListener("pointerdown", onPointerDown);
     // The stage ref changes on scroll; reduced motion needs a nudge to redraw.
-    const scroller = interaction ? findScrollParent(interaction) : null;
     scroller?.addEventListener("scroll", requestDraw, { passive: true });
 
     reducedMotion.addEventListener("change", start);

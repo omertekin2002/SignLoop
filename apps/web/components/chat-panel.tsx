@@ -970,6 +970,9 @@ export function ChatPanel({
   const { isLoaded: isUserLoaded, user } = useUser();
   const queryClient = useQueryClient();
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [landingBackdrop, setLandingBackdrop] = useState<HTMLDivElement | null>(
+    null,
+  );
   const [persistenceWarning, setPersistenceWarning] = useState(false);
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
@@ -1346,6 +1349,14 @@ export function ChatPanel({
         "relative isolate flex h-full min-h-0 w-full flex-col overflow-hidden rounded-none border-0 bg-transparent",
       )}
     >
+      {landingHero ? (
+        // Landing constellation layer: spans the slides and the composer, behind both.
+        <div
+          ref={setLandingBackdrop}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 -z-10"
+        />
+      ) : null}
       <CardContent className="flex h-full min-h-0 flex-1 flex-col p-0 sm:p-0">
         <AssistantRuntimeProvider runtime={runtime}>
           {!temporary && activeThreadQuery.data?.hasMore && (
@@ -1398,7 +1409,7 @@ export function ChatPanel({
                 <>
                   <ThreadPrimitive.Empty>
                     {temporary && landingHero ? (
-                      <LandingHero />
+                      <LandingHero backdrop={landingBackdrop} />
                     ) : (
                       <div className="flex h-full flex-col items-center justify-center space-y-4 text-center pb-20">
                         <Sparkles className="h-6 w-6 text-primary" />

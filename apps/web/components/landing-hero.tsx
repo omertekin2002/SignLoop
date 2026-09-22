@@ -7,6 +7,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { ArrowDown, ArrowRight } from "lucide-react";
 import { Constellation, findScrollParent } from "@/components/constellation";
 import { TypingAnimation } from "@/components/typing-animation";
@@ -448,10 +449,12 @@ function focusComposer() {
     ?.focus();
 }
 
-// Dala-style landing: one sticky 3D constellation behind a column of sections. Scrolling morphs
+// Dala-style landing: one fixed 3D constellation behind a column of sections. Scrolling morphs
 // it brain → dust → contract stack → risk skyline → routing network → SignLoop mark; the pointer
 // tilts it, dragging spins it, and clicks send a shockwave through it.
-export function LandingHero() {
+// `backdrop` is a layer behind the whole chat panel (slides and composer). The constellation renders
+// there rather than inside the scroller, so it isn't clipped at the composer's top edge.
+export function LandingHero({ backdrop }: { backdrop: HTMLElement | null }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [isHeroTitleComplete, setIsHeroTitleComplete] = useState(false);
   const { stageRef, viewportHeight } = useScrollStage(rootRef);
@@ -470,11 +473,11 @@ export function LandingHero() {
         } as CSSProperties
       }
     >
-      <div className="pointer-events-none absolute inset-0" aria-hidden="true">
-        <div className="sticky top-0 h-[var(--landing-vh)]">
-          <Constellation stageRef={stageRef} interactionRef={rootRef} />
-        </div>
-      </div>
+      {backdrop &&
+        createPortal(
+          <Constellation stageRef={stageRef} interactionRef={rootRef} />,
+          backdrop,
+        )}
 
       <div className="relative">
         <section
