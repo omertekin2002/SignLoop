@@ -522,7 +522,7 @@ export function LandingHero({ backdrop }: { backdrop: HTMLElement | null }) {
             <span className="landing-scroll-cue relative flex h-8 w-5 justify-center rounded-full border border-input">
               <ArrowDown className="mt-1.5 h-3 w-3" />
             </span>
-            Scroll to explore · drag to spin
+            Scroll to explore
           </div>
         </section>
 
