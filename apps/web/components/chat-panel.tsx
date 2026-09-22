@@ -50,9 +50,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { marked } from "marked";
-import { Constellation } from "@/components/constellation";
-import { NumberTicker } from "@/components/number-ticker";
-import { TypingAnimation } from "@/components/typing-animation";
+import { LandingHero } from "@/components/landing-hero";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -67,17 +65,6 @@ import {
 // KaTeX styles are only needed where assistant markdown can render math, which is here.
 // Scoped to this client component so the ~24KB stylesheet no longer loads on every route.
 import "katex/dist/katex.min.css";
-
-const landingStats = [
-  {
-    label: "Contracts Analyzed",
-    value: 150,
-  },
-  {
-    label: "Chat Interactions",
-    value: 2000,
-  },
-] as const;
 
 type ChatApiMessage = {
   role: "system" | "user" | "assistant";
@@ -878,76 +865,6 @@ const ChatMessage = () => {
   );
 };
 
-// Dala hero: oversized left-aligned headline, Saffron label over ultra-light body copy, and the
-// particle constellation as the only imagery. On small screens the constellation becomes ambient.
-function LandingHeroEmpty() {
-  const [isHeroTitleComplete, setIsHeroTitleComplete] = useState(false);
-
-  return (
-    <div className="relative -mx-4 -my-6 flex min-h-[calc(100dvh-8.5rem)] flex-col justify-center overflow-hidden px-6 py-12 sm:px-10 lg:px-16">
-      <Constellation className="absolute inset-0 opacity-30 lg:hidden" />
-
-      <div className="relative mx-auto grid w-full max-w-page items-center gap-12 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
-        <section className="flex flex-col items-start text-left">
-          <h1 className="min-h-[4.8em] whitespace-pre-wrap text-heading-sm font-normal sm:min-h-[3.3em] sm:text-heading lg:text-heading-lg">
-            <TypingAnimation
-              text={"Review contracts with precision.\nNot guesswork."}
-              initialDelay={250}
-              typeSpeed={40}
-              persistCursor={false}
-              onComplete={() => setIsHeroTitleComplete(true)}
-              className="whitespace-pre-wrap"
-              cursorClassName="text-primary"
-            />
-          </h1>
-
-          <div
-            className={cn(
-              "mt-8 max-w-[480px] space-y-4 opacity-0",
-              isHeroTitleComplete && "animate-fade-in-up",
-            )}
-            style={{ animationDelay: "0.1s" }}
-          >
-            <p className="app-eyebrow">SignLoop is now in beta</p>
-            <p className="text-body font-extralight text-foreground">
-              SignLoop combines document ingestion, structured analysis
-              workflows, model routing, and chat into one legal workspace.
-            </p>
-          </div>
-
-          <dl className="mt-14 grid w-full max-w-[480px] grid-cols-2 gap-8">
-            {landingStats.map((stat, index) => (
-              <div
-                key={stat.label}
-                className={cn(
-                  "flex flex-col gap-3 opacity-0",
-                  isHeroTitleComplete && "animate-fade-in-up",
-                )}
-                style={{ animationDelay: index === 0 ? "0.25s" : "0.35s" }}
-              >
-                <dt className="text-caption uppercase tracking-[0.04em] text-muted-foreground">
-                  {stat.label}
-                </dt>
-                <dd className="flex items-baseline text-heading-sm font-normal tabular-nums sm:text-heading">
-                  <NumberTicker
-                    start={isHeroTitleComplete}
-                    delay={index * 140}
-                    useGrouping={stat.value >= 1000}
-                    value={stat.value}
-                  />
-                  <span className="ml-1 text-primary">+</span>
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-
-        <Constellation className="hidden h-[min(560px,62vh)] lg:block" />
-      </div>
-    </div>
-  );
-}
-
 // The landing composition starts at the top; only conversations follow new content to the bottom.
 function ChatViewport({ children }: { children: ReactNode }) {
   const hasMessages = useThread((state) => state.messages.length > 0);
@@ -1363,7 +1280,7 @@ export function ChatPanel({
                 <>
                   <ThreadPrimitive.Empty>
                     {temporary && landingHero ? (
-                      <LandingHeroEmpty />
+                      <LandingHero />
                     ) : (
                       <div className="flex h-full flex-col items-center justify-center space-y-4 text-center pb-20">
                         <Sparkles className="h-6 w-6 text-primary" />

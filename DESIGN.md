@@ -117,6 +117,8 @@ Small filled circle ~8px diameter, #8052ff violet for active state. Inactive dot
 
 Thousands of tiny triangular glyphs (outlined, 1-2px) in a full spectrum of vivid colors (violet, amber, teal, magenta, blue) forming an organic brain or cloud shape against pure black. Individual particles are scattered/ambient across the surrounding space as well. This is the site's defining visual — not a static image but an animated field of point-lights.
 
+**SignLoop implementation** (`apps/web/components/constellation.tsx`, driven by `landing-hero.tsx`): the cloud is a true 3D point set drawn with perspective, pinned in a sticky layer behind the landing sections. Scrolling morphs the same particles through one shape per section — brain (hero) → loose dust (manifesto) → contract page stack (Ingest) → risk-coloured bar skyline (Analyze) → hub-and-spoke model network with flowing links (Route) → the extruded SignLoop arrow mark (CTA). Morphs stagger left → right with a brief outward bloom, so shapes dissolve and re-form rather than cross-fade. It is kinetic: the pointer tilts the scene and repels nearby particles, a mouse drag spins it with inertia, and a click or tap sends a shockwave ring through it. Shapes alternate sides opposite their copy on desktop; below 1024px they sit centred at low opacity as an ambient backdrop. Reduced motion snaps between whole shapes with no idle animation. Light mode swaps in a deepened palette so the 1px strokes hold up on white.
+
 ### Section Headline Block
 **Role:** Oversized left-aligned headline + supporting copy
 

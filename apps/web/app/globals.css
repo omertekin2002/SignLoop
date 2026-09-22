@@ -226,6 +226,44 @@
   animation: fade-in-up 1s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* Landing sections (components/landing-hero.tsx): blur-lift reveal and scroll-lit copy. */
+.landing-reveal {
+  opacity: 0;
+  transform: translateY(32px);
+  filter: blur(8px);
+  transition:
+    opacity 1s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 1.2s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 1s cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+.landing-reveal[data-shown] {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+/* Each word lights up as the paragraph's `--p` (0 → 1, set on scroll) passes its index `--i`. */
+.landing-lit-word {
+  opacity: calc(0.16 + 0.84 * clamp(0, (var(--p, 0) - var(--i, 0)) * 6, 1));
+  transition: opacity 0.25s linear;
+}
+
+@keyframes landing-scroll-cue {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(5px);
+  }
+}
+
+.landing-scroll-cue svg {
+  animation: landing-scroll-cue 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
 @keyframes typingCursorBlink {
   0%,
   49% {
@@ -252,6 +290,21 @@
   .animate-fade-in-up {
     animation: none;
     opacity: 1;
+  }
+
+  .landing-reveal {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    transition: none;
+  }
+
+  .landing-lit-word {
+    opacity: 1;
+  }
+
+  .landing-scroll-cue svg {
+    animation: none;
   }
 }
 
