@@ -11,7 +11,9 @@ import { DEFAULT_PERSONALITY_MODE } from "@/lib/personality-settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useTheme } from "next-themes";
 import { toast } from "sonner";
+import { useIsClient } from "@/components/theme-toggle";
 
 const PERSONALITY_LABELS: Record<string, string> = {
   "bare-llm": "Bare LLM",
@@ -25,6 +27,8 @@ export default function SettingsPage() {
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectedPersonality, setSelectedPersonality] = useState<string>("");
   const [modelSelectOpen, setModelSelectOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
+  const isClient = useIsClient();
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["settings"],
@@ -288,6 +292,30 @@ export default function SettingsPage() {
                 </div>
               </>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Appearance</CardTitle>
+            <CardDescription>Choose a light or dark canvas, or follow your system setting.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <label className="text-sm text-foreground" htmlFor="theme">
+                Theme
+              </label>
+              <Select value={isClient ? theme : undefined} onValueChange={setTheme} disabled={!isClient}>
+                <SelectTrigger id="theme">
+                  <SelectValue placeholder="Loading theme..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="dark">Dark</SelectItem>
+                  <SelectItem value="light">Light</SelectItem>
+                  <SelectItem value="system">System</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </CardContent>
         </Card>
       </main>

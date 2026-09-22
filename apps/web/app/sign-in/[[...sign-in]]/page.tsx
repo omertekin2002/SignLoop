@@ -1,7 +1,10 @@
+"use client";
+
 import { SignIn } from "@clerk/nextjs";
-import { clerkAuthAppearance } from "@/lib/clerk-appearance";
+import { useClerkAuthAppearance } from "@/lib/clerk-appearance";
 
 export default function SignInPage() {
+  const appearance = useClerkAuthAppearance();
   return (
     <div className="relative flex min-h-dvh items-center justify-center bg-transparent px-4 py-12 sm:px-6 lg:px-8">
       <div className="w-full max-w-md space-y-6">
@@ -14,7 +17,7 @@ export default function SignInPage() {
             Continue to your contract workspace.
           </p>
         </header>
-        <SignIn appearance={clerkAuthAppearance} />
+        <SignIn appearance={appearance} />
       </div>
     </div>
   );

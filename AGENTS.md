@@ -45,7 +45,7 @@ This is a Turborepo with workspaces in `apps/*` and `packages/*`:
 
 ## Design System
 
-UI follows `DESIGN.md` at the repository root: the Dala style reference plus a "SignLoop Implementation" section that governs SignLoop code. Tokens live in `apps/web/app/globals.css` and `apps/web/tailwind.config.ts` (Tailwind v3). The app is dark-only. Use semantic or Dala token classes rather than raw palette colours, and merge classes with `cn()` so the custom type scale survives.
+UI follows `DESIGN.md` at the repository root: the Dala style reference plus a "SignLoop Implementation" section that governs SignLoop code. Tokens live in `apps/web/app/globals.css` and `apps/web/tailwind.config.ts` (Tailwind v3). The app defaults to dark and has a light theme driven by semantic tokens. Use semantic or Dala token classes rather than raw palette colours, and merge classes with `cn()` so the custom type scale survives.
 
 ## Data and Configuration
 

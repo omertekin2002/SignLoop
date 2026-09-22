@@ -26,6 +26,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { apiClient, getApiErrorMessage } from "@/lib/api-client";
 import { cn, formatDate } from "@/lib/utils";
 import {
@@ -858,6 +859,7 @@ const Dashboard = ({
 
             <div className="p-3">
               <div className="space-y-1">
+                <ThemeToggle />
                 {canUseSavedWorkspace ? (
                   <>
                     <Button

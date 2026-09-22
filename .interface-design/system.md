@@ -4,7 +4,7 @@ The source of truth is `/DESIGN.md`: the Dala style reference plus the "SignLoop
 
 ## Direction and Feel
 - Dala, "constellation floating on black velvet": pure black void, one Electric Iris (`#8052ff`) accent for action, Saffron Spark (`#ffb829`) for emphasis labels.
-- Dark only. There is no light theme.
+- Dark by default, with a light theme that only re-points the semantic tokens (see `/DESIGN.md` → Theme).
 - Hierarchy comes from scale and tracking, never weight: headings are 400, long-form body is 18px / 200.
 - Signature element: the particle constellation (`components/constellation.tsx`), used only in the landing hero.
 

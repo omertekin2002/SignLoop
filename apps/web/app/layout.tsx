@@ -26,7 +26,7 @@ export default function RootLayout({
 }>) {
   return (
     <ClerkProvider>
-      <html lang="en" className={`${inter.variable} dark`} suppressHydrationWarning>
+      <html lang="en" className={inter.variable} suppressHydrationWarning>
         <body className="font-sans antialiased bg-background text-foreground">
           <Providers>
             <div className="relative z-10">

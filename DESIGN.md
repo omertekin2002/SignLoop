@@ -373,7 +373,7 @@ PPNeueMontreal is a licensed face and is not bundled. `--font-ppneuemontreal` li
 
 ### Theme
 
-Dark only. `<html>` renders with `dark` and `next-themes` uses `forcedTheme="dark"`, which also overrides any `light` preference saved by the old Settings toggle (now removed). There is no light variant; do not add `dark:` or light-mode styles.
+Dark is the reference theme and the default. A light theme is a SignLoop extension: `next-themes` sets `.light` or `.dark` on `<html>` (default `dark`, `system` available), and the `.light` block in `globals.css` re-points only the **semantic** tokens (`--background`, `--foreground`, `--muted-foreground`, `--highlight`, …) at a white canvas. Electric Iris stays the single accent; greys, Saffron (`#a35f00`), red and verdant are deepened so text keeps 4.5:1 on white. Users switch from the sidebar toggle or Settings → Appearance. Style with semantic token classes so both themes follow; do not add `dark:` variants or raw Dala palette classes for surfaces or text. Clerk takes literal colours, so `lib/clerk-appearance.ts` mirrors both palettes.
 
 ### SignLoop extensions (not in the Dala source)
 

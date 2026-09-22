@@ -6,7 +6,8 @@
  * Design language: Dala — "constellation floating on black velvet". See /DESIGN.md.
  * The first block mirrors DESIGN.md "Quick Start" verbatim; everything after it is the
  * SignLoop mapping onto the shadcn semantic tokens that the components consume.
- * The theme is dark-only: the void is the design, so there is no light variant.
+ * Dark is the reference theme; `.light` (set by next-themes) re-points the semantic tokens at a
+ * paper-white canvas while keeping the same single violet accent.
  */
 @layer base {
   :root {
@@ -125,12 +126,46 @@
     --destructive: var(--color-signal-red);
     --destructive-foreground: var(--color-bone-white);
     --success: var(--color-verdant-glow);
+    --code-background: var(--color-void-raised);
     --border: var(--color-hairline);
     --input: var(--color-hairline-strong);
     --ring: var(--color-electric-iris);
     --radius: var(--radius-3xl);
 
     color-scheme: dark;
+  }
+
+  /*
+   * Light mode — a SignLoop extension, not in the Dala source. Only semantic tokens move; the Dala
+   * palette keeps its literal names. Greys and Saffron are darkened because the dark-theme values
+   * fall below 4.5:1 on white (Ash Gray 2.8:1, Saffron 1.6:1).
+   */
+  .light {
+    --background: #ffffff;
+    --foreground: #0a0a0a;
+    --card: #ffffff;
+    --card-foreground: #0a0a0a;
+    --popover: #ffffff;
+    --popover-foreground: #0a0a0a;
+    --primary: var(--color-electric-iris); /* white on iris 4.9:1 */
+    --primary-foreground: #ffffff;
+    --secondary: #f2f2f2;
+    --secondary-foreground: #0a0a0a;
+    --muted: #f2f2f2;
+    --muted-foreground: #6b6b6b; /* 5.3:1 on white */
+    --subtle-foreground: #4d4d4d;
+    --accent: #f2f2f2;
+    --accent-foreground: #0a0a0a;
+    --highlight: #a35f00; /* Saffron, deepened to 5.0:1 on white */
+    --destructive: #d42a2a;
+    --destructive-foreground: #ffffff;
+    --success: var(--color-deep-verdant); /* 4.6:1 on white */
+    --code-background: #f5f5f5;
+    --border: #e6e6e6;
+    --input: #cfcfcf;
+    --ring: var(--color-electric-iris);
+
+    color-scheme: light;
   }
 }
 
@@ -146,7 +181,7 @@
 
   ::selection {
     background-color: color-mix(in srgb, var(--color-electric-iris) 45%, transparent);
-    color: var(--color-bone-white);
+    color: var(--foreground);
   }
 }
 
