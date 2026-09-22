@@ -673,7 +673,7 @@ export function Constellation({ className, stageRef, interactionRef }: Constella
 
       // Ease the stage toward the scroll position; reduced motion snaps between whole shapes.
       const target = stageRef?.current ?? 0;
-      stage = motion ? stage + (target - stage) * (1 - Math.exp(-dt / 140)) : Math.round(target);
+      stage = motion ? stage + (target - stage) * (1 - Math.exp(-dt / 240)) : Math.round(target);
       if (Math.abs(target - stage) < 0.0005) stage = target;
       const fromIndex = Math.min(field.shapes.length - 1, Math.floor(stage));
       const toIndex = Math.min(field.shapes.length - 1, fromIndex + 1);
@@ -723,14 +723,14 @@ export function Constellation({ className, stageRef, interactionRef }: Constella
       const repelRadius = 110;
 
       for (let i = 0; i < field.count; i += 1) {
-        const local: number = motion ? easeInOutCubic(clamp01((progress - field.delay[i]! * 0.4) / 0.6)) : progress;
+        const local: number = motion ? easeInOutCubic(clamp01((progress - field.delay[i]! * 0.5) / 0.5)) : progress;
         shapePoint(from, i, clock, point);
         let x = point[0];
         let y = point[1];
         let z = point[2];
         if (local > 0) {
           shapePoint(to, i, clock, next);
-          const bloom = Math.sin(local * Math.PI) * 0.45;
+          const bloom = Math.sin(local * Math.PI) * 0.55;
           x = lerp(x, next[0], local) + field.scatter[i * 3]! * bloom;
           y = lerp(y, next[1], local) + field.scatter[i * 3 + 1]! * bloom;
           z = lerp(z, next[2], local) + field.scatter[i * 3 + 2]! * bloom;

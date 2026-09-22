@@ -226,7 +226,7 @@
   animation: fade-in-up 1s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-/* Landing sections (components/landing-hero.tsx): blur-lift reveal and scroll-lit copy. */
+/* Landing sections (components/landing-hero.tsx): blur-lift reveal, lit copy, and touch snapping. */
 .landing-reveal {
   opacity: 0;
   transform: translateY(32px);
@@ -244,10 +244,37 @@
   filter: none;
 }
 
-/* Each word lights up as the paragraph's `--p` (0 → 1, set on scroll) passes its index `--i`. */
+/*
+ * Lit paragraphs: each word brightens in reading order as `--p` runs 0 → 1 after the paragraph is
+ * shown. `--p` is registered so it can transition; `--i` is the word's position in the paragraph.
+ */
+@property --p {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+.landing-lit {
+  --p: 0;
+  transition: --p 2.4s cubic-bezier(0.3, 0, 0.3, 1) var(--reveal-delay, 0ms);
+}
+
+.landing-lit[data-shown] {
+  --p: 1;
+}
+
 .landing-lit-word {
-  opacity: calc(0.16 + 0.84 * clamp(0, (var(--p, 0) - var(--i, 0)) * 6, 1));
-  transition: opacity 0.25s linear;
+  opacity: calc(0.16 + 0.84 * clamp(0, (var(--p, 0) * 1.2 - var(--i, 0)) * 5, 1));
+}
+
+/* Touch devices snap natively between landing slides; desktop pages in JS (useSlideSnap). */
+.landing-snap {
+  scroll-snap-type: y mandatory;
+}
+
+.landing-snap [data-stage] {
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
 }
 
 @keyframes landing-scroll-cue {

@@ -33,7 +33,8 @@ const smoothstep = (edge0: number, edge1: number, value: number) => {
 };
 
 // Maps the scroller position to a fractional constellation stage. Each section holds its shape
-// while it is centred and morphs to the next shape across the gap between section centres.
+// while it is centred and morphs to the next shape across nearly the whole gap between section
+// centres, so a slide glide spends almost all of its time mid-morph.
 function useScrollStage(rootRef: React.RefObject<HTMLDivElement | null>) {
   const stageRef = useRef(0);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
@@ -72,8 +73,8 @@ function useScrollStage(rootRef: React.RefObject<HTMLDivElement | null>) {
             stage =
               index +
               smoothstep(
-                0.15,
-                0.85,
+                0.05,
+                0.95,
                 (position - start) / Math.max(1, end - start),
               );
             break;
@@ -81,20 +82,6 @@ function useScrollStage(rootRef: React.RefObject<HTMLDivElement | null>) {
         }
       }
       stageRef.current = stage;
-
-      // Scroll-lit copy: `--p` runs 0 → 1 as the block travels up through the viewport.
-      for (const block of root.querySelectorAll<HTMLElement>(
-        "[data-scroll-lit]",
-      )) {
-        const rect = block.getBoundingClientRect();
-        const progress =
-          (scrollerRect.top + height * 0.85 - rect.top) /
-          (rect.height + height * 0.35);
-        block.style.setProperty(
-          "--p",
-          Math.min(1, Math.max(0, progress)).toFixed(3),
-        );
-      }
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update);
@@ -119,7 +106,242 @@ function useScrollStage(rootRef: React.RefObject<HTMLDivElement | null>) {
   return { stageRef, viewportHeight };
 }
 
-// Fades and lifts `[data-reveal]` children into place the first time they enter the scroller.
+// Long and evenly paced so the morph between shapes gets room to play out.
+const GLIDE_MS = 2000;
+const SETTLE_MS = 500;
+const easeInOutSine = (t: number) => -(Math.cos(Math.PI * t) - 1) / 2;
+
+// Scroll range in which a slide is at rest. A slide that fits the viewport rests at one position
+// (centred); a taller one rests anywhere from its top edge to its bottom edge.
+type Slide = { start: number; end: number };
+
+// Sections carry 64px of vertical padding each side, so overflow up to this much only trims
+// padding when centred; treating those as tall slides would cost an extra gesture for nothing.
+const PADDING_OVERFLOW = 120;
+
+// Pages the landing one slide at a time so it never rests between shapes. Wheels, trackpads, and
+// keys glide to the next slide, and one gesture moves one slide however hard it flicks; scrollbar
+// drags and focus or find-in-page jumps settle onto the nearest slide. Touch devices use native
+// CSS snapping instead (`.landing-snap`), which feels right under a finger.
+function useSlideSnap(rootRef: React.RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const root = rootRef.current;
+    const scroller = root ? findScrollParent(root) : null;
+    if (!root || !scroller) return;
+
+    if (window.matchMedia("(pointer: coarse)").matches) {
+      scroller.classList.add("landing-snap");
+      return () => scroller.classList.remove("landing-snap");
+    }
+
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    // Frame-by-frame scrollTop writes would each start a smooth scroll under `scroll-smooth`.
+    const previousBehavior = scroller.style.scrollBehavior;
+    scroller.style.scrollBehavior = "auto";
+
+    let animation = 0;
+    let animating = false;
+    let settleTimer = 0;
+    let draggingScrollbar = false;
+    // Wheel gesture tracking: after a page turn, further events belong to the same gesture (or its
+    // trackpad momentum) until the wheel goes quiet or a fresh, stronger swipe begins.
+    let locked = false;
+    let lastWheel = 0;
+    let accumulated = 0;
+    const recentDeltas: number[] = [];
+
+    const slides = (): Slide[] => {
+      const height = scroller.clientHeight;
+      const max = scroller.scrollHeight - height;
+      const offset = scroller.scrollTop - scroller.getBoundingClientRect().top;
+      const clamp = (value: number) => Math.min(max, Math.max(0, value));
+      return Array.from(
+        root.querySelectorAll<HTMLElement>("[data-stage]"),
+        (section) => {
+          const rect = section.getBoundingClientRect();
+          const top = rect.top + offset;
+          if (rect.height <= height + PADDING_OVERFLOW) {
+            const anchor = clamp(top + rect.height / 2 - height / 2);
+            return { start: anchor, end: anchor };
+          }
+          return { start: clamp(top), end: clamp(top + rect.height - height) };
+        },
+      );
+    };
+
+    const glideTo = (target: number, duration = GLIDE_MS) => {
+      cancelAnimationFrame(animation);
+      const from = scroller.scrollTop;
+      const distance = target - from;
+      if (Math.abs(distance) < 1 || duration <= 0 || reducedMotion.matches) {
+        scroller.scrollTop = target;
+        animating = false;
+        return;
+      }
+      animating = true;
+      const startedAt = performance.now();
+      const step = (now: number) => {
+        const t = Math.min(1, (now - startedAt) / duration);
+        scroller.scrollTop = from + distance * easeInOutSine(t);
+        if (t < 1) animation = requestAnimationFrame(step);
+        else animating = false;
+      };
+      animation = requestAnimationFrame(step);
+    };
+
+    // Moves one step: through the rest of a tall slide first (by `amount`), then to the next slide.
+    // Returns "inside" when it only scrolled within the current slide.
+    const advance = (direction: 1 | -1, amount: number, smooth: boolean) => {
+      const list = slides();
+      const position = scroller.scrollTop;
+      const current = list.find(
+        (slide) => position >= slide.start - 2 && position <= slide.end + 2,
+      );
+      if (current) {
+        const edge = direction > 0 ? current.end : current.start;
+        if ((edge - position) * direction > 2) {
+          const target =
+            direction > 0
+              ? Math.min(edge, position + amount)
+              : Math.max(edge, position - amount);
+          if (smooth) glideTo(target, SETTLE_MS);
+          else scroller.scrollTop = target;
+          return "inside";
+        }
+      }
+      // The next slide in this direction, whether we are at rest on a slide or between two.
+      const next =
+        direction > 0
+          ? list.find((slide) => slide.start > position + 2)
+          : list.filter((slide) => slide.end < position - 2).at(-1);
+      if (next) glideTo(direction > 0 ? next.start : next.end);
+      return "page";
+    };
+
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      event.preventDefault();
+      const now = performance.now();
+      const unit =
+        event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
+      const delta = event.deltaY * unit;
+      const magnitude = Math.abs(delta);
+      const quiet = now - lastWheel > 160;
+      const average =
+        recentDeltas.reduce((sum, value) => sum + value, 0) /
+        Math.max(1, recentDeltas.length);
+      // Momentum only decays, so a delta well above the recent average is a new swipe.
+      const surge =
+        recentDeltas.length > 0 && magnitude > 20 && magnitude > average * 1.6;
+      lastWheel = now;
+      recentDeltas.push(magnitude);
+      if (recentDeltas.length > 6) recentDeltas.shift();
+
+      if (animating) return;
+      if (quiet || surge) {
+        locked = false;
+        accumulated = 0;
+      }
+      if (locked) return;
+      accumulated += delta;
+      if (Math.abs(accumulated) < 8) return;
+      const direction = accumulated > 0 ? 1 : -1;
+      if (advance(direction, Math.abs(accumulated), false) === "inside") {
+        accumulated = 0;
+        return;
+      }
+      locked = true;
+      accumulated = 0;
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (!scroller.getClientRects().length) return; // chat tab hidden
+      // Only when nothing else owns the keyboard: focus is on the page body or the landing itself.
+      const active = document.activeElement;
+      if (active && active !== document.body && !root.contains(active)) return;
+      if (event.key === " " && active?.closest("button, a, [role=button]")) return;
+
+      const page = scroller.clientHeight * 0.85;
+      const down =
+        event.key === "ArrowDown" ||
+        event.key === "PageDown" ||
+        (event.key === " " && !event.shiftKey);
+      const up =
+        event.key === "ArrowUp" ||
+        event.key === "PageUp" ||
+        (event.key === " " && event.shiftKey);
+      if (down) advance(1, page, true);
+      else if (up) advance(-1, page, true);
+      else if (event.key === "Home") glideTo(slides()[0]?.start ?? 0);
+      else if (event.key === "End") glideTo(slides().at(-1)?.end ?? scroller.scrollTop);
+      else return;
+      event.preventDefault();
+    };
+
+    // Anything that leaves the page between slides (scrollbar, focus, find-in-page, resize) settles.
+    const settle = (duration = SETTLE_MS) => {
+      if (animating || draggingScrollbar) return;
+      const list = slides();
+      const position = scroller.scrollTop;
+      if (list.some((slide) => position >= slide.start - 1 && position <= slide.end + 1)) {
+        return;
+      }
+      let target = position;
+      let best = Infinity;
+      for (const slide of list) {
+        const edge = position < slide.start ? slide.start : slide.end;
+        if (Math.abs(edge - position) < best) {
+          best = Math.abs(edge - position);
+          target = edge;
+        }
+      }
+      glideTo(target, duration);
+    };
+
+    const onScroll = () => {
+      if (animating) return;
+      window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(() => settle(), 160);
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      // Presses right of the content box land on the scrollbar.
+      const rect = scroller.getBoundingClientRect();
+      if (event.clientX - rect.left >= scroller.clientWidth) draggingScrollbar = true;
+    };
+    const onPointerUp = () => {
+      if (!draggingScrollbar) return;
+      draggingScrollbar = false;
+      settle();
+    };
+
+    const resizeObserver = new ResizeObserver(() => settle(0));
+    resizeObserver.observe(scroller);
+    resizeObserver.observe(root);
+
+    scroller.addEventListener("wheel", onWheel, { passive: false });
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    scroller.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      cancelAnimationFrame(animation);
+      window.clearTimeout(settleTimer);
+      resizeObserver.disconnect();
+      scroller.removeEventListener("wheel", onWheel);
+      scroller.removeEventListener("scroll", onScroll);
+      scroller.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("keydown", onKeyDown);
+      scroller.style.scrollBehavior = previousBehavior;
+    };
+  }, [rootRef]);
+}
+
+// Fades and lifts `[data-reveal]` children into place, and starts `[data-lit]` paragraphs lighting
+// word by word, the first time they enter the scroller.
 function useReveal(rootRef: React.RefObject<HTMLDivElement | null>) {
   useEffect(() => {
     const root = rootRef.current;
@@ -134,7 +356,7 @@ function useReveal(rootRef: React.RefObject<HTMLDivElement | null>) {
       },
       { root: findScrollParent(root), threshold: 0.25 },
     );
-    for (const element of root.querySelectorAll("[data-reveal]"))
+    for (const element of root.querySelectorAll("[data-reveal], [data-lit]"))
       observer.observe(element);
     return () => observer.disconnect();
   }, [rootRef]);
@@ -160,10 +382,23 @@ function Reveal({
   );
 }
 
-function ScrollLit({ text, className }: { text: string; className?: string }) {
+// Words light up in reading order once the paragraph is shown (see `.landing-lit` in globals.css).
+function LitParagraph({
+  text,
+  delay = 0,
+  className,
+}: {
+  text: string;
+  delay?: number;
+  className?: string;
+}) {
   const words = text.split(" ");
   return (
-    <p data-scroll-lit="" className={className}>
+    <p
+      data-lit=""
+      className={cn("landing-lit", className)}
+      style={{ "--reveal-delay": `${delay}ms` } as CSSProperties}
+    >
       {words.map((word, index) => (
         <span
           key={index}
@@ -190,7 +425,7 @@ function Section({
     <section
       data-stage={stage}
       className={cn(
-        "relative mx-auto flex min-h-[var(--landing-vh)] w-full max-w-page flex-col justify-center px-6 py-24 sm:px-10 lg:px-16",
+        "relative mx-auto flex min-h-[var(--landing-vh)] w-full max-w-page flex-col justify-center px-6 py-16 sm:px-10 lg:px-16",
         align === "center" && "items-center text-center",
         align === "right" && "lg:items-end",
       )}
@@ -220,6 +455,7 @@ export function LandingHero() {
   const rootRef = useRef<HTMLDivElement>(null);
   const [isHeroTitleComplete, setIsHeroTitleComplete] = useState(false);
   const { stageRef, viewportHeight } = useScrollStage(rootRef);
+  useSlideSnap(rootRef);
   useReveal(rootRef);
 
   return (
@@ -292,10 +528,11 @@ export function LandingHero() {
             <p className="app-eyebrow mb-8">The problem</p>
           </Reveal>
           <div className="space-y-10">
-            {manifesto.map((paragraph) => (
-              <ScrollLit
+            {manifesto.map((paragraph, index) => (
+              <LitParagraph
                 key={paragraph}
                 text={paragraph}
+                delay={index * 900}
                 className="text-heading-2xs font-normal sm:text-subheading lg:text-heading-sm"
               />
             ))}
