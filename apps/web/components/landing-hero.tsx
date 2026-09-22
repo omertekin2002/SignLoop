@@ -544,21 +544,18 @@ export function LandingHero({ backdrop }: { backdrop: HTMLElement | null }) {
 
         <Section stage={2} align="left">
           <Reveal>
-            <p className="app-eyebrow">01 · Ingest</p>
-          </Reveal>
-          <Reveal delay={80}>
-            <h2 className="mt-6 text-heading-sm font-normal lg:text-heading-lg">
+            <h2 className="text-heading-sm font-normal lg:text-heading-lg">
               Bring your documents.
             </h2>
           </Reveal>
-          <Reveal delay={160}>
+          <Reveal delay={80}>
             <p className="app-lede mt-8">
               Drop in a PDF, a Word file, or a phone photo of a signed page.
               SignLoop extracts document text and uses OCR for image uploads.
               Scanned PDFs need a usable text layer.
             </p>
           </Reveal>
-          <Reveal delay={240}>
+          <Reveal delay={160}>
             <ul
               className="mt-10 flex flex-wrap gap-2"
               aria-label="Supported formats"
@@ -577,14 +574,11 @@ export function LandingHero({ backdrop }: { backdrop: HTMLElement | null }) {
 
         <Section stage={3} align="right">
           <Reveal>
-            <p className="app-eyebrow">02 · Analyze</p>
-          </Reveal>
-          <Reveal delay={80}>
-            <h2 className="mt-6 text-heading-sm font-normal lg:text-heading-lg">
+            <h2 className="text-heading-sm font-normal lg:text-heading-lg">
               Risk, clause by clause.
             </h2>
           </Reveal>
-          <Reveal delay={160}>
+          <Reveal delay={80}>
             <p className="app-lede mt-8">
               Structured analysis rates each contract low, medium, or high risk,
               then shows its working. The clauses that matter rise to the top.
@@ -592,7 +586,7 @@ export function LandingHero({ backdrop }: { backdrop: HTMLElement | null }) {
               notices in the result.
             </p>
           </Reveal>
-          <Reveal delay={240}>
+          <Reveal delay={160}>
             <ul className="mt-10 divide-y divide-border border-y border-border">
               {analysisOutputs.map((output, index) => (
                 <li
@@ -611,21 +605,18 @@ export function LandingHero({ backdrop }: { backdrop: HTMLElement | null }) {
 
         <Section stage={4} align="left">
           <Reveal>
-            <p className="app-eyebrow">03 · Route</p>
-          </Reveal>
-          <Reveal delay={80}>
-            <h2 className="mt-6 text-heading-sm font-normal lg:text-heading-lg">
+            <h2 className="text-heading-sm font-normal lg:text-heading-lg">
               Model choice, with fallback.
             </h2>
           </Reveal>
-          <Reveal delay={160}>
+          <Reveal delay={80}>
             <p className="app-lede mt-8">
               Choose a model in Settings. If it cannot start answering, SignLoop
               can try a fallback. A response interrupted after it begins needs a
               retry.
             </p>
           </Reveal>
-          <Reveal delay={240}>
+          <Reveal delay={160}>
             <p className="app-lede mt-6">
               Then keep talking. Ask chat to find and read your saved contracts.
               Project reference documents inform structured analysis through
