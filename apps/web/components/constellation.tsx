@@ -50,7 +50,7 @@ const DESKTOP_POSES: Pose[] = [
   { x: 0.73, scale: 1, alpha: 1, yaw: -0.25, pitch: 0.1, sway: 0.3 },
   { x: 0.5, scale: 1.05, alpha: 0.75, yaw: 0.4, pitch: 0.1, sway: 0.25 },
   { x: 0.72, scale: 0.95, alpha: 1, yaw: -0.45, pitch: 0.12, sway: 0.3 },
-  { x: 0.29, scale: 0.9, alpha: 1, yaw: 0.65, pitch: 0.38, sway: 0.35 },
+  { x: 0.26, scale: 0.74, alpha: 1, yaw: 0.3, pitch: 0.28, sway: 0.2 },
   { x: 0.72, scale: 0.95, alpha: 1, yaw: 0.2, pitch: 0.25, sway: 0.9 },
   { x: 0.5, scale: 0.85, alpha: 0.6, yaw: 0, pitch: 0.08, sway: 0.45 },
 ];
@@ -305,27 +305,69 @@ function buildDocument(count: number, ambient: Uint8Array, dust: Float32Array, b
   return { positions, colors };
 }
 
-// A 5×5 field of columns, one per clause, whose heights read as risk: verdant → saffron → magenta.
+// A grouped 3D bar chart: three rows of six clause bars whose heights climb left → right and are
+// coloured by risk (verdant → saffron → magenta). Bars are crisp wireframe boxes with lit lids,
+// standing on floor axes so the whole thing reads as a chart, not a skyline.
 function buildSkyline(count: number, ambient: Uint8Array, dust: Float32Array, baseColors: Uint8Array): Shape {
   const random = mulberry32(0x5c1e);
-  const grid = 5;
-  const spacing = 0.42;
+  const columnsX = 6;
+  const rows = 3;
+  const spacingX = 0.34;
+  const spacingZ = 0.46;
   const size = 0.2;
-  const floor = 0.55;
-  const columns: { x: number; z: number; h: number; color: number; area: number }[] = [];
-  for (let gx = 0; gx < grid; gx += 1) {
-    for (let gz = 0; gz < grid; gz += 1) {
-      const cx = (gx - (grid - 1) / 2) * spacing;
-      const cz = (gz - (grid - 1) / 2) * spacing;
-      // Mostly low risk, with a ridge of high-risk clauses so the chart has a story.
-      const ridge = Math.exp(-((cx - 0.3) ** 2 + (cz + 0.2) ** 2) * 2.5);
-      const h = 0.14 + ridge * 1.15 + random() * 0.3;
-      const color = h > 0.8 ? MAGENTA : h > 0.45 ? SAFFRON : VERDANT;
-      columns.push({ x: cx, z: cz, h, color, area: 4 * h + 8 * size });
+  const floor = 0.62;
+  const half = size / 2;
+  // Row heights (low → high risk), each row offset so the rows stay distinct from any angle.
+  const heights = [
+    [0.12, 0.2, 0.3, 0.46, 0.66, 0.92],
+    [0.16, 0.26, 0.4, 0.58, 0.84, 1.14],
+    [0.1, 0.16, 0.24, 0.36, 0.52, 0.74],
+  ];
+
+  type Segment = { a: Vec3; b: Vec3; color: number; length: number };
+  const segments: Segment[] = [];
+  const lids: { x: number; z: number; top: number; color: number }[] = [];
+  const addSegment = (a: Vec3, b: Vec3, color: number, weight = 1) => {
+    segments.push({ a, b, color, length: Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) * weight });
+  };
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columnsX; column += 1) {
+      const cx = (column - (columnsX - 1) / 2) * spacingX;
+      const cz = (row - (rows - 1) / 2) * spacingZ;
+      const h = heights[row]![column]!;
+      const top = floor - h;
+      const color = h > 0.7 ? MAGENTA : h > 0.34 ? SAFFRON : VERDANT;
+      const corners: [number, number][] = [
+        [-half, -half],
+        [half, -half],
+        [half, half],
+        [-half, half],
+      ];
+      for (const [index, [dx, dz]] of corners.entries()) {
+        const [nx, nz] = corners[(index + 1) % corners.length]!;
+        addSegment([cx + dx, floor, cz + dz], [cx + dx, top, cz + dz], color); // vertical edge
+        addSegment([cx + dx, top, cz + dz], [cx + nx, top, cz + nz], color, 1.6); // lid outline
+        addSegment([cx + dx, floor, cz + dz], [cx + nx, floor, cz + nz], color, 0.6); // footprint
+      }
+      lids.push({ x: cx, z: cz, top, color });
     }
   }
-  const areaTotal = columns.reduce((sum, column) => sum + column.area, 0);
 
+  // Chart axes along the floor's front and left edges, plus a vertical value axis.
+  const left = -((columnsX - 1) / 2) * spacingX - 0.2;
+  const right = ((columnsX - 1) / 2) * spacingX + 0.2;
+  const front = ((rows - 1) / 2) * spacingZ + 0.26;
+  const back = -((rows - 1) / 2) * spacingZ - 0.26;
+  addSegment([left, floor, front], [right, floor, front], IRIS_LIFT, 1.4);
+  addSegment([left, floor, front], [left, floor, back], IRIS_LIFT, 1.4);
+  addSegment([left, floor, back], [left, floor - 1.2, back], IRIS_LIFT, 1.4);
+  for (let tick = 1; tick <= 4; tick += 1) {
+    const y = floor - tick * 0.28;
+    addSegment([left, y, back], [left + 0.08, y, back], IRIS_LIFT, 1.5);
+  }
+
+  const lengthTotal = segments.reduce((sum, segment) => sum + segment.length, 0);
   const positions = new Float32Array(count * 3);
   const colors = new Uint8Array(count);
   for (let i = 0; i < count; i += 1) {
@@ -334,42 +376,32 @@ function buildSkyline(count: number, ambient: Uint8Array, dust: Float32Array, ba
       colors[i] = baseColors[i] ?? 0;
       continue;
     }
-    // 12% form the base plate grid; the rest are placed on column surfaces weighted by area.
-    if (random() < 0.12) {
-      const span = (grid - 1) * spacing + size * 2;
-      const onX = random() < 0.5;
-      const line = Math.round(random() * (grid - 1)) - (grid - 1) / 2;
-      const along = (random() - 0.5) * span;
-      positions.set(onX ? [along, floor, line * spacing] : [line * spacing, floor, along], i * 3);
-      colors[i] = IRIS;
+    // 14% fill the lids so each bar's top reads as a solid cap.
+    if (random() < 0.14) {
+      const lid = lids[Math.floor(random() * lids.length)]!;
+      positions.set([lid.x + (random() - 0.5) * size, lid.top, lid.z + (random() - 0.5) * size], i * 3);
+      colors[i] = lid.color;
       continue;
     }
-    let roll = random() * areaTotal;
-    let column = columns[0]!;
-    for (const candidate of columns) {
-      roll -= candidate.area;
+    let roll = random() * lengthTotal;
+    let segment = segments[0]!;
+    for (const candidate of segments) {
+      roll -= candidate.length;
       if (roll <= 0) {
-        column = candidate;
+        segment = candidate;
         break;
       }
     }
-    const half = size / 2;
-    const top = floor - column.h;
-    const cornerX = random() < 0.5 ? -half : half;
-    const cornerZ = random() < 0.5 ? -half : half;
-    const along = (random() - 0.5) * size;
-    const pick = random();
-    let px: number;
-    let py: number;
-    let pz: number;
-    // Wireframe boxes: vertical edges, the top outline, and a light scatter across the lid.
-    if (pick < 0.55) [px, py, pz] = [column.x + cornerX, floor - random() * column.h, column.z + cornerZ];
-    else if (pick < 0.85) {
-      [px, py, pz] =
-        random() < 0.5 ? [column.x + along, top, column.z + cornerZ] : [column.x + cornerX, top, column.z + along];
-    } else [px, py, pz] = [column.x + along, top, column.z + (random() - 0.5) * size];
-    positions.set([px, py, pz], i * 3);
-    colors[i] = column.color;
+    const t = random();
+    positions.set(
+      [
+        lerp(segment.a[0], segment.b[0], t),
+        lerp(segment.a[1], segment.b[1], t),
+        lerp(segment.a[2], segment.b[2], t),
+      ],
+      i * 3,
+    );
+    colors[i] = segment.color;
   }
   return { positions, colors };
 }
