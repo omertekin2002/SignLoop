@@ -1,3 +1,4 @@
+import { readBoundedJson } from "@/lib/bounded-response";
 import { getErrorMessage } from "@/lib/utils";
 import { isIP } from "node:net";
 import { isPublicIpAddress } from "@/lib/public-ip";
@@ -36,12 +37,21 @@ export function validatePublicHttpUrl(input: string): URL {
   try {
     url = new URL(input.trim());
   } catch {
-    throw new UrlReadError(`Invalid URL: ${input.slice(0, 200)}`, INVALID_ADDRESS);
+    throw new UrlReadError(
+      `Invalid URL: ${input.slice(0, 200)}`,
+      INVALID_ADDRESS,
+    );
   }
-  if (input.length > 2048 || (url.protocol !== "http:" && url.protocol !== "https:"))
+  if (
+    input.length > 2048 ||
+    (url.protocol !== "http:" && url.protocol !== "https:")
+  )
     throw new UrlReadError(`Unsupported URL: ${url.protocol}`, INVALID_ADDRESS);
   if (url.username || url.password)
-    throw new UrlReadError("URLs with credentials are not allowed", INVALID_ADDRESS);
+    throw new UrlReadError(
+      "URLs with credentials are not allowed",
+      INVALID_ADDRESS,
+    );
   const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
   const isAddress = isIP(host) !== 0;
   if (
@@ -78,13 +88,18 @@ async function readWithFirecrawl(
     }),
     signal,
   });
-  if (!response.ok) throw new Error(`Firecrawl responded with ${response.status}`);
-  const payload = (await response.json()) as {
+  if (!response.ok)
+    throw new Error(`Firecrawl responded with ${response.status}`);
+  const payload = (await readBoundedJson(response, signal)) as {
     success?: boolean;
-    data?: { markdown?: string; metadata?: { title?: string; sourceURL?: string } };
+    data?: {
+      markdown?: string;
+      metadata?: { title?: string; sourceURL?: string };
+    };
   };
   const content = payload.data?.markdown?.trim();
-  if (!payload.success || !content) throw new Error("Firecrawl returned no markdown");
+  if (!payload.success || !content)
+    throw new Error("Firecrawl returned no markdown");
   return {
     provider: "firecrawl",
     title: sanitizeTitle(payload.data?.metadata?.title, url.hostname),
@@ -106,8 +121,9 @@ async function readWithJina(
     },
     signal,
   });
-  if (!response.ok) throw new Error(`Jina Reader responded with ${response.status}`);
-  const payload = (await response.json()) as {
+  if (!response.ok)
+    throw new Error(`Jina Reader responded with ${response.status}`);
+  const payload = (await readBoundedJson(response, signal)) as {
     data?: { title?: string; url?: string; content?: string };
   };
   const content = payload.data?.content?.trim();
@@ -140,14 +156,19 @@ export async function readUrl(
         result = await readWithFirecrawl(url, firecrawlKey, signal);
       } catch (error) {
         if (signal.aborted) throw error;
-        console.warn("Firecrawl read failed, falling back to Jina:", getErrorMessage(error));
+        console.warn(
+          "Firecrawl read failed, falling back to Jina:",
+          getErrorMessage(error),
+        );
       }
     }
     result ??= await readWithJina(url, jinaKey, signal);
     const truncated = result.content.length > MAX_PAGE_CHARACTERS;
     return {
       ...result,
-      content: truncated ? result.content.slice(0, MAX_PAGE_CHARACTERS) : result.content,
+      content: truncated
+        ? result.content.slice(0, MAX_PAGE_CHARACTERS)
+        : result.content,
       truncated,
     };
   } catch (error) {

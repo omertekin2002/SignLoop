@@ -29,7 +29,9 @@
     "LANGFUSE_BASE_URL",
     "LANGFUSE_RECORD_CONTENT",
     "FIRECRAWL_API_KEY",
-    "JINA_API_KEY"
+    "JINA_API_KEY",
+    "CHAT_DAILY_REQUEST_LIMIT",
+    "CHAT_CONCURRENCY_LIMIT"
   ],
   "tasks": {
     "build": {

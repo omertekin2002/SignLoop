@@ -1,3 +1,4 @@
+import { readBoundedJson } from "@/lib/bounded-response";
 import { getErrorMessage, isRecord } from "@/lib/utils";
 import {
   searchWeb as geminiGroundedSearch,
@@ -51,7 +52,11 @@ function env(name: string): string | null {
  */
 export function resolveWebSearchProvider(): WebSearchProviderName | null {
   const configured = env("WEB_SEARCH_PROVIDER")?.toLowerCase();
-  if (configured === "brave" || configured === "firecrawl" || configured === "gemini") {
+  if (
+    configured === "brave" ||
+    configured === "firecrawl" ||
+    configured === "gemini"
+  ) {
     return configured;
   }
   if (env("BRAVE_SEARCH_API_KEY")) return "brave";
@@ -62,7 +67,11 @@ export function resolveWebSearchProvider(): WebSearchProviderName | null {
 
 function sanitizeLine(value: unknown, maxLength: number): string {
   return typeof value === "string"
-    ? value.replace(/\p{Cc}+/gu, " ").replace(/\s+/g, " ").trim().slice(0, maxLength)
+    ? value
+        .replace(/\p{Cc}+/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, maxLength)
     : "";
 }
 
@@ -72,7 +81,9 @@ function normalizeUrl(value: unknown): string | null {
   if (!trimmed || trimmed.length > MAX_URL_CHARACTERS) return null;
   try {
     const url = new URL(trimmed);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url.toString()
+      : null;
   } catch {
     return null;
   }
@@ -92,8 +103,10 @@ function toResults(rawResults: unknown): WebSearchResult[] {
     const snippet = sanitizeLine(entry.description, MAX_SNIPPET_CHARACTERS);
     results.push({
       title:
-        sanitizeLine(entry.title, MAX_TITLE_CHARACTERS).replace(/[[\]\\]/g, "") ||
-        new URL(url).hostname,
+        sanitizeLine(entry.title, MAX_TITLE_CHARACTERS).replace(
+          /[[\]\\]/g,
+          "",
+        ) || new URL(url).hostname,
       url,
       snippet: snippet || null,
     });
@@ -103,7 +116,10 @@ function toResults(rawResults: unknown): WebSearchResult[] {
   return results;
 }
 
-async function searchBrave(query: string, signal: AbortSignal): Promise<WebSearchResult[]> {
+async function searchBrave(
+  query: string,
+  signal: AbortSignal,
+): Promise<WebSearchResult[]> {
   const apiKey = env("BRAVE_SEARCH_API_KEY");
   if (!apiKey) throw new Error("BRAVE_SEARCH_API_KEY is not set");
   const url = new URL("https://api.search.brave.com/res/v1/web/search");
@@ -113,26 +129,35 @@ async function searchBrave(query: string, signal: AbortSignal): Promise<WebSearc
     headers: { Accept: "application/json", "X-Subscription-Token": apiKey },
     signal,
   });
-  if (!response.ok) throw new Error(`Brave search responded with ${response.status}`);
-  const payload: unknown = await response.json();
+  if (!response.ok)
+    throw new Error(`Brave search responded with ${response.status}`);
+  const payload: unknown = await readBoundedJson(response, signal);
   const web = isRecord(payload) && isRecord(payload.web) ? payload.web : null;
   return toResults(web?.results);
 }
 
-async function searchFirecrawl(query: string, signal: AbortSignal): Promise<WebSearchResult[]> {
+async function searchFirecrawl(
+  query: string,
+  signal: AbortSignal,
+): Promise<WebSearchResult[]> {
   const apiKey = env("FIRECRAWL_API_KEY");
   if (!apiKey) throw new Error("FIRECRAWL_API_KEY is not set");
   const response = await fetch("https://api.firecrawl.dev/v2/search", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
     // No scrapeOptions: the model decides which results are worth a full read, which keeps the
     // search cheap and leaves the read (and its citation) an explicit step.
     body: JSON.stringify({ query, limit: MAX_RESULTS, sources: ["web"] }),
     signal,
   });
-  if (!response.ok) throw new Error(`Firecrawl search responded with ${response.status}`);
-  const payload: unknown = await response.json();
-  const data = isRecord(payload) && isRecord(payload.data) ? payload.data : null;
+  if (!response.ok)
+    throw new Error(`Firecrawl search responded with ${response.status}`);
+  const payload: unknown = await readBoundedJson(response, signal);
+  const data =
+    isRecord(payload) && isRecord(payload.data) ? payload.data : null;
   return toResults(data?.web);
 }
 
@@ -159,7 +184,9 @@ export async function searchWeb(
 
   if (provider === "gemini") {
     // Already wrapped in GeminiWebSearchError, which carries its own publicMessage.
-    const grounded = await geminiGroundedSearch(trimmed, { signal: options?.signal });
+    const grounded = await geminiGroundedSearch(trimmed, {
+      signal: options?.signal,
+    });
     return {
       provider,
       query: grounded.metadata.query || trimmed,

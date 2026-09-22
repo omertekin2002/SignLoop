@@ -1,42 +1,25 @@
 import type { ModelMessage } from "ai";
 import type { ChatMessage, ChatRole } from "@/lib/chat";
 import { isRecord } from "@/lib/utils";
+import { parseAgentMessages, parseWebSources } from "@/lib/chat-agent-history";
+export { MAX_AGENT_STATE_CHARACTERS } from "@/lib/chat-agent-history";
 
 export const MAX_CHAT_MESSAGES = 30;
 export const MAX_CHAT_MESSAGE_LENGTH = 4_000;
 export const MAX_CHAT_TOTAL_MESSAGE_LENGTH = 60_000;
 export const MAX_CHAT_REQUEST_BODY_BYTES = 128 * 1024;
 /** Serialized cap on one replayed tool transcript, applied on both the client and the server. */
-export const MAX_AGENT_STATE_CHARACTERS = 20_000;
-const MAX_AGENT_MESSAGES = 40;
-// The agent loop only ever emits assistant (tool-call) and tool (tool-result) messages here.
-const AGENT_MESSAGE_ROLES = new Set(["assistant", "tool"]);
 
 /**
  * Temporary chat has no server-side history, so a replayed tool transcript arrives from the
- * browser. It is only ever fed back to the model inside that same anonymous session — there is no
- * privilege or other user's data behind it — but it still has to be structurally sound so a
+ * browser, including for signed-in users with private contract tools. It must be structurally sound so a
  * malformed shape cannot fault the SDK or the provider call. Anything unexpected drops the whole
  * transcript rather than replaying part of it, which degrades to a text-only turn.
  */
 export function parseClientAgentMessages(
   value: unknown,
 ): ModelMessage[] | undefined {
-  if (!Array.isArray(value) || !value.length) return undefined;
-  if (value.length > MAX_AGENT_MESSAGES) return undefined;
-  if (JSON.stringify(value).length > MAX_AGENT_STATE_CHARACTERS) return undefined;
-
-  for (const entry of value) {
-    if (!isRecord(entry)) return undefined;
-    if (typeof entry.role !== "string" || !AGENT_MESSAGE_ROLES.has(entry.role)) {
-      return undefined;
-    }
-    if (typeof entry.content !== "string" && !Array.isArray(entry.content)) {
-      return undefined;
-    }
-  }
-
-  return value as ModelMessage[];
+  return parseAgentMessages(value);
 }
 
 /** Replace generated image payloads before a message is sent back to a text model. */
@@ -135,11 +118,24 @@ export function parseClientChatMessages(payload: unknown): ParsedChatMessages {
     }
 
     const agentMessages =
-      role === "assistant" ? parseClientAgentMessages(item.agentMessages) : undefined;
+      role === "assistant"
+        ? parseClientAgentMessages(item.agentMessages)
+        : undefined;
+    const webSources =
+      role === "assistant" ? parseWebSources(item.webSources) : undefined;
+    totalLength += JSON.stringify({ agentMessages, webSources }).length;
+    if (totalLength > MAX_CHAT_TOTAL_MESSAGE_LENGTH) {
+      return {
+        ok: false,
+        status: 413,
+        error: "Chat history is too large. Start a new chat.",
+      };
+    }
     normalized.push({
       role,
       content: trimmed,
       ...(agentMessages ? { agentMessages } : {}),
+      ...(webSources ? { webSources } : {}),
     });
   }
 
@@ -285,29 +281,57 @@ export function boundCanonicalChatHistory(
     if (!content) continue;
     if (content.length > remainingCharacters) break;
 
-    const agentStateSize = JSON.stringify({ agentMessages: message.agentMessages, webSources: message.webSources }).length;
-    const includeAgentState = message.role === "assistant" && message.agentMessages?.length &&
-      agentStateSize + content.length <= remainingCharacters;
-    selected.push({ role: message.role, content, ...(includeAgentState ? {
+    const sourceSize = message.webSources?.length
+      ? JSON.stringify({ webSources: message.webSources }).length
+      : 0;
+    const includeSources =
+      sourceSize > 0 && sourceSize + content.length <= remainingCharacters;
+    const agentStateSize = JSON.stringify({
       agentMessages: message.agentMessages,
-      webSources: message.webSources,
-    } : {}) });
-    remainingCharacters -= content.length + (includeAgentState ? agentStateSize : 0);
+    }).length;
+    const includeAgentState =
+      message.role === "assistant" &&
+      message.agentMessages?.length &&
+      agentStateSize + content.length + (includeSources ? sourceSize : 0) <=
+        remainingCharacters;
+    selected.push({
+      role: message.role,
+      content,
+      ...(includeAgentState
+        ? {
+            agentMessages: message.agentMessages,
+          }
+        : {}),
+      ...(includeSources ? { webSources: message.webSources } : {}),
+    });
+    remainingCharacters -=
+      content.length +
+      (includeAgentState ? agentStateSize : 0) +
+      (includeSources ? sourceSize : 0);
   }
 
   return selected.reverse();
 }
 
 /** Bound history for transport; the runtime retains the full text for display. */
-export function boundTemporaryChatHistory(messages: readonly ChatMessage[]): ChatMessage[] {
+export function boundTemporaryChatHistory(
+  messages: readonly ChatMessage[],
+): ChatMessage[] {
   const latest = messages.at(-1);
   if (!latest) return [];
   // Never silently truncate the user's new request; server validation gives a useful error.
-  const history = boundCanonicalChatHistory(messages.slice(-MAX_CHAT_MESSAGES, -1), latest.content.length);
+  const history = boundCanonicalChatHistory(
+    messages.slice(-MAX_CHAT_MESSAGES, -1),
+    latest.content.length,
+  );
   const encoder = new TextEncoder();
   const result = [...history, latest];
   // Reserve framing space for thread/mode fields and account for Unicode and JSON escaping.
-  while (result.length > 1 && encoder.encode(JSON.stringify({ messages: result })).byteLength > MAX_CHAT_REQUEST_BODY_BYTES - 2048) {
+  while (
+    result.length > 1 &&
+    encoder.encode(JSON.stringify({ messages: result })).byteLength >
+      MAX_CHAT_REQUEST_BODY_BYTES - 2048
+  ) {
     result.shift();
   }
   return result;

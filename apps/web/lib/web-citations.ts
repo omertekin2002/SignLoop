@@ -17,13 +17,16 @@ export type FigureVerification = "ok" | "no-evidence" | "unmatched";
 
 const FIGURE_NOTICES: Record<Exclude<FigureVerification, "ok">, string> = {
   "no-evidence":
-    "_No page was read for this answer, so the figures above come from the model's own knowledge rather than a source._",
+    "_The figures above were not checked against source text retrieved during this turn._",
   unmatched:
     "_The figures above could not be matched to the text of the pages that were read._",
 };
 
 export function normalizeCitationMarkers(message: string): string {
-  return message.replace(FOREIGN_CITATION_MARKER, (_match, number: string) => `[${number}]`);
+  return message.replace(
+    FOREIGN_CITATION_MARKER,
+    (_match, number: string) => `[${number}]`,
+  );
 }
 
 /** Prose only: code blocks, inline code, and link destinations are not the model's claims. */
@@ -89,7 +92,8 @@ export function appendWebSourcesToMessage(
   // so a missing citation can no longer hide which pages an answer was built from.
   const listed = new Set<number>(
     (options?.readThisTurn ?? []).filter(
-      (number) => Number.isInteger(number) && number >= 1 && number <= sources.length,
+      (number) =>
+        Number.isInteger(number) && number >= 1 && number <= sources.length,
     ),
   );
   // Sources carried over from earlier turns are listed only where this answer cites them.

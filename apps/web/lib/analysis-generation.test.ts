@@ -12,15 +12,18 @@ const payload = JSON.stringify({
 function providerResponse(status: string | undefined, text = payload) {
   return Response.json({
     id: "resp_test",
+    usage: { input_tokens: 12, output_tokens: 7, total_tokens: 19 },
     object: "response",
     status,
     incomplete_details:
       status === "incomplete" ? { reason: "max_output_tokens" } : null,
-    output: [{
-      type: "message",
-      role: "assistant",
-      content: [{ type: "output_text", text, annotations: [] }],
-    }],
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text, annotations: [] }],
+      },
+    ],
   });
 }
 
@@ -55,7 +58,8 @@ describe("analysis response completion", () => {
   );
 
   it("rejects an incomplete repair without sending the contract to fallback", async () => {
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(providerResponse("completed", "{"))
       .mockResolvedValueOnce(providerResponse("incomplete"));
     vi.stubGlobal("fetch", fetchMock);
@@ -67,16 +71,22 @@ describe("analysis response completion", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it.each([false, true])("accepts completed output (repair: %s)", async (repair) => {
-    const fetchMock = vi.fn();
-    if (repair) fetchMock.mockResolvedValueOnce(providerResponse("completed", "{"));
-    fetchMock.mockResolvedValueOnce(providerResponse("completed"));
-    vi.stubGlobal("fetch", fetchMock);
-    const { analyzeText } = await import("./analysis");
+  it.each([false, true])(
+    "accepts completed output (repair: %s)",
+    async (repair) => {
+      const fetchMock = vi.fn();
+      if (repair)
+        fetchMock.mockResolvedValueOnce(providerResponse("completed", "{"));
+      fetchMock.mockResolvedValueOnce(providerResponse("completed"));
+      vi.stubGlobal("fetch", fetchMock);
+      const { analyzeText } = await import("./analysis");
 
-    const answer = await analyzeText("Monthly payment agreement");
-    expect(answer.result.key_points).toContain("Payment is monthly");
-    expect(answer.provider).toBe("primary-openai-compatible");
-    expect(fetchMock).toHaveBeenCalledTimes(repair ? 2 : 1);
-  });
+      const answer = await analyzeText("Monthly payment agreement");
+      expect(answer.result.key_points).toContain("Payment is monthly");
+      expect(answer.provider).toBe("primary-openai-compatible");
+      expect(answer.promptTokens).toBe(repair ? 24 : 12);
+      expect(answer.completionTokens).toBe(repair ? 14 : 7);
+      expect(fetchMock).toHaveBeenCalledTimes(repair ? 2 : 1);
+    },
+  );
 });

@@ -57,11 +57,20 @@ function toAbsolutePath(storageKey: string): string {
   return path.join(/* turbopackIgnore: true */ getStorageRoot(), cleanKey);
 }
 
+/** Record the actual backend, independently of the configurable local bucket label. */
+export function getUploadCleanupKey(storageKey: string): string {
+  return isBlobEnabled()
+    ? `blob:${sanitizeStorageKey(storageKey)}`
+    : sanitizeStorageKey(storageKey);
+}
+
 export async function uploadObject(
   storageKey: string,
   buffer: Buffer,
   contentType: string,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   const cleanKey = sanitizeStorageKey(storageKey);
 
   if (isBlobEnabled()) {
@@ -71,22 +80,33 @@ export async function uploadObject(
       addRandomSuffix: false,
       allowOverwrite: false,
       contentType,
+      abortSignal: AbortSignal.any([
+        AbortSignal.timeout(20_000),
+        ...(signal ? [signal] : []),
+      ]),
     });
     return blob.url;
   }
 
   const absolutePath = toAbsolutePath(storageKey);
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.writeFile(absolutePath, buffer, { flag: "wx" });
+  await fs.writeFile(absolutePath, buffer, { flag: "wx", signal });
   return cleanKey;
 }
 
 export async function deleteObject(storageKey: string): Promise<void> {
+  // Pre-write cleanup intents know the deterministic Blob pathname before put returns its URL.
+  if (storageKey.startsWith("blob:")) {
+    await del(storageKey.slice(5), {
+      abortSignal: AbortSignal.timeout(30_000),
+    });
+    return;
+  }
   // Blob writes persist the returned HTTPS URL, whereas local writes persist a relative key.
   // Select the backend from that recorded shape so an environment/config change cannot send a
   // local key to Blob or interpret a Blob URL as a local filesystem path.
   if (isRemoteObjectUrl(storageKey)) {
-    await del(storageKey);
+    await del(storageKey, { abortSignal: AbortSignal.timeout(30_000) });
     return;
   }
 

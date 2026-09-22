@@ -14,7 +14,7 @@ The source of truth is `/DESIGN.md`: the Dala style reference plus the "SignLoop
 - Hairlines: `border` `#1f1f1f` for structure only; `input` `#333333` for form controls.
 
 ## Spacing and Shape
-- Dala uses a 6px base unit. Use Tailwind's equivalent steps (`1.5`, `3`, `4.5`, `6`, `7.5`, `9`, `15`, `24`, `30`); the Dala spacing tokens are not mapped into Tailwind.
+- Dala uses a 6px base unit. Use Tailwind's equivalent steps (`1.5`, `3`, `6`, `9`, `24`); for 18/30/60/120px use explicit values such as `gap-[18px]` and `py-[60px]`; the Dala spacing tokens are not mapped into Tailwind.
 - 24px radius for cards, dialogs, menus, and textareas (`rounded-card`); pills (`rounded-button` / `rounded-full`) for buttons, inputs, badges, and menu items.
 
 ## Core Component Patterns

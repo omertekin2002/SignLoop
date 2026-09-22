@@ -44,6 +44,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { AnalysisDetails } from "@/components/analysis-details";
 import type { AnalysisResult } from "@/lib/schemas";
 
 type AnalysisRecord = {
@@ -56,6 +57,7 @@ type AnalysisRecord = {
 };
 
 type ContractDetail = {
+  analysesHasMore?: boolean;
   title?: string | null;
   status?: string | null;
   createdAt?: string | Date | null;
@@ -138,6 +140,34 @@ const ContractDetails = () => {
     enabled: !!id,
   });
 
+  const olderHistoryMutation = useMutation({
+    mutationFn: async () =>
+      (
+        await apiClient.get<ContractDetail>(
+          `/contracts/${id}?analysisOffset=${contract?.analyses?.length ?? 0}`,
+        )
+      ).data,
+    onSuccess: (page) =>
+      queryClient.setQueryData<ContractDetail>(["contract", id], (current) =>
+        current
+          ? {
+              ...current,
+              analysesHasMore: page.analysesHasMore,
+              analyses: [
+                ...(current.analyses ?? []),
+                ...(page.analyses ?? []).filter(
+                  (item) =>
+                    !current.analyses?.some(
+                      (existing) => existing.id === item.id,
+                    ),
+                ),
+              ],
+            }
+          : current,
+      ),
+    onError: () => toast.error("Could not load older analyses. Please retry."),
+  });
+
   const analyzeMutation = useMutation({
     mutationFn: async (params?: { force?: boolean }) => {
       const force = params?.force ? "?force=true" : "";
@@ -169,13 +199,22 @@ const ContractDetails = () => {
   const selectedAnalysis = selectedAnalysisId
     ? (sortedAnalyses.find((a) => a.id === selectedAnalysisId) ?? null)
     : null;
-  const viewingOlder = Boolean(selectedAnalysis && selectedAnalysis.id !== latestAnalysisRecord?.id);
+  const viewingOlder = Boolean(
+    selectedAnalysis && selectedAnalysis.id !== latestAnalysisRecord?.id,
+  );
   const historicalAnalysisQuery = useQuery({
     queryKey: ["analysis", id, selectedAnalysisId],
     enabled: viewingOlder,
-    queryFn: async () => (await apiClient.get<AnalysisRecord>(`/contracts/${id}/analysis/${selectedAnalysisId}`)).data,
+    queryFn: async () =>
+      (
+        await apiClient.get<AnalysisRecord>(
+          `/contracts/${id}/analysis/${selectedAnalysisId}`,
+        )
+      ).data,
   });
-  const analysis = viewingOlder ? historicalAnalysisQuery.data ?? null : latestAnalysisRecord;
+  const analysis = viewingOlder
+    ? (historicalAnalysisQuery.data ?? null)
+    : latestAnalysisRecord;
   const olderAnalyses = sortedAnalyses.slice(1);
   const isViewingHistoricalAnalysis = Boolean(
     analysis?.id &&
@@ -209,14 +248,20 @@ const ContractDetails = () => {
         ? resultJson.risk_badge
         : "UNKNOWN";
 
-  const keyPoints: string[] = Array.isArray(resultJson?.key_points) ? resultJson.key_points : [];
+  const keyPoints: string[] = Array.isArray(resultJson?.key_points)
+    ? resultJson.key_points
+    : [];
   const redFlags: AnalysisResult["red_flags"] = Array.isArray(
     resultJson?.red_flags,
   )
     ? resultJson.red_flags
     : [];
-  const coverageNotices = Array.isArray(resultJson?.coverage_notices) ? resultJson.coverage_notices : [];
-  const keyFindings = keyPoints.filter((point) => !coverageNotices.includes(point));
+  const coverageNotices = Array.isArray(resultJson?.coverage_notices)
+    ? resultJson.coverage_notices
+    : [];
+  const keyFindings = keyPoints.filter(
+    (point) => !coverageNotices.includes(point),
+  );
   const summaryCancellation =
     summary?.cancellation && typeof summary.cancellation === "object"
       ? summary.cancellation
@@ -288,7 +333,9 @@ const ContractDetails = () => {
   const deleteOlderAnalysesMutation = useMutation({
     mutationFn: async () => {
       if (!latestAnalysisRecord) return;
-      await apiClient.delete(`/contracts/${id}/analysis?keep=${latestAnalysisRecord.id}`);
+      await apiClient.delete(
+        `/contracts/${id}/analysis?keep=${latestAnalysisRecord.id}`,
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["contract", id] });
@@ -350,7 +397,14 @@ const ContractDetails = () => {
   }
 
   if (viewingOlder && historicalAnalysisQuery.isError) {
-    return <div className="app-page p-8"><p>Could not load this historical analysis.</p><Button variant="outline" onClick={() => setSelectedAnalysisId(null)}>Return to latest analysis</Button></div>;
+    return (
+      <div className="app-page p-8">
+        <p>Could not load this historical analysis.</p>
+        <Button variant="outline" onClick={() => setSelectedAnalysisId(null)}>
+          Return to latest analysis
+        </Button>
+      </div>
+    );
   }
 
   if (isError) {
@@ -379,9 +433,7 @@ const ContractDetails = () => {
           <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="app-eyebrow">Contract</p>
-              <h1 className="app-title mt-3">
-                {contractTitle}
-              </h1>
+              <h1 className="app-title mt-3">{contractTitle}</h1>
               <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
                 <span>Uploaded {uploadedDateLabel}</span>
                 <span>•</span>
@@ -501,12 +553,27 @@ const ContractDetails = () => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {coverageNotices.length > 0 && <div role="status" className="mb-4 rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground">
-                    <p className="text-highlight">Analysis coverage</p>
-                    <ul className="mt-2 list-disc pl-5">{coverageNotices.map((notice) => <li key={notice}>{notice}</li>)}</ul>
-                  </div>}
+                  {coverageNotices.length > 0 && (
+                    <div
+                      role="status"
+                      className="mb-4 rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground"
+                    >
+                      <p className="text-highlight">Analysis coverage</p>
+                      <ul className="mt-2 list-disc pl-5">
+                        {coverageNotices.map((notice) => (
+                          <li key={notice}>{notice}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   {contract.status !== "ANALYZED" && (
-                    <p role="status" className="mb-4 rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground">This analysis uses older evidence. The contract or project context has changed; analyze again for a current result.</p>
+                    <p
+                      role="status"
+                      className="mb-4 rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground"
+                    >
+                      This analysis uses older evidence. The contract or project
+                      context has changed; analyze again for a current result.
+                    </p>
                   )}
                   {keyFindings.length > 0 ? (
                     <ul className="space-y-4">
@@ -872,9 +939,7 @@ const ContractDetails = () => {
                   <div className="mb-4 rounded-full border p-4">
                     <Loader2 className="h-8 w-8 text-primary animate-spin" />
                   </div>
-                  <h3 className="text-heading-2xs">
-                    Analysis in progress
-                  </h3>
+                  <h3 className="text-heading-2xs">Analysis in progress</h3>
                   <p className="text-sm text-muted-foreground max-w-sm mt-2">
                     This can take a few minutes. We’ll refresh automatically
                     when it’s ready.
@@ -885,9 +950,7 @@ const ContractDetails = () => {
                   <div className="mb-4 rounded-full border p-4">
                     <Play className="h-8 w-8 text-primary" />
                   </div>
-                  <h3 className="text-heading-2xs">
-                    No Analysis Yet
-                  </h3>
+                  <h3 className="text-heading-2xs">No Analysis Yet</h3>
                   <p className="text-sm text-muted-foreground max-w-sm mt-2 mb-6">
                     Run our AI analysis to identify risks, missing clauses, and
                     key obligations in this contract.
@@ -904,8 +967,10 @@ const ContractDetails = () => {
           </Card>
         )}
 
+        {resultJson && <AnalysisDetails result={resultJson} />}
+
         {/* Analysis History */}
-        {olderAnalyses.length > 0 && (
+        {(olderAnalyses.length > 0 || contract.analysesHasMore) && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
               <div>
@@ -920,7 +985,7 @@ const ContractDetails = () => {
                 disabled={deleteOlderAnalysesMutation.isPending}
                 onClick={() => {
                   const ok = window.confirm(
-                    `Delete ${olderAnalyses.length} older analysis(es)? This cannot be undone.`,
+                    "Delete all older analyses for this contract? This cannot be undone.",
                   );
                   if (!ok) return;
                   deleteOlderAnalysesMutation.mutate();
@@ -982,6 +1047,17 @@ const ContractDetails = () => {
                     </div>
                   </div>
                 ))}
+                {contract.analysesHasMore && (
+                  <Button
+                    variant="outline"
+                    disabled={olderHistoryMutation.isPending}
+                    onClick={() => olderHistoryMutation.mutate()}
+                  >
+                    {olderHistoryMutation.isPending
+                      ? "Loading…"
+                      : "Load older analyses"}
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>

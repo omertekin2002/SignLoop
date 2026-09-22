@@ -38,7 +38,10 @@ export async function POST(
   if (!force) {
     const gate = await getContractAnalysisGateForUser(userId, id);
     if (!gate) {
-      return NextResponse.json({ error: "Contract not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Contract not found" },
+        { status: 404 },
+      );
     }
     if (!gate.hasText) {
       return NextResponse.json(
@@ -56,94 +59,115 @@ export async function POST(
   }
 
   const release = await claimGenerationOperation(userId, "contract", id, 360);
-  if (!release) return NextResponse.json({ error: "Analysis is already running for this contract." }, { status: 409 });
-  const operationSignal = AbortSignal.any([req.signal, AbortSignal.timeout(270_000)]);
+  if (!release)
+    return NextResponse.json(
+      { error: "Analysis is already running for this contract." },
+      { status: 409 },
+    );
+  const operationSignal = AbortSignal.any([
+    req.signal,
+    AbortSignal.timeout(270_000),
+  ]);
   const startedAt = Date.now();
   try {
-  const contract = await getContractWithLatestAnalysisForUser(userId, id);
+    const contract = await getContractWithLatestAnalysisForUser(userId, id);
 
-  if (!contract) {
-    return NextResponse.json({ error: "Contract not found" }, { status: 404 });
-  }
-
-  if (!contract.text?.trim()) {
-    return NextResponse.json(
-      { error: "Contract has no text content. Upload a file first." },
-      { status: 400 },
-    );
-  }
-
-  // The gate ran before the lease. A result committed in between should still be reused.
-  if (!force && contract.status === "ANALYZED" && contract.latestAnalysis) {
-    return NextResponse.json({
-      message: "Analysis already exists",
-      jobId: "done",
-      analysisId: contract.latestAnalysis.id,
-    });
-  }
-
-  try {
-    const [settings, contextDocuments, modelSnapshot] = await Promise.all([
-      getUserSettingsByUserId(userId),
-      contract.projectId
-        ? getProjectContextForAnalysis(userId, contract.projectId)
-        : Promise.resolve([]),
-      getModelAvailabilitySnapshot(),
-    ]);
-    const selectedPrimaryModel = resolveAvailablePrimaryModel(
-      settings?.primaryModel,
-      modelSnapshot.availablePrimaryModels,
-    );
-    const { result, provider, model } = await analyzeText(
-      contract.text,
-      undefined,
-      {
-        primaryModel: selectedPrimaryModel,
-        signal: operationSignal,
-        contextDocuments: contextDocuments.map((document) => ({
-          title: document.title,
-          documentType: document.documentType,
-          text: document.extractedText,
-          originalCharacterCount: document.originalCharacterCount,
-        })),
-      },
-    );
-    const qualityWarnings = [contract.extractionWarning, ...contextDocuments.map((document) => document.extractionWarning ? `${document.title}: ${document.extractionWarning}` : null)].filter((warning): warning is string => Boolean(warning));
-    result.coverage_notices = [...qualityWarnings, ...(result.coverage_notices ?? [])];
-    const created = await createAnalysisForContract({
-      userId,
-      contractId: contract.id,
-      expectedRevision: contract.revision,
-      riskBadge:
-        typeof result.risk_badge === "string" ? result.risk_badge : null,
-      resultJson: result as Record<string, unknown>,
-      llmProvider: provider ?? null,
-      llmModel: model ?? null,
-      processingTimeMs: Date.now() - startedAt,
-    });
-
-    return NextResponse.json({
-      message: "Analysis complete",
-      jobId: "done",
-      analysisId: created.id,
-    });
-  } catch (error: unknown) {
-    if (error instanceof ContractRevisionChangedError) {
+    if (!contract) {
       return NextResponse.json(
-        {
-          error:
-            "The contract changed while analysis was running. Please analyze it again.",
-        },
-        { status: 409 },
+        { error: "Contract not found" },
+        { status: 404 },
       );
     }
-    console.error("Analysis error:", error);
-    return NextResponse.json(
-      { error: "Analysis failed. Please try again." },
-      { status: 500 },
-    );
-  }
+
+    if (!contract.text?.trim()) {
+      return NextResponse.json(
+        { error: "Contract has no text content. Upload a file first." },
+        { status: 400 },
+      );
+    }
+
+    // The gate ran before the lease. A result committed in between should still be reused.
+    if (!force && contract.status === "ANALYZED" && contract.latestAnalysis) {
+      return NextResponse.json({
+        message: "Analysis already exists",
+        jobId: "done",
+        analysisId: contract.latestAnalysis.id,
+      });
+    }
+
+    try {
+      const [settings, contextDocuments, modelSnapshot] = await Promise.all([
+        getUserSettingsByUserId(userId),
+        contract.projectId
+          ? getProjectContextForAnalysis(userId, contract.projectId)
+          : Promise.resolve([]),
+        getModelAvailabilitySnapshot(),
+      ]);
+      const selectedPrimaryModel = resolveAvailablePrimaryModel(
+        settings?.primaryModel,
+        modelSnapshot.availablePrimaryModels,
+      );
+      const { result, provider, model, promptTokens, completionTokens } =
+        await analyzeText(contract.text, undefined, {
+          primaryModel: selectedPrimaryModel,
+          signal: operationSignal,
+          contextDocuments: contextDocuments.map((document) => ({
+            title: document.title,
+            documentType: document.documentType,
+            text: document.extractedText,
+            originalCharacterCount: document.originalCharacterCount,
+          })),
+        });
+      const qualityWarnings = [
+        contract.extractionWarning,
+        ...contextDocuments.map((document) =>
+          document.extractionWarning
+            ? `${document.title}: ${document.extractionWarning}`
+            : null,
+        ),
+      ].filter((warning): warning is string => Boolean(warning));
+      result.coverage_notices = [
+        ...qualityWarnings,
+        ...(result.coverage_notices ?? []),
+      ];
+      const created = await createAnalysisForContract({
+        userId,
+        contractId: contract.id,
+        expectedRevision: contract.revision,
+        riskBadge:
+          typeof result.risk_badge === "string" ? result.risk_badge : null,
+        resultJson: result as Record<string, unknown>,
+        llmProvider: provider ?? null,
+        llmModel: model ?? null,
+        llmPromptTokens: promptTokens,
+        llmCompletionTokens: completionTokens,
+        processingTimeMs: Date.now() - startedAt,
+      });
+
+      return NextResponse.json({
+        message: "Analysis complete",
+        jobId: "done",
+        analysisId: created.id,
+      });
+    } catch (error: unknown) {
+      if (error instanceof ContractRevisionChangedError) {
+        return NextResponse.json(
+          {
+            error:
+              "The contract changed while analysis was running. Please analyze it again.",
+          },
+          { status: 409 },
+        );
+      }
+      console.error("Analysis error:", error);
+      return NextResponse.json(
+        { error: "Analysis failed. Please try again." },
+        { status: 500 },
+      );
+    }
   } finally {
-    await release().catch((error) => console.error("Analysis lease release failed", error));
+    await release().catch((error) =>
+      console.error("Analysis lease release failed", error),
+    );
   }
 }

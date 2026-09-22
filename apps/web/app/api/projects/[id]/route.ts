@@ -1,9 +1,6 @@
 import { after, NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
-import {
-  deleteProjectForUser,
-  getProjectByIdForUser,
-} from "@/lib/server-db";
+import { deleteProjectForUser, getProjectByIdForUser } from "@/lib/server-db";
 import { flushStorageDeletions } from "@/lib/storage-cleanup";
 import { isUuid } from "@/lib/utils";
 
@@ -19,7 +16,14 @@ export async function GET(
   if (!isUuid(id)) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
-  const project = await getProjectByIdForUser(userId, id);
+  const project = await getProjectByIdForUser(userId, id, {
+    contractsOffset: Number(
+      new URL(req.url).searchParams.get("contractsOffset") ?? 0,
+    ),
+    contextOffset: Number(
+      new URL(req.url).searchParams.get("contextOffset") ?? 0,
+    ),
+  });
 
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });

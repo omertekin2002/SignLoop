@@ -1,15 +1,18 @@
+import { withAbort } from "@/lib/bounded-response";
+import { MAX_EXTRACTED_TEXT_LENGTH } from "@/lib/extraction-limits";
 import { randomUUID } from "node:crypto";
+import { createUploadCleanupIntent } from "@/lib/server-db";
 import {
   ExtractionLimitError,
   ExtractionUnavailableError,
-  processFile,
+  processValidatedFile,
   validateFileSignature,
   validateMimeType,
   type ExtractionMethod,
 } from "@/lib/text-extraction";
 import {
-  deleteObject,
   getStorageBucketName,
+  getUploadCleanupKey,
   uploadObject,
 } from "@/lib/object-storage";
 import { getErrorMessage } from "@/lib/utils";
@@ -19,7 +22,6 @@ import {
 } from "@/lib/upload-constants";
 
 const MAX_MULTIPART_OVERHEAD = 64 * 1024;
-const MAX_EXTRACTED_TEXT_LENGTH = 2_000_000;
 const LOW_OCR_CONFIDENCE = 60;
 
 // Shared file-upload pipeline used by both the contract-upload and project-context routes,
@@ -32,6 +34,7 @@ export type UploadValidationError = {
 };
 
 export type PreparedUpload = {
+  signal: AbortSignal;
   ok: true;
   formData: FormData;
   file: File;
@@ -69,6 +72,7 @@ function getExtractionWarning(input: {
 export async function prepareUpload(
   req: Request,
 ): Promise<PreparedUpload | UploadValidationError> {
+  const signal = AbortSignal.any([req.signal, AbortSignal.timeout(150_000)]);
   const declaredContentLength = Number(req.headers.get("content-length"));
   if (
     Number.isFinite(declaredContentLength) &&
@@ -82,18 +86,23 @@ export async function prepareUpload(
   }
 
   let formData: FormData;
+  const reader = req.body?.getReader();
   try {
-    const reader = req.body?.getReader();
-    if (!reader) return { ok: false, status: 400, error: "Missing upload body" };
+    if (!reader)
+      return { ok: false, status: 400, error: "Missing upload body" };
     const chunks: Uint8Array<ArrayBuffer>[] = [];
     let bytes = 0;
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await withAbort(reader.read(), signal);
       if (done) break;
       bytes += value.byteLength;
       if (bytes > MAX_UPLOAD_FILE_SIZE + MAX_MULTIPART_OVERHEAD) {
-        await reader.cancel();
-        return { ok: false, status: 413, error: "Upload request is too large." };
+        void reader.cancel().catch(() => {});
+        return {
+          ok: false,
+          status: 413,
+          error: "Upload request is too large.",
+        };
       }
       // No defensive copy: Blob copies each chunk when it takes ownership below.
       chunks.push(value);
@@ -102,7 +111,16 @@ export async function prepareUpload(
       headers: { "content-type": req.headers.get("content-type") ?? "" },
     }).formData();
   } catch {
-    return { ok: false, status: 400, error: "Invalid multipart upload" };
+    void reader?.cancel().catch(() => {});
+    return {
+      ok: false,
+      status: signal.aborted ? 503 : 400,
+      error: signal.aborted
+        ? "Upload timed out or was canceled."
+        : "Invalid multipart upload",
+    };
+  } finally {
+    reader?.releaseLock();
   }
 
   // Content-Length is only a fast preflight and may be absent. Recount every parsed part so large
@@ -170,7 +188,8 @@ export async function prepareUpload(
   let extractionError: string | null = null;
   let extractionWarning: string | null = null;
   try {
-    const extracted = await processFile(buffer, mimeType, file.name);
+    const extracted = await processValidatedFile(buffer, mimeType, { signal });
+    signal.throwIfAborted();
     if (extracted.text.length > MAX_EXTRACTED_TEXT_LENGTH) {
       return {
         ok: false,
@@ -187,6 +206,12 @@ export async function prepareUpload(
     if (error instanceof ExtractionLimitError) {
       return { ok: false, status: 422, error: error.message };
     }
+    if (signal.aborted)
+      return {
+        ok: false,
+        status: 503,
+        error: "Upload processing timed out or was canceled.",
+      };
     if (error instanceof ExtractionUnavailableError) {
       return { ok: false, status: 503, error: error.message };
     }
@@ -195,6 +220,7 @@ export async function prepareUpload(
 
   return {
     ok: true,
+    signal,
     formData,
     file,
     buffer,
@@ -210,29 +236,20 @@ export async function prepareUpload(
 // Persist under an opaque, collision-resistant path. The object key deliberately contains no
 // Clerk ID, domain entity ID, or original filename because Blob URLs may be logged or shared.
 export async function storeUploadedFile(input: {
+  signal?: AbortSignal;
   buffer: Buffer;
   mimeType: string;
-}): Promise<{ storageKey: string; bucket: string }> {
+}): Promise<{ storageKey: string; bucket: string; storageIntentId: string }> {
   const objectKey = `uploads/${randomUUID()}`;
   const bucket = getStorageBucketName();
+  const storageIntentId = await createUploadCleanupIntent(
+    getUploadCleanupKey(objectKey),
+  );
   const storageKey = await uploadObject(
     objectKey,
     input.buffer,
     input.mimeType,
+    input.signal,
   );
-  return { storageKey, bucket };
-}
-
-// Best-effort removal of an object stored by storeUploadedFile when the follow-up database write
-// fails or finds nothing to attach it to. A cleanup failure is logged, never thrown, so the
-// caller's original error response still reaches the client.
-export async function discardStoredUpload(storageKey: string): Promise<void> {
-  try {
-    await deleteObject(storageKey);
-  } catch (cleanupError: unknown) {
-    console.error(
-      "Failed to clean up upload after persistence error:",
-      cleanupError,
-    );
-  }
+  return { storageKey, bucket, storageIntentId };
 }

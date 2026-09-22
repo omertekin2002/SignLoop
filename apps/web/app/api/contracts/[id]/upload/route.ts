@@ -4,11 +4,7 @@ import {
   getContractMetaForUser,
   saveContractUploadForUser,
 } from "@/lib/server-db";
-import {
-  discardStoredUpload,
-  prepareUpload,
-  storeUploadedFile,
-} from "@/lib/upload-pipeline";
+import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
 import { isUuid } from "@/lib/utils";
 
 // Image uploads run OCR, which budgets 60s for worker init plus 90s for recognition. The platform
@@ -58,10 +54,11 @@ export async function POST(
     );
   }
 
-  let stored: { storageKey: string; bucket: string };
+  let stored: Awaited<ReturnType<typeof storeUploadedFile>>;
   try {
     stored = await storeUploadedFile({
       buffer: prepared.buffer,
+      signal: prepared.signal,
       mimeType: prepared.mimeType,
     });
   } catch (error: unknown) {
@@ -82,6 +79,7 @@ export async function POST(
       title: contract.title,
       fileName: prepared.file.name,
       storageKey: stored.storageKey,
+      storageIntentId: stored.storageIntentId,
       bucket: stored.bucket,
       contentType: prepared.mimeType,
       sizeBytes: prepared.file.size,
@@ -89,7 +87,6 @@ export async function POST(
       extractionConfidence: prepared.confidence,
     });
     if (!saved) {
-      await discardStoredUpload(stored.storageKey);
       return NextResponse.json(
         { error: "Contract not found" },
         { status: 404 },
@@ -107,7 +104,6 @@ export async function POST(
         : {}),
     });
   } catch (error: unknown) {
-    await discardStoredUpload(stored.storageKey);
     console.error("Upload persistence failed:", error);
     return NextResponse.json(
       { error: "Failed to save the uploaded file. Please try again." },

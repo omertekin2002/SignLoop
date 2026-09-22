@@ -1,4 +1,7 @@
-import { assistantMessageForClient, toPublicChatMessage } from "@/lib/chat-public-message";
+import {
+  assistantMessageForClient,
+  toPublicChatMessage,
+} from "@/lib/chat-public-message";
 import { appendWebSourcesToMessage } from "@/lib/web-citations";
 import { NextResponse, after } from "next/server";
 import { flushTelemetry, isTelemetryEnabled } from "@/lib/telemetry";
@@ -36,6 +39,7 @@ import {
   getUserSettingsByUserId,
 } from "@/lib/server-db";
 import { isRecord, isUuid } from "@/lib/utils";
+import { admitChat } from "@/lib/chat-admission";
 
 const CHAT_SYSTEM_PROMPT = `
 You are SignLoop's legal contract assistant.
@@ -68,7 +72,8 @@ const ROUTE_TIMEOUT_MS = 275_000;
 const CHAT_LEASE_SECONDS = 360;
 
 function getPublicChatErrorMessage(error: unknown): string {
-  return error instanceof GeminiWebSearchError || error instanceof WebSearchError
+  return error instanceof GeminiWebSearchError ||
+    error instanceof WebSearchError
     ? error.publicMessage
     : DEFAULT_CHAT_ERROR_MESSAGE;
 }
@@ -142,7 +147,8 @@ function toTemporaryAgentMessages(
   temporary: boolean,
 ): ChatReply["agentMessages"] | undefined {
   if (!temporary || !reply.agentMessages?.length) return undefined;
-  return JSON.stringify(reply.agentMessages).length <= MAX_AGENT_STATE_CHARACTERS
+  return JSON.stringify(reply.agentMessages).length <=
+    MAX_AGENT_STATE_CHARACTERS
     ? reply.agentMessages
     : undefined;
 }
@@ -175,10 +181,15 @@ function toDoneStreamEvent(input: {
 
 export async function POST(req: Request) {
   let release: (() => Promise<void>) | null = null;
+  let releaseAdmission: (() => Promise<void>) | null = null;
   let streaming = false;
   let storedMessages: ChatMessageRecord[] = [];
   const disconnect = new AbortController();
-  const operationSignal = AbortSignal.any([req.signal, disconnect.signal, AbortSignal.timeout(ROUTE_TIMEOUT_MS)]);
+  const operationSignal = AbortSignal.any([
+    req.signal,
+    disconnect.signal,
+    AbortSignal.timeout(ROUTE_TIMEOUT_MS),
+  ]);
   // Spans buffer in memory; export them once the response (including a stream) has finished.
   if (isTelemetryEnabled) after(flushTelemetry);
   try {
@@ -247,9 +258,36 @@ export async function POST(req: Request) {
     let conversationMessages = parsedMessages.messages;
     const latestUserMessage = conversationMessages.at(-1)!;
 
+    try {
+      const admission = await admitChat(userId);
+      if ("retryAfter" in admission)
+        return NextResponse.json(
+          { error: "Chat is at its request limit. Please try again later." },
+          {
+            status: 429,
+            headers: { "Retry-After": String(admission.retryAfter) },
+          },
+        );
+      releaseAdmission = admission.release;
+    } catch {
+      return NextResponse.json(
+        { error: "Chat is temporarily unavailable. Please try again shortly." },
+        { status: 503 },
+      );
+    }
+
     if (userId && !isTemporaryChat) {
-      release = await claimGenerationOperation(userId, "chat", threadId, CHAT_LEASE_SECONDS);
-      if (!release) return NextResponse.json({ error: "A reply is already running in this chat." }, { status: 409 });
+      release = await claimGenerationOperation(
+        userId,
+        "chat",
+        threadId,
+        CHAT_LEASE_SECONDS,
+      );
+      if (!release)
+        return NextResponse.json(
+          { error: "A reply is already running in this chat." },
+          { status: 409 },
+        );
     }
 
     const [settings, persistedMessages, modelSnapshot] = await Promise.all([
@@ -322,7 +360,9 @@ export async function POST(req: Request) {
     if (wantsStream) {
       streaming = true;
       const stream = new ReadableStream<Uint8Array>({
-        cancel() { disconnect.abort(); },
+        cancel() {
+          disconnect.abort();
+        },
         async start(controller) {
           let sentDone = false;
 
@@ -380,7 +420,11 @@ export async function POST(req: Request) {
                   temporary: isTemporaryChat,
                 });
               } catch (persistError) {
-                if (req.signal.aborted || disconnect.signal.aborted || isAbortError(persistError)) {
+                if (
+                  req.signal.aborted ||
+                  disconnect.signal.aborted ||
+                  isAbortError(persistError)
+                ) {
                   return;
                 }
                 persisted = false;
@@ -405,7 +449,11 @@ export async function POST(req: Request) {
               sentDone = true;
             }
 
-            if (!sentDone && !req.signal.aborted && !disconnect.signal.aborted) {
+            if (
+              !sentDone &&
+              !req.signal.aborted &&
+              !disconnect.signal.aborted
+            ) {
               controller.enqueue(
                 streamEvent({
                   type: "error",
@@ -414,7 +462,11 @@ export async function POST(req: Request) {
               );
             }
           } catch (streamError) {
-            if (req.signal.aborted || disconnect.signal.aborted || isAbortError(streamError)) {
+            if (
+              req.signal.aborted ||
+              disconnect.signal.aborted ||
+              isAbortError(streamError)
+            ) {
               return;
             }
 
@@ -426,7 +478,12 @@ export async function POST(req: Request) {
               }),
             );
           } finally {
-            await release?.().catch((error) => console.error("Chat lease release failed", error));
+            await release?.().catch((error) =>
+              console.error("Chat lease release failed", error),
+            );
+            await releaseAdmission?.().catch((error) =>
+              console.error("Chat admission release failed", error),
+            );
             if (!disconnect.signal.aborted) controller.close();
           }
         },
@@ -441,19 +498,25 @@ export async function POST(req: Request) {
       });
     }
 
-    const { message, provider, model, webSearch, agentMessages, toolActivity, readSources, figures } = await generateChatReply(
-      promptMessages,
-      {
-        primaryModel: selectedPrimaryModel,
-        signal: operationSignal,
-        enableWebSearch,
-        enableUrlReader: enableWebSearch,
-        enableHttpFetch: enableWebSearch,
-        contractsUserId: userId,
-        enableImageGeneration: modelSnapshot.imageGenerationAvailable,
-        userId,
-      },
-    );
+    const {
+      message,
+      provider,
+      model,
+      webSearch,
+      agentMessages,
+      toolActivity,
+      readSources,
+      figures,
+    } = await generateChatReply(promptMessages, {
+      primaryModel: selectedPrimaryModel,
+      signal: operationSignal,
+      enableWebSearch,
+      enableUrlReader: enableWebSearch,
+      enableHttpFetch: enableWebSearch,
+      contractsUserId: userId,
+      enableImageGeneration: modelSnapshot.imageGenerationAvailable,
+      userId,
+    });
     const assistantMessage = appendWebSourcesToMessage(
       message,
       webSearch?.sources ?? [],
@@ -515,6 +578,13 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   } finally {
-    if (!streaming) await release?.().catch((error) => console.error("Chat lease release failed", error));
+    if (!streaming)
+      await release?.().catch((error) =>
+        console.error("Chat lease release failed", error),
+      );
+    if (!streaming)
+      await releaseAdmission?.().catch((error) =>
+        console.error("Chat admission release failed", error),
+      );
   }
 }

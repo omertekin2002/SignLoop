@@ -351,10 +351,13 @@ function toNumberOrNull(value: unknown): number | null {
 
 // A month, range, or business-day deadline cannot safely be presented as calendar days.
 function toNoticeDays(value: unknown): number | null {
-  const parsed = typeof value === "string"
-    ? toNumberOrNull(value.trim().replace(/\s+(?:calendar\s+)?days?$/i, ""))
-    : toNumberOrNull(value);
-  return parsed !== null && Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+  const parsed =
+    typeof value === "string"
+      ? toNumberOrNull(value.trim().replace(/\s+(?:calendar\s+)?days?$/i, ""))
+      : toNumberOrNull(value);
+  return parsed !== null && Number.isInteger(parsed) && parsed >= 0
+    ? parsed
+    : null;
 }
 
 function toClampedNumberOrNull(
@@ -831,7 +834,10 @@ function isLikelyUnsupportedJsonModeError(error: unknown): boolean {
   );
 }
 
-type LlmRequestOptions = { signal?: AbortSignal };
+type LlmRequestOptions = {
+  signal?: AbortSignal;
+  onUsage?: (usage: OpenAI.Responses.ResponseUsage | undefined) => void;
+};
 
 async function createResponsesPreferringJson(
   openai: OpenAI,
@@ -840,8 +846,10 @@ async function createResponsesPreferringJson(
   input: string,
   requestOptions?: LlmRequestOptions,
 ) {
+  const { onUsage, ...sdkOptions } = requestOptions ?? {};
+  let response: OpenAI.Responses.Response;
   try {
-    return await openai.responses.create(
+    response = await openai.responses.create(
       {
         model,
         instructions,
@@ -849,29 +857,28 @@ async function createResponsesPreferringJson(
         max_output_tokens: MAX_ANALYSIS_OUTPUT_TOKENS,
         text: { format: { type: "json_object" } },
       },
-      requestOptions,
+      sdkOptions,
     );
   } catch (error) {
-    if (!isLikelyUnsupportedJsonModeError(error)) {
-      throw error;
-    }
-
-    console.warn(
-      "Model/provider rejected text.format=json_object on Responses API, retrying without it",
-    );
-    return await openai.responses.create(
+    if (!isLikelyUnsupportedJsonModeError(error)) throw error;
+    console.warn("Model/provider rejected JSON mode, retrying without it");
+    response = await openai.responses.create(
       {
         model,
         instructions,
         input,
         max_output_tokens: MAX_ANALYSIS_OUTPUT_TOKENS,
       },
-      requestOptions,
+      sdkOptions,
     );
   }
+  onUsage?.(response.usage);
+  return response;
 }
 
-function requireCompletedAnalysisResponse(response: OpenAI.Responses.Response): void {
+function requireCompletedAnalysisResponse(
+  response: OpenAI.Responses.Response,
+): void {
   if (response.status !== "completed") {
     const reason = response.incomplete_details?.reason;
     throw new LlmResponseValidationError(
@@ -1066,19 +1073,34 @@ export async function analyzeText(
     signal?: AbortSignal;
     contextDocuments?: readonly AnalysisContextDocument[];
   },
-): Promise<{ result: AnalysisResult; provider: LlmProvider; model: string }> {
+): Promise<{
+  result: AnalysisResult;
+  provider: LlmProvider;
+  model: string;
+  promptTokens: number | null;
+  completionTokens: number | null;
+}> {
   const { prompt, coverageNotices } = buildAnalysisPrompt(
     text,
     metadata,
     options?.contextDocuments,
   );
 
+  let promptTokens: number | null = null;
+  let completionTokens: number | null = null;
+  const onUsage = (usage: OpenAI.Responses.ResponseUsage | undefined) => {
+    if (typeof usage?.input_tokens === "number")
+      promptTokens = (promptTokens ?? 0) + usage.input_tokens;
+    if (typeof usage?.output_tokens === "number")
+      completionTokens = (completionTokens ?? 0) + usage.output_tokens;
+  };
   const selectedPrimaryModel = resolvePrimaryModel(options?.primaryModel);
 
   const { result, provider, model } = await runWithPrimaryAndOpenRouterFallback(
     selectedPrimaryModel,
     (client, runModel) =>
       runAnalysisWithResponsesModel(client, runModel, prompt, {
+        onUsage,
         signal: options?.signal,
       }),
     {
@@ -1098,5 +1120,11 @@ export async function analyzeText(
       }
     : result;
 
-  return { result: resultWithCoverageNotices, provider, model };
+  return {
+    result: resultWithCoverageNotices,
+    provider,
+    model,
+    promptTokens,
+    completionTokens,
+  };
 }

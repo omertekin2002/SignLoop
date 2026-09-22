@@ -1,6 +1,14 @@
+import {
+  ExtractionLimitError,
+  MAX_EXTRACTED_TEXT_LENGTH,
+  validateImageDimensions,
+  validateDocxExpansion,
+} from "@/lib/extraction-limits";
+export { ExtractionLimitError } from "@/lib/extraction-limits";
 import type { createWorker } from "tesseract.js";
 import type WordExtractor from "word-extractor";
 import { getErrorMessage } from "@/lib/utils";
+import { withAbort } from "@/lib/bounded-response";
 
 const MIN_TEXT_DENSITY = 50; // Minimum characters per page for non-scanned PDF
 // At or below this page count a sparse PDF may still be a legitimately short document, so the
@@ -30,14 +38,23 @@ let ocrWorkerPromise: Promise<Awaited<ReturnType<typeof createWorker>>> | null =
 let ocrQueue: Promise<void> = Promise.resolve();
 let pendingOcrJobs = 0;
 
-async function runSerializedOcr<T>(task: () => Promise<T>): Promise<T> {
+async function runSerializedOcr<T>(
+  task: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
   const previous = ocrQueue;
   let release!: () => void;
   ocrQueue = new Promise<void>((resolve) => {
     release = resolve;
   });
 
-  await previous;
+  try {
+    await withAbort(previous, signal);
+  } catch (error) {
+    // A canceled waiter must not unlock the worker while its predecessor is still running.
+    void previous.then(release, release);
+    throw error;
+  }
   try {
     return await task();
   } finally {
@@ -87,13 +104,6 @@ export interface ExtractionResult {
 }
 
 export type ExtractionMethod = ExtractionResult["method"];
-
-export class ExtractionLimitError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ExtractionLimitError";
-  }
-}
 
 export class ExtractionUnavailableError extends Error {
   constructor(message: string) {
@@ -255,7 +265,9 @@ export function validateFileSignature(buffer: Buffer, mimeType: string): void {
   // Callers pass the canonical type validateMimeType already resolved (processFile does exactly
   // that), so re-running the filename-aware resolution here would apply a *different* rule set --
   // this call has no fileName to cross-check against. Canonicalize only what was handed in.
-  const supportedMimeType = validateMimeType(mimeType);
+  const supportedMimeType = canonicalizeSupportedMimeType(
+    normalizeMimeType(mimeType),
+  );
   let matches = false;
 
   switch (supportedMimeType) {
@@ -349,25 +361,48 @@ export function validateMimeType(mimeType: string, fileName?: string): string {
  */
 export async function extractTextFromPdf(
   buffer: Buffer,
+  options?: { signal?: AbortSignal },
 ): Promise<ExtractionResult> {
   let pdf: Awaited<
     ReturnType<(typeof import("unpdf"))["getDocumentProxy"]>
   > | null = null;
   try {
-    const { extractText, getDocumentProxy } = await import("unpdf");
+    const { getDocumentProxy } = await import("unpdf");
     // PDF.js rejects Node Buffer instances and takes ownership of/detaches the supplied
     // ArrayBuffer. Make an owned copy so parsing cannot empty the original bytes before storage.
     pdf = await getDocumentProxy(new Uint8Array(buffer));
+    options?.signal?.throwIfAborted();
     if (pdf.numPages > MAX_PDF_PAGES) {
       throw new ExtractionLimitError(
         `PDF has too many pages. Maximum is ${MAX_PDF_PAGES.toLocaleString("en-US")} pages.`,
       );
     }
 
-    const { text, totalPages } = await extractText(pdf, {
-      mergePages: true,
-    });
-    const extractedText = (text as string)?.trim() || "";
+    const pages: string[] = [];
+    let characters = 0;
+    // Read one page at a time: unpdf's convenience helper materializes every page in parallel.
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+      options?.signal?.throwIfAborted();
+      const page = await pdf.getPage(pageNumber);
+      try {
+        const content = await withAbort(page.getTextContent(), options?.signal);
+        const parts: string[] = [];
+        for (const item of content.items) {
+          if (!("str" in item)) continue;
+          characters += item.str.length + 1;
+          if (characters > MAX_EXTRACTED_TEXT_LENGTH)
+            throw new ExtractionLimitError(
+              "PDF text exceeds the 2,000,000-character processing limit.",
+            );
+          parts.push(item.str + (item.hasEOL ? "\n" : ""));
+        }
+        pages.push(parts.join(""));
+      } finally {
+        page.cleanup();
+      }
+    }
+    const extractedText = pages.join("\n").replace(/\s+/g, " ").trim();
+    const totalPages = pdf.numPages;
 
     // Check if it's a scanned PDF (low text density)
     const pageCount = totalPages || 1;
@@ -418,7 +453,13 @@ export async function extractTextFromPdf(
  */
 export async function extractTextFromImage(
   buffer: Buffer,
+  options?: { signal?: AbortSignal },
 ): Promise<ExtractionResult> {
+  const signal = AbortSignal.any([
+    AbortSignal.timeout(150_000),
+    ...(options?.signal ? [options.signal] : []),
+  ]);
+  signal.throwIfAborted();
   // One shared worker must be serialized, but an unbounded promise chain would retain every
   // waiting upload buffer. Allow one active job plus one waiter and ask excess callers to retry.
   if (pendingOcrJobs >= MAX_PENDING_OCR_JOBS) {
@@ -435,22 +476,25 @@ export async function extractTextFromImage(
         const workerPromise = getOcrWorker();
         let workerInitTimeout: ReturnType<typeof setTimeout> | undefined;
         try {
-          worker = await Promise.race([
-            workerPromise,
-            new Promise<never>((_resolve, reject) => {
-              workerInitTimeout = setTimeout(
-                () =>
-                  reject(
-                    new ExtractionUnavailableError(
-                      "Image text extraction could not start. Please try again shortly.",
+          worker = await withAbort(
+            Promise.race([
+              workerPromise,
+              new Promise<never>((_resolve, reject) => {
+                workerInitTimeout = setTimeout(
+                  () =>
+                    reject(
+                      new ExtractionUnavailableError(
+                        "Image text extraction could not start. Please try again shortly.",
+                      ),
                     ),
-                  ),
-                OCR_WORKER_INIT_TIMEOUT_MS,
-              );
-            }),
-          ]);
+                  OCR_WORKER_INIT_TIMEOUT_MS,
+                );
+              }),
+            ]),
+            signal,
+          );
         } catch (error: unknown) {
-          if (error instanceof ExtractionUnavailableError) {
+          if (error instanceof ExtractionUnavailableError || signal.aborted) {
             // A late worker must not remain orphaned or become the cached worker after this request
             // has already failed. Terminate it asynchronously when initialization eventually ends.
             ocrWorkerPromise = null;
@@ -483,10 +527,10 @@ export async function extractTextFromImage(
 
         let result: Awaited<ReturnType<typeof worker.recognize>>;
         try {
-          result = await Promise.race([
-            worker.recognize(buffer),
-            timeoutPromise,
-          ]);
+          result = await withAbort(
+            Promise.race([worker.recognize(buffer), timeoutPromise]),
+            signal,
+          );
         } finally {
           if (timeout) clearTimeout(timeout);
         }
@@ -502,7 +546,7 @@ export async function extractTextFromImage(
         ocrWorkerPromise = null;
         if (worker) {
           try {
-            await worker.terminate();
+            await withAbort(worker.terminate(), AbortSignal.timeout(2_000));
           } catch (terminationError: unknown) {
             console.warn(
               "Failed to terminate OCR worker after recognition error:",
@@ -515,7 +559,13 @@ export async function extractTextFromImage(
         }
         throw new Error(`Failed to OCR image: ${getErrorMessage(error)}`);
       }
-    });
+    }, signal);
+  } catch (error) {
+    if (signal.aborted)
+      throw new ExtractionUnavailableError(
+        "Image extraction exceeded the request deadline or was canceled. Please retry.",
+      );
+    throw error;
   } finally {
     pendingOcrJobs -= 1;
   }
@@ -582,16 +632,29 @@ export async function processFile(
   buffer: Buffer,
   mimeType: string,
   fileName?: string,
+  options?: { signal?: AbortSignal },
 ): Promise<ExtractionResult> {
   const supportedMimeType = validateMimeType(mimeType, fileName);
   validateFileSignature(buffer, supportedMimeType);
+  return processValidatedFile(buffer, supportedMimeType, options);
+}
+
+/** Internal extraction path for callers that have already validated MIME and signature. */
+export async function processValidatedFile(
+  buffer: Buffer,
+  supportedMimeType: string,
+  options?: { signal?: AbortSignal },
+): Promise<ExtractionResult> {
+  options?.signal?.throwIfAborted();
+  if (supportedMimeType === DOCX_MIME_TYPE) await validateDocxExpansion(buffer);
+  if (supportedMimeType.startsWith("image/")) validateImageDimensions(buffer);
 
   if (supportedMimeType === PDF_MIME_TYPE) {
-    return extractTextFromPdf(buffer);
+    return extractTextFromPdf(buffer, options);
   }
 
   if (supportedMimeType.startsWith("image/")) {
-    return extractTextFromImage(buffer);
+    return extractTextFromImage(buffer, options);
   }
 
   if (supportedMimeType === TEXT_MIME_TYPE) {

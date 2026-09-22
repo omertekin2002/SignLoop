@@ -76,7 +76,7 @@ The root page, sign-in/up pages, and `/api/chat` are public in [proxy.ts](apps/w
 - `OPENROUTER_API_KEY` enables fallback inference; `OPENROUTER_BASE_URL` defaults to `https://openrouter.ai/api/v1`.
 - `NEXT_PUBLIC_APP_URL` supplies app URL metadata in provider request headers, defaulting to `http://localhost:3000`.
 
-Signed-in chat and analysis select the saved model if available, otherwise the first eligible model returned by the primary `/models` endpoint. They do not use `PRIMARY_LLM_MODEL` as the selector's default. Discovery is cached per process for 60 seconds, or 10 seconds following failure; selector/settings actions can force a refresh. Anonymous chat skips discovery and uses the configured default.
+Signed-in chat and analysis select the saved model if available, otherwise the first eligible model returned by the primary `/models` endpoint. They do not use `PRIMARY_LLM_MODEL` as the selector's default. Discovery is cached per process for 60 seconds, or 10 seconds following failure; ordinary selector/settings reads reuse this cache. Saving an unavailable primary model forces one fresh check; explicit `GET /api/settings?refreshModels=1` remains available. Anonymous chat skips discovery and uses the configured default.
 
 If no primary model is available to an authenticated request, it uses the configured OpenRouter chain. When OpenRouter is configured, users can also pin `openrouter/free`, which skips primary inference. The current fallback order and image-model identifier live in [model-settings.ts](apps/web/lib/model-settings.ts). Image generation is offered only to signed-in users when primary discovery advertises `gpt-image-2`.
 
@@ -115,7 +115,9 @@ See [object-storage.ts](apps/web/lib/object-storage.ts) and [upload-pipeline.ts]
 
 The UI creates a contract, then uploads its file to `/api/contracts/:id/upload`. Project context uploads use `/api/projects/:id/context`.
 
-The shared pipeline checks ownership at the route boundary, bounds multipart input, and validates file size, MIME type, and signatures. Files are limited to **4 MiB**. PDF text uses `unpdf`, `.doc`/`.docx` extraction uses `word-extractor`, images use Tesseract OCR, and plain text is decoded directly.
+The shared pipeline checks ownership at the route boundary, bounds multipart input, and validates file size, MIME type, and signatures. Files are limited to **4 MiB**. PDF text uses the PDF.js proxy from `unpdf`, `.doc`/`.docx` extraction uses `word-extractor`, images use Tesseract OCR, and plain text is decoded directly.
+
+PDF pages are read sequentially, with at most 500 pages and 2,000,000 extracted characters. Images are limited to 25 megapixels before decoding. DOCX archives are inspected before expansion, with limits of 16 MiB expanded data and 2,000 entries. OCR allows one active job and one queued job; its 150-second deadline includes queue wait. The upload deadline also covers reading the request and storing the file. These bounds do not provide parser process isolation.
 
 Scanned PDFs are detected through low text density; their pages are **not** rasterized for OCR. Contract and context uploads reject extraction failures or empty text. Usable but low-quality extraction can be stored with a warning. Original bytes go to object storage, while extracted text and metadata go to PostgreSQL. Reuploads replace active contract text and invalidate current analysis state; prior file records remain until deletion.
 
@@ -125,11 +127,17 @@ Scanned PDFs are detected through low text density; their pages are **not** rast
 
 The prompt includes up to 15,000 contract characters, preserving the beginning and end when shortened. Context is limited to eight documents, up to 3,000 characters each within an 8,000-character total text budget; the per-document bound is applied in SQL, so the prompt builder assembles rather than re-trims. Coverage and extraction warnings are retained with the result; this is not full-document coverage for long inputs.
 
-Output passes through JSON parsing, schema validation, supported normalization, and a bounded repair path. Provider/request failures can use OpenRouter fallback; semantic validation failures do not trigger another provider solely to retry invalid analysis. The final database transaction checks the contract revision before storing the analysis and marking it `ANALYZED`. Contract/context changes invalidate previous results as current, while historical analyses remain accessible.
+Output passes through JSON parsing, schema validation, supported normalization, and a bounded repair path. Provider/request failures can use OpenRouter fallback; semantic validation failures do not trigger another provider solely to retry invalid analysis. The final database transaction checks the contract revision before storing the analysis and marking it `ANALYZED`. Contract/context changes invalidate previous results as current, while historical analyses remain accessible. The view includes parties, obligations, regional comparisons, fees, term dates, and the generated disclaimer. Provider-reported input/output token counts are stored, including JSON repair calls when usage is available.
+
+Project detail returns 50 contracts and 50 context documents per page, with independent `contractsOffset` and `contextOffset` query parameters. Contract detail returns 50 analysis records per page using `analysisOffset`; the UI can load older records. `contractsHasMore`, `contextHasMore`, and `analysesHasMore` indicate continuation.
 
 ### Chat and tools
 
 Temporary chat does not persist a thread or messages to the application database. It can be used anonymously or while signed in; provider processing and optional tracing are separate from thread persistence. Saved chat requires authentication and persists ordered user/assistant message pairs. Its model history is reconstructed from the database rather than trusted browser copies.
+
+URL prompts (`/?q=...`) populate a draft after privacy acknowledgement and require the user to press Send.
+
+Admission is shared across instances through PostgreSQL. Signed-in users may start 30 requests per hour with two concurrent runs; anonymous visitors share 10 requests per hour and one concurrent run. The global defaults are 1,000 requests per UTC day and eight concurrent runs, configurable using `CHAT_DAILY_REQUEST_LIMIT` and `CHAT_CONCURRENCY_LIMIT`. Rejected requests return 429 with `Retry-After`; unavailable admission storage returns 503. These are request limits, not exact monetary spending caps.
 
 The default personality is `bare-llm`; signed-in users can select `signloop-assistant`. The answering model decides when to invoke tools:
 
@@ -143,7 +151,7 @@ The default personality is `bare-llm`; signed-in users can select `signloop-assi
 
 Signed-in temporary and saved chats expose the research and contract tools. Image availability is checked separately. Missing integration keys can still cause tool errors. Anonymous chat exposes no tools. Retrieved document/page text is marked as untrusted; those textual markers are not an authorization boundary.
 
-Saved replies retain tool exchanges and source catalogs in metadata, subject to replay limits. Temporary replies send tool exchanges back to the browser with a 20,000-character serialized replay cap. Temporary replay currently has shallow role/content validation and does not carry the source catalog end to end; follow-up citation numbering is therefore not guaranteed to remain stable.
+Saved and temporary replies use the same SDK-backed replay schema. Replay is compacted to 20,000 serialized characters before persistence, preserving complete tool exchanges and shortened evidence. Source catalogs travel independently through temporary requests and responses, capped at 64 sources and 16,000 serialized characters. SQL bounds legacy replay projections before returning rows; canonical prompt history remains bounded. Follow-up citation IDs retain the catalog when it fits the history budget.
 
 Text and tool activity stream as newline-delimited JSON. The final source footer lists fetched sources and any valid references to retained source numbers. Citation markers are normalized, but a source's presence does not prove that it supports the answer. The numerical check compares decimals/grouped thousands against web text fetched during the current turn. It does not cover contract evidence or earlier-turn evidence and does not verify the meaning of a numerical claim.
 
@@ -155,8 +163,8 @@ New saved images are stored in `chat_attachments` and served through an ownershi
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Analysis                | 120-second per-request client timeout; 270-second operation deadline; 300-second route budget.                                                                                                           |
 | Chat                    | 260-second generation deadline; 275-second request deadline; 300-second route budget.                                                                             |
-| Chat tool loop          | Ten model steps; final step disables tools. Per-turn limits: three search executions, five page reads, five direct HTTP fetches, two image generations.           |
-| Provider stream opening | 20-second deadline per candidate; currently cleared by the first event other than `stream-start`, including metadata. It is not a guaranteed first-text deadline. |
+| Chat tool loop          | Ten model steps; final step disables tools. Per-turn limits: three search executions, five page reads, five direct HTTP fetches, two image generations, ten contract reads with two cached keyword-search documents.           |
+| Provider stream opening | 20-second deadline per candidate until meaningful content/tool output; metadata-only streams retain the deadline. Opening events are capped at 256. |
 | Direct HTTP             | 30 seconds, five redirects, 2 MiB response bytes, and 12,000 returned characters.                                                                                 |
 
 Provider fallback can occur when opening a model step fails; an already-opened step is not replayed on another provider. SDK automatic retries are disabled in chat and analysis; application-level fallback/repair still exists. Incomplete saved chat runs are not persisted. A completed answer whose persistence fails is shown with an unsaved warning.
@@ -165,17 +173,17 @@ Budget sources: [chat.ts](apps/web/lib/chat.ts), [chat route](apps/web/app/api/c
 
 ## Persistence and operations
 
-Primary tables are `projects`, `contracts`, `analyses`, `context_documents`, `contract_files`, `user_settings`, `chat_threads`, `chat_messages`, and `chat_attachments`. `generation_operations` holds expiring inference leases; `storage_deletions` is the object-deletion outbox; `schema_migrations` tracks applied SQL files.
+Primary tables are `projects`, `contracts`, `analyses`, `context_documents`, `contract_files`, `user_settings`, `chat_threads`, `chat_messages`, and `chat_attachments`. `generation_operations` holds expiring inference leases; `chat_admissions` and `chat_request_budgets` enforce shared chat admission; `storage_deletions` is the object-deletion outbox; `schema_migrations` tracks applied SQL files.
 
-The [migration runner](apps/web/db/migrations.js) discovers numbered SQL files, uses an advisory lock, and records each migration in the same transaction as its changes. Runtime bootstrap and the standalone command use that runner. Migration 012 adds relationship constraints/cascades, revision invalidation, the deletion outbox, and generation leases; 013 adds attachments; 014 adds extraction warnings; 015 adds index coverage for the chat contract listing and the deletion outbox. Legacy relationship violations can leave constraints unvalidated with warnings rather than deleting old rows.
+The [migration runner](apps/web/db/migrations.js) discovers numbered SQL files, uses an advisory lock, and records each migration in the same transaction as its changes. Runtime bootstrap and the standalone command use that runner. Migration 012 adds relationship constraints/cascades, revision invalidation, the deletion outbox, and generation leases; 013 adds attachments; 014 adds extraction warnings; 015 adds index coverage for the chat contract listing and the deletion outbox; 016 adds admission budgets and cleanup claims/backoff. Legacy relationship violations can leave constraints unvalidated with warnings rather than deleting old rows.
 
-Database deletion enqueues object cleanup transactionally. Delete routes attempt cleanup after responding; failed items remain queued. From `apps/web`, using configured database and storage credentials:
+Before uploading bytes, the server records a cleanup intent that becomes eligible after one hour. Successful file persistence cancels that intent in the same transaction; failed or interrupted uploads leave it for cleanup. An uncertain commit does not trigger immediate object deletion. Database deletion enqueues object cleanup transactionally. Delete routes attempt cleanup after responding; failed items remain queued. From `apps/web`, using configured database and storage credentials:
 
 ```bash
 bun run storage:cleanup
 ```
 
-The worker processes the oldest 100 rows sequentially. The command continues only when all 100 complete, so a failed deletion can stop draining before later rows are reached; persistently failing rows can starve later work. The repository has no recurring cleanup schedule.
+Cleanup atomically claims due rows with expiring leases and processes four objects concurrently. Failed deletions back off from one minute to at most one day so newer work can proceed. Acknowledgments require the claim token. The command continues while full batches of eligible work remain. There is no scheduled cleanup. Due items are processed by later deletion requests or the manual cleanup command.
 
 ## Deployment
 
@@ -191,10 +199,8 @@ The configured ignore command considers changes under `apps/web`, `packages`, an
 
 ## Known limitations and remaining work
 
-- `/?q=...` currently submits a temporary-chat prompt after privacy acknowledgement, including previously stored acknowledgement. Signed-in runs retain private contract and outbound tool capabilities; a URL prompt does not require a separate Send action.
-- Temporary replay validation/source catalogs, metadata-only provider stalls, and cleanup draining have the limitations described above.
-- Anonymous inference has per-request bounds but no aggregate spending/admission quota.
-- Larger uploads, parser process isolation, and pagination of very large project collections and analysis-history metadata remain unimplemented.
+- Larger uploads and parser process isolation remain unimplemented. Size/page/dimension guards reduce resource exposure but cannot prove arbitrary parser inputs harmless.
+- Rendering speedups, constellation initialization, and candidate index removals still need profiling or production database evidence; they were deliberately excluded from this implementation.
 - Live provider credentials, extraction quality on real documents, and deployed infrastructure require verification outside the mocked/unit test suite.
 
 For contributor commands and persistence invariants, see [AGENTS.md](AGENTS.md).

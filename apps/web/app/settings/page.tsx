@@ -6,11 +6,27 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useClerk, useUser } from "@clerk/nextjs";
 import { ArrowLeft, Loader2, Settings as SettingsIcon } from "lucide-react";
 import { apiClient, getApiErrorMessage } from "@/lib/api-client";
-import { fetchSettings, getModelSelection, getSettingsErrorMessage } from "@/lib/settings";
+import {
+  fetchSettings,
+  getModelSelection,
+  getSettingsErrorMessage,
+} from "@/lib/settings";
 import { DEFAULT_PERSONALITY_MODE } from "@/lib/personality-settings";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { useIsClient } from "@/components/theme-toggle";
@@ -32,8 +48,8 @@ export default function SettingsPage() {
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["settings"],
-    queryFn: () => fetchSettings({ refreshModels: true }),
-    refetchOnMount: "always",
+    queryFn: () => fetchSettings(),
+    staleTime: 60_000,
   });
 
   const handleModelSelectOpenChange = (nextOpen: boolean) => {
@@ -65,9 +81,8 @@ export default function SettingsPage() {
     () => data?.availablePersonalities ?? [],
     [data?.availablePersonalities],
   );
-  const { model: effectiveModel, hasChanges: hasModelChanges } = getModelSelection(
-    selectedModel, data?.primaryModel, availableModels,
-  );
+  const { model: effectiveModel, hasChanges: hasModelChanges } =
+    getModelSelection(selectedModel, data?.primaryModel, availableModels);
   const effectivePersonality = useMemo(() => {
     if (selectedPersonality) return selectedPersonality;
     if (data?.personality) return data.personality;
@@ -79,7 +94,10 @@ export default function SettingsPage() {
   // the same fallback was redundant and pinned the display to a stale value across refetches.
   const saveModelMutation = useMutation({
     mutationFn: async (primaryModel: string) => {
-      const response = await apiClient.put<{ primaryModel: string; updatedAt: string }>("/settings", {
+      const response = await apiClient.put<{
+        primaryModel: string;
+        updatedAt: string;
+      }>("/settings", {
         primaryModel,
       });
       return response.data;
@@ -95,7 +113,10 @@ export default function SettingsPage() {
 
   const savePersonalityMutation = useMutation({
     mutationFn: async (personality: string) => {
-      const response = await apiClient.put<{ personality: string; updatedAt: string }>("/settings", {
+      const response = await apiClient.put<{
+        personality: string;
+        updatedAt: string;
+      }>("/settings", {
         personality,
       });
       return response.data;
@@ -111,7 +132,7 @@ export default function SettingsPage() {
 
   const initialPersonality = data?.personality ?? DEFAULT_PERSONALITY_MODE;
   const hasPersonalityChanges = Boolean(
-    effectivePersonality && effectivePersonality !== initialPersonality
+    effectivePersonality && effectivePersonality !== initialPersonality,
   );
 
   return (
@@ -123,7 +144,9 @@ export default function SettingsPage() {
             <h1 className="app-title">Settings</h1>
           </div>
           <div className="flex items-center gap-4">
-            <span className="hidden text-sm text-muted-foreground sm:block">Welcome, {user?.firstName}</span>
+            <span className="hidden text-sm text-muted-foreground sm:block">
+              Welcome, {user?.firstName}
+            </span>
             <Button variant="outline" onClick={() => signOut()}>
               Sign out
             </Button>
@@ -147,17 +170,23 @@ export default function SettingsPage() {
               Analysis Model
             </CardTitle>
             <CardDescription>
-              Choose which model SignLoop should use first for analysis and chat. If a primary model
-              fails, SignLoop falls back to OpenRouter automatically. Pick an OpenRouter model to skip
-              the primary endpoint entirely.
+              Choose which model SignLoop should use first for analysis and
+              chat. If a primary model fails, SignLoop falls back to OpenRouter
+              automatically. Pick an OpenRouter model to skip the primary
+              endpoint entirely.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {isLoading ? (
-              <div className="text-sm text-muted-foreground">Loading settings...</div>
+              <div className="text-sm text-muted-foreground">
+                Loading settings...
+              </div>
             ) : availableModels.length === 0 ? (
               <div className="space-y-2">
-                <label className="text-sm text-foreground" htmlFor="primary-model">
+                <label
+                  className="text-sm text-foreground"
+                  htmlFor="primary-model"
+                >
                   Primary model
                 </label>
                 <Select value="openrouter" disabled>
@@ -172,7 +201,10 @@ export default function SettingsPage() {
             ) : (
               <>
                 <div className="space-y-2">
-                  <label className="text-sm text-foreground" htmlFor="primary-model">
+                  <label
+                    className="text-sm text-foreground"
+                    htmlFor="primary-model"
+                  >
                     Primary model
                   </label>
                   <Select
@@ -188,7 +220,9 @@ export default function SettingsPage() {
                     <SelectContent>
                       {availableModels.map((model) => (
                         <SelectItem key={model} value={model}>
-                          {fallbackModels.includes(model) ? `${model} (OpenRouter)` : model}
+                          {fallbackModels.includes(model)
+                            ? `${model} (OpenRouter)`
+                            : model}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -237,28 +271,43 @@ export default function SettingsPage() {
           <CardHeader>
             <CardTitle>Personality</CardTitle>
             <CardDescription>
-              Choose whether chat replies should use SignLoop&apos;s legal-assistant persona or respond as a bare model.
+              Choose whether chat replies should use SignLoop&apos;s
+              legal-assistant persona or respond as a bare model.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {isLoading ? (
-              <div className="text-sm text-muted-foreground">Loading settings...</div>
+              <div className="text-sm text-muted-foreground">
+                Loading settings...
+              </div>
             ) : availablePersonalities.length === 0 ? (
-              <div className="text-sm text-destructive">No personality options are available.</div>
+              <div className="text-sm text-destructive">
+                No personality options are available.
+              </div>
             ) : (
               <>
                 <div className="space-y-2">
-                  <label className="text-sm text-foreground" htmlFor="personality">
+                  <label
+                    className="text-sm text-foreground"
+                    htmlFor="personality"
+                  >
                     Chat personality
                   </label>
-                  <Select value={effectivePersonality} onValueChange={setSelectedPersonality}>
+                  <Select
+                    value={effectivePersonality}
+                    onValueChange={setSelectedPersonality}
+                  >
                     <SelectTrigger id="personality">
                       <SelectValue placeholder="Select personality" />
                     </SelectTrigger>
                     <SelectContent>
                       {availablePersonalities.map((personalityOption) => (
-                        <SelectItem key={personalityOption} value={personalityOption}>
-                          {PERSONALITY_LABELS[personalityOption] ?? personalityOption}
+                        <SelectItem
+                          key={personalityOption}
+                          value={personalityOption}
+                        >
+                          {PERSONALITY_LABELS[personalityOption] ??
+                            personalityOption}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -267,7 +316,10 @@ export default function SettingsPage() {
 
                 <div className="flex gap-2">
                   <Button
-                    disabled={!hasPersonalityChanges || savePersonalityMutation.isPending}
+                    disabled={
+                      !hasPersonalityChanges ||
+                      savePersonalityMutation.isPending
+                    }
                     onClick={() => {
                       if (!effectivePersonality) return;
                       savePersonalityMutation.mutate(effectivePersonality);
@@ -298,14 +350,20 @@ export default function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Appearance</CardTitle>
-            <CardDescription>Choose a light or dark canvas, or follow your system setting.</CardDescription>
+            <CardDescription>
+              Choose a light or dark canvas, or follow your system setting.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
               <label className="text-sm text-foreground" htmlFor="theme">
                 Theme
               </label>
-              <Select value={isClient ? theme : undefined} onValueChange={setTheme} disabled={!isClient}>
+              <Select
+                value={isClient ? theme : undefined}
+                onValueChange={setTheme}
+                disabled={!isClient}
+              >
                 <SelectTrigger id="theme">
                   <SelectValue placeholder="Loading theme..." />
                 </SelectTrigger>

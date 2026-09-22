@@ -12,12 +12,13 @@ import {
   isOpenRouterModel,
   OPENROUTER_API_KEY,
   OPENROUTER_BASE_URL,
-  OPENROUTER_MODELS,
   PRIMARY_LLM_API_KEY,
   PRIMARY_LLM_BASE_URL,
   SITE_URL,
   resolvePrimaryModel,
 } from "@/lib/llm-client";
+import { orderOpenRouterModels } from "@/lib/model-settings";
+import { withAbort } from "@/lib/bounded-response";
 import type { WebSearchMetadata } from "@/lib/gemini-search";
 import { searchWeb } from "@/lib/web-search";
 import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
@@ -29,18 +30,23 @@ import {
 } from "@/lib/chat-tools";
 import { verifyFigures, type FigureVerification } from "@/lib/web-citations";
 import { isRecord } from "@/lib/utils";
+import {
+  compactAgentMessages,
+  MAX_SOURCE_COUNT,
+  MAX_SOURCE_CATALOG_CHARACTERS,
+} from "@/lib/chat-agent-history";
 
 // Search now returns leads rather than a brief, so a normal run is search -> several reads ->
 // answer. That needs more steps than a loop whose search already came back answer-shaped.
 const MAX_STEPS = 10;
 const MAX_SEARCHES = 3;
-const MAX_SOURCES = 512;
 // Budget chain: route maxDuration 300s > route abort 275s > this deadline > per-step first-chunk guard.
 const GENERATION_TIMEOUT_MS = 260_000;
 // A provider that accepts the request but sends nothing back is treated as down and skipped.
 const FIRST_CHUNK_TIMEOUT_MS = 20_000;
 // Langfuse records prompts and completions by default; contracts are sensitive, so allow opting out.
-const RECORD_TELEMETRY_CONTENT = process.env.LANGFUSE_RECORD_CONTENT !== "false";
+const RECORD_TELEMETRY_CONTENT =
+  process.env.LANGFUSE_RECORD_CONTENT !== "false";
 const TOOL_NOTES = {
   search_web:
     "Use search_web to find pages about a topic. It returns a ranked list of titles, addresses, and snippets — leads, not evidence. Open the promising ones with read_url (or http_get for an API) and answer from what you read; a snippet alone is not enough to state a fact. Refine the keywords and search again when the results are off-target.",
@@ -113,7 +119,9 @@ export function describeToolInput(tool: ChatToolName, input: unknown): string {
       return typeof record.url === "string" ? record.url : "";
     case "read_contract":
       return [
-        typeof record.contractId === "string" ? `${record.contractId.slice(0, 8)}…` : "",
+        typeof record.contractId === "string"
+          ? `${record.contractId.slice(0, 8)}…`
+          : "",
         typeof record.find === "string" && record.find
           ? `find "${record.find}"`
           : typeof record.offset === "number" && record.offset > 0
@@ -125,7 +133,8 @@ export function describeToolInput(tool: ChatToolName, input: unknown): string {
     case "list_contracts":
       return "";
     case "generate_image": {
-      const prompt = typeof record.prompt === "string" ? record.prompt.trim() : "";
+      const prompt =
+        typeof record.prompt === "string" ? record.prompt.trim() : "";
       return prompt.length > 80 ? `${prompt.slice(0, 79)}…` : prompt;
     }
   }
@@ -190,9 +199,13 @@ async function openStreamWithDeadline(
   // per-request signal shared by every step of the tool loop: each step left another listener, and
   // another retained AbortController, on it. AbortSignal.any keeps its link to the sources weak,
   // so the composite and the link are collected with the stream that uses them.
-  const signal = outer ? AbortSignal.any([outer, deadline.signal]) : deadline.signal;
+  const signal = outer
+    ? AbortSignal.any([outer, deadline.signal])
+    : deadline.signal;
   const aborted = new Promise<never>((_, reject) => {
-    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    signal.addEventListener("abort", () => reject(signal.reason), {
+      once: true,
+    });
   });
   aborted.catch(() => {});
   let timedOut = false;
@@ -216,7 +229,20 @@ async function openStreamWithDeadline(
         break;
       }
       buffered.push(value);
-      if (value.type !== "stream-start") break;
+      if (buffered.length > 256)
+        throw new Error("Provider sent too many opening events");
+      // Metadata/text-start can arrive long before useful output. Keep the opening deadline
+      // until content, a tool event, an error, or completion makes retrying inappropriate.
+      if (
+        ![
+          "stream-start",
+          "response-metadata",
+          "text-start",
+          "reasoning-start",
+          "raw",
+        ].includes(value.type)
+      )
+        break;
     }
     const source = reader;
     const stream = new ReadableStream<StreamPart>({
@@ -225,7 +251,7 @@ async function openStreamWithDeadline(
         if (closed) sink.close();
       },
       async pull(sink) {
-        const { done, value } = await source.read();
+        const { done, value } = await withAbort(source.read(), signal);
         if (done) sink.close();
         else sink.enqueue(value);
       },
@@ -234,7 +260,8 @@ async function openStreamWithDeadline(
     return { ...result, stream };
   } catch (error) {
     reader?.cancel().catch(() => {});
-    if (timedOut && !outer?.aborted) throw new FirstChunkTimeoutError(timeoutMs);
+    if (timedOut && !outer?.aborted)
+      throw new FirstChunkTimeoutError(timeoutMs);
     throw error;
   } finally {
     clearTimeout(timer);
@@ -250,9 +277,7 @@ export function createRoutedModel(
 ) {
   // A pinned OpenRouter model skips the primary endpoint and heads the OpenRouter chain.
   const pinnedFallback = isOpenRouterModel(primaryModel);
-  const openRouterModels = pinnedFallback
-    ? [primaryModel, ...OPENROUTER_MODELS.filter((model) => model !== primaryModel)]
-    : OPENROUTER_MODELS;
+  const openRouterModels = orderOpenRouterModels(primaryModel);
   const candidates = [
     ...(primaryModel && !pinnedFallback && PRIMARY_LLM_BASE_URL
       ? [
@@ -305,7 +330,9 @@ export function createRoutedModel(
       modelId: base.modelId,
       supportedUrls: base.supportedUrls,
       doGenerate: (options: Parameters<RoutedCandidate["doGenerate"]>[0]) =>
-        attempt(options.abortSignal, (candidate) => candidate.doGenerate(options)),
+        attempt(options.abortSignal, (candidate) =>
+          candidate.doGenerate(options),
+        ),
       doStream: (options: StreamOptions) =>
         attempt(options.abortSignal, (candidate) =>
           openStreamWithDeadline(candidate, options, firstChunkTimeoutMs),
@@ -348,7 +375,11 @@ export async function* generateChatReplyStream(
   const addSource = (source: WebSearchMetadata["sources"][number]): number => {
     let index = sources.findIndex((existing) => existing.url === source.url);
     if (index < 0) {
-      if (sources.length >= MAX_SOURCES)
+      if (
+        sources.length >= MAX_SOURCE_COUNT ||
+        JSON.stringify([...sources, source]).length >
+          MAX_SOURCE_CATALOG_CHARACTERS
+      )
         throw new Error("Source catalog limit reached");
       index = sources.length;
       sources.push(source);
@@ -427,7 +458,11 @@ export async function* generateChatReplyStream(
     toolNotes.push(TOOL_NOTES.contracts);
     Object.assign(
       tools,
-      createContractTools({ userId: options.contractsUserId, signal }),
+      createContractTools({
+        userId: options.contractsUserId,
+        signal,
+        onEvidence: (text) => evidence.push(text),
+      }),
     );
   }
   const generatedImages = new Map<string, string>();
@@ -438,7 +473,8 @@ export async function* generateChatReplyStream(
       createImageTool({
         signal,
         userId: options.userId,
-        onImage: (toolCallId, markdown) => generatedImages.set(toolCallId, markdown),
+        onImage: (toolCallId, markdown) =>
+          generatedImages.set(toolCallId, markdown),
       }),
     );
   }
@@ -548,7 +584,7 @@ export async function* generateChatReplyStream(
               sources,
             }
           : null,
-        agentMessages,
+        agentMessages: compactAgentMessages(agentMessages),
         toolActivity: [...activities.values()],
         readSources: [...readThisTurn],
         figures: verifyFigures(answer, evidence),

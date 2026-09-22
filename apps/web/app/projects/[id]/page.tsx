@@ -57,6 +57,8 @@ import {
 import { toast } from "sonner";
 
 interface Project {
+  contractsHasMore: boolean;
+  contextHasMore: boolean;
   id: string;
   title: string;
   description?: string;
@@ -87,6 +89,8 @@ const ProjectDetails = () => {
   const contractFileRef = useRef<HTMLInputElement>(null);
   const contextFileRef = useRef<HTMLInputElement>(null);
 
+  const [contractsOffset, setContractsOffset] = useState(0);
+  const [contextOffset, setContextOffset] = useState(0);
   const [contractName, setContractName] = useState("");
   const [selectedContractFile, setSelectedContractFile] = useState<File | null>(
     null,
@@ -106,9 +110,11 @@ const ProjectDetails = () => {
     error,
     refetch,
   } = useQuery({
-    queryKey: ["project", id],
+    queryKey: ["project", id, contractsOffset, contextOffset],
     queryFn: async () => {
-      const response = await apiClient.get(`/projects/${id}`);
+      const response = await apiClient.get(
+        `/projects/${id}?contractsOffset=${contractsOffset}&contextOffset=${contextOffset}`,
+      );
       return response.data as Project;
     },
     enabled: !!id,
@@ -168,7 +174,12 @@ const ProjectDetails = () => {
   };
 
   const uploadContractMutation = useMutation({
-    mutationFn: () => uploadContract({ file: selectedContractFile, title: contractName, projectId: id }),
+    mutationFn: () =>
+      uploadContract({
+        file: selectedContractFile,
+        title: contractName,
+        projectId: id,
+      }),
     onSuccess: (result) => {
       if (result.warning) {
         toast.warning(`Contract uploaded. ${result.warning}`);
@@ -301,7 +312,10 @@ const ProjectDetails = () => {
       <div className="min-h-screen bg-transparent flex items-center justify-center">
         <div className="text-center">
           <h2 className="text-heading-2xs">Project not found</h2>
-          <Link href="/dashboard" className="mt-3 inline-block text-highlight underline-offset-4 hover:underline">
+          <Link
+            href="/dashboard"
+            className="mt-3 inline-block text-highlight underline-offset-4 hover:underline"
+          >
             Back to Dashboard
           </Link>
         </div>
@@ -330,9 +344,7 @@ const ProjectDetails = () => {
               <p className="app-eyebrow">Project</p>
               <h1 className="app-title mt-3">{project.title}</h1>
               {project.description && (
-                <p className="app-lede mt-3 max-w-2xl">
-                  {project.description}
-                </p>
+                <p className="app-lede mt-3 max-w-2xl">{project.description}</p>
               )}
               <div className="mt-4 flex items-center gap-3 text-sm text-muted-foreground">
                 <span>
@@ -389,16 +401,22 @@ const ProjectDetails = () => {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          {contract.status !== "ANALYZED" && Boolean(contract.analyses?.length) && <Badge variant="secondary">Needs re-analysis</Badge>}
-                          {contract.status === "ANALYZED" && contract.analyses?.[0]?.riskBadge && (
-                            <Badge
-                              className={getRiskColor(
-                                contract.analyses[0].riskBadge,
-                              )}
-                            >
-                              {contract.analyses[0].riskBadge}
-                            </Badge>
-                          )}
+                          {contract.status !== "ANALYZED" &&
+                            Boolean(contract.analyses?.length) && (
+                              <Badge variant="secondary">
+                                Needs re-analysis
+                              </Badge>
+                            )}
+                          {contract.status === "ANALYZED" &&
+                            contract.analyses?.[0]?.riskBadge && (
+                              <Badge
+                                className={getRiskColor(
+                                  contract.analyses[0].riskBadge,
+                                )}
+                              >
+                                {contract.analyses[0].riskBadge}
+                              </Badge>
+                            )}
                           <ChevronRight className="h-4 w-4 text-muted-foreground" />
                         </div>
                       </Link>
@@ -406,6 +424,34 @@ const ProjectDetails = () => {
                   </div>
                 )}
 
+                {(contractsOffset > 0 || project.contractsHasMore) && (
+                  <nav
+                    aria-label="Contracts pages"
+                    className="mb-4 flex items-center justify-between gap-2"
+                  >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={contractsOffset === 0}
+                      onClick={() =>
+                        setContractsOffset(Math.max(0, contractsOffset - 50))
+                      }
+                    >
+                      Previous
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      Page {Math.floor(contractsOffset / 50) + 1}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!project.contractsHasMore}
+                      onClick={() => setContractsOffset(contractsOffset + 50)}
+                    >
+                      Next
+                    </Button>
+                  </nav>
+                )}
                 {/* Upload New Contract */}
                 <div className="rounded-card border p-4">
                   <div className="space-y-3">
@@ -532,6 +578,34 @@ const ProjectDetails = () => {
                   </div>
                 )}
 
+                {(contextOffset > 0 || project.contextHasMore) && (
+                  <nav
+                    aria-label="Context documents pages"
+                    className="mb-4 flex items-center justify-between gap-2"
+                  >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={contextOffset === 0}
+                      onClick={() =>
+                        setContextOffset(Math.max(0, contextOffset - 50))
+                      }
+                    >
+                      Previous
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      Page {Math.floor(contextOffset / 50) + 1}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!project.contextHasMore}
+                      onClick={() => setContextOffset(contextOffset + 50)}
+                    >
+                      Next
+                    </Button>
+                  </nav>
+                )}
                 {/* Upload New Context */}
                 <div className="rounded-card border p-4">
                   <div className="space-y-3">

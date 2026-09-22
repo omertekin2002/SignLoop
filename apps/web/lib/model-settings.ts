@@ -1,3 +1,4 @@
+import { readBoundedJson } from "@/lib/bounded-response";
 import { getErrorMessage, isRecord } from "@/lib/utils";
 
 export type PrimaryModel = string;
@@ -13,16 +14,19 @@ export const OPENROUTER_MODELS = [
 ];
 const OPENROUTER_CONFIGURED = Boolean(process.env.OPENROUTER_API_KEY?.trim());
 /** Models a user may pin explicitly even while primary models are available. */
-export const SELECTABLE_FALLBACK_MODELS: readonly string[] = OPENROUTER_CONFIGURED
-  ? [OPENROUTER_FREE_MODEL]
-  : [];
+export const SELECTABLE_FALLBACK_MODELS: readonly string[] =
+  OPENROUTER_CONFIGURED ? [OPENROUTER_FREE_MODEL] : [];
 
-export function isOpenRouterModel(model: string | null | undefined): model is string {
+export function isOpenRouterModel(
+  model: string | null | undefined,
+): model is string {
   return typeof model === "string" && OPENROUTER_MODELS.includes(model);
 }
 
 /** The OpenRouter chain with a pinned model moved to the front. */
-export function orderOpenRouterModels(pinned: string | null | undefined): string[] {
+export function orderOpenRouterModels(
+  pinned: string | null | undefined,
+): string[] {
   return isOpenRouterModel(pinned)
     ? [pinned, ...OPENROUTER_MODELS.filter((model) => model !== pinned)]
     : [...OPENROUTER_MODELS];
@@ -95,7 +99,9 @@ async function listRemoteModelIds(): Promise<string[]> {
       );
     }
 
-    const payload = (await response.json()) as { data?: unknown };
+    const payload = (await readBoundedJson(response, controller.signal)) as {
+      data?: unknown;
+    };
     const rawModels = Array.isArray(payload.data) ? payload.data : [];
     const modelIds = rawModels
       .map((entry) => {

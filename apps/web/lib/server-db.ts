@@ -1,6 +1,12 @@
-import { parseAgentMessages, parseWebSources } from "@/lib/chat-agent-history";
+import {
+  compactAgentMessages,
+  parseAgentMessages,
+  parseWebSources,
+  MAX_AGENT_STATE_CHARACTERS,
+  MAX_SOURCE_CATALOG_CHARACTERS,
+} from "@/lib/chat-agent-history";
 import { runMigrations } from "../db/migrations.js";
-import { sql } from "@vercel/postgres";
+import { sql, type VercelPoolClient } from "@vercel/postgres";
 import { randomUUID } from "node:crypto";
 import type { PrimaryModel } from "@/lib/model-settings";
 import type { PersonalityMode } from "@/lib/personality-settings";
@@ -13,7 +19,10 @@ import {
 type JsonObject = Record<string, unknown>;
 
 export async function claimGenerationOperation(
-  userId: string, kind: "contract" | "chat", id: string, seconds: number,
+  userId: string,
+  kind: "contract" | "chat",
+  id: string,
+  seconds: number,
 ): Promise<(() => Promise<void>) | null> {
   await ensureSchema();
   const entityKey = `${kind}:${userId}:${id}`;
@@ -27,19 +36,117 @@ export async function claimGenerationOperation(
   );
   if (!rowCount) return null;
   return async () => {
-    await sql.query("DELETE FROM generation_operations WHERE entity_key = $1 AND token = $2", [entityKey, token]);
+    await sql.query(
+      "DELETE FROM generation_operations WHERE entity_key = $1 AND token = $2",
+      [entityKey, token],
+    );
   };
 }
 
-export async function listPendingStorageDeletions() {
+export async function claimChatAdmission(input: {
+  principal: string;
+  hourlyLimit: number;
+  concurrency: number;
+  globalDailyLimit: number;
+  globalConcurrency: number;
+}): Promise<{ release: () => Promise<void> } | { retryAfter: number }> {
   await ensureSchema();
-  return (await sql<{ id: string; storageKey: string }>`
-    SELECT id, storage_key AS "storageKey" FROM storage_deletions ORDER BY created_at LIMIT 100
-  `).rows;
+  const client = await sql.connect();
+  const token = randomUUID();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(736194822)");
+    await client.query("DELETE FROM chat_admissions WHERE expires_at <= now()");
+    await client.query(
+      "DELETE FROM chat_request_budgets WHERE window_start < now() - interval '2 days'",
+    );
+    const { rows } = await client.query<{
+      active: number;
+      own: number;
+      daily: number;
+      hourly: number;
+    }>(
+      `
+      SELECT (SELECT count(*)::integer FROM chat_admissions) AS active,
+        (SELECT count(*)::integer FROM chat_admissions WHERE principal = $1) AS own,
+        coalesce((SELECT requests FROM chat_request_budgets WHERE bucket = 'global' AND window_start = date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), 0) AS daily,
+        coalesce((SELECT requests FROM chat_request_budgets WHERE bucket = $1 AND window_start = date_trunc('hour', now())), 0) AS hourly`,
+      [input.principal],
+    );
+    const state = rows[0]!;
+    const retryAfter =
+      state.daily >= input.globalDailyLimit
+        ? 86400
+        : state.hourly >= input.hourlyLimit
+          ? 3600
+          : state.active >= input.globalConcurrency ||
+              state.own >= input.concurrency
+            ? 30
+            : 0;
+    if (retryAfter) {
+      await client.query("ROLLBACK");
+      return { retryAfter };
+    }
+    await client.query(
+      `INSERT INTO chat_request_budgets(bucket, window_start, requests)
+      VALUES ('global', date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', 1), ($1, date_trunc('hour', now()), 1)
+      ON CONFLICT (bucket, window_start) DO UPDATE SET requests = chat_request_budgets.requests + 1`,
+      [input.principal],
+    );
+    await client.query(
+      "INSERT INTO chat_admissions(token, principal, expires_at) VALUES ($1, $2, now() + interval '360 seconds')",
+      [token, input.principal],
+    );
+    await client.query("COMMIT");
+    return {
+      release: async () => {
+        await sql.query("DELETE FROM chat_admissions WHERE token = $1", [
+          token,
+        ]);
+      },
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
-export async function completeStorageDeletion(id: string) {
-  await sql`DELETE FROM storage_deletions WHERE id = ${id}`;
+export async function claimStorageDeletions(limit = 20) {
+  await ensureSchema();
+  const token = randomUUID();
+  return (
+    await sql<{ id: string; storageKey: string; token: string }>`
+    WITH pending AS (
+      SELECT id FROM storage_deletions WHERE available_at <= now()
+        AND (lease_until IS NULL OR lease_until <= now())
+      ORDER BY available_at, created_at, id LIMIT ${Math.max(1, Math.min(100, Math.trunc(limit)))} FOR UPDATE SKIP LOCKED
+    ) UPDATE storage_deletions d SET lease_token = ${token}, lease_until = now() + interval '15 minutes'
+      FROM pending WHERE d.id = pending.id
+      RETURNING d.id, d.storage_key AS "storageKey", d.lease_token AS token
+  `
+  ).rows;
+}
+
+export async function deferStorageDeletion(id: string, token: string) {
+  await sql`UPDATE storage_deletions SET attempts = attempts + 1,
+    available_at = now() + least(86400, 60 * power(2, least(attempts, 11))) * interval '1 second',
+    lease_token = NULL, lease_until = NULL WHERE id = ${id} AND lease_token = ${token}`;
+}
+
+/** Register before writing bytes, so failed persistence still leaves a durable cleanup intent. */
+export async function createUploadCleanupIntent(storageKey: string) {
+  await ensureSchema();
+  const { rows } = await sql<{
+    id: string;
+  }>`INSERT INTO storage_deletions(storage_key, available_at)
+    VALUES (${storageKey}, now() + interval '1 hour') RETURNING id`;
+  return rows[0]!.id;
+}
+
+export async function completeStorageDeletion(id: string, token: string) {
+  await sql`DELETE FROM storage_deletions WHERE id = ${id} AND lease_token = ${token}`;
 }
 
 export type PaginationOptions = {
@@ -118,6 +225,7 @@ export type ContractSummaryRecord = {
 };
 
 export type ContractRecord = ContractSummaryRecord & {
+  analysesHasMore: boolean;
   analyses: AnalysisRecord[];
 };
 
@@ -134,6 +242,8 @@ export type ProjectSummaryRecord = {
 };
 
 export type ProjectDetailRecord = {
+  contractsHasMore: boolean;
+  contextHasMore: boolean;
   id: string;
   userId: string;
   title: string;
@@ -212,6 +322,7 @@ export type ChatThreadDetailRecord = {
 };
 
 type UploadedContractFileInput = {
+  storageIntentId?: string;
   userId: string;
   contractId: string;
   projectId: string | null;
@@ -239,6 +350,7 @@ type NewAnalysisInput = {
 };
 
 type NewContextDocumentInput = {
+  storageIntentId?: string;
   userId: string;
   projectId: string;
   title: string;
@@ -293,6 +405,7 @@ type AnalysisRow = {
 // a single lateral-join snapshot instead, so its contract status and latest result cannot drift.
 async function fetchAnalysisRowsByContractId(
   contractId: string,
+  offset = 0,
 ): Promise<AnalysisRow[]> {
   const baseQuery = `
     select
@@ -309,14 +422,21 @@ async function fetchAnalysisRowsByContractId(
       created_at as "createdAt"
     from analyses
     where contract_id = $1
-    order by created_at desc, id desc`;
+    order by created_at desc, id desc LIMIT 51 OFFSET $2`;
 
-  const { rows } = await sql.query<AnalysisRow>(baseQuery, [contractId]);
+  const { rows } = await sql.query<AnalysisRow>(baseQuery, [
+    contractId,
+    clampPagination({ offset }).offset,
+  ]);
 
   return rows;
 }
 
-export async function getAnalysisForUser(userId: string, contractId: string, analysisId: string): Promise<AnalysisRecord | null> {
+export async function getAnalysisForUser(
+  userId: string,
+  contractId: string,
+  analysisId: string,
+): Promise<AnalysisRecord | null> {
   await ensureSchema();
   const { rows } = await sql<AnalysisRow>`
     SELECT a.id, a.contract_id AS "contractId", a.risk_badge AS "riskBadge", a.result_json AS "resultJson",
@@ -367,7 +487,7 @@ export async function listContractsByUserId(
       from contracts
       where user_id = ${userId}
         and (${standalone} = false or project_id is null)
-      order by created_at desc
+      order by created_at desc, id desc
       limit ${limit} offset ${offset}
     `,
     sql<{ count: number }>`
@@ -431,12 +551,11 @@ export async function createContractForUser(input: {
 export async function getContractByIdForUser(
   userId: string,
   contractId: string,
+  analysisOffset = 0,
 ): Promise<ContractRecord | null> {
   await ensureSchema();
 
-  const { rows: contractRows } = await sql<
-    ContractSummaryRecord
-  >`
+  const { rows: contractRows } = await sql<ContractSummaryRecord>`
     select
       id,
       user_id as "userId",
@@ -456,13 +575,17 @@ export async function getContractByIdForUser(
     return null;
   }
 
-  const analysisRows = await fetchAnalysisRowsByContractId(contractId);
+  const analysisRows = await fetchAnalysisRowsByContractId(
+    contractId,
+    analysisOffset,
+  );
 
-  const analyses = analysisRows.map(mapAnalysisRow);
+  const analyses = analysisRows.slice(0, 50).map(mapAnalysisRow);
 
   return {
     ...contract,
     analyses,
+    analysesHasMore: analysisRows.length > 50,
   };
 }
 
@@ -506,7 +629,10 @@ export type ChatContractSummaryRecord = {
 export async function listContractsForChat(
   userId: string,
   options: { offset?: number; query?: string } = {},
-): Promise<{ contracts: ChatContractSummaryRecord[]; nextOffset: number | null }> {
+): Promise<{
+  contracts: ChatContractSummaryRecord[];
+  nextOffset: number | null;
+}> {
   await ensureSchema();
   const limit = 50;
   const offset = Math.max(0, Math.trunc(options.offset ?? 0));
@@ -563,6 +689,25 @@ export async function getContractTextForUser(
     limit 1
   `;
 
+  return rows[0] ?? null;
+}
+
+/** Offsets are Unicode code points, matching PostgreSQL substring/char_length. */
+export async function getContractWindowForUser(
+  userId: string,
+  contractId: string,
+  offset: number,
+) {
+  await ensureSchema();
+  const start = Math.max(0, Math.min(2_000_000, Math.trunc(offset)));
+  const { rows } = await sql<
+    ChatContractTextRecord & { characterCount: number }
+  >`
+    SELECT id, title, status, substring(text_content FROM ${start + 1} FOR 12000) AS text,
+      coalesce(char_length(text_content), 0)::integer AS "characterCount",
+      extraction_warning AS "extractionWarning"
+    FROM contracts WHERE id = ${contractId} AND user_id = ${userId} LIMIT 1
+  `;
   return rows[0] ?? null;
 }
 
@@ -673,12 +818,15 @@ export async function getContractWithLatestAnalysisForUser(
 }
 
 export async function saveContractUploadForUser(
-  input: UploadedContractFileInput & { text: string; extractionWarning?: string | null },
+  input: UploadedContractFileInput & {
+    text: string;
+    extractionWarning?: string | null;
+  },
 ): Promise<boolean> {
   await ensureSchema();
 
-  // Keep the extracted text/status and file metadata atomic. If either statement fails, the route
-  // can safely remove the new object without leaving a DRAFT contract that points to no file row.
+  // Commit extracted text, file metadata, and cancellation of the cleanup intent atomically.
+  // An uncertain commit result must never trigger immediate deletion of the uploaded object.
   const client = await sql.connect();
   try {
     await client.query("BEGIN");
@@ -686,7 +834,12 @@ export async function saveContractUploadForUser(
       `UPDATE contracts
        SET text_content = $1, status = 'DRAFT', updated_at = clock_timestamp(), extraction_warning = $4
        WHERE id = $2 AND user_id = $3`,
-      [input.text, input.contractId, input.userId, input.extractionWarning ?? null],
+      [
+        input.text,
+        input.contractId,
+        input.userId,
+        input.extractionWarning ?? null,
+      ],
     );
 
     if (!rowCount) {
@@ -715,6 +868,7 @@ export async function saveContractUploadForUser(
       ],
     );
 
+    await consumeUploadIntent(client, input.storageIntentId);
     await client.query("COMMIT");
     return true;
   } catch (error) {
@@ -803,7 +957,8 @@ export async function deleteAnalysisForContract(input: {
   keepAnalysisId?: string;
 }): Promise<boolean> {
   await ensureSchema();
-  if (!input.analysisId && !input.keepAnalysisId) throw new Error("An analysis ID is required");
+  if (!input.analysisId && !input.keepAnalysisId)
+    throw new Error("An analysis ID is required");
 
   // Delete the analysis and, if it was the contract's last one, revert the contract status — in a
   // single transaction so the contract can't be left badged ANALYZED with zero analyses.
@@ -821,7 +976,8 @@ export async function deleteAnalysisForContract(input: {
     }
 
     const latest = await client.query<{ id: string }>(
-      "SELECT id FROM analyses WHERE contract_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1", [input.contractId],
+      "SELECT id FROM analyses WHERE contract_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1",
+      [input.contractId],
     );
     const deletingLatest = latest.rows[0]?.id === input.analysisId;
 
@@ -835,7 +991,12 @@ export async function deleteAnalysisForContract(input: {
          AND contracts.id = analyses.contract_id
          AND contracts.user_id = $3
        RETURNING analyses.id`,
-      [input.analysisId ?? null, input.contractId, input.userId, input.keepAnalysisId ?? null],
+      [
+        input.analysisId ?? null,
+        input.contractId,
+        input.userId,
+        input.keepAnalysisId ?? null,
+      ],
     );
 
     if (!rows[0]) {
@@ -861,8 +1022,6 @@ export async function deleteAnalysisForContract(input: {
     client.release();
   }
 }
-
-
 
 export async function deleteContractForUser(input: {
   userId: string;
@@ -947,7 +1106,7 @@ export async function listProjectsByUserId(
         ) as "contextDocumentCount"
       from projects p
       where p.user_id = ${userId}
-      order by p.created_at desc
+      order by p.created_at desc, p.id desc
       limit ${limit} offset ${offset}
     `,
     sql<{ count: number }>`
@@ -988,6 +1147,7 @@ export async function isProjectOwnedByUser(
 export async function getProjectByIdForUser(
   userId: string,
   projectId: string,
+  options: { contractsOffset?: number; contextOffset?: number } = {},
 ): Promise<ProjectDetailRecord | null> {
   await ensureSchema();
 
@@ -1035,10 +1195,15 @@ export async function getProjectByIdForUser(
       from contracts
       where project_id = ${projectId}
         and user_id = ${userId}
-      order by created_at desc
+      order by created_at desc, id desc
+      LIMIT 51 OFFSET ${clampPagination({ offset: options.contractsOffset }).offset}
     `,
-      listProjectContextDocumentsForUser(userId, projectId).then((rows) => ({ rows })),
-
+      listProjectContextDocumentsForUser(
+        userId,
+        projectId,
+        options.contextOffset,
+        51,
+      ).then((rows) => ({ rows })),
     ]);
 
   const analysesByContract = new Map<
@@ -1047,7 +1212,7 @@ export async function getProjectByIdForUser(
   >();
 
   if (contractRows.length > 0) {
-    const contractIds = contractRows.map((c) => c.id);
+    const contractIds = contractRows.slice(0, 50).map((c) => c.id);
 
     const { rows: analysisRows } = await sql.query<{
       contractId: string;
@@ -1071,7 +1236,7 @@ export async function getProjectByIdForUser(
     }
   }
 
-  const contracts = contractRows.map((contract) => ({
+  const contracts = contractRows.slice(0, 50).map((contract) => ({
     ...contract,
     analyses: analysesByContract.get(contract.id) ?? [],
   }));
@@ -1079,7 +1244,9 @@ export async function getProjectByIdForUser(
   return {
     ...project,
     contracts,
-    contextDocuments,
+    contractsHasMore: contractRows.length > 50,
+    contextHasMore: contextDocuments.length > 50,
+    contextDocuments: contextDocuments.slice(0, 50),
   };
 }
 
@@ -1088,14 +1255,22 @@ export async function getProjectByIdForUser(
  * bound in SQL prevents a large context upload from being transferred wholesale just to be sliced
  * for the model prompt. Both the beginning and end are retained for definitions and late clauses.
  */
-export async function listProjectContextDocumentsForUser(userId: string, projectId: string): Promise<ProjectDetailRecord["contextDocuments"]> {
+export async function listProjectContextDocumentsForUser(
+  userId: string,
+  projectId: string,
+  offset = 0,
+  limit = 50,
+): Promise<ProjectDetailRecord["contextDocuments"]> {
   await ensureSchema();
-  return (await sql<ProjectDetailRecord["contextDocuments"][number]>`
+  return (
+    await sql<ProjectDetailRecord["contextDocuments"][number]>`
     SELECT cd.id, cd.title, cd.document_type AS "documentType", cd.original_filename AS "originalFilename",
       cd.size_bytes AS "fileSize", cd.word_count AS "wordCount", cd.created_at AS "createdAt"
     FROM context_documents cd JOIN projects p ON p.id = cd.project_id
-    WHERE p.id = ${projectId} AND p.user_id = ${userId} ORDER BY cd.created_at
-  `).rows;
+    WHERE p.id = ${projectId} AND p.user_id = ${userId} ORDER BY cd.created_at, cd.id
+    LIMIT ${Math.min(51, Math.max(1, limit))} OFFSET ${clampPagination({ offset }).offset}
+  `
+  ).rows;
 }
 
 export async function getProjectContextForAnalysis(
@@ -1152,38 +1327,58 @@ export async function addContextDocumentToProject(
 
   // Insert only if the project is owned by the user — folds the ownership check into the write so
   // there's no separate round-trip. No inserted row ⇒ the project doesn't exist / isn't owned.
-  const { rows } = await sql.query<{ id: string }>(
-    `insert into context_documents (
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query<{ id: string }>(
+      `insert into context_documents (
        project_id, title, document_type, storage_key, bucket,
        original_filename, content_type, size_bytes, extracted_text, word_count, extraction_warning
      )
      select $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $12
      where exists (select 1 from projects where id = $1 and user_id = $11)
      returning id`,
-    [
-      input.projectId,
-      input.title,
-      input.documentType,
-      input.storageKey,
-      input.bucket,
-      input.originalFilename,
-      input.contentType,
-      input.sizeBytes,
-      input.extractedText,
-      input.wordCount,
-      input.userId,
-      input.extractionWarning ?? null,
-    ],
-  );
+      [
+        input.projectId,
+        input.title,
+        input.documentType,
+        input.storageKey,
+        input.bucket,
+        input.originalFilename,
+        input.contentType,
+        input.sizeBytes,
+        input.extractedText,
+        input.wordCount,
+        input.userId,
+        input.extractionWarning ?? null,
+      ],
+    );
 
-  const created = rows[0];
-  if (!created) {
-    throw new ProjectNotFoundError();
+    const created = rows[0];
+    if (!created) {
+      throw new ProjectNotFoundError();
+    }
+
+    await consumeUploadIntent(client, input.storageIntentId);
+    await client.query("COMMIT");
+    return created;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
   }
-
-  return created;
 }
 
+async function consumeUploadIntent(client: VercelPoolClient, id?: string) {
+  if (!id) return;
+  const result = await client.query(
+    "DELETE FROM storage_deletions WHERE id = $1 AND lease_token IS NULL AND attempts = 0 RETURNING id",
+    [id],
+  );
+  if (!result.rowCount)
+    throw new Error("Upload cleanup has already started. Please upload again.");
+}
 
 export async function deleteContextDocumentFromProject(input: {
   userId: string;
@@ -1241,89 +1436,25 @@ export async function getUserSettingsByUserId(
   return rows[0] ?? null;
 }
 
-export async function upsertUserPrimaryModel(input: {
+export async function upsertUserSettings(input: {
   userId: string;
-  primaryModel: PrimaryModel;
+  primaryModel?: PrimaryModel;
+  personality?: PersonalityMode;
 }): Promise<UserSettingsRecord> {
   await ensureSchema();
-
   const { rows } = await sql<UserSettingsRecord>`
-    insert into user_settings (
-      user_id,
-      primary_model,
-      personality,
-      updated_at
-    )
-    values (
-      ${input.userId},
-      ${input.primaryModel},
-      null,
-      now()
-    )
-    on conflict (user_id)
-    do update set
-      primary_model = excluded.primary_model,
+    INSERT INTO user_settings(user_id, primary_model, personality, updated_at)
+    VALUES (${input.userId}, ${input.primaryModel ?? null}, ${input.personality ?? null}, now())
+    ON CONFLICT (user_id) DO UPDATE SET
+      primary_model = CASE WHEN ${input.primaryModel !== undefined} THEN excluded.primary_model ELSE user_settings.primary_model END,
+      personality = CASE WHEN ${input.personality !== undefined} THEN excluded.personality ELSE user_settings.personality END,
       updated_at = now()
-    returning
-      user_id as "userId",
-      primary_model as "primaryModel",
-      personality as "personality",
-      updated_at as "updatedAt"
+    RETURNING user_id AS "userId", primary_model AS "primaryModel", personality, updated_at AS "updatedAt"
   `;
-
-  const saved = rows[0];
-  if (!saved) {
-    throw new Error("Failed to save user settings");
-  }
-
-  return saved;
+  if (!rows[0]) throw new Error("Failed to save user settings");
+  return rows[0];
 }
 
-export async function upsertUserPersonality(input: {
-  userId: string;
-  personality: PersonalityMode;
-}): Promise<UserSettingsRecord> {
-  await ensureSchema();
-
-  const { rows } = await sql<UserSettingsRecord>`
-    insert into user_settings (
-      user_id,
-      primary_model,
-      personality,
-      updated_at
-    )
-    values (
-      ${input.userId},
-      null,
-      ${input.personality},
-      now()
-    )
-    on conflict (user_id)
-    do update set
-      personality = excluded.personality,
-      updated_at = now()
-    returning
-      user_id as "userId",
-      primary_model as "primaryModel",
-      personality as "personality",
-      updated_at as "updatedAt"
-  `;
-
-  const saved = rows[0];
-  if (!saved) {
-    throw new Error("Failed to save user settings");
-  }
-
-  return saved;
-}
-
-/**
- * `replayState` controls hydration of agentMessages/webSources — the server-only tool transcript
- * the chat loop replays into the next turn. Validating it is the most expensive work on the row
- * (a full stringify to size-check, then a Zod parse of the largest object stored), so reads whose
- * response drops it anyway — everything that goes out through toPublicChatMessage — pass "omit".
- * The default stays "include" so a missed call site costs work rather than losing the transcript.
- */
 function mapChatMessageRow(
   row: {
     id: string;
@@ -1482,7 +1613,12 @@ export async function getRecentChatMessagesForThreadForUser(
         left(regexp_replace(m.content, 'data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+', '[generated image data]', 'g'), 4000) AS content,
         m.position,
         m.created_at as "createdAt",
-        m.metadata_json as metadata
+        jsonb_build_object(
+          'agentMessages', CASE WHEN char_length((m.metadata_json->'agentMessages')::text) <= ${MAX_AGENT_STATE_CHARACTERS * 2}
+            THEN m.metadata_json->'agentMessages' END,
+          'webSources', CASE WHEN char_length((m.metadata_json->'webSources')::text) <= ${MAX_SOURCE_CATALOG_CHARACTERS * 2}
+            THEN m.metadata_json->'webSources' END
+        ) as metadata
       from chat_messages m
       where m.thread_id = t.id
       order by m.position desc, m.created_at desc
@@ -1497,29 +1633,31 @@ export async function getRecentChatMessagesForThreadForUser(
     return null;
   }
 
-  return rows
-    .filter(
-      (
-        row,
-      ): row is typeof row & {
-        id: string;
-        threadId: string;
-        role: string;
-        content: string;
-        position: number;
-        createdAt: string;
-      } =>
-        row.id !== null &&
-        row.threadId !== null &&
-        row.role !== null &&
-        row.content !== null &&
-        row.position !== null &&
-        row.createdAt !== null,
-    )
-    // The chat loop replays this transcript into the next turn, so this is the one read that
-    // genuinely needs it. Wrapped rather than passed by reference: Array.map supplies the index
-    // as the second argument, which would silently select the wrong hydration mode.
-    .map((row) => mapChatMessageRow(row, "include"));
+  return (
+    rows
+      .filter(
+        (
+          row,
+        ): row is typeof row & {
+          id: string;
+          threadId: string;
+          role: string;
+          content: string;
+          position: number;
+          createdAt: string;
+        } =>
+          row.id !== null &&
+          row.threadId !== null &&
+          row.role !== null &&
+          row.content !== null &&
+          row.position !== null &&
+          row.createdAt !== null,
+      )
+      // The chat loop replays this transcript into the next turn, so this is the one read that
+      // genuinely needs it. Wrapped rather than passed by reference: Array.map supplies the index
+      // as the second argument, which would silently select the wrong hydration mode.
+      .map((row) => mapChatMessageRow(row, "include"))
+  );
 }
 
 export async function getChatThreadByIdForUser(
@@ -1606,7 +1744,13 @@ export async function appendChatMessagesToThread(input: {
     .map((message) => ({
       role: message.role,
       content: message.content.trim(),
-      metadata: message.metadata ?? null,
+      metadata: message.metadata
+        ? {
+            ...message.metadata,
+            agentMessages: compactAgentMessages(message.metadata.agentMessages),
+            webSources: parseWebSources(message.metadata.webSources),
+          }
+        : null,
     }))
     .filter((message) => message.content.length > 0);
 
@@ -1634,7 +1778,8 @@ export async function appendChatMessagesToThread(input: {
 
     // Move every inline generated image out of the transcript text into chat_attachments, so a
     // reply that mixes prose and images stays small and each image is served by its own route.
-    const inlineImage = /!\[Generated image\]\(data:image\/png;base64,([A-Za-z0-9+/=]+)\)/g;
+    const inlineImage =
+      /!\[Generated image\]\(data:image\/png;base64,([A-Za-z0-9+/=]+)\)/g;
     for (const message of cleanedMessages) {
       if (message.role !== "assistant") continue;
       const images = [...message.content.matchAll(inlineImage)];
@@ -1643,10 +1788,19 @@ export async function appendChatMessagesToThread(input: {
       for (const image of images) {
         if (replacements.has(image[0])) continue;
         const imageId = randomUUID();
-        await client.query("INSERT INTO chat_attachments(id, thread_id, image_data) VALUES ($1, $2, decode($3, 'base64'))", [imageId, input.threadId, image[1]!]);
-        replacements.set(image[0], `![Generated image](/api/chat/threads/${input.threadId}/images/${imageId})`);
+        await client.query(
+          "INSERT INTO chat_attachments(id, thread_id, image_data) VALUES ($1, $2, decode($3, 'base64'))",
+          [imageId, input.threadId, image[1]!],
+        );
+        replacements.set(
+          image[0],
+          `![Generated image](/api/chat/threads/${input.threadId}/images/${imageId})`,
+        );
       }
-      message.content = message.content.replace(inlineImage, (match) => replacements.get(match) ?? match);
+      message.content = message.content.replace(
+        inlineImage,
+        (match) => replacements.get(match) ?? match,
+      );
     }
 
     const posResult = await client.query(
@@ -1693,7 +1847,11 @@ export async function appendChatMessagesToThread(input: {
   }
 }
 
-export async function getChatImageForUser(userId: string, threadId: string, imageId: string): Promise<Buffer | null> {
+export async function getChatImageForUser(
+  userId: string,
+  threadId: string,
+  imageId: string,
+): Promise<Buffer | null> {
   await ensureSchema();
   const { rows } = await sql.query<{ image: Buffer }>(
     `SELECT a.image_data AS image FROM chat_attachments a JOIN chat_threads t ON t.id = a.thread_id
@@ -1708,7 +1866,17 @@ export async function getChatImageForUser(userId: string, threadId: string, imag
   return rows[0]?.image ?? null;
 }
 
-export async function deleteChatThreadForUser(input: { userId: string; threadId: string }): Promise<boolean> {
+export async function deleteChatThreadForUser(input: {
+  userId: string;
+  threadId: string;
+}): Promise<boolean> {
   await ensureSchema();
-  return Boolean((await sql.query("DELETE FROM chat_threads WHERE id = $1 AND user_id = $2", [input.threadId, input.userId])).rowCount);
+  return Boolean(
+    (
+      await sql.query(
+        "DELETE FROM chat_threads WHERE id = $1 AND user_id = $2",
+        [input.threadId, input.userId],
+      )
+    ).rowCount,
+  );
 }

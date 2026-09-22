@@ -1,5 +1,7 @@
 "use client";
 
+import { parseWebSources } from "@/lib/chat-agent-history";
+
 import type { ModelMessage } from "ai";
 import type { ChatToolActivity, ChatToolName } from "@/lib/chat";
 
@@ -70,12 +72,14 @@ type ChatApiMessage = {
   role: "system" | "user" | "assistant";
   content: string;
   agentMessages?: unknown[];
+  webSources?: ReturnType<typeof parseWebSources>;
 };
 
 type ChatApiSuccess = {
   toolActivity?: ChatToolActivity[];
   /** Temporary chat keeps its tool exchanges here; saved threads reload them from the database. */
   agentMessages?: unknown[];
+  webSources?: ReturnType<typeof parseWebSources>;
   message: string;
   provider?: string;
   model?: string;
@@ -181,17 +185,26 @@ function readAgentMessages(message: ThreadMessage): ModelMessage[] | undefined {
 }
 
 function toApiMessages(messages: readonly ThreadMessage[]): ChatApiMessage[] {
-  return boundTemporaryChatHistory(messages.slice(-30)
-    .map((message) => {
-      const agentMessages =
-        message.role === "assistant" ? readAgentMessages(message) : undefined;
-      return {
-        role: message.role,
-        content: extractMessageText(message),
-        ...(agentMessages ? { agentMessages } : {}),
-      };
-    })
-    .filter((message) => message.content.length > 0));
+  return boundTemporaryChatHistory(
+    messages
+      .slice(-30)
+      .map((message) => {
+        const agentMessages =
+          message.role === "assistant" ? readAgentMessages(message) : undefined;
+        return {
+          role: message.role,
+          content: extractMessageText(message),
+          ...(agentMessages ? { agentMessages } : {}),
+          webSources: parseWebSources(
+            (
+              message.metadata as
+                { custom?: { webSources?: unknown } } | undefined
+            )?.custom?.webSources,
+          ),
+        };
+      })
+      .filter((message) => message.content.length > 0),
+  );
 }
 
 function parseError(payload: unknown, status: number): string {
@@ -218,11 +231,21 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
 
   return {
     message,
+    webSources: parseWebSources(payload.webSources),
     toolActivity: parseToolActivity(payload.toolActivity),
     agentMessages: Array.isArray(payload.agentMessages)
       ? payload.agentMessages
       : undefined,
-    storedMessages: Array.isArray(payload.storedMessages) ? payload.storedMessages.filter((message): message is ChatThreadMessage => isRecord(message) && typeof message.id === "string" && typeof message.content === "string" && typeof message.position === "number" && (message.role === "user" || message.role === "assistant")) : undefined,
+    storedMessages: Array.isArray(payload.storedMessages)
+      ? payload.storedMessages.filter(
+          (message): message is ChatThreadMessage =>
+            isRecord(message) &&
+            typeof message.id === "string" &&
+            typeof message.content === "string" &&
+            typeof message.position === "number" &&
+            (message.role === "user" || message.role === "assistant"),
+        )
+      : undefined,
     provider:
       typeof payload.provider === "string" ? payload.provider : undefined,
     model: typeof payload.model === "string" ? payload.model : undefined,
@@ -231,31 +254,67 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
   };
 }
 
-const TOOL_ACTIVITY_LABELS: Record<ChatToolName, { running: string; complete: string; error: string }> = {
-  search_web: { running: "Searching", complete: "Searched", error: "Search unavailable" },
-  generate_image: { running: "Generating image", complete: "Generated image", error: "Image unavailable" },
-  read_url: { running: "Reading page", complete: "Read page", error: "Page unavailable" },
+const TOOL_ACTIVITY_LABELS: Record<
+  ChatToolName,
+  { running: string; complete: string; error: string }
+> = {
+  search_web: {
+    running: "Searching",
+    complete: "Searched",
+    error: "Search unavailable",
+  },
+  generate_image: {
+    running: "Generating image",
+    complete: "Generated image",
+    error: "Image unavailable",
+  },
+  read_url: {
+    running: "Reading page",
+    complete: "Read page",
+    error: "Page unavailable",
+  },
   http_get: { running: "Fetching", complete: "Fetched", error: "Fetch failed" },
-  read_contract: { running: "Reading contract", complete: "Read contract", error: "Contract unavailable" },
-  list_contracts: { running: "Listing contracts", complete: "Listed contracts", error: "Contract list unavailable" },
+  read_contract: {
+    running: "Reading contract",
+    complete: "Read contract",
+    error: "Contract unavailable",
+  },
+  list_contracts: {
+    running: "Listing contracts",
+    complete: "Listed contracts",
+    error: "Contract list unavailable",
+  },
 };
 
 function parseToolActivity(value: unknown): ChatToolActivity[] {
-  return Array.isArray(value) ? value.flatMap((item): ChatToolActivity[] =>
-    isRecord(item) && typeof item.id === "string" && typeof item.query === "string" &&
-    (item.status === "running" || item.status === "complete" || item.status === "error")
-      ? [{
-          id: item.id,
-          query: item.query,
-          status: item.status,
-          ...(typeof item.tool === "string" && item.tool in TOOL_ACTIVITY_LABELS ? { tool: item.tool as ChatToolName } : {}),
-        }]
-      : []) : [];
+  return Array.isArray(value)
+    ? value.flatMap((item): ChatToolActivity[] =>
+        isRecord(item) &&
+        typeof item.id === "string" &&
+        typeof item.query === "string" &&
+        (item.status === "running" ||
+          item.status === "complete" ||
+          item.status === "error")
+          ? [
+              {
+                id: item.id,
+                query: item.query,
+                status: item.status,
+                ...(typeof item.tool === "string" &&
+                item.tool in TOOL_ACTIVITY_LABELS
+                  ? { tool: item.tool as ChatToolName }
+                  : {}),
+              },
+            ]
+          : [],
+      )
+    : [];
 }
 
 function describeToolActivity(activity: ChatToolActivity): string {
   // Rows saved before other tools existed carry no tool name and were always searches.
-  const label = TOOL_ACTIVITY_LABELS[activity.tool ?? "search_web"][activity.status];
+  const label =
+    TOOL_ACTIVITY_LABELS[activity.tool ?? "search_web"][activity.status];
   return activity.query ? `${label}: ${activity.query}` : label;
 }
 
@@ -375,7 +434,11 @@ async function* readChatApiResponse(
         if (event.type === "tool") {
           toolActivity.set(event.activity.id, event.activity);
           toolActivitySnapshot = [...toolActivity.values()];
-          yield { message: accumulatedMessage, done: false, toolActivity: toolActivitySnapshot };
+          yield {
+            message: accumulatedMessage,
+            done: false,
+            toolActivity: toolActivitySnapshot,
+          };
           continue;
         }
 
@@ -641,6 +704,8 @@ const rehypePlugins = [rehypeKatex];
 // because the lexer never splits inside those constructs.
 function parseMarkdownIntoBlocks(markdown: string): string[] {
   if (!markdown) return [];
+  // Reference definitions need one document scope (including GFM footnotes).
+  if (/^ {0,3}\[[^\]\n]+\]:/m.test(markdown)) return [markdown];
 
   try {
     // The lexer emits a `space` token for every blank line between blocks — roughly half of all
@@ -754,14 +819,18 @@ const AssistantModelLabel = () => {
 };
 
 const SearchActivity = () => {
-  const rawActivity = useMessage(message => message.metadata?.custom?.toolActivity);
+  const rawActivity = useMessage(
+    (message) => message.metadata?.custom?.toolActivity,
+  );
   const activities = parseToolActivity(rawActivity);
   if (!activities.length) return null;
-  return <div className="space-y-1 text-xs text-muted-foreground" aria-live="polite">
-    {activities.map(activity => <div key={activity.id}>
-      {describeToolActivity(activity)}
-    </div>)}
-  </div>;
+  return (
+    <div className="space-y-1 text-xs text-muted-foreground" aria-live="polite">
+      {activities.map((activity) => (
+        <div key={activity.id}>{describeToolActivity(activity)}</div>
+      ))}
+    </div>
+  );
 };
 
 // Copies the message the same way it is sent to the API, so a generated image becomes a short
@@ -904,6 +973,7 @@ export function ChatPanel({
   const [persistenceWarning, setPersistenceWarning] = useState(false);
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const loadingOlderRef = useRef(false);
   const hydratedSignatureRef = useRef<string | null>(null);
   const initialPromptSignatureRef = useRef<string | null>(null);
   const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
@@ -1042,6 +1112,7 @@ export function ChatPanel({
                 toolActivity: snapshot.toolActivity ?? [],
                 // Retained so the next temporary turn can replay this turn's tool exchange.
                 agentMessages: snapshot.agentMessages ?? [],
+                webSources: snapshot.webSources ?? [],
               },
             },
           };
@@ -1054,14 +1125,30 @@ export function ChatPanel({
         if (!temporary) {
           setPersistenceWarning(completedSnapshot.persisted === false);
           queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
-          if (completedSnapshot.persisted !== false && completedSnapshot.storedMessages?.length) {
+          if (
+            completedSnapshot.persisted !== false &&
+            completedSnapshot.storedMessages?.length
+          ) {
             const stored = completedSnapshot.storedMessages;
-            queryClient.setQueryData<ChatThreadDetail>(["chat-thread", threadId], (previous) => {
-              const ids = new Set(stored.map((message) => message.id));
-              const messages = [...(previous?.messages ?? []).filter((message) => !ids.has(message.id)), ...stored];
-              hydratedSignatureRef.current = `${threadId}:${messages.length}:${messages.at(-1)?.id ?? "none"}`;
-              return { id: threadId!, title: previous?.title ?? "Chat", hasMore: previous?.hasMore ?? false, messages };
-            });
+            queryClient.setQueryData<ChatThreadDetail>(
+              ["chat-thread", threadId],
+              (previous) => {
+                const ids = new Set(stored.map((message) => message.id));
+                const messages = [
+                  ...(previous?.messages ?? []).filter(
+                    (message) => !ids.has(message.id),
+                  ),
+                  ...stored,
+                ];
+                hydratedSignatureRef.current = `${threadId}:${messages.length}:${messages.at(-1)?.id ?? "none"}`;
+                return {
+                  id: threadId!,
+                  title: previous?.title ?? "Chat",
+                  hasMore: previous?.hasMore ?? false,
+                  messages,
+                };
+              },
+            );
           }
         }
       },
@@ -1119,13 +1206,15 @@ export function ChatPanel({
     if (!temporary || !prompt || !privacyAcknowledged) return;
     const signature = `temporary-prompt:${prompt}`;
     let canceled = false;
-    // Defer past Strict Mode's setup/cleanup replay; use the normal cancellable adapter.
+    // A URL supplies a draft; only the user can submit it. Defer past Strict Mode replay.
     queueMicrotask(() => {
       if (canceled || initialPromptSignatureRef.current === signature) return;
       initialPromptSignatureRef.current = signature;
-      runtime.thread.append({ role: "user", content: [{ type: "text", text: prompt }] });
+      runtime.thread.composer.setText(prompt);
     });
-    return () => { canceled = true; };
+    return () => {
+      canceled = true;
+    };
   }, [initialPrompt, privacyAcknowledged, runtime, temporary]);
 
   useEffect(() => {
@@ -1191,16 +1280,41 @@ export function ChatPanel({
 
   const loadOlderMessages = async () => {
     const first = activeThreadQuery.data?.messages[0];
-    if (!first || !activeThreadId || runtime.thread.getState().isRunning) return;
+    if (
+      !first ||
+      !activeThreadId ||
+      loadingOlderRef.current ||
+      runtime.thread.getState().isRunning
+    )
+      return;
+    loadingOlderRef.current = true;
     setIsLoadingOlder(true);
     try {
-      const response = await fetch(`/api/chat/threads/${activeThreadId}?before=${first.position}`);
+      const response = await fetch(
+        `/api/chat/threads/${activeThreadId}?before=${first.position}`,
+      );
       if (!response.ok) throw new Error("Could not load older messages");
-      const { data } = await response.json() as { data: ChatThreadDetail };
-      queryClient.setQueryData<ChatThreadDetail>(["chat-thread", activeThreadId], (previous) => previous ? { ...previous, hasMore: data.hasMore, messages: [...data.messages, ...previous.messages] } : data);
+      const { data } = (await response.json()) as { data: ChatThreadDetail };
+      if (runtime.thread.getState().isRunning) return;
+      queryClient.setQueryData<ChatThreadDetail>(
+        ["chat-thread", activeThreadId],
+        (previous) =>
+          previous
+            ? {
+                ...previous,
+                hasMore: data.hasMore,
+                messages: [...data.messages, ...previous.messages],
+              }
+            : data,
+      );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not load older messages");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not load older messages",
+      );
     } finally {
+      loadingOlderRef.current = false;
       setIsLoadingOlder(false);
     }
   };
@@ -1221,6 +1335,7 @@ export function ChatPanel({
 
   const composerDisabled =
     !privacyAcknowledged ||
+    isLoadingOlder ||
     isHydratingThread ||
     isThreadUnavailable ||
     persistenceWarning;
@@ -1234,19 +1349,22 @@ export function ChatPanel({
       <CardContent className="flex h-full min-h-0 flex-1 flex-col p-0 sm:p-0">
         <AssistantRuntimeProvider runtime={runtime}>
           {!temporary && activeThreadQuery.data?.hasMore && (
-        <Button variant="ghost" size="sm" disabled={isLoadingOlder} onClick={() => void loadOlderMessages()}>
-          {isLoadingOlder ? "Loading…" : "Load older messages"}
-        </Button>
-      )}
-      <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col overflow-hidden">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isLoadingOlder}
+              onClick={() => void loadOlderMessages()}
+            >
+              {isLoadingOlder ? "Loading…" : "Load older messages"}
+            </Button>
+          )}
+          <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col overflow-hidden">
             <ChatViewport>
               {isHydratingThread ? (
                 <div className="flex h-full flex-col items-center justify-center space-y-4 pb-20 text-center">
                   <Loader2 className="h-6 w-6 animate-spin text-primary" />
                   <div className="space-y-2 max-w-[400px]">
-                    <h2 className="text-heading-2xs">
-                      Loading conversation
-                    </h2>
+                    <h2 className="text-heading-2xs">Loading conversation</h2>
                     <p className="text-sm leading-relaxed text-muted-foreground">
                       Fetching the existing thread history before chat becomes
                       available.
@@ -1396,9 +1514,9 @@ export function ChatPanel({
               <div className="mx-auto mt-2 max-w-3xl text-center text-caption text-muted-foreground">
                 {isHydratingThread
                   ? "Conversation history is loading. Sending is disabled until it finishes."
-                    : temporary
-                      ? "Temporary chat is not saved. AI may produce inaccurate information."
-                      : "AI may produce inaccurate information about laws or guidelines. Keep original records."}
+                  : temporary
+                    ? "Temporary chat is not saved. AI may produce inaccurate information."
+                    : "AI may produce inaccurate information about laws or guidelines. Keep original records."}
               </div>
             </ComposerPrimitive.Root>
           </ThreadPrimitive.Root>

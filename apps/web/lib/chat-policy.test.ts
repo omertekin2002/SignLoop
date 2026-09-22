@@ -141,22 +141,33 @@ describe("parseBoundedJsonRequest", () => {
   });
 });
 
-
 describe("temporary history transport", () => {
   it("keeps long answers in the UI while bounding history for a follow-up", async () => {
     const { boundTemporaryChatHistory } = await import("./chat-policy");
     const full = "a".repeat(8000);
-    const input = [{ role: "assistant" as const, content: full }, { role: "user" as const, content: "Follow up" }];
+    const input = [
+      { role: "assistant" as const, content: full },
+      { role: "user" as const, content: "Follow up" },
+    ];
     const bounded = boundTemporaryChatHistory(input);
     expect(input[0]!.content).toBe(full);
     expect(bounded[0]!.content).toHaveLength(4000);
     expect(parseClientChatMessages({ messages: bounded }).ok).toBe(true);
   });
   it("accounts for Unicode and JSON escaping before sending history", async () => {
-    const { boundTemporaryChatHistory, MAX_CHAT_REQUEST_BODY_BYTES } = await import("./chat-policy");
-    const history = Array.from({ length: 29 }, () => ({ role: "assistant" as const, content: "中\\\n".repeat(2000) }));
-    const messages = boundTemporaryChatHistory([...history, { role: "user", content: "Next" }]);
-    expect(new TextEncoder().encode(JSON.stringify({ messages })).byteLength).toBeLessThan(MAX_CHAT_REQUEST_BODY_BYTES - 2048);
+    const { boundTemporaryChatHistory, MAX_CHAT_REQUEST_BODY_BYTES } =
+      await import("./chat-policy");
+    const history = Array.from({ length: 29 }, () => ({
+      role: "assistant" as const,
+      content: "中\\\n".repeat(2000),
+    }));
+    const messages = boundTemporaryChatHistory([
+      ...history,
+      { role: "user", content: "Next" },
+    ]);
+    expect(
+      new TextEncoder().encode(JSON.stringify({ messages })).byteLength,
+    ).toBeLessThan(MAX_CHAT_REQUEST_BODY_BYTES - 2048);
     expect(parseClientChatMessages({ messages }).ok).toBe(true);
   });
 });
@@ -165,19 +176,33 @@ describe("replayed tool transcripts", () => {
   const validTranscript = [
     {
       role: "assistant",
-      content: [{ type: "tool-call", toolCallId: "c1", toolName: "read_url", input: {} }],
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "c1",
+          toolName: "read_url",
+          input: {},
+        },
+      ],
     },
     {
       role: "tool",
-      content: [{ type: "tool-result", toolCallId: "c1", toolName: "read_url", output: {} }],
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "c1",
+          toolName: "read_url",
+          output: { type: "json", value: {} },
+        },
+      ],
     },
   ];
 
   it("accepts the shapes the agent loop emits", () => {
     expect(parseClientAgentMessages(validTranscript)).toEqual(validTranscript);
-    expect(parseClientAgentMessages([{ role: "assistant", content: "text" }])).toEqual([
-      { role: "assistant", content: "text" },
-    ]);
+    expect(
+      parseClientAgentMessages([{ role: "assistant", content: "text" }]),
+    ).toEqual([{ role: "assistant", content: "text" }]);
   });
 
   it("drops the whole transcript rather than replaying part of a malformed one", () => {
@@ -200,8 +225,16 @@ describe("replayed tool transcripts", () => {
   it("carries an assistant transcript through message parsing but ignores one on a user turn", () => {
     const parsed = parseClientChatMessages({
       messages: [
-        { role: "assistant", content: "Prior answer", agentMessages: validTranscript },
-        { role: "user", content: "What tool did you call?", agentMessages: validTranscript },
+        {
+          role: "assistant",
+          content: "Prior answer",
+          agentMessages: validTranscript,
+        },
+        {
+          role: "user",
+          content: "What tool did you call?",
+          agentMessages: validTranscript,
+        },
       ],
     });
     expect(parsed.ok).toBe(true);
@@ -212,7 +245,11 @@ describe("replayed tool transcripts", () => {
 
   it("keeps a replayed transcript through temporary-history bounding", () => {
     const bounded = boundCanonicalChatHistory([
-      { role: "assistant", content: "Prior answer", agentMessages: validTranscript as never },
+      {
+        role: "assistant",
+        content: "Prior answer",
+        agentMessages: validTranscript as never,
+      },
       { role: "user", content: "Follow-up" },
     ]);
     expect(bounded[0]?.agentMessages).toEqual(validTranscript);

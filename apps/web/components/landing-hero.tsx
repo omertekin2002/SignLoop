@@ -1,23 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { ArrowDown, ArrowRight } from "lucide-react";
 import { Constellation, findScrollParent } from "@/components/constellation";
-import { NumberTicker } from "@/components/number-ticker";
 import { TypingAnimation } from "@/components/typing-animation";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-
-const landingStats = [
-  {
-    label: "Contracts Analyzed",
-    value: 150,
-  },
-  {
-    label: "Chat Interactions",
-    value: 2000,
-  },
-] as const;
 
 const manifesto = [
   "Every contract hides something. A renewal that rolls over in silence. An indemnity with no cap. A termination clause written for the other side.",
@@ -54,10 +48,18 @@ function useScrollStage(rootRef: React.RefObject<HTMLDivElement | null>) {
       frame = 0;
       const scrollerRect = scroller.getBoundingClientRect();
       const height = scroller.clientHeight;
-      const sections = Array.from(root.querySelectorAll<HTMLElement>("[data-stage]"));
+      const sections = Array.from(
+        root.querySelectorAll<HTMLElement>("[data-stage]"),
+      );
       const anchors = sections.map((section) => {
         const rect = section.getBoundingClientRect();
-        return rect.top - scrollerRect.top + scroller.scrollTop + rect.height / 2 - height / 2;
+        return (
+          rect.top -
+          scrollerRect.top +
+          scroller.scrollTop +
+          rect.height / 2 -
+          height / 2
+        );
       });
       const position = scroller.scrollTop;
       let stage = 0;
@@ -67,7 +69,13 @@ function useScrollStage(rootRef: React.RefObject<HTMLDivElement | null>) {
           const start = anchors[index]!;
           const end = anchors[index + 1]!;
           if (position < end) {
-            stage = index + smoothstep(0.15, 0.85, (position - start) / Math.max(1, end - start));
+            stage =
+              index +
+              smoothstep(
+                0.15,
+                0.85,
+                (position - start) / Math.max(1, end - start),
+              );
             break;
           }
         }
@@ -75,10 +83,17 @@ function useScrollStage(rootRef: React.RefObject<HTMLDivElement | null>) {
       stageRef.current = stage;
 
       // Scroll-lit copy: `--p` runs 0 → 1 as the block travels up through the viewport.
-      for (const block of root.querySelectorAll<HTMLElement>("[data-scroll-lit]")) {
+      for (const block of root.querySelectorAll<HTMLElement>(
+        "[data-scroll-lit]",
+      )) {
         const rect = block.getBoundingClientRect();
-        const progress = (scrollerRect.top + height * 0.85 - rect.top) / (rect.height + height * 0.35);
-        block.style.setProperty("--p", Math.min(1, Math.max(0, progress)).toFixed(3));
+        const progress =
+          (scrollerRect.top + height * 0.85 - rect.top) /
+          (rect.height + height * 0.35);
+        block.style.setProperty(
+          "--p",
+          Math.min(1, Math.max(0, progress)).toFixed(3),
+        );
       }
     };
     const schedule = () => {
@@ -119,7 +134,8 @@ function useReveal(rootRef: React.RefObject<HTMLDivElement | null>) {
       },
       { root: findScrollParent(root), threshold: 0.25 },
     );
-    for (const element of root.querySelectorAll("[data-reveal]")) observer.observe(element);
+    for (const element of root.querySelectorAll("[data-reveal]"))
+      observer.observe(element);
     return () => observer.disconnect();
   }, [rootRef]);
 }
@@ -134,7 +150,11 @@ function Reveal({
   className?: string;
 }) {
   return (
-    <div data-reveal="" className={cn("landing-reveal", className)} style={{ "--reveal-delay": `${delay}ms` } as CSSProperties}>
+    <div
+      data-reveal=""
+      className={cn("landing-reveal", className)}
+      style={{ "--reveal-delay": `${delay}ms` } as CSSProperties}
+    >
       {children}
     </div>
   );
@@ -145,7 +165,11 @@ function ScrollLit({ text, className }: { text: string; className?: string }) {
   return (
     <p data-scroll-lit="" className={className}>
       {words.map((word, index) => (
-        <span key={index} className="landing-lit-word" style={{ "--i": (index / words.length).toFixed(3) } as CSSProperties}>
+        <span
+          key={index}
+          className="landing-lit-word"
+          style={{ "--i": (index / words.length).toFixed(3) } as CSSProperties}
+        >
           {word}{" "}
         </span>
       ))}
@@ -171,13 +195,22 @@ function Section({
         align === "right" && "lg:items-end",
       )}
     >
-      <div className={cn("w-full", align === "center" ? "max-w-[860px]" : "max-w-[520px]")}>{children}</div>
+      <div
+        className={cn(
+          "w-full",
+          align === "center" ? "max-w-[860px]" : "max-w-[520px]",
+        )}
+      >
+        {children}
+      </div>
     </section>
   );
 }
 
 function focusComposer() {
-  document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Chat message"]')?.focus();
+  document
+    .querySelector<HTMLTextAreaElement>('textarea[aria-label="Chat message"]')
+    ?.focus();
 }
 
 // Dala-style landing: one sticky 3D constellation behind a column of sections. Scrolling morphs
@@ -195,7 +228,9 @@ export function LandingHero() {
       className="relative -mx-4 -my-6 overflow-x-clip"
       style={
         {
-          "--landing-vh": viewportHeight ? `${viewportHeight}px` : "calc(100dvh - 8.5rem)",
+          "--landing-vh": viewportHeight
+            ? `${viewportHeight}px`
+            : "calc(100dvh - 8.5rem)",
         } as CSSProperties
       }
     >
@@ -224,36 +259,18 @@ export function LandingHero() {
             </h1>
 
             <div
-              className={cn("mt-8 max-w-[480px] space-y-4 opacity-0", isHeroTitleComplete && "animate-fade-in-up")}
+              className={cn(
+                "mt-8 max-w-[480px] space-y-4 opacity-0",
+                isHeroTitleComplete && "animate-fade-in-up",
+              )}
               style={{ animationDelay: "0.1s" }}
             >
               <p className="app-eyebrow">SignLoop is now in beta</p>
               <p className="text-body font-extralight text-foreground">
-                SignLoop combines document ingestion, structured analysis workflows, model routing, and chat into
-                one legal workspace.
+                SignLoop combines document ingestion, structured analysis
+                workflows, model routing, and chat into one legal workspace.
               </p>
             </div>
-
-            <dl className="mt-14 grid w-full max-w-[480px] grid-cols-2 gap-8">
-              {landingStats.map((stat, index) => (
-                <div
-                  key={stat.label}
-                  className={cn("flex flex-col gap-3 opacity-0", isHeroTitleComplete && "animate-fade-in-up")}
-                  style={{ animationDelay: index === 0 ? "0.25s" : "0.35s" }}
-                >
-                  <dt className="text-caption uppercase tracking-[0.04em] text-muted-foreground">{stat.label}</dt>
-                  <dd className="flex items-baseline text-heading-sm font-normal tabular-nums sm:text-heading">
-                    <NumberTicker
-                      start={isHeroTitleComplete}
-                      delay={index * 140}
-                      useGrouping={stat.value >= 1000}
-                      value={stat.value}
-                    />
-                    <span className="ml-1 text-primary">+</span>
-                  </dd>
-                </div>
-              ))}
-            </dl>
           </div>
 
           <div
@@ -290,16 +307,22 @@ export function LandingHero() {
             <p className="app-eyebrow">01 · Ingest</p>
           </Reveal>
           <Reveal delay={80}>
-            <h2 className="mt-6 text-heading-sm font-normal lg:text-heading-lg">Every format. Every page.</h2>
+            <h2 className="mt-6 text-heading-sm font-normal lg:text-heading-lg">
+              Bring your documents.
+            </h2>
           </Reveal>
           <Reveal delay={160}>
             <p className="app-lede mt-8">
-              Drop in a PDF, a Word file, or a phone photo of a signed page. SignLoop extracts the text, runs OCR
-              where it has to, and turns a stack of paper into something you can question.
+              Drop in a PDF, a Word file, or a phone photo of a signed page.
+              SignLoop extracts document text and uses OCR for image uploads.
+              Scanned PDFs need a usable text layer.
             </p>
           </Reveal>
           <Reveal delay={240}>
-            <ul className="mt-10 flex flex-wrap gap-2" aria-label="Supported formats">
+            <ul
+              className="mt-10 flex flex-wrap gap-2"
+              aria-label="Supported formats"
+            >
               {formats.map((format) => (
                 <li
                   key={format}
@@ -317,19 +340,28 @@ export function LandingHero() {
             <p className="app-eyebrow">02 · Analyze</p>
           </Reveal>
           <Reveal delay={80}>
-            <h2 className="mt-6 text-heading-sm font-normal lg:text-heading-lg">Risk, clause by clause.</h2>
+            <h2 className="mt-6 text-heading-sm font-normal lg:text-heading-lg">
+              Risk, clause by clause.
+            </h2>
           </Reveal>
           <Reveal delay={160}>
             <p className="app-lede mt-8">
-              Structured analysis rates each contract low, medium, or high risk, then shows its working. The
-              clauses that matter rise to the top.
+              Structured analysis rates each contract low, medium, or high risk,
+              then shows its working. The clauses that matter rise to the top.
+              Long documents are analyzed using bounded excerpts, with coverage
+              notices in the result.
             </p>
           </Reveal>
           <Reveal delay={240}>
             <ul className="mt-10 divide-y divide-border border-y border-border">
               {analysisOutputs.map((output, index) => (
-                <li key={output} className="flex items-baseline gap-5 py-4 text-body font-extralight">
-                  <span className="text-caption tabular-nums text-primary">0{index + 1}</span>
+                <li
+                  key={output}
+                  className="flex items-baseline gap-5 py-4 text-body font-extralight"
+                >
+                  <span className="text-caption tabular-nums text-primary">
+                    0{index + 1}
+                  </span>
                   {output}
                 </li>
               ))}
@@ -342,18 +374,22 @@ export function LandingHero() {
             <p className="app-eyebrow">03 · Route</p>
           </Reveal>
           <Reveal delay={80}>
-            <h2 className="mt-6 text-heading-sm font-normal lg:text-heading-lg">The right model, every time.</h2>
+            <h2 className="mt-6 text-heading-sm font-normal lg:text-heading-lg">
+              Model choice, with fallback.
+            </h2>
           </Reveal>
           <Reveal delay={160}>
             <p className="app-lede mt-8">
-              Every request runs through a chain of models. If a provider slows down or goes dark, the next one
-              picks up where it left off — your review never stalls.
+              Choose a model in Settings. If it cannot start answering, SignLoop
+              can try a fallback. A response interrupted after it begins needs a
+              retry.
             </p>
           </Reveal>
           <Reveal delay={240}>
             <p className="app-lede mt-6">
-              Then keep talking. Chat with a single contract or a whole project, with the context you&apos;ve added
-              always in view.
+              Then keep talking. Ask chat to find and read your saved contracts.
+              Project reference documents inform structured analysis through
+              bounded excerpts.
             </p>
           </Reveal>
         </Section>

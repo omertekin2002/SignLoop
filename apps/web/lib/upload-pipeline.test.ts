@@ -4,6 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { prepareUpload, storeUploadedFile } from "./upload-pipeline";
 
+vi.mock("@/lib/server-db", () => ({
+  createUploadCleanupIntent: vi.fn().mockResolvedValue("intent"),
+}));
+
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {

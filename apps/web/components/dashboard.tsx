@@ -122,14 +122,27 @@ function SignLoopWordmark({ className }: { className?: string }) {
         className,
       )}
     >
-      <svg viewBox="0 0 20 20" aria-hidden="true" className="h-[18px] w-[18px] shrink-0">
+      <svg
+        viewBox="0 0 20 20"
+        aria-hidden="true"
+        className="h-[18px] w-[18px] shrink-0"
+      >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0.35" style={{ stopColor: "var(--color-electric-iris)" }} />
-            <stop offset="1" style={{ stopColor: "var(--color-deep-verdant)" }} />
+            <stop
+              offset="0.35"
+              style={{ stopColor: "var(--color-electric-iris)" }}
+            />
+            <stop
+              offset="1"
+              style={{ stopColor: "var(--color-deep-verdant)" }}
+            />
           </linearGradient>
         </defs>
-        <path d="M10 1.5 18.5 18.5 10 13.4 1.5 18.5Z" fill={`url(#${gradientId})`} />
+        <path
+          d="M10 1.5 18.5 18.5 10 13.4 1.5 18.5Z"
+          fill={`url(#${gradientId})`}
+        />
       </svg>
       SignLoop
     </span>
@@ -196,10 +209,7 @@ function ModelSelector({
           )}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="start"
-        className="mt-1 w-64"
-      >
+      <DropdownMenuContent align="start" className="mt-1 w-64">
         {availableModels.length > 0 || fallbackModels.length > 0 ? (
           <>
             {availableModels.map(renderModelItem)}
@@ -263,17 +273,57 @@ const Dashboard = ({
   const [isRefreshingModels, setIsRefreshingModels] = useState(false);
   const modelRefreshPromiseRef = useRef<Promise<boolean> | null>(null);
 
-  const contractList = useWorkspaceList<Contract>("contracts", "/contracts?standalone=true", canUseSavedWorkspace && (activeTab === "contracts" || (sidebarOpen && openSections.contracts)));
-  const projectList = useWorkspaceList<Project>("projects", "/projects", canUseSavedWorkspace && (activeTab === "projects" || (sidebarOpen && openSections.projects)));
-  const threadList = useWorkspaceList<ChatThreadSummary>("chat-threads", "/chat/threads", canUseSavedWorkspace && (!isTemporaryChatSelected || (sidebarOpen && openSections.chat)));
-  const { data: contracts, isLoading: loadingContracts, isLoadingError: contractsFailed, refetch: refetchContracts } = contractList;
-  const { data: projects, isLoading: loadingProjects, isLoadingError: projectsFailed, refetch: refetchProjects } = projectList;
-  const { data: chatThreads, isLoading: loadingChatThreads, isLoadingError: chatThreadsFailed, refetch: refetchChatThreads } = threadList;
-  const renderLoadMore = (list: { hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: () => Promise<unknown> }) => list.hasNextPage ? (
-    <Button variant="ghost" size="sm" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
-      {list.isFetchingNextPage ? "Loading…" : "Load more"}
-    </Button>
-  ) : null;
+  const contractList = useWorkspaceList<Contract>(
+    "contracts",
+    "/contracts?standalone=true",
+    canUseSavedWorkspace &&
+      (activeTab === "contracts" || (sidebarOpen && openSections.contracts)),
+  );
+  const projectList = useWorkspaceList<Project>(
+    "projects",
+    "/projects",
+    canUseSavedWorkspace &&
+      (activeTab === "projects" || (sidebarOpen && openSections.projects)),
+  );
+  const threadList = useWorkspaceList<ChatThreadSummary>(
+    "chat-threads",
+    "/chat/threads",
+    canUseSavedWorkspace &&
+      (!isTemporaryChatSelected || (sidebarOpen && openSections.chat)),
+  );
+  const {
+    data: contracts,
+    isLoading: loadingContracts,
+    isLoadingError: contractsFailed,
+    refetch: refetchContracts,
+  } = contractList;
+  const {
+    data: projects,
+    isLoading: loadingProjects,
+    isLoadingError: projectsFailed,
+    refetch: refetchProjects,
+  } = projectList;
+  const {
+    data: chatThreads,
+    isLoading: loadingChatThreads,
+    isLoadingError: chatThreadsFailed,
+    refetch: refetchChatThreads,
+  } = threadList;
+  const renderLoadMore = (list: {
+    hasNextPage: boolean;
+    isFetchingNextPage: boolean;
+    fetchNextPage: () => Promise<unknown>;
+  }) =>
+    list.hasNextPage ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={list.isFetchingNextPage}
+        onClick={() => void list.fetchNextPage()}
+      >
+        {list.isFetchingNextPage ? "Loading…" : "Load more"}
+      </Button>
+    ) : null;
 
   const { data: settingsData } = useQuery({
     queryKey: ["settings"],
@@ -288,7 +338,7 @@ const Dashboard = ({
     }
 
     setIsRefreshingModels(true);
-    const request = fetchSettings({ refreshModels: true })
+    const request = fetchSettings()
       .then((settings) => {
         queryClient.setQueryData<SettingsResponse>(["settings"], settings);
         return true;
@@ -963,7 +1013,7 @@ const Dashboard = ({
               <ModelSelector
                 activeModel={activeModel}
                 availableModels={availableModels}
-          fallbackModels={fallbackModels}
+                fallbackModels={fallbackModels}
                 disabled={
                   !canUseSavedWorkspace ||
                   updateModelMutation.isPending ||
@@ -991,9 +1041,7 @@ const Dashboard = ({
             <div className="mb-10 flex flex-col gap-6 pt-6 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <p className="app-eyebrow">Workspace</p>
-                <h1 className="app-title mt-3">
-                  {tabLabels[activeTab]}
-                </h1>
+                <h1 className="app-title mt-3">{tabLabels[activeTab]}</h1>
                 <p className="app-lede mt-3">
                   {canUseSavedWorkspace
                     ? `Welcome back, ${user?.firstName || "there"}`
@@ -1011,7 +1059,11 @@ const Dashboard = ({
                   </Button>
                 ) : activeTab === "contracts" ? (
                   <UploadDialog>
-                    <Button variant={standaloneContracts.length === 0 ? "outline" : "default"}>
+                    <Button
+                      variant={
+                        standaloneContracts.length === 0 ? "outline" : "default"
+                      }
+                    >
                       <Plus className="mr-2 h-4 w-4" />
                       New Contract
                     </Button>
@@ -1205,7 +1257,9 @@ const Dashboard = ({
               temporary={isTemporaryChatSelected}
               temporarySessionKey={temporaryChatKey}
               landingHero={landingHero}
-              initialPrompt={temporaryChatKey === 0 ? initialTemporaryPrompt : undefined}
+              initialPrompt={
+                temporaryChatKey === 0 ? initialTemporaryPrompt : undefined
+              }
               onThreadSelected={(threadId) => {
                 if (threadId) {
                   selectNewChatThread(threadId);

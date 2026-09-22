@@ -13,12 +13,19 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: () => ({ responses: mocks.responses }),
 }));
+vi.mock("@/lib/model-settings", () => ({
+  orderOpenRouterModels: (pinned: string) =>
+    pinned === "openrouter/free" ? [pinned, "fallback"] : ["fallback"],
+}));
 vi.mock("@/lib/web-search", () => ({ searchWeb: mocks.search }));
 vi.mock("@/lib/url-reader", () => ({ readUrl: mocks.readUrl }));
-vi.mock("@/lib/image-generation", () => ({ generateImageReply: mocks.generateImage }));
+vi.mock("@/lib/image-generation", () => ({
+  generateImageReply: mocks.generateImage,
+}));
 vi.mock("@/lib/server-db", () => ({
   listContractsForChat: mocks.listContracts,
   getContractTextForUser: mocks.getContractText,
+  getContractWindowForUser: mocks.getContractText,
 }));
 vi.mock("@/lib/llm-client", () => ({
   APP_NAME: "SignLoop",
@@ -374,7 +381,9 @@ describe("agentic chat", () => {
     mocks.responses.mockImplementation((name: string) =>
       name === "primary" ? primary : fallback,
     );
-    const reply = await generateChatReply(messages, { firstChunkTimeoutMs: 20 });
+    const reply = await generateChatReply(messages, {
+      firstChunkTimeoutMs: 20,
+    });
     expect(reply.provider).toBe("openrouter");
     expect(reply.message).toBe("Answer [1]");
     expect(primary.doStreamCalls[0]?.abortSignal?.aborted).toBe(true);
@@ -394,7 +403,9 @@ describe("agentic chat", () => {
     mocks.responses.mockImplementation((name: string) =>
       name === "primary" ? primary : fallback,
     );
-    const reply = await generateChatReply(messages, { firstChunkTimeoutMs: 20 });
+    const reply = await generateChatReply(messages, {
+      firstChunkTimeoutMs: 20,
+    });
     expect(reply.provider).toBe("openrouter");
     expect(fallback.doStreamCalls).toHaveLength(1);
   });
@@ -456,16 +467,34 @@ describe("agentic chat", () => {
     expect(continuation).toContain("UNTRUSTED CONTENT");
     expect(continuation).toContain("Text of the statute");
     expect(reply.toolActivity).toEqual([
-      { id: "call-0", tool: "read_url", query: "https://law.test/statute", status: "complete" },
+      {
+        id: "call-0",
+        tool: "read_url",
+        query: "https://law.test/statute",
+        status: "complete",
+      },
     ]);
-    expect(JSON.stringify(model.doStreamCalls[0]?.prompt)).toContain("read_url");
+    expect(JSON.stringify(model.doStreamCalls[0]?.prompt)).toContain(
+      "read_url",
+    );
   });
 
   it("reads the user's contracts only when a user is attached", async () => {
     const contractId = "11111111-1111-4111-8111-111111111111";
-    mocks.listContracts.mockResolvedValue({ contracts: [
-      { id: contractId, title: "NDA", status: "DRAFT", projectId: null, updatedAt: "2026-01-01", characterCount: 44, extractionWarning: null },
-    ], nextOffset: null });
+    mocks.listContracts.mockResolvedValue({
+      contracts: [
+        {
+          id: contractId,
+          title: "NDA",
+          status: "DRAFT",
+          projectId: null,
+          updatedAt: "2026-01-01",
+          characterCount: 44,
+          extractionWarning: null,
+        },
+      ],
+      nextOffset: null,
+    });
     mocks.getContractText.mockResolvedValue({
       id: contractId,
       title: "NDA",
@@ -478,12 +507,21 @@ describe("agentic chat", () => {
       toolStep(1, "read_contract", { contractId, find: "confidentiality" }),
     ]);
     mocks.responses.mockReturnValue(model);
-    const reply = await generateChatReply(messages, { contractsUserId: "user-1" });
-    expect(mocks.listContracts).toHaveBeenCalledWith("user-1", { offset: undefined, query: undefined });
+    const reply = await generateChatReply(messages, {
+      contractsUserId: "user-1",
+    });
+    expect(mocks.listContracts).toHaveBeenCalledWith("user-1", {
+      offset: undefined,
+      query: undefined,
+    });
     expect(mocks.getContractText).toHaveBeenCalledWith("user-1", contractId);
     expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain("NDA");
-    expect(JSON.stringify(model.doStreamCalls[2]?.prompt)).toContain("Confidentiality lasts");
-    expect(reply.toolActivity?.map((activity) => [activity.tool, activity.status])).toEqual([
+    expect(JSON.stringify(model.doStreamCalls[2]?.prompt)).toContain(
+      "Confidentiality lasts",
+    );
+    expect(
+      reply.toolActivity?.map((activity) => [activity.tool, activity.status]),
+    ).toEqual([
       ["list_contracts", "complete"],
       ["read_contract", "complete"],
     ]);
@@ -493,51 +531,89 @@ describe("agentic chat", () => {
     mocks.responses.mockReturnValue(anonymous);
     await generateChatReply(messages, {});
     expect(anonymous.doStreamCalls[0]?.tools ?? []).toHaveLength(0);
-    expect(JSON.stringify(anonymous.doStreamCalls[0]?.prompt)).toContain("No tools are available");
+    expect(JSON.stringify(anonymous.doStreamCalls[0]?.prompt)).toContain(
+      "No tools are available",
+    );
   });
 
   it("reports contract lookups that fail as tool errors", async () => {
     mocks.getContractText.mockResolvedValue(null);
     const model = sequencedModel([
-      toolStep(0, "read_contract", { contractId: "11111111-1111-4111-8111-111111111111" }),
+      toolStep(0, "read_contract", {
+        contractId: "11111111-1111-4111-8111-111111111111",
+      }),
     ]);
     mocks.responses.mockReturnValue(model);
-    const reply = await generateChatReply(messages, { contractsUserId: "user-1" });
+    const reply = await generateChatReply(messages, {
+      contractsUserId: "user-1",
+    });
     expect(reply.toolActivity?.[0]?.status).toBe("error");
-    expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain("Contract not found");
+    expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain(
+      "Contract not found",
+    );
   });
 
   it("streams a generated image into the reply without putting bytes in the transcript", async () => {
     const markdown = "![Generated image](data:image/png;base64,AAAA)";
-    mocks.generateImage.mockResolvedValue({ message: markdown, model: "gpt-image-2", provider: "primary-openai-compatible" });
-    const model = sequencedModel([toolStep(0, "generate_image", { prompt: "a signed contract on a desk" })]);
+    mocks.generateImage.mockResolvedValue({
+      message: markdown,
+      model: "gpt-image-2",
+      provider: "primary-openai-compatible",
+    });
+    const model = sequencedModel([
+      toolStep(0, "generate_image", { prompt: "a signed contract on a desk" }),
+    ]);
     mocks.responses.mockReturnValue(model);
     const chunks: ChatReplyStreamChunk[] = [];
-    for await (const chunk of generateChatReplyStream(messages, { enableImageGeneration: true, userId: "user-1" })) chunks.push(chunk);
-    expect(mocks.generateImage).toHaveBeenCalledWith("a signed contract on a desk", expect.objectContaining({ userId: "user-1" }));
-    const deltas = chunks.filter((chunk) => chunk.type === "delta").map((chunk) => chunk.text);
+    for await (const chunk of generateChatReplyStream(messages, {
+      enableImageGeneration: true,
+      userId: "user-1",
+    }))
+      chunks.push(chunk);
+    expect(mocks.generateImage).toHaveBeenCalledWith(
+      "a signed contract on a desk",
+      expect.objectContaining({ userId: "user-1" }),
+    );
+    const deltas = chunks
+      .filter((chunk) => chunk.type === "delta")
+      .map((chunk) => chunk.text);
     expect(deltas[0]).toBe(markdown);
     const done = chunks.at(-1);
     if (done?.type !== "done") throw new Error("missing done");
     expect(done.reply.message).toBe(`${markdown}\n\nAnswer [1]`);
     expect(JSON.stringify(done.reply.agentMessages)).not.toContain("base64");
-    expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain('"attached"');
+    expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain(
+      '"attached"',
+    );
     expect(done.reply.toolActivity).toEqual([
-      { id: "call-0", tool: "generate_image", query: "a signed contract on a desk", status: "complete" },
+      {
+        id: "call-0",
+        tool: "generate_image",
+        query: "a signed contract on a desk",
+        status: "complete",
+      },
     ]);
 
     const withoutImages = scriptedModel();
     mocks.responses.mockReturnValue(withoutImages);
     await generateChatReply(messages, { enableWebSearch: true });
-    expect(withoutImages.doStreamCalls[0]?.tools?.map((item) => item.name)).toEqual(["search_web"]);
+    expect(
+      withoutImages.doStreamCalls[0]?.tools?.map((item) => item.name),
+    ).toEqual(["search_web"]);
   });
 
   it("returns image failures to the model as tool errors", async () => {
-    mocks.generateImage.mockRejectedValue(new Error("upstream 500 with secret details"));
+    mocks.generateImage.mockRejectedValue(
+      new Error("upstream 500 with secret details"),
+    );
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const model = sequencedModel([toolStep(0, "generate_image", { prompt: "anything" })]);
+    const model = sequencedModel([
+      toolStep(0, "generate_image", { prompt: "anything" }),
+    ]);
     mocks.responses.mockReturnValue(model);
-    const reply = await generateChatReply(messages, { enableImageGeneration: true });
+    const reply = await generateChatReply(messages, {
+      enableImageGeneration: true,
+    });
     expect(reply.message).toBe("Answer [1]");
     expect(reply.toolActivity?.[0]?.status).toBe("error");
     const continuation = JSON.stringify(model.doStreamCalls[1]?.prompt);
@@ -548,8 +624,16 @@ describe("agentic chat", () => {
   it("skips the primary endpoint when the user pins an OpenRouter model", async () => {
     const model = scriptedModel();
     mocks.responses.mockReturnValue(model);
-    const reply = await generateChatReply(messages, { primaryModel: "openrouter/free" });
-    expect(mocks.responses.mock.calls.map((call) => call[0])).toEqual(["openrouter/free", "fallback"]);
-    expect(reply).toMatchObject({ provider: "openrouter", model: "openrouter/free" });
+    const reply = await generateChatReply(messages, {
+      primaryModel: "openrouter/free",
+    });
+    expect(mocks.responses.mock.calls.map((call) => call[0])).toEqual([
+      "openrouter/free",
+      "fallback",
+    ]);
+    expect(reply).toMatchObject({
+      provider: "openrouter",
+      model: "openrouter/free",
+    });
   });
 });

@@ -12,11 +12,7 @@ import {
   type PersonalityMode,
   isAllowedPersonalityMode,
 } from "@/lib/personality-settings";
-import {
-  getUserSettingsByUserId,
-  upsertUserPersonality,
-  upsertUserPrimaryModel,
-} from "@/lib/server-db";
+import { getUserSettingsByUserId, upsertUserSettings } from "@/lib/server-db";
 
 export async function GET(req: Request) {
   const authed = await requireUserId();
@@ -77,9 +73,12 @@ export async function PUT(req: Request) {
     // Pinning OpenRouter needs no primary availability check, so skip the upstream round-trip.
     model = modelInput;
   } else if (modelInput) {
-    const { availablePrimaryModels } = await getModelAvailabilitySnapshot({
-      forceRefresh: true,
-    });
+    let { availablePrimaryModels } = await getModelAvailabilitySnapshot();
+    if (!availablePrimaryModels.includes(modelInput)) {
+      ({ availablePrimaryModels } = await getModelAvailabilitySnapshot({
+        forceRefresh: true,
+      }));
+    }
 
     if (!availablePrimaryModels.includes(modelInput)) {
       return NextResponse.json(
@@ -109,23 +108,11 @@ export async function PUT(req: Request) {
     personality = personalityInput;
   }
 
-  // Each upsert returns the full saved row, so we only read what we write (no eager pre-fetch).
-  let saved: Awaited<ReturnType<typeof getUserSettingsByUserId>> = null;
-
-  if (model) {
-    saved = await upsertUserPrimaryModel({ userId, primaryModel: model });
-  }
-
-  if (personality) {
-    saved = await upsertUserPersonality({ userId, personality });
-  }
-
-  if (!saved) {
-    return NextResponse.json(
-      { error: "Failed to save settings" },
-      { status: 500 },
-    );
-  }
+  const saved = await upsertUserSettings({
+    userId,
+    ...(model ? { primaryModel: model } : {}),
+    ...(personality ? { personality } : {}),
+  });
 
   return NextResponse.json({
     primaryModel: saved.primaryModel,

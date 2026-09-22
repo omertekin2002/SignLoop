@@ -1,9 +1,6 @@
 import { after, NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
-import {
-  deleteContractForUser,
-  getContractByIdForUser,
-} from "@/lib/server-db";
+import { deleteContractForUser, getContractByIdForUser } from "@/lib/server-db";
 import { flushStorageDeletions } from "@/lib/storage-cleanup";
 import { isUuid } from "@/lib/utils";
 
@@ -19,7 +16,11 @@ export async function GET(
   if (!isUuid(id)) {
     return NextResponse.json({ error: "Contract not found" }, { status: 404 });
   }
-  const contract = await getContractByIdForUser(userId, id);
+  const contract = await getContractByIdForUser(
+    userId,
+    id,
+    Number(new URL(req.url).searchParams.get("analysisOffset") ?? 0),
+  );
   if (!contract) {
     return NextResponse.json({ error: "Contract not found" }, { status: 404 });
   }

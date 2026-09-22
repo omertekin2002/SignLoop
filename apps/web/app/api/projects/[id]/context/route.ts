@@ -5,11 +5,7 @@ import {
   listProjectContextDocumentsForUser,
   isProjectOwnedByUser,
 } from "@/lib/server-db";
-import {
-  discardStoredUpload,
-  prepareUpload,
-  storeUploadedFile,
-} from "@/lib/upload-pipeline";
+import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
 import { ProjectNotFoundError } from "@/lib/errors";
 import { isUuid } from "@/lib/utils";
 
@@ -29,7 +25,7 @@ export async function GET(
   if (!isUuid(id)) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
-  if (!await isProjectOwnedByUser(userId, id)) {
+  if (!(await isProjectOwnedByUser(userId, id))) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
@@ -100,10 +96,11 @@ export async function POST(
   const extractionMethod = prepared.method;
   const extractionWarning = prepared.extractionWarning;
 
-  let stored: { storageKey: string; bucket: string };
+  let stored: Awaited<ReturnType<typeof storeUploadedFile>>;
   try {
     stored = await storeUploadedFile({
       buffer: prepared.buffer,
+      signal: prepared.signal,
       mimeType: prepared.mimeType,
     });
   } catch (error: unknown) {
@@ -123,6 +120,7 @@ export async function POST(
       title,
       documentType,
       storageKey: stored.storageKey,
+      storageIntentId: stored.storageIntentId,
       bucket: stored.bucket,
       originalFilename: prepared.file.name,
       contentType: prepared.mimeType,
@@ -132,7 +130,6 @@ export async function POST(
       wordCount,
     });
   } catch (error: unknown) {
-    await discardStoredUpload(stored.storageKey);
     if (error instanceof ProjectNotFoundError) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }

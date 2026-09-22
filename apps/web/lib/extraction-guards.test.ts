@@ -23,6 +23,23 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+function pdfFixture(
+  numPages: number,
+  text: string,
+  destroy: ReturnType<typeof vi.fn>,
+) {
+  return {
+    numPages,
+    destroy,
+    getPage: vi
+      .fn()
+      .mockResolvedValue({
+        cleanup: vi.fn(),
+        getTextContent: vi.fn().mockResolvedValue({ items: [{ str: text }] }),
+      }),
+  };
+}
+
 describe("extraction resource guards", () => {
   it("rejects excessive PDF page counts before text extraction and releases the parser", async () => {
     const destroy = vi.fn().mockResolvedValue(undefined);
@@ -40,7 +57,9 @@ describe("extraction resource guards", () => {
     // 200 pages of scanner furniture (a Bates stamp per page): sparse enough to be obviously
     // scanned, but well past the absolute 500-character mark that used to suppress detection.
     const destroy = vi.fn().mockResolvedValue(undefined);
-    mocks.getDocumentProxy.mockResolvedValue({ numPages: 200, destroy });
+    mocks.getDocumentProxy.mockResolvedValue(
+      pdfFixture(200, "BATES-000001 ", destroy),
+    );
     mocks.extractText.mockResolvedValue({
       text: "BATES-000001 ".repeat(200),
       totalPages: 200,
@@ -54,10 +73,12 @@ describe("extraction resource guards", () => {
 
   it("still treats a genuinely short, sparse PDF as scanned", async () => {
     const destroy = vi.fn().mockResolvedValue(undefined);
-    mocks.getDocumentProxy.mockResolvedValue({ numPages: 1, destroy });
+    mocks.getDocumentProxy.mockResolvedValue(pdfFixture(1, "Page 1", destroy));
     mocks.extractText.mockResolvedValue({ text: "Page 1", totalPages: 1 });
 
-    await expect(extractTextFromPdf(Buffer.from("%PDF-1.7"))).resolves.toMatchObject({
+    await expect(
+      extractTextFromPdf(Buffer.from("%PDF-1.7")),
+    ).resolves.toMatchObject({
       method: "pdf_scanned",
       confidence: 0,
     });
@@ -65,16 +86,30 @@ describe("extraction resource guards", () => {
 
   it("treats a dense multi-page PDF as parsed", async () => {
     const destroy = vi.fn().mockResolvedValue(undefined);
-    mocks.getDocumentProxy.mockResolvedValue({ numPages: 20, destroy });
+    mocks.getDocumentProxy.mockResolvedValue(
+      pdfFixture(20, "This is a real contract clause. ".repeat(10), destroy),
+    );
     mocks.extractText.mockResolvedValue({
       text: "This is a real contract clause. ".repeat(200),
       totalPages: 20,
     });
 
-    await expect(extractTextFromPdf(Buffer.from("%PDF-1.7"))).resolves.toMatchObject({
+    await expect(
+      extractTextFromPdf(Buffer.from("%PDF-1.7")),
+    ).resolves.toMatchObject({
       method: "pdf_parse",
       confidence: 100,
     });
+  });
+
+  it("stops before the next PDF page when the text budget is exhausted", async () => {
+    const fixture = pdfFixture(10, "x".repeat(2_000_001), vi.fn());
+    mocks.getDocumentProxy.mockResolvedValue(fixture);
+    await expect(
+      extractTextFromPdf(Buffer.from("%PDF-1.7")),
+    ).rejects.toBeInstanceOf(ExtractionLimitError);
+    expect(fixture.getPage).toHaveBeenCalledOnce();
+    expect(fixture.destroy).toHaveBeenCalledOnce();
   });
 
   it("terminates and replaces a cached OCR worker after recognition fails", async () => {
