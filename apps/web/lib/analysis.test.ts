@@ -208,4 +208,54 @@ describe("buildAnalysisPrompt", () => {
       "Project context was bounded for analysis; some context text or documents were omitted.",
     );
   });
+
+  it("keeps a stored context excerpt that already fits the per-document budget", () => {
+    const marker = "\n\n[Context excerpt omitted from the middle]\n\n";
+    const stored = `HEAD${"a".repeat(1_200)}${marker}${"b".repeat(1_200)}TAIL`;
+    const { prompt } = buildAnalysisPrompt("Contract body", undefined, [
+      {
+        title: "Policy",
+        documentType: "policy",
+        text: stored,
+        originalCharacterCount: 40_000,
+      },
+    ]);
+
+    expect(stored.length).toBeLessThanOrEqual(3_000);
+    expect(prompt).toContain(marker);
+    expect(prompt).toContain(
+      `[The stored excerpt omits ${40_000 - stored.length} characters from the original document.]`,
+    );
+    expect(prompt).not.toContain(
+      "omitted from the middle of project context document",
+    );
+  });
+
+  it("counts a second context cut from the original document", () => {
+    const marker = "\n\n[Context excerpt omitted from the middle]\n\n";
+    const padding = "a".repeat(3_000 - "HEAD".length - "TAIL".length - marker.length);
+    const stored = `HEAD${padding.slice(0, 1_500)}${marker}${padding.slice(1_500)}TAIL`;
+    expect(stored).toHaveLength(3_000);
+    const documents = [1, 2, 3].map((index) => ({
+      title: `Policy ${index}`,
+      documentType: "policy",
+      text: stored,
+      originalCharacterCount: 20_000,
+    }));
+
+    const { prompt } = buildAnalysisPrompt("Contract body", undefined, documents);
+
+    expect(prompt.split(marker)).toHaveLength(3);
+    expect(prompt).toContain("HEAD");
+    expect(prompt).toContain("TAIL");
+    expect(prompt).toContain(
+      "[18000 characters omitted from the middle of project context document 3]",
+    );
+    expect(prompt).not.toContain(
+      "1000 characters omitted from the middle of project context document 3",
+    );
+    expect(prompt).not.toContain(
+      "omitted from the middle of project context document 1",
+    );
+  });
 });

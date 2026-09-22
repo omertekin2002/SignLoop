@@ -17,7 +17,7 @@ import {
   appendChatMessagesToThread, claimGenerationOperation, createAnalysisForContract,
   createChatThreadForUser, createContractForUser, createProjectForUser,
   deleteAnalysisForContract, deleteContractForUser, deleteProjectForUser,
-  getChatImageForUser, getChatThreadByIdForUser, getContractTextForUser, getContractWithLatestAnalysisForUser,
+  getChatImageForUser, getChatThreadByIdForUser, getContractAnalysisGateForUser, getContractTextForUser, getContractWithLatestAnalysisForUser,
   getProjectContextForAnalysis, getRecentChatMessagesForThreadForUser,
   listContractsByUserId, listContractsForChat, saveContractUploadForUser,
 } from "./server-db";
@@ -85,6 +85,24 @@ describe.skipIf(!connectionString)("database integration", () => {
     const constraints = await pool.current!.query("SELECT convalidated FROM pg_constraint WHERE conname LIKE '%_fk'");
     expect(constraints.rows).toHaveLength(5);
     expect(constraints.rows.every((row) => row.convalidated)).toBe(true);
+  });
+
+  it("answers an analysis cache check without the contract text or result body", async () => {
+    const item = await contract();
+    expect(await getContractAnalysisGateForUser("owner", item.id)).toEqual({
+      status: "DRAFT",
+      hasText: false,
+      latestAnalysisId: null,
+    });
+    expect(await getContractAnalysisGateForUser("intruder", item.id)).toBeNull();
+
+    await pool.current!.query("UPDATE contracts SET text_content = $2 WHERE id = $1", [item.id, `${" ".repeat(20)}Clause text`]);
+    const created = await analyse(item.id);
+    expect(await getContractAnalysisGateForUser("owner", item.id)).toEqual({
+      status: "ANALYZED",
+      hasText: true,
+      latestAnalysisId: created.id,
+    });
   });
 
   it("serializes concurrent analysis deletes and resets status", async () => {

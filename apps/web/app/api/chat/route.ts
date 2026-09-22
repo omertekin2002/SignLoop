@@ -1,4 +1,4 @@
-import { toPublicChatMessage } from "@/lib/chat-public-message";
+import { assistantMessageForClient, toPublicChatMessage } from "@/lib/chat-public-message";
 import { appendWebSourcesToMessage } from "@/lib/web-citations";
 import { NextResponse, after } from "next/server";
 import { flushTelemetry, isTelemetryEnabled } from "@/lib/telemetry";
@@ -391,7 +391,11 @@ export async function POST(req: Request) {
                 streamEvent(
                   toDoneStreamEvent({
                     reply: chunk.reply,
-                    message: assistantMessage,
+                    message: assistantMessageForClient(
+                      assistantMessage,
+                      storedMessages,
+                      persisted && !isTemporaryChat,
+                    ),
                     temporary: isTemporaryChat,
                     persisted,
                     storedMessages,
@@ -484,7 +488,11 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({
-      message: assistantMessage,
+      message: assistantMessageForClient(
+        assistantMessage,
+        storedMessages,
+        persisted && !isTemporaryChat,
+      ),
       storedMessages: storedMessages.map(toPublicChatMessage),
       provider,
       model,

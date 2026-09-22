@@ -566,15 +566,50 @@ export async function getContractTextForUser(
   return rows[0] ?? null;
 }
 
+export type ContractAnalysisGate = {
+  status: string;
+  hasText: boolean;
+  latestAnalysisId: string | null;
+};
+
 export type ContractWithLatestAnalysisRecord = ContractSummaryRecord & {
   text: string | null;
   extractionWarning: string | null;
   revision: string;
-  latestAnalysis: AnalysisRecord | null;
+  latestAnalysis: { id: string } | null;
 };
 
-// Read for callers that need the contract text plus only the most recent analysis (e.g. the
-// analyze route's idempotency check). Fetches a single analysis row instead of the full history.
+// Idempotency probe for POST /analyze. Status, a non-empty-text flag, and the latest analysis id
+// are enough to return "already exists". The contract body and result_json stay in the database.
+export async function getContractAnalysisGateForUser(
+  userId: string,
+  contractId: string,
+): Promise<ContractAnalysisGate | null> {
+  await ensureSchema();
+
+  const { rows } = await sql<ContractAnalysisGate>`
+    select
+      c.status,
+      (c.text_content ~ '[^[:space:]]') is true as "hasText",
+      latest.id as "latestAnalysisId"
+    from contracts c
+    left join lateral (
+      select a.id
+      from analyses a
+      where a.contract_id = c.id
+      order by a.created_at desc
+      limit 1
+    ) latest on true
+    where c.id = ${contractId}
+      and c.user_id = ${userId}
+    limit 1
+  `;
+
+  return rows[0] ?? null;
+}
+
+// Text plus revision for a run that is about to call the model. The latest analysis id is only
+// the race re-check (a result may have landed after the gate); its JSON is not loaded.
 export async function getContractWithLatestAnalysisForUser(
   userId: string,
   contractId: string,
@@ -587,14 +622,6 @@ export async function getContractWithLatestAnalysisForUser(
       extractionWarning: string | null;
       revision: string;
       analysisId: string | null;
-      analysisRiskBadge: string | null;
-      analysisResultJson: unknown;
-      analysisLlmProvider: string | null;
-      analysisLlmModel: string | null;
-      analysisLlmPromptTokens: number | null;
-      analysisLlmCompletionTokens: number | null;
-      analysisProcessingTimeMs: number | null;
-      analysisCreatedAt: string | null;
     }
   >`
     select
@@ -611,27 +638,10 @@ export async function getContractWithLatestAnalysisForUser(
       ) as "revision",
       c.created_at as "createdAt",
       c.updated_at as "updatedAt",
-      latest.id as "analysisId",
-      latest.risk_badge as "analysisRiskBadge",
-      latest.result_json as "analysisResultJson",
-      latest.llm_provider as "analysisLlmProvider",
-      latest.llm_model as "analysisLlmModel",
-      latest.llm_prompt_tokens as "analysisLlmPromptTokens",
-      latest.llm_completion_tokens as "analysisLlmCompletionTokens",
-      latest.processing_time_ms as "analysisProcessingTimeMs",
-      latest.created_at as "analysisCreatedAt"
+      latest.id as "analysisId"
     from contracts c
     left join lateral (
-      select
-        a.id,
-        a.risk_badge,
-        a.result_json,
-        a.llm_provider,
-        a.llm_model,
-        a.llm_prompt_tokens,
-        a.llm_completion_tokens,
-        a.processing_time_ms,
-        a.created_at
+      select a.id
       from analyses a
       where a.contract_id = c.id
       order by a.created_at desc
@@ -647,22 +657,6 @@ export async function getContractWithLatestAnalysisForUser(
     return null;
   }
 
-  const latestAnalysis =
-    row.analysisId && row.analysisCreatedAt
-      ? mapAnalysisRow({
-          id: row.analysisId,
-          contractId: row.id,
-          riskBadge: row.analysisRiskBadge,
-          resultJson: row.analysisResultJson,
-          llmProvider: row.analysisLlmProvider,
-          llmModel: row.analysisLlmModel,
-          llmPromptTokens: row.analysisLlmPromptTokens,
-          llmCompletionTokens: row.analysisLlmCompletionTokens,
-          processingTimeMs: row.analysisProcessingTimeMs,
-          createdAt: row.analysisCreatedAt,
-        })
-      : null;
-
   return {
     id: row.id,
     userId: row.userId,
@@ -674,7 +668,7 @@ export async function getContractWithLatestAnalysisForUser(
     revision: row.revision,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-    latestAnalysis,
+    latestAnalysis: row.analysisId ? { id: row.analysisId } : null,
   };
 }
 
@@ -1559,6 +1553,8 @@ export async function getChatThreadByIdForUser(
     return null;
   }
 
+  // Drop the tool transcript and source catalog here. The thread view never renders them, and the
+  // next turn reloads them through getRecentChatMessagesForThreadForUser.
   const { rows: messageRows } = await sql<{
     id: string;
     threadId: string;
@@ -1577,7 +1573,7 @@ export async function getChatThreadByIdForUser(
         ELSE content END AS content,
       position,
       created_at as "createdAt",
-      metadata_json as "metadata"
+      metadata_json - 'agentMessages' - 'webSources' as "metadata"
     from chat_messages
     where thread_id = ${threadId}
     and position < ${beforePosition}

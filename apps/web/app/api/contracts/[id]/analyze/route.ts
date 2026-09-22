@@ -5,6 +5,7 @@ import { analyzeText } from "@/lib/analysis";
 import {
   claimGenerationOperation,
   createAnalysisForContract,
+  getContractAnalysisGateForUser,
   getContractWithLatestAnalysisForUser,
   getProjectContextForAnalysis,
   getUserSettingsByUserId,
@@ -32,6 +33,28 @@ export async function POST(
   }
   const force = new URL(req.url).searchParams.get("force") === "true";
 
+  // Reuse a current result before taking the lease or reading the contract body. Re-uploading
+  // marks the contract DRAFT, so a historical analysis does not block the new revision.
+  if (!force) {
+    const gate = await getContractAnalysisGateForUser(userId, id);
+    if (!gate) {
+      return NextResponse.json({ error: "Contract not found" }, { status: 404 });
+    }
+    if (!gate.hasText) {
+      return NextResponse.json(
+        { error: "Contract has no text content. Upload a file first." },
+        { status: 400 },
+      );
+    }
+    if (gate.status === "ANALYZED" && gate.latestAnalysisId) {
+      return NextResponse.json({
+        message: "Analysis already exists",
+        jobId: "done",
+        analysisId: gate.latestAnalysisId,
+      });
+    }
+  }
+
   const release = await claimGenerationOperation(userId, "contract", id, 360);
   if (!release) return NextResponse.json({ error: "Analysis is already running for this contract." }, { status: 409 });
   const operationSignal = AbortSignal.any([req.signal, AbortSignal.timeout(270_000)]);
@@ -50,8 +73,7 @@ export async function POST(
     );
   }
 
-  // Idempotency: reuse an existing result only while the contract is still ANALYZED. Re-uploading
-  // text marks it DRAFT, so historical results must not block analysis of the new revision.
+  // The gate ran before the lease. A result committed in between should still be reused.
   if (!force && contract.status === "ANALYZED" && contract.latestAnalysis) {
     return NextResponse.json({
       message: "Analysis already exists",

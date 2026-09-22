@@ -61,6 +61,46 @@ function buildBoundedExcerpt(
   };
 }
 
+// Same marker getProjectContextForAnalysis inserts when it clips a document in SQL. A document
+// that still fits the per-document budget must keep that excerpt as-is. Re-windowing it would
+// drop the marker and replace it with a count of only the second cut.
+const STORED_CONTEXT_EXCERPT_MARKER =
+  "\n\n[Context excerpt omitted from the middle]\n\n";
+
+function boundProjectContextDocument(
+  text: string,
+  maxChars: number,
+  originalCharacterCount: number,
+  label: string,
+): { text: string; omittedCharacters: number } {
+  const markerAt = text.indexOf(STORED_CONTEXT_EXCERPT_MARKER);
+  const body =
+    markerAt >= 0
+      ? text.slice(0, markerAt) +
+        text.slice(markerAt + STORED_CONTEXT_EXCERPT_MARKER.length)
+      : text;
+
+  if (body.length <= maxChars) {
+    return {
+      text,
+      omittedCharacters: Math.max(0, originalCharacterCount - body.length),
+    };
+  }
+
+  // The shared project budget can be smaller than a document that already fits the per-document
+  // cap. Count the gap from the original document, not from this second slice of the stored excerpt.
+  const headChars = Math.ceil(maxChars * 0.65);
+  const tailChars = maxChars - headChars;
+  const omittedCharacters = Math.max(
+    0,
+    originalCharacterCount - headChars - tailChars,
+  );
+  return {
+    text: `${body.slice(0, headChars)}\n\n[${omittedCharacters} characters omitted from the middle of ${label}]\n\n${body.slice(-tailChars)}`,
+    omittedCharacters,
+  };
+}
+
 function buildProjectContextSection(
   contextDocuments: readonly AnalysisContextDocument[],
 ): {
@@ -92,19 +132,22 @@ function buildProjectContextSection(
       MAX_CONTEXT_DOCUMENT_PROMPT_CHARS,
       remainingCharacters,
     );
-    const excerpt = buildBoundedExcerpt(
-      document.text,
-      allowedCharacters,
-      `project context document ${index + 1}`,
-    );
     const originalCharacterCount = Math.max(
       document.originalCharacterCount ?? document.text.length,
       document.text.length,
     );
-    const omittedBeforePrompt = Math.max(
-      0,
-      originalCharacterCount - document.text.length,
+    const excerpt = boundProjectContextDocument(
+      document.text,
+      allowedCharacters,
+      originalCharacterCount,
+      `project context document ${index + 1}`,
     );
+    // A document that still fits keeps the stored wording, including its own omission line.
+    // A document that had to be cut again states the full gap in that new marker.
+    const passedThrough = excerpt.text === document.text;
+    const omittedBeforePrompt = passedThrough
+      ? Math.max(0, originalCharacterCount - document.text.length)
+      : 0;
     if (excerpt.omittedCharacters > 0 || omittedBeforePrompt > 0) {
       contextWasTruncated = true;
     }
