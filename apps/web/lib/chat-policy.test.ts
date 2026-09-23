@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   boundCanonicalChatHistory,
   compactInlineImageDataUris,
@@ -138,6 +138,21 @@ describe("parseBoundedJsonRequest", () => {
       100,
     );
     expect(oversized).toMatchObject({ ok: false, status: 413 });
+  });
+
+  it("cancels a stalled body when the request deadline expires", async () => {
+    const cancel = vi.fn();
+    const request = new Request("http://localhost/api/chat", {
+      method: "POST",
+      body: new ReadableStream({ cancel }),
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+    const controller = new AbortController();
+    const pending = parseBoundedJsonRequest(request, 100, controller.signal);
+
+    controller.abort(new Error("deadline"));
+    await expect(pending).resolves.toMatchObject({ ok: false, status: 503 });
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
   });
 });
 

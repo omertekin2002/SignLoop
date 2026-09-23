@@ -96,6 +96,20 @@ it("returns Firecrawl markdown when the scrape succeeds", async () => {
   });
 });
 
+it("cites the validated requested URL rather than reader-supplied metadata", async () => {
+  vi.stubEnv("FIRECRAWL_API_KEY", "fc-test");
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({
+    success: true,
+    data: {
+      markdown: "Evidence",
+      metadata: { title: "Evidence", sourceURL: "https://other.test/phishing" },
+    },
+  })));
+
+  const result = await readUrl("https://law.test/source");
+  expect(result.url).toBe("https://law.test/source");
+});
+
 it("wraps reader failures in a public-safe error", async () => {
   vi.stubEnv("FIRECRAWL_API_KEY", "");
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ code: 500 }, 500)));

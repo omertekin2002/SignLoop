@@ -31,7 +31,8 @@
     "FIRECRAWL_API_KEY",
     "JINA_API_KEY",
     "CHAT_DAILY_REQUEST_LIMIT",
-    "CHAT_CONCURRENCY_LIMIT"
+    "CHAT_CONCURRENCY_LIMIT",
+    "CRON_SECRET"
   ],
   "tasks": {
     "build": {

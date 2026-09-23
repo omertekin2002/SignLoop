@@ -444,22 +444,25 @@ function toStringArray(value: unknown): string[] {
 
 function normalizeRiskBadge(value: unknown): "LOW" | "MEDIUM" | "HIGH" {
   const normalized = toStringOrNull(value)?.toLowerCase() || "";
-  if (normalized.includes("high")) return "HIGH";
-  if (normalized.includes("low")) return "LOW";
-  // Everything else (medium/moderate/mid and anything unrecognized) defaults to MEDIUM.
-  return "MEDIUM";
+  if (/\bhigh\b/.test(normalized)) return "HIGH";
+  if (/\blow\b/.test(normalized)) return "LOW";
+  if (/\b(?:medium|moderate|mid)\b/.test(normalized))
+    return "MEDIUM";
+  throw new LlmResponseValidationError("LLM response omitted a usable risk badge");
 }
 
-function normalizeRegionLabel(value: unknown): "typical" | "unusual" {
+function normalizeRegionLabel(value: unknown): "typical" | "unusual" | null {
   const normalized = toStringOrNull(value)?.toLowerCase() || "";
   if (
     normalized.includes("unusual") ||
     normalized.includes("atypical") ||
-    normalized.includes("non-standard")
+    /\b(?:non[- ]?standard|abnormal|not typical|not standard)\b/.test(normalized)
   ) {
     return "unusual";
   }
-  return "typical";
+  if (/\b(?:typical|standard|normal)\b/.test(normalized))
+    return "typical";
+  return null;
 }
 
 function normalizeDateType(
@@ -547,16 +550,11 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
     .map((item) => {
       const record = asRecord(item);
       if (!record) {
-        const text = toStringOrNull(item);
-        if (!text) return null;
-        return {
-          topic: text,
-          typical_range: "Not specified",
-          yours: null,
-          label: "typical" as const,
-        };
+        return null;
       }
 
+      const label = normalizeRegionLabel(pickFirst(record, ["label", "status"]));
+      if (!label) return null;
       return {
         topic:
           toStringOrNull(pickFirst(record, ["topic", "item", "clause"])) ||
@@ -568,7 +566,7 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
         yours: toStringOrNull(
           pickFirst(record, ["yours", "your_term", "yourTerm"]),
         ),
-        label: normalizeRegionLabel(pickFirst(record, ["label", "status"])),
+        label,
       };
     })
     .filter((item): item is AnalysisResult["normal_in_region"][number] =>

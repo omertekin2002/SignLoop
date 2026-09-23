@@ -183,7 +183,7 @@ Before uploading bytes, the server records a cleanup intent that becomes eligibl
 bun run storage:cleanup
 ```
 
-Cleanup atomically claims due rows with expiring leases and processes four objects concurrently. Failed deletions back off from one minute to at most one day so newer work can proceed. Acknowledgments require the claim token. The command continues while full batches of eligible work remain. There is no scheduled cleanup. Due items are processed by later deletion requests or the manual cleanup command.
+Cleanup atomically claims due rows with expiring leases and processes four objects concurrently. Failed deletions back off from one minute to at most one day so newer work can proceed. Acknowledgments require the claim token. The command continues while full batches of eligible work remain. Vercel Cron calls `/api/cron/storage-cleanup` daily at 03:00 UTC; the route processes bounded batches, and later runs pick up remaining work. Set a random `CRON_SECRET` in the production Vercel environment to authorize those requests. Deletion requests and the manual command can also process due items.
 
 ## Deployment
 
@@ -192,6 +192,7 @@ Root [vercel.json](vercel.json) configures:
 - Install: `bun install --frozen-lockfile --linker hoisted`.
 - Build: `bunx turbo build --filter=web`.
 - Output: `apps/web/.next`.
+- Cron: daily storage-deletion outbox cleanup, authenticated with `CRON_SECRET`.
 
 Keep the hoisted linker so repository-root framework discovery can resolve Next.js. The build command does not apply migrations. Run migrations against the intended environment before setting `SKIP_SCHEMA_BOOTSTRAP=1`. API output traces include SQL migration files through [next.config.js](apps/web/next.config.js).
 

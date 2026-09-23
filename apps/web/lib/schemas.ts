@@ -172,7 +172,7 @@ export const AnalysisResultSchema = BaseAnalysisResultSchema.superRefine(
 
 export const PartialAnalysisResultSchema = z
   .object({
-    risk_badge: z.enum(["LOW", "MEDIUM", "HIGH"]).optional().default("MEDIUM"),
+    risk_badge: z.enum(["LOW", "MEDIUM", "HIGH"]),
     key_points: z.array(z.string()).optional().default([]),
     summary: z.object({
       what_it_is: z.string().optional().default("Contract analysis"),

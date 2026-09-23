@@ -204,7 +204,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const parsedBody = await parseBoundedJsonRequest<unknown>(req);
+    const parsedBody = await parseBoundedJsonRequest<unknown>(
+      req,
+      MAX_CHAT_REQUEST_BODY_BYTES,
+      operationSignal,
+    );
     if (!parsedBody.ok) {
       return NextResponse.json(
         { error: parsedBody.error },
@@ -258,6 +262,20 @@ export async function POST(req: Request) {
     let conversationMessages = parsedMessages.messages;
     const latestUserMessage = conversationMessages.at(-1)!;
 
+    if (userId && !isTemporaryChat) {
+      release = await claimGenerationOperation(
+        userId,
+        "chat",
+        threadId,
+        CHAT_LEASE_SECONDS,
+      );
+      if (!release)
+        return NextResponse.json(
+          { error: "A reply is already running in this chat." },
+          { status: 409 },
+        );
+    }
+
     try {
       const admission = await admitChat(userId);
       if ("retryAfter" in admission)
@@ -274,20 +292,6 @@ export async function POST(req: Request) {
         { error: "Chat is temporarily unavailable. Please try again shortly." },
         { status: 503 },
       );
-    }
-
-    if (userId && !isTemporaryChat) {
-      release = await claimGenerationOperation(
-        userId,
-        "chat",
-        threadId,
-        CHAT_LEASE_SECONDS,
-      );
-      if (!release)
-        return NextResponse.json(
-          { error: "A reply is already running in this chat." },
-          { status: 409 },
-        );
     }
 
     const [settings, persistedMessages, modelSnapshot] = await Promise.all([

@@ -48,6 +48,7 @@ import {
   getContractTextForUser,
   getContractWithLatestAnalysisForUser,
   getProjectContextForAnalysis,
+  listProjectContextDocumentsForUser,
   getRecentChatMessagesForThreadForUser,
   listContractsByUserId,
   listContractsForChat,
@@ -357,6 +358,40 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(await getProjectContextForAnalysis("intruder", project.id)).toEqual(
       [],
     );
+  });
+
+  it("prioritizes recent context in project pages and analysis prompts", async () => {
+    const project = await createProjectForUser({ userId: "owner", title: "Recent context" });
+    await pool.current!.query(
+      `INSERT INTO context_documents(project_id, title, extracted_text, created_at)
+       SELECT $1, 'Evidence ' || n, 'Text ' || n,
+         now() + n * interval '1 second'
+       FROM generate_series(1, 10) AS n`,
+      [project.id],
+    );
+
+    const listed = await listProjectContextDocumentsForUser("owner", project.id);
+    expect(listed.map((row) => row.title)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `Evidence ${10 - index}`),
+    );
+
+    const context = await getProjectContextForAnalysis("owner", project.id);
+    expect(context).toHaveLength(9);
+    expect(context[0]?.title).toBe("Evidence 10");
+    const { prompt } = buildAnalysisPrompt(
+      "Contract body",
+      undefined,
+      context.map((row) => ({
+        title: row.title,
+        documentType: row.documentType,
+        text: row.extractedText,
+        originalCharacterCount: row.originalCharacterCount,
+      })),
+    );
+    expect(prompt).toContain("Title: Evidence 10\n");
+    expect(prompt).toContain("Title: Evidence 3\n");
+    expect(prompt).not.toContain("Title: Evidence 2\n");
+    expect(prompt).not.toContain("Title: Evidence 1\n");
   });
 
   it("invalidates current and in-flight analyses when project evidence changes", async () => {

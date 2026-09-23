@@ -2,6 +2,7 @@ import type { ModelMessage } from "ai";
 import type { ChatMessage, ChatRole } from "@/lib/chat";
 import { isRecord } from "@/lib/utils";
 import { parseAgentMessages, parseWebSources } from "@/lib/chat-agent-history";
+import { withAbort } from "@/lib/bounded-response";
 export { MAX_AGENT_STATE_CHARACTERS } from "@/lib/chat-agent-history";
 
 export const MAX_CHAT_MESSAGES = 30;
@@ -162,6 +163,7 @@ export function parseClientChatMessages(payload: unknown): ParsedChatMessages {
 export async function parseBoundedJsonRequest<T>(
   request: Request,
   maxBytes = MAX_CHAT_REQUEST_BODY_BYTES,
+  signal: AbortSignal = request.signal,
 ): Promise<ParsedJsonRequest<T>> {
   const reader = request.body?.getReader();
   if (!reader) {
@@ -173,13 +175,13 @@ export async function parseBoundedJsonRequest<T>(
 
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await withAbort(reader.read(), signal);
       if (done) break;
       if (!value) continue;
 
       totalBytes += value.byteLength;
       if (totalBytes > maxBytes) {
-        await reader.cancel();
+        void reader.cancel().catch(() => {});
         return {
           ok: false,
           error: "Chat request body is too large.",
@@ -189,7 +191,12 @@ export async function parseBoundedJsonRequest<T>(
       chunks.push(value);
     }
   } catch {
-    return { ok: false, error: "Invalid JSON body", status: 400 };
+    void reader.cancel().catch(() => {});
+    return signal.aborted
+      ? { ok: false, error: "Chat request timed out or was canceled.", status: 503 }
+      : { ok: false, error: "Invalid JSON body", status: 400 };
+  } finally {
+    reader.releaseLock();
   }
 
   const bytes = new Uint8Array(totalBytes);

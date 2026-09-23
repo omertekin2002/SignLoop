@@ -1267,7 +1267,7 @@ export async function listProjectContextDocumentsForUser(
     SELECT cd.id, cd.title, cd.document_type AS "documentType", cd.original_filename AS "originalFilename",
       cd.size_bytes AS "fileSize", cd.word_count AS "wordCount", cd.created_at AS "createdAt"
     FROM context_documents cd JOIN projects p ON p.id = cd.project_id
-    WHERE p.id = ${projectId} AND p.user_id = ${userId} ORDER BY cd.created_at, cd.id
+    WHERE p.id = ${projectId} AND p.user_id = ${userId} ORDER BY cd.created_at DESC, cd.id DESC
     LIMIT ${Math.min(51, Math.max(1, limit))} OFFSET ${clampPagination({ offset }).offset}
   `
   ).rows;
@@ -1291,8 +1291,8 @@ export async function getProjectContextForAnalysis(
   );
   const tailCharacters =
     maxDocumentCharacters - omissionMarker.length - headCharacters;
-  // Fetch one sentinel row beyond the prompt's eight-document cap so the prompt can disclose that
-  // additional context was omitted without counting or transferring the whole project collection.
+  // Prioritize recently added evidence. Fetch one sentinel beyond the prompt's eight-document cap
+  // so the prompt can disclose omissions without transferring the whole project collection.
   const maxDocuments = 9;
 
   const { rows } = await sql<ProjectContextForAnalysisRecord>`
@@ -1313,7 +1313,7 @@ export async function getProjectContextForAnalysis(
     where cd.project_id = ${projectId}
       and p.user_id = ${userId}
       and nullif(btrim(cd.extracted_text), '') is not null
-    order by cd.created_at asc
+    order by cd.created_at desc, cd.id desc
     limit ${maxDocuments}
   `;
 

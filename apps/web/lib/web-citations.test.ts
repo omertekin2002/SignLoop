@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { marked } from "marked";
 import {
   appendWebSourcesToMessage,
   normalizeCitationMarkers,
@@ -26,6 +27,26 @@ describe("web citations", () => {
     expect(result).toContain("- [3] [Source 3](<https://example.com/source3>)");
     expect(result).not.toContain("Source 2");
     expect(result.match(/Source 3/g)).toHaveLength(1);
+  });
+
+  it("escapes reader titles so they cannot add a second link", () => {
+    const result = appendWebSourcesToMessage("Read [1].", [
+      {
+        title: "Legit](https://evil.example) [More",
+        url: "https://example.com/source",
+      },
+    ]);
+    const html = String(marked.parse(result));
+    expect(html).toContain('href="https://example.com/source"');
+    expect(html).not.toContain('href="https://evil.example"');
+  });
+
+  it("does not create a link for a non-http source URL", () => {
+    const result = appendWebSourcesToMessage("Read [1].", [
+      { title: "Source", url: "javascript:alert(1)" },
+    ]);
+    expect(result).toContain("- [1] Source");
+    expect(result).not.toContain("javascript:");
   });
 
   it.each([

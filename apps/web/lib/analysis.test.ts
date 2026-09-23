@@ -44,6 +44,38 @@ describe("parseStrictJson", () => {
     expect(result.summary.cancellation.notice_period_days).toBe(30);
   });
 
+  it("rejects a missing risk badge instead of inventing medium risk", () => {
+    const { risk_badge: _omitted, ...withoutRiskBadge } = validPayload;
+    expect(() =>
+      parseStrictJson<AnalysisResult>(JSON.stringify(withoutRiskBadge)),
+    ).toThrow(/risk badge/i);
+  });
+
+  it("does not treat unrelated words as risk labels", () => {
+    expect(() =>
+      parseStrictJson<AnalysisResult>(
+        JSON.stringify({ ...validPayload, risk_badge: "highlight" }),
+      ),
+    ).toThrow(/risk badge/i);
+  });
+
+  it("omits regional comparisons without a supported classification", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = parseStrictJson<AnalysisResult>(
+        JSON.stringify({
+          ...validPayload,
+          normal_in_region: [
+            { topic: "Renewal", typical_range: "30 days", yours: "60 days" },
+          ],
+        }),
+      );
+      expect(result.normal_in_region).toEqual([]);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("recovers malformed JSON and normalizes common model shape/type mistakes", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const malformedPayload = `{

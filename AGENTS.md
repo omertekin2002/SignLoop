@@ -68,4 +68,4 @@ The repository is configured for Vercel in root `vercel.json`:
 - Build: `bunx turbo build --filter=web`.
 - Output: `apps/web/.next`.
 
-Keep the hoisted linker for repository-root deployment so Vercel can resolve Next.js from root `node_modules`. The build does not run migrations. SQL migration files are included in API deployment traces through `apps/web/next.config.js`. Cleanup scheduling is not configured in this repository.
+Keep the hoisted linker for repository-root deployment so Vercel can resolve Next.js from root `node_modules`. The build does not run migrations. SQL migration files are included in API deployment traces through `apps/web/next.config.js`. Vercel Cron runs the storage-deletion outbox cleanup daily at 03:00 UTC through an authenticated route. Set `CRON_SECRET` in the production environment.

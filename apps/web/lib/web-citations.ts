@@ -15,6 +15,30 @@ const MEASURED_FIGURE = /\d{1,3}(?:[.,]\d{3})+(?:[.,]\d+)?|\d+[.,]\d+/g;
 
 export type FigureVerification = "ok" | "no-evidence" | "unmatched";
 
+function escapeMarkdownLabel(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/\\/g, "\\\\")
+    .replace(/([!*_`~<>])/g, "\\$1")
+    .replaceAll("[", "\\[")
+    .replaceAll("]", "\\]");
+}
+
+function safeSourceUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      url.username ||
+      url.password
+    )
+      return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
 const FIGURE_NOTICES: Record<Exclude<FigureVerification, "ok">, string> = {
   "no-evidence":
     "_The figures above were not checked against source text retrieved during this turn._",
@@ -111,7 +135,9 @@ export function appendWebSourcesToMessage(
     .map((number) => {
       const source = sources[number - 1]!;
       // Explicit labels preserve citation numbers when only a subset is used.
-      return `- [${number}] [${source.title}](<${source.url}>)`;
+      const title = escapeMarkdownLabel(source.title);
+      const url = safeSourceUrl(source.url);
+      return `- [${number}] ${url ? `[${title}](<${url}>)` : title}`;
     });
   return `${withNotice.trim()}\n\nSources:\n${links.join("\n")}`;
 }

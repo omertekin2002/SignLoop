@@ -94,7 +94,7 @@ async function readWithFirecrawl(
     success?: boolean;
     data?: {
       markdown?: string;
-      metadata?: { title?: string; sourceURL?: string };
+      metadata?: { title?: string };
     };
   };
   const content = payload.data?.markdown?.trim();
@@ -103,7 +103,8 @@ async function readWithFirecrawl(
   return {
     provider: "firecrawl",
     title: sanitizeTitle(payload.data?.metadata?.title, url.hostname),
-    url: payload.data?.metadata?.sourceURL || url.href,
+    // The reader's metadata is untrusted. Cite the validated URL we requested.
+    url: url.href,
     content,
   };
 }
@@ -124,14 +125,14 @@ async function readWithJina(
   if (!response.ok)
     throw new Error(`Jina Reader responded with ${response.status}`);
   const payload = (await readBoundedJson(response, signal)) as {
-    data?: { title?: string; url?: string; content?: string };
+    data?: { title?: string; content?: string };
   };
   const content = payload.data?.content?.trim();
   if (!content) throw new Error("Jina Reader returned no content");
   return {
     provider: "jina",
     title: sanitizeTitle(payload.data?.title, url.hostname),
-    url: payload.data?.url || url.href,
+    url: url.href,
     content,
   };
 }
