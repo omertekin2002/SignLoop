@@ -1735,6 +1735,8 @@ export async function getChatThreadByIdForUser(
 export async function appendChatMessagesToThread(input: {
   userId: string;
   threadId: string;
+  /** Applied only to an untitled thread's first saved turn, under the same row lock. */
+  generatedTitle?: string | null;
   messages: Array<{
     role: ChatMessageRole;
     content: string;
@@ -1833,9 +1835,16 @@ export async function appendChatMessagesToThread(input: {
     );
 
     await client.query(
-      `UPDATE chat_threads SET updated_at = now()
+      `UPDATE chat_threads SET updated_at = now(),
+         title = CASE WHEN $3::integer = 0 AND title = 'New chat' AND $4::text IS NOT NULL
+           THEN $4 ELSE title END
        WHERE id = $1 AND user_id = $2`,
-      [input.threadId, input.userId],
+      [
+        input.threadId,
+        input.userId,
+        basePosition,
+        input.generatedTitle?.trim() || null,
+      ],
     );
 
     await client.query("COMMIT");

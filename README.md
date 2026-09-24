@@ -135,6 +135,8 @@ Project detail returns 50 contracts and 50 context documents per page, with inde
 
 Temporary chat does not persist a thread or messages to the application database. It can be used anonymously or while signed in; provider processing and optional tracing are separate from thread persistence. Saved chat requires authentication and persists ordered user/assistant message pairs. Its model history is reconstructed from the database rather than trusted browser copies.
 
+New saved chats receive a short AI-generated title from their first user message. Naming runs alongside the first reply using the same selected model, chat pipeline, and provider fallbacks, with tools disabled. The title is saved with the first completed turn and appears in the sidebar's completion refresh. Existing or custom titles are preserved; if naming fails, the reply still saves with the default title.
+
 URL prompts (`/?q=...`) populate a draft after privacy acknowledgement and require the user to press Send.
 
 Admission is shared across instances through PostgreSQL. Signed-in users may start 30 requests per hour with two concurrent runs; anonymous visitors share 10 requests per hour and one concurrent run. The global defaults are 1,000 requests per UTC day and eight concurrent runs, configurable using `CHAT_DAILY_REQUEST_LIMIT` and `CHAT_CONCURRENCY_LIMIT`. Rejected requests return 429 with `Retry-After`; unavailable admission storage returns 503. These are request limits, not exact monetary spending caps.

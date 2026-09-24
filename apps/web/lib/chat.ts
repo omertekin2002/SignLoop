@@ -159,6 +159,7 @@ export type ChatReplyStreamChunk =
 type ChatGenerationOptions = {
   primaryModel?: string | null;
   signal?: AbortSignal;
+  maxOutputTokens?: number;
   enableWebSearch?: boolean;
   enableUrlReader?: boolean;
   /** Enables http_get: direct GETs to any public address, returned as raw response bodies. */
@@ -489,7 +490,7 @@ export async function* generateChatReplyStream(
       )}\n\n${buildAuthoritativeUtcTimeContext()}\n\n${buildToolInstructions(toolNotes)}`,
     tools,
     stopWhen: isStepCount(MAX_STEPS),
-    maxOutputTokens: 4096,
+    maxOutputTokens: options?.maxOutputTokens ?? 4096,
     maxRetries: 0,
     providerOptions: { openai: { store: false } },
     telemetry: {

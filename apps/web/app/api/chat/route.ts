@@ -40,6 +40,7 @@ import {
 } from "@/lib/server-db";
 import { isRecord, isUuid } from "@/lib/utils";
 import { admitChat } from "@/lib/chat-admission";
+import { generateChatTitle } from "@/lib/chat-title";
 
 const CHAT_SYSTEM_PROMPT = `
 You are SignLoop's legal contract assistant.
@@ -102,6 +103,8 @@ async function persistChatMessages(input: {
   webSources?: ChatMessage["webSources"];
   toolActivity?: ChatReply["toolActivity"];
   temporary: boolean;
+  generatedTitle?: string | null;
+  signal: AbortSignal;
 }): Promise<ChatMessageRecord[]> {
   if (input.temporary) {
     return [];
@@ -111,9 +114,13 @@ async function persistChatMessages(input: {
     throw new Error("Unauthorized");
   }
 
+  // Naming can still be running when the answer finishes; honor cancellation during that wait.
+  input.signal.throwIfAborted();
+
   return appendChatMessagesToThread({
     userId: input.userId,
     threadId: input.threadId,
+    generatedTitle: input.generatedTitle,
     messages: [
       { role: "user", content: input.latestUserMessage.content },
       {
@@ -185,6 +192,7 @@ export async function POST(req: Request) {
   let streaming = false;
   let storedMessages: ChatMessageRecord[] = [];
   const disconnect = new AbortController();
+  const titleController = new AbortController();
   const operationSignal = AbortSignal.any([
     req.signal,
     disconnect.signal,
@@ -360,6 +368,22 @@ export async function POST(req: Request) {
             ...conversationMessages,
           ];
 
+    // Start naming alongside the answer. Persist both in the first-turn transaction so the
+    // client's existing thread-list refresh sees the title immediately after completion.
+    // Catch here so a title failure never rejects (or creates an unhandled rejection during)
+    // an otherwise successful reply.
+    const generatedTitle =
+      !isTemporaryChat && persistedMessages?.length === 0
+        ? generateChatTitle(latestUserMessage.content, {
+            primaryModel: selectedPrimaryModel,
+            signal: AbortSignal.any([operationSignal, titleController.signal]),
+          }).catch((error) => {
+            if (!operationSignal.aborted && !titleController.signal.aborted)
+              console.error("Chat title generation failed:", error);
+            return null;
+          })
+        : Promise.resolve(null);
+
     const wantsStream = isRecord(body) && body.stream === true;
     if (wantsStream) {
       streaming = true;
@@ -422,6 +446,8 @@ export async function POST(req: Request) {
                   assistantModel: chunk.reply.model ?? null,
                   assistantProvider: chunk.reply.provider ?? null,
                   temporary: isTemporaryChat,
+                  generatedTitle: await generatedTitle,
+                  signal: operationSignal,
                 });
               } catch (persistError) {
                 if (
@@ -482,6 +508,7 @@ export async function POST(req: Request) {
               }),
             );
           } finally {
+            titleController.abort();
             await release?.().catch((error) =>
               console.error("Chat lease release failed", error),
             );
@@ -545,6 +572,8 @@ export async function POST(req: Request) {
           assistantModel: model ?? null,
           assistantProvider: provider ?? null,
           temporary: false,
+          generatedTitle: await generatedTitle,
+          signal: operationSignal,
         });
       } catch (persistError) {
         // Match the streaming path: inference already succeeded, so keep the useful reply while
@@ -582,6 +611,7 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   } finally {
+    if (!streaming) titleController.abort();
     if (!streaming)
       await release?.().catch((error) =>
         console.error("Chat lease release failed", error),

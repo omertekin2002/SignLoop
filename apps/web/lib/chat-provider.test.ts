@@ -126,3 +126,80 @@ it("rejects Responses EOF before the provider completion event", async () => {
     generateChatReply([{ role: "user", content: "hello" }]),
   ).rejects.toThrow(/did not complete|before successful completion/);
 });
+
+it.each([
+  {
+    selected: "my-model",
+    expected: [
+      "my-model",
+      "google/gemma-4-31b-it:free",
+      "openai/gpt-oss-120b:free",
+      "openrouter/free",
+    ],
+  },
+  {
+    selected: "openrouter/free",
+    expected: [
+      "openrouter/free",
+      "google/gemma-4-31b-it:free",
+      "openai/gpt-oss-120b:free",
+    ],
+  },
+  {
+    selected: null,
+    expected: [
+      "google/gemma-4-31b-it:free",
+      "openai/gpt-oss-120b:free",
+      "openrouter/free",
+    ],
+  },
+])(
+  "generates a title through the regular fallback chain for $selected",
+  async ({ selected, expected }) => {
+    vi.resetModules();
+    vi.stubEnv("PRIMARY_LLM_BASE_URL", "https://primary.test/v1");
+    vi.stubEnv("OPENROUTER_BASE_URL", "https://openrouter.test/v1");
+    vi.stubEnv("OPENROUTER_API_KEY", "test");
+    const fetchMock = vi.fn();
+    for (let index = 1; index < expected.length; index++) {
+      fetchMock.mockResolvedValueOnce(
+        new Response("Unavailable", { status: 503 }),
+      );
+    }
+    fetchMock.mockResolvedValueOnce(
+      response(
+        textEvents.map((event) =>
+          event.type === "response.output_text.delta"
+            ? { ...event, delta: "Lease Renewal Terms" }
+            : event,
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { generateChatTitle } = await import("./chat-title");
+    await expect(
+      generateChatTitle("Explain my lease renewal.", {
+        primaryModel: selected,
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toBe("Lease Renewal Terms");
+
+    const requests = fetchMock.mock.calls.map(([, init]) =>
+      JSON.parse(init.body),
+    );
+    expect(requests.map((request) => request.model)).toEqual(expected);
+    for (const request of requests) {
+      expect(request.stream).toBe(true);
+      expect(request.store).toBe(false);
+      expect(request.tools ?? []).toEqual([]);
+    }
+    expect(String(fetchMock.mock.calls[0]![0])).toBe(
+      selected === "my-model"
+        ? "https://primary.test/v1/responses"
+        : "https://openrouter.test/v1/responses",
+    );
+    expect(String(fetchMock.mock.calls.at(-1)![0])).toBe(
+      "https://openrouter.test/v1/responses",
+    );
+  },
+);

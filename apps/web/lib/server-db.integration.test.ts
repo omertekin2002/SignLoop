@@ -95,6 +95,79 @@ describe.skipIf(!connectionString)("database integration", () => {
     });
   }
 
+  it("saves the first generated chat title atomically and preserves it on later turns", async () => {
+    const thread = await createChatThreadForUser({ userId: "title-owner" });
+    const messages = [
+      { role: "user" as const, content: "Explain renewal" },
+      { role: "assistant" as const, content: "Renewal extends the term." },
+    ];
+    await expect(
+      appendChatMessagesToThread({
+        userId: "intruder",
+        threadId: thread.id,
+        messages,
+        generatedTitle: "Wrong owner",
+      }),
+    ).rejects.toThrow();
+    expect(
+      (await getChatThreadByIdForUser("title-owner", thread.id))?.title,
+    ).toBe("New chat");
+
+    await appendChatMessagesToThread({
+      userId: "title-owner",
+      threadId: thread.id,
+      messages,
+      generatedTitle: "Lease Renewal Terms",
+    });
+    const saved = await getChatThreadByIdForUser("title-owner", thread.id);
+    expect(saved?.title).toBe("Lease Renewal Terms");
+    expect(saved?.messages).toHaveLength(2);
+
+    await appendChatMessagesToThread({
+      userId: "title-owner",
+      threadId: thread.id,
+      messages,
+      generatedTitle: "Another topic",
+    });
+    expect(
+      (await getChatThreadByIdForUser("title-owner", thread.id))?.title,
+    ).toBe("Lease Renewal Terms");
+  });
+
+  it("preserves custom titles and saves replies even when title generation failed", async () => {
+    const custom = await createChatThreadForUser({
+      userId: "owner",
+      title: "My contract",
+    });
+    const untitled = await createChatThreadForUser({ userId: "owner" });
+    for (const [thread, generatedTitle] of [
+      [custom, "Generated name"],
+      [untitled, null],
+    ] as const) {
+      await appendChatMessagesToThread({
+        userId: "owner",
+        threadId: thread.id,
+        generatedTitle,
+        messages: [
+          { role: "user", content: "Hello" },
+          { role: "assistant", content: "Hi" },
+        ],
+      });
+      const saved = await getChatThreadByIdForUser("owner", thread.id);
+      expect(saved?.title).toBe(thread.title);
+      expect(saved?.messages).toHaveLength(2);
+    }
+    await appendChatMessagesToThread({
+      userId: "owner",
+      threadId: untitled.id,
+      generatedTitle: "Late competing title",
+      messages: [{ role: "user", content: "Another turn" }],
+    });
+    expect((await getChatThreadByIdForUser("owner", untitled.id))?.title).toBe(
+      "New chat",
+    );
+  });
+
   it("persists and reloads bounded agent tool exchanges in message metadata", async () => {
     const thread = await createChatThreadForUser({
       userId: "owner",
