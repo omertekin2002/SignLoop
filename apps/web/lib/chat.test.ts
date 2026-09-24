@@ -161,6 +161,28 @@ describe("agentic chat", () => {
       expect.arrayContaining([expect.objectContaining({ name: "search_web" })]),
     );
     expect(reply.webSearch).toBeNull();
+    expect(reply.agentMessages).toBeUndefined();
+  });
+
+  it("uses complete canonical text instead of legacy clipped text-only replay", async () => {
+    const model = scriptedModel();
+    mocks.responses.mockReturnValue(model);
+    const answer = `${"x".repeat(3000)} The renewal deadline is September 30.`;
+    await generateChatReply([
+      { role: "user", content: "Explain the renewal terms." },
+      {
+        role: "assistant",
+        content: answer,
+        agentMessages: [{
+          role: "assistant",
+          content: [{ type: "text", text: `${answer.slice(0, 2000)}\n[Replay excerpt]` }],
+        }],
+      },
+      { role: "user", content: "What was that deadline?" },
+    ]);
+
+    const assistant = model.doStreamCalls[0]?.prompt.find((message) => message.role === "assistant");
+    expect(assistant?.content).toEqual([{ type: "text", text: answer, providerOptions: undefined }]);
   });
 
   it("executes successive model-selected searches and returns results to the model", async () => {

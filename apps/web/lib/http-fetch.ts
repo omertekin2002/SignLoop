@@ -49,14 +49,14 @@ function resolveDecoder(contentType: string | null): TextDecoder {
   return new TextDecoder("utf-8");
 }
 
-/** Reads at most MAX_RESPONSE_BYTES so a large or endless body cannot exhaust the function. */
+/** Decode only the useful prefix plus one lookahead character, with a separate byte ceiling. */
 async function readBoundedBody(
   response: Response,
 ): Promise<{ text: string; truncated: boolean }> {
   const decoder = resolveDecoder(response.headers.get("content-type"));
   if (!response.body) return { text: "", truncated: false };
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
+  let text = "";
   let total = 0;
   let truncated = false;
   try {
@@ -64,20 +64,40 @@ async function readBoundedBody(
       const { done, value } = await reader.read();
       if (done) break;
       if (!value?.byteLength) continue;
-      const remaining = MAX_RESPONSE_BYTES - total;
-      if (value.byteLength >= remaining) {
-        chunks.push(value.subarray(0, remaining));
+      let offset = 0;
+      while (
+        offset < value.byteLength &&
+        total < MAX_RESPONSE_BYTES &&
+        text.length <= MAX_FETCH_RESPONSE_CHARACTERS
+      ) {
+        const length = Math.min(
+          value.byteLength - offset,
+          MAX_RESPONSE_BYTES - total,
+          MAX_FETCH_RESPONSE_CHARACTERS + 1 - text.length,
+        );
+        text += decoder.decode(value.subarray(offset, offset + length), {
+          stream: true,
+        });
+        total += length;
+        offset += length;
+      }
+      if (
+        text.length > MAX_FETCH_RESPONSE_CHARACTERS ||
+        total >= MAX_RESPONSE_BYTES
+      ) {
         truncated = true;
         break;
       }
-      chunks.push(value);
-      total += value.byteLength;
     }
   } finally {
-    reader.cancel().catch(() => {});
+    void reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
-  const text = chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join("");
-  return { text: text + decoder.decode(), truncated };
+  text += decoder.decode();
+  return {
+    text: text.slice(0, MAX_FETCH_RESPONSE_CHARACTERS),
+    truncated: truncated || text.length > MAX_FETCH_RESPONSE_CHARACTERS,
+  };
 }
 
 /**
@@ -124,13 +144,12 @@ export async function httpGet(
         continue;
       }
 
-      const { text, truncated: bodyTruncated } = await readBoundedBody(response);
-      const truncated = bodyTruncated || text.length > MAX_FETCH_RESPONSE_CHARACTERS;
+      const { text, truncated } = await readBoundedBody(response);
       return {
         url: target.href,
         status: response.status,
         contentType: response.headers.get("content-type"),
-        body: truncated ? text.slice(0, MAX_FETCH_RESPONSE_CHARACTERS) : text,
+        body: text,
         truncated,
       };
     }

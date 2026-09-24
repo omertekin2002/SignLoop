@@ -27,9 +27,12 @@ export function getModelSelection(
 
 export async function fetchSettings(options?: {
   refreshModels?: boolean;
+  signal?: AbortSignal;
 }): Promise<SettingsResponse> {
   const suffix = options?.refreshModels ? "?refreshModels=1" : "";
-  const response = await apiClient.get<SettingsResponse>(`/settings${suffix}`);
+  const response = await apiClient.get<SettingsResponse>(`/settings${suffix}`, {
+    signal: options?.signal,
+  });
   return response.data;
 }
 

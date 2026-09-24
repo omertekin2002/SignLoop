@@ -32,6 +32,7 @@ import { verifyFigures, type FigureVerification } from "@/lib/web-citations";
 import { isRecord } from "@/lib/utils";
 import {
   compactAgentMessages,
+  isPlainAssistantReplay,
   MAX_SOURCE_COUNT,
   MAX_SOURCE_CATALOG_CHARACTERS,
 } from "@/lib/chat-agent-history";
@@ -509,7 +510,9 @@ export async function* generateChatReplyStream(
       messages: messages
         .filter((message) => message.role !== "system")
         .flatMap((message): ModelMessage[] =>
-          message.role === "assistant" && message.agentMessages?.length
+          message.role === "assistant" &&
+          message.agentMessages?.length &&
+          !isPlainAssistantReplay(message.agentMessages)
             ? message.agentMessages
             : [{ role: message.role, content: message.content }],
         ),

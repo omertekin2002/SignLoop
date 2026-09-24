@@ -6,6 +6,7 @@ vi.mock("@/lib/http-fetch", () => ({ httpGet: vi.fn() }));
 import { httpGet } from "@/lib/http-fetch";
 import { readUrl } from "@/lib/url-reader";
 import { getContractTextForUser, listContractsForChat } from "@/lib/server-db";
+import { MAX_SOURCE_TITLE_CHARACTERS, parseWebSources } from "./chat-agent-history";
 import {
   CONTRACT_WINDOW_CHARACTERS,
   createHttpGetTool,
@@ -194,6 +195,20 @@ describe("createHttpGetTool", () => {
     await execute({ url: "https://api.test/a" });
     await execute({ url: "https://API.test/a" });
     expect(httpGet).toHaveBeenCalledOnce();
+  });
+
+  it("keeps long API paths valid when their source catalog is persisted", async () => {
+    const url = `https://api.test/${"x".repeat(250)}`;
+    vi.mocked(httpGet).mockResolvedValue({
+      url, status: 200, contentType: "application/json", body: "{}", truncated: false,
+    });
+    const { addSource, execute } = build();
+    await execute({ url });
+    const source = addSource.mock.calls[0]![0];
+    expect(source.title).toHaveLength(MAX_SOURCE_TITLE_CHARACTERS);
+    expect(source.url).toBe(url);
+    const sources = [{ title: "Existing", url: "https://existing.test/" }, source];
+    expect(parseWebSources(sources)).toEqual(sources);
   });
 
   it("reports an exhausted budget instead of fetching further", async () => {

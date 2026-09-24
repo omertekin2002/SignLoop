@@ -117,6 +117,45 @@ describe("saved chat policy", () => {
       result.reduce((total, message) => total + message.content.length, 4_000),
     ).toBeLessThanOrEqual(60_000);
   });
+
+  it("charges cumulative source catalogs once while keeping their original order", () => {
+    const sources = Array.from({ length: 64 }, (_, index) => ({
+      title: "t".repeat(180),
+      url: `https://source.test/${index}`,
+    }));
+    const history = Array.from({ length: 28 }, (_, index) => ({
+      role: index % 2 ? "assistant" as const : "user" as const,
+      content: "x".repeat(1000),
+      ...(index % 2 ? { webSources: sources } : {}),
+    }));
+
+    const bounded = boundCanonicalChatHistory(history, 1000);
+    expect(bounded).toHaveLength(28);
+    expect(bounded.filter((message) => message.webSources)).toHaveLength(1);
+    expect(bounded.at(-1)?.webSources).toEqual(sources);
+    expect(history.filter((message) => message.webSources)).toHaveLength(14);
+  });
+
+  it("keeps the newest available catalog when a later answer has none", () => {
+    const firstSources = [{ title: "First", url: "https://source.test/first" }];
+    const latestSources = [...firstSources, { title: "Second", url: "https://source.test/second" }];
+    const bounded = boundCanonicalChatHistory([
+      { role: "assistant", content: "First [1]", webSources: firstSources },
+      { role: "assistant", content: "Second [2]", webSources: latestSources },
+      { role: "assistant", content: "Later answer" },
+    ]);
+    expect(bounded[0]).not.toHaveProperty("webSources");
+    expect(bounded[1]?.webSources).toEqual(latestSources);
+  });
+
+  it("drops legacy plain replay without shortening canonical answer text", () => {
+    const answer = "x".repeat(3500);
+    expect(boundCanonicalChatHistory([{
+      role: "assistant",
+      content: answer,
+      agentMessages: [{ role: "assistant", content: answer.slice(0, 2000) }],
+    }])).toEqual([{ role: "assistant", content: answer }]);
+  });
 });
 
 describe("parseBoundedJsonRequest", () => {
@@ -157,6 +196,18 @@ describe("parseBoundedJsonRequest", () => {
 });
 
 describe("temporary history transport", () => {
+  it("transports only the newest cumulative source catalog", async () => {
+    const { boundTemporaryChatHistory } = await import("./chat-policy");
+    const sources = [{ title: "Source", url: "https://source.test/" }];
+    const bounded = boundTemporaryChatHistory([
+      { role: "assistant", content: "First [1]", webSources: sources },
+      { role: "assistant", content: "Second [1]", webSources: sources },
+      { role: "user", content: "Follow up" },
+    ]);
+    expect(bounded.filter((message) => message.webSources)).toHaveLength(1);
+    expect(bounded[1]?.webSources).toEqual(sources);
+    expect(parseClientChatMessages({ messages: bounded }).ok).toBe(true);
+  });
   it("keeps long answers in the UI while bounding history for a follow-up", async () => {
     const { boundTemporaryChatHistory } = await import("./chat-policy");
     const full = "a".repeat(8000);

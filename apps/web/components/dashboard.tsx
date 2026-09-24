@@ -32,7 +32,6 @@ import { cn, formatDate } from "@/lib/utils";
 import {
   fetchSettings,
   getSettingsErrorMessage,
-  type SettingsResponse,
 } from "@/lib/settings";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -327,7 +326,7 @@ const Dashboard = ({
 
   const { data: settingsData } = useQuery({
     queryKey: ["settings"],
-    queryFn: () => fetchSettings(),
+    queryFn: ({ signal }) => fetchSettings({ signal }),
     enabled: canUseSavedWorkspace,
   });
 
@@ -338,11 +337,12 @@ const Dashboard = ({
     }
 
     setIsRefreshingModels(true);
-    const request = fetchSettings()
-      .then((settings) => {
-        queryClient.setQueryData<SettingsResponse>(["settings"], settings);
-        return true;
-      })
+    const request = queryClient.fetchQuery({
+      queryKey: ["settings"],
+      queryFn: ({ signal }) => fetchSettings({ signal }),
+      staleTime: 0,
+    })
+      .then(() => true)
       .catch((error: unknown) => {
         toast.error(getApiErrorMessage(error, "Failed to refresh models"));
         return false;

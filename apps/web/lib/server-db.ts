@@ -742,7 +742,7 @@ export async function getContractAnalysisGateForUser(
       select a.id
       from analyses a
       where a.contract_id = c.id
-      order by a.created_at desc
+      order by a.created_at desc, a.id desc
       limit 1
     ) latest on true
     where c.id = ${contractId}
@@ -789,7 +789,7 @@ export async function getContractWithLatestAnalysisForUser(
       select a.id
       from analyses a
       where a.contract_id = c.id
-      order by a.created_at desc
+      order by a.created_at desc, a.id desc
       limit 1
     ) latest on true
     where c.id = ${contractId}
@@ -1219,13 +1219,16 @@ export async function getProjectByIdForUser(
       id: string;
       riskBadge: string | null;
     }>(
-      `select distinct on (contract_id)
-        contract_id as "contractId",
-        id,
-        risk_badge as "riskBadge"
-      from analyses
-      where contract_id = any($1::uuid[])
-      order by contract_id, created_at desc`,
+      // One indexed lookup per displayed contract, independent of its full analysis history.
+      `select selected.contract_id as "contractId", latest.id, latest.risk_badge as "riskBadge"
+      from unnest($1::uuid[]) as selected(contract_id)
+      cross join lateral (
+        select a.id, a.risk_badge
+        from analyses a
+        where a.contract_id = selected.contract_id
+        order by a.created_at desc, a.id desc
+        limit 1
+      ) latest`,
       [contractIds],
     );
 

@@ -1,7 +1,9 @@
 import { z } from "zod";
 
+const CoverageNoticesSchema = z.array(z.string()).optional();
+
 const BaseAnalysisResultSchema = z.object({
-  coverage_notices: z.array(z.string()).optional(),
+  coverage_notices: CoverageNoticesSchema,
   risk_badge: z.enum(["LOW", "MEDIUM", "HIGH"]),
 
   key_points: z.array(z.string()),
@@ -172,6 +174,7 @@ export const AnalysisResultSchema = BaseAnalysisResultSchema.superRefine(
 
 export const PartialAnalysisResultSchema = z
   .object({
+    coverage_notices: CoverageNoticesSchema,
     risk_badge: z.enum(["LOW", "MEDIUM", "HIGH"]),
     key_points: z.array(z.string()).optional().default([]),
     summary: z.object({

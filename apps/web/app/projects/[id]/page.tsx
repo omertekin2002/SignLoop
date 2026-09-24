@@ -111,9 +111,10 @@ const ProjectDetails = () => {
     refetch,
   } = useQuery({
     queryKey: ["project", id, contractsOffset, contextOffset],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const response = await apiClient.get(
         `/projects/${id}?contractsOffset=${contractsOffset}&contextOffset=${contextOffset}`,
+        { signal },
       );
       return response.data as Project;
     },

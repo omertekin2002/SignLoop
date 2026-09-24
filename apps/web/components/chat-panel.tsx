@@ -15,6 +15,7 @@ import {
   type ReactNode,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -60,6 +61,9 @@ import {
   MAX_AGENT_STATE_CHARACTERS,
 } from "@/lib/chat-policy";
 import { cn, isRecord } from "@/lib/utils";
+import { ApiRequestError } from "@/lib/api-client";
+import { normalizeAssistantMarkdown } from "@/lib/assistant-markdown";
+import { createOperationGuard } from "@/lib/operation-guard";
 import {
   hasPrivacyConsent,
   PRIVACY_CONSENT_EVENT,
@@ -503,48 +507,9 @@ const UserTextPart = () => (
   />
 );
 
-function looksLikeMathContent(raw: string): boolean {
-  const text = raw.trim();
-  if (!text) return false;
-  if (/^\d+$/.test(text)) return false;
-  // Bracketed legal alternatives such as "[Buyer/Seller]" are placeholders, not equations.
-  if (/^[A-Za-z][A-Za-z .'-]{1,}(?:\/[A-Za-z][A-Za-z .'-]{1,})+$/.test(text)) {
-    return false;
-  }
-
-  return /\\[a-zA-Z]+|[{}^_=]|[+\-*/<>]=?|(?:\d+\s*[a-zA-Z])|(?:[a-zA-Z]\s*\d)/.test(
-    text,
-  );
-}
-
-function normalizeMathNotation(raw: string): string {
-  let text = raw;
-
-  // Support LaTeX-style delimiters.
-  text = text.replace(
-    /\\\[((?:.|\n)*?)\\\]/g,
-    (_match, expression) => `\n$$\n${expression.trim()}\n$$\n`,
-  );
-  text = text.replace(
-    /\\\(((?:.|\n)*?)\\\)/g,
-    (_match, expression) => `$${expression.trim()}$`,
-  );
-
-  // Support bracketed display math often returned by models: [ ... ]
-  text = text.replace(
-    /(^|[\s:])\[([^\]\n]{2,320})\](?=$|[\s,.;:!?])/g,
-    (full, prefix: string, expression: string) => {
-      if (!looksLikeMathContent(expression)) return full;
-      return `${prefix}\n$$\n${expression.trim()}\n$$\n`;
-    },
-  );
-
-  return text;
-}
-
 function toMarkdownText(children: ReactNode): string {
   const text = typeof children === "string" ? children : String(children ?? "");
-  return normalizeMathNotation(text.replace(/<br\s*\/?>/gi, "\n"));
+  return normalizeAssistantMarkdown(text);
 }
 
 function markdownUrlTransform(url: string): string {
@@ -976,11 +941,19 @@ export function ChatPanel({
   const [persistenceWarning, setPersistenceWarning] = useState(false);
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [restoreGuard] = useState(createOperationGuard);
   const loadingOlderRef = useRef(false);
   const hydratedSignatureRef = useRef<string | null>(null);
   const initialPromptSignatureRef = useRef<string | null>(null);
   const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
   const previousActiveThreadIdRef = useRef<string | null>(null);
+
+  useLayoutEffect(() => {
+    restoreGuard.invalidate();
+    setIsRestoring(false);
+    return () => restoreGuard.invalidate();
+  }, [activeThreadId, selectedThreadId, temporary, temporarySessionKey, restoreGuard]);
 
   useEffect(() => {
     if (!isUserLoaded) {
@@ -1000,15 +973,15 @@ export function ChatPanel({
     queryKey: ["chat-thread", activeThreadId],
     refetchOnWindowFocus: false,
     enabled: !temporary && Boolean(activeThreadId),
-    queryFn: async () => {
-      const response = await fetch(`/api/chat/threads/${activeThreadId}`);
+    queryFn: async ({ signal }) => {
+      const response = await fetch(`/api/chat/threads/${activeThreadId}`, { signal });
       const payload = (await response.json().catch(() => null)) as {
         data?: ChatThreadDetail;
         error?: string;
       } | null;
 
       if (!response.ok || !payload?.data) {
-        throw new Error(payload?.error || "Failed to fetch chat thread.");
+        throw new ApiRequestError(payload?.error || "Failed to fetch chat thread.", response.status);
       }
 
       return payload.data;
@@ -1323,17 +1296,28 @@ export function ChatPanel({
   };
 
   const restorePersistedConversation = async () => {
-    if (!activeThreadId) return;
+    if (!activeThreadId || activeThreadId !== selectedThreadId || temporary || isRestoring) return;
+    const threadId = activeThreadId;
+    const isCurrent = restoreGuard.begin();
+    setIsRestoring(true);
+    try {
+      const result = await activeThreadQuery.refetch();
+      if (!isCurrent()) return;
+      if (result.isError) {
+        toast.error("Could not restore the saved conversation. Please try again.");
+        return;
+      }
+      if (!result.data || result.data.id !== threadId) return;
 
-    const result = await activeThreadQuery.refetch();
-    if (!result.data) return;
-
-    const lastMessage = result.data.messages[result.data.messages.length - 1];
-    runtime.thread.cancelRun();
-    runtime.thread.reset(toRuntimeMessages(result.data.messages));
-    hydratedSignatureRef.current = `${result.data.id}:${result.data.messages.length}:${lastMessage?.id ?? "none"}`;
-    newlyCreatedThreadIdsRef.current.delete(result.data.id);
-    setPersistenceWarning(false);
+      const lastMessage = result.data.messages[result.data.messages.length - 1];
+      runtime.thread.cancelRun();
+      runtime.thread.reset(toRuntimeMessages(result.data.messages));
+      hydratedSignatureRef.current = `${result.data.id}:${result.data.messages.length}:${lastMessage?.id ?? "none"}`;
+      newlyCreatedThreadIdsRef.current.delete(result.data.id);
+      setPersistenceWarning(false);
+    } finally {
+      if (isCurrent()) setIsRestoring(false);
+    }
   };
 
   const composerDisabled =
@@ -1465,9 +1449,10 @@ export function ChatPanel({
                       type="button"
                       size="sm"
                       variant="outline"
+                      disabled={isRestoring}
                       onClick={() => void restorePersistedConversation()}
                     >
-                      Restore saved chat
+                      {isRestoring ? "Restoring…" : "Restore saved chat"}
                     </Button>
                   </div>
                 </div>

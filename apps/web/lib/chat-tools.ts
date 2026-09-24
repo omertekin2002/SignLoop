@@ -1,6 +1,7 @@
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import type { WebSearchSource } from "@/lib/gemini-search";
+import { MAX_SOURCE_TITLE_CHARACTERS } from "@/lib/chat-agent-history";
 import { readUrl } from "@/lib/url-reader";
 import { httpGet } from "@/lib/http-fetch";
 import { generateImageReply } from "@/lib/image-generation";
@@ -220,7 +221,10 @@ export function createHttpGetTool(deps: {
             const response = await httpGet(url, { signal: deps.signal });
             const target = new URL(response.url);
             const number = deps.addSource({
-              title: `${target.hostname}${target.pathname === "/" ? "" : target.pathname}`,
+              title: `${target.hostname}${target.pathname === "/" ? "" : target.pathname}`.slice(
+                0,
+                MAX_SOURCE_TITLE_CHARACTERS,
+              ),
               url: response.url,
             });
             deps.onEvidence?.(response.body);

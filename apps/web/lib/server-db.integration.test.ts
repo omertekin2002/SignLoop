@@ -47,6 +47,7 @@ import {
   getContractAnalysisGateForUser,
   getContractTextForUser,
   getContractWithLatestAnalysisForUser,
+  getProjectByIdForUser,
   getProjectContextForAnalysis,
   listProjectContextDocumentsForUser,
   getRecentChatMessagesForThreadForUser,
@@ -392,6 +393,52 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(prompt).toContain("Title: Evidence 3\n");
     expect(prompt).not.toContain("Title: Evidence 2\n");
     expect(prompt).not.toContain("Title: Evidence 1\n");
+  });
+
+  it("pages project contracts with only their deterministic latest analysis", async () => {
+    const userId = "project-analysis-owner";
+    const project = await createProjectForUser({ userId, title: "History" });
+    await pool.current!.query(
+      `INSERT INTO contracts(user_id, project_id, title, created_at)
+       SELECT $1, $2, 'Contract ' || n, '2026-01-01'::timestamptz + n * interval '1 second'
+       FROM generate_series(1, 51) n`,
+      [userId, project.id],
+    );
+    const { rows: newest } = await pool.current!.query<{ id: string }>(
+      "SELECT id FROM contracts WHERE project_id = $1 ORDER BY created_at DESC LIMIT 1",
+      [project.id],
+    );
+    const contractId = newest[0]!.id;
+    await pool.current!.query(
+      `INSERT INTO analyses(contract_id, risk_badge, result_json, created_at)
+       SELECT $1, 'LOW', '{}', '2020-01-01'::timestamptz + n * interval '1 second'
+       FROM generate_series(1, 200) n`,
+      [contractId],
+    );
+    // Equal timestamps must select the same ID in detail, generation gates, and history order.
+    const latestId = "f0000000-0000-4000-8000-000000000002";
+    await pool.current!.query(
+      `INSERT INTO analyses(id, contract_id, risk_badge, result_json, created_at)
+       VALUES ('f0000000-0000-4000-8000-000000000001', $1, 'MEDIUM', '{}', '2026-01-01'),
+              ($2, $1, 'HIGH', '{}', '2026-01-01')`,
+      [contractId, latestId],
+    );
+
+    const first = await getProjectByIdForUser(userId, project.id);
+    expect(first?.contracts).toHaveLength(50);
+    expect(first?.contractsHasMore).toBe(true);
+    expect(first?.contracts[0]).toMatchObject({
+      id: contractId,
+      analyses: [{ id: latestId, riskBadge: "HIGH" }],
+    });
+    expect(first?.contracts.slice(1).every((item) => item.analyses.length === 0)).toBe(true);
+    expect((await getContractAnalysisGateForUser(userId, contractId))?.latestAnalysisId).toBe(latestId);
+    expect((await getContractWithLatestAnalysisForUser(userId, contractId))?.latestAnalysis?.id).toBe(latestId);
+    const last = await getProjectByIdForUser(userId, project.id, { contractsOffset: 50 });
+    expect(last?.contracts).toHaveLength(1);
+    expect(last?.contracts[0]).toMatchObject({ title: "Contract 1", analyses: [] });
+    expect(last?.contractsHasMore).toBe(false);
+    expect(await getProjectByIdForUser("intruder", project.id)).toBeNull();
   });
 
   it("invalidates current and in-flight analyses when project evidence changes", async () => {

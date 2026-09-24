@@ -133,8 +133,8 @@ const ContractDetails = () => {
     error,
   } = useQuery({
     queryKey: ["contract", id],
-    queryFn: async () => {
-      const response = await apiClient.get(`/contracts/${id}`);
+    queryFn: async ({ signal }) => {
+      const response = await apiClient.get(`/contracts/${id}`, { signal });
       return response.data as ContractDetail;
     },
     enabled: !!id,
@@ -205,10 +205,11 @@ const ContractDetails = () => {
   const historicalAnalysisQuery = useQuery({
     queryKey: ["analysis", id, selectedAnalysisId],
     enabled: viewingOlder,
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       (
         await apiClient.get<AnalysisRecord>(
           `/contracts/${id}/analysis/${selectedAnalysisId}`,
+          { signal },
         )
       ).data,
   });

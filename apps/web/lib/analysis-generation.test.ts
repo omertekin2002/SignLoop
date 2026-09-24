@@ -43,6 +43,30 @@ afterEach(() => {
 });
 
 describe("analysis response completion", () => {
+  it("merges provider and input-coverage notices without losing or repeating either", async () => {
+    const { analyzeText, buildAnalysisPrompt } = await import("./analysis");
+    const contract = "Contract clause. ".repeat(2000);
+    const { coverageNotices } = buildAnalysisPrompt(contract);
+    const fetchMock = vi.fn().mockResolvedValue(
+      providerResponse(
+        "completed",
+        JSON.stringify({
+          ...JSON.parse(payload),
+          coverage_notices: ["No region was provided.", ...coverageNotices],
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const answer = await analyzeText(contract);
+    expect(answer.result.coverage_notices).toEqual([
+      ...coverageNotices,
+      "No region was provided.",
+    ]);
+    expect(answer.result.key_points).toContain(coverageNotices[0]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it.each(["incomplete", "failed", undefined])(
     "rejects status %s without repair or another provider call",
     async (status) => {
@@ -89,4 +113,47 @@ describe("analysis response completion", () => {
       expect(fetchMock).toHaveBeenCalledTimes(repair ? 2 : 1);
     },
   );
+});
+
+describe("analysis JSON format compatibility", () => {
+  it.each([
+    { message: "Unsupported parameter: text.format", param: "text.format" },
+    { message: "Unsupported parameter", param: "response_format" },
+    { message: "Invalid value: json_object", param: null },
+  ])("retries a rejected JSON-format option: $message", async (error) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ error }, { status: 400 }))
+      .mockResolvedValueOnce(providerResponse("completed"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { analyzeText } = await import("./analysis");
+
+    const answer = await analyzeText("Monthly payment agreement");
+    expect(answer.provider).toBe("primary-openai-compatible");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const bodies = fetchMock.mock.calls.map((call) =>
+      JSON.parse(String((call[1] as RequestInit).body)),
+    );
+    expect(bodies[0].text).toEqual({ format: { type: "json_object" } });
+    expect(bodies[1]).not.toHaveProperty("text");
+  });
+
+  it.each([
+    { status: 400, message: "Unsupported model audit-model", param: "model" },
+    { status: 429, message: "JSON mode requests are not supported during overload", param: null },
+    { status: 503, message: "JSON mode service unavailable", param: null },
+  ])("does not resend an unrelated $status error to the same model", async ({ status, ...error }) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ error }, { status }))
+      .mockResolvedValueOnce(providerResponse("completed"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { analyzeText } = await import("./analysis");
+
+    const answer = await analyzeText("Monthly payment agreement");
+    expect(answer.provider).toBe("openrouter");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("analysis.test");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("openrouter.ai");
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)).text)
+      .toEqual({ format: { type: "json_object" } });
+  });
 });

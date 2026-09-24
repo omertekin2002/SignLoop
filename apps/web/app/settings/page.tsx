@@ -46,9 +46,9 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const isClient = useIsClient();
 
-  const { data, isLoading, isFetching, refetch } = useQuery({
+  const { data, isLoading, isFetching, isLoadingError, error, refetch } = useQuery({
     queryKey: ["settings"],
-    queryFn: () => fetchSettings(),
+    queryFn: ({ signal }) => fetchSettings({ signal }),
     staleTime: 60_000,
   });
 
@@ -163,6 +163,21 @@ export default function SettingsPage() {
           Back to Dashboard
         </Link>
 
+        {isLoadingError ? (
+          <Card role="alert">
+            <CardHeader>
+              <CardTitle>Unable to load settings</CardTitle>
+              <CardDescription>
+                {getApiErrorMessage(error, "Check your connection and try again.")}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="outline" disabled={isFetching} onClick={() => void refetch()}>
+                {isFetching ? "Loading…" : "Try again"}
+              </Button>
+            </CardContent>
+          </Card>
+        ) : <>
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -197,6 +212,9 @@ export default function SettingsPage() {
                     <SelectItem value="openrouter">OpenRouter</SelectItem>
                   </SelectContent>
                 </Select>
+                <Button variant="outline" disabled={isFetching} onClick={() => void refetch()}>
+                  {isFetching ? "Loading…" : "Reload model options"}
+                </Button>
               </div>
             ) : (
               <>
@@ -346,6 +364,8 @@ export default function SettingsPage() {
             )}
           </CardContent>
         </Card>
+
+        </>}
 
         <Card>
           <CardHeader>

@@ -91,7 +91,16 @@ it("drops incomplete tool exchanges without leaving orphaned results", () => {
       },
       { role: "assistant", content: "Answer without tool result" },
     ]),
-  ).toEqual([{ role: "assistant", content: "Answer without tool result" }]);
+  ).toBeUndefined();
+});
+
+it("does not duplicate text-only answers in persisted replay state", () => {
+  expect(compactAgentMessages([
+    { role: "assistant", content: "A complete answer" },
+  ])).toBeUndefined();
+  expect(compactAgentMessages([
+    { role: "assistant", content: [{ type: "text", text: "x".repeat(3500) }] },
+  ])).toBeUndefined();
 });
 
 it("preserves source IDs independently when replay is too large for the history budget", () => {

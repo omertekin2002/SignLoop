@@ -637,6 +637,9 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
     );
 
   return {
+    ...(source.coverage_notices !== undefined
+      ? { coverage_notices: toStringArray(source.coverage_notices) }
+      : {}),
     risk_badge: normalizeRiskBadge(
       pickFirst(source, ["risk_badge", "riskBadge", "risk", "risk_level"]),
     ),
@@ -826,9 +829,20 @@ function parseModelJson(content: string): unknown {
 }
 
 function isLikelyUnsupportedJsonModeError(error: unknown): boolean {
-  const message = getErrorMessage(error);
-  return /(response_format|text\.format|json_object|json mode|unsupported|not support)/i.test(
-    message,
+  const status = isRecord(error) ? error.status : undefined;
+  if (typeof status === "number" && status !== 400 && status !== 422) {
+    return false;
+  }
+  const details = [
+    getErrorMessage(error),
+    isRecord(error) && typeof error.param === "string" ? error.param : "",
+    isRecord(error) && typeof error.code === "string" ? error.code : "",
+  ].join(" ");
+  // Retry only a rejected JSON-format option. An unsupported model or an overloaded
+  // endpoint cannot be fixed by resending the same request without JSON mode.
+  return (
+    /(response_format|text\.format|json_object|json mode)/i.test(details) &&
+    /(unsupported|not supported|not support|does not support|unknown|unrecognized|invalid|not available)/i.test(details)
   );
 }
 
@@ -1108,10 +1122,13 @@ export async function analyzeText(
     },
   );
 
-  const resultWithCoverageNotices = coverageNotices.length
+  const mergedCoverageNotices = Array.from(
+    new Set([...coverageNotices, ...(result.coverage_notices ?? [])]),
+  );
+  const resultWithCoverageNotices = mergedCoverageNotices.length
     ? {
         ...result,
-        coverage_notices: coverageNotices,
+        coverage_notices: mergedCoverageNotices,
         key_points: Array.from(
           new Set([...coverageNotices, ...result.key_points]),
         ),

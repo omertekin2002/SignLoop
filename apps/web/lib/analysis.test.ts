@@ -44,6 +44,33 @@ describe("parseStrictJson", () => {
     expect(result.summary.cancellation.notice_period_days).toBe(30);
   });
 
+  it.each(["strict", "partial", "normalized"])(
+    "preserves coverage notices through %s validation",
+    (path) => {
+      const partial = {
+        risk_badge: "LOW",
+        key_points: ["Payment is monthly"],
+        summary: {
+          renewal: { auto_renew: false },
+          cancellation: { how: "Email notice", notice_period_days: 30 },
+        },
+      };
+      const payload = {
+        ...(path === "strict" ? validPayload : partial),
+        ...(path === "normalized" ? { risk_badge: "low" } : {}),
+        coverage_notices: ["No region was provided."],
+      };
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(
+          parseStrictJson<AnalysisResult>(JSON.stringify(payload)).coverage_notices,
+        ).toEqual(["No region was provided."]);
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
+
   it("rejects a missing risk badge instead of inventing medium risk", () => {
     const { risk_badge: _omitted, ...withoutRiskBadge } = validPayload;
     expect(() =>

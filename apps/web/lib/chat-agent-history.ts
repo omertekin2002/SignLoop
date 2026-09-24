@@ -5,6 +5,22 @@ const historySchema = z.array(modelMessageSchema).max(36);
 export const MAX_AGENT_STATE_CHARACTERS = 20_000;
 export const MAX_SOURCE_CATALOG_CHARACTERS = 16_000;
 export const MAX_SOURCE_COUNT = 64;
+export const MAX_SOURCE_TITLE_CHARACTERS = 240;
+
+/** Plain answers already live in canonical message content; replay adds no tool evidence. */
+export function isPlainAssistantReplay(
+  messages: readonly ModelMessage[],
+): boolean {
+  return (
+    messages.length > 0 &&
+    messages.every(
+      (message) =>
+        message.role === "assistant" &&
+        (typeof message.content === "string" ||
+          message.content.every((part) => part.type === "text")),
+    )
+  );
+}
 
 /** Accept only server-persisted assistant/tool turns; never replay system instructions from metadata. */
 export function parseAgentMessages(value: unknown): ModelMessage[] | undefined {
@@ -28,7 +44,7 @@ export function parseAgentMessages(value: unknown): ModelMessage[] | undefined {
 const sourcesSchema = z
   .array(
     z.object({
-      title: z.string().max(240),
+      title: z.string().max(MAX_SOURCE_TITLE_CHARACTERS),
       url: z
         .string()
         .max(2048)
@@ -57,6 +73,7 @@ export function compactAgentMessages(
     parsed.data.some((m) => m.role !== "assistant" && m.role !== "tool")
   )
     return undefined;
+  if (isPlainAssistantReplay(parsed.data)) return undefined;
   const clip = (text: string) =>
     text.length > 2_000
       ? `${text.slice(0, 2_000)}\n[Replay excerpt; read the source again for more detail.]`
@@ -126,5 +143,7 @@ export function compactAgentMessages(
       break;
     selected.unshift(...group);
   }
-  return selected.length ? selected : undefined;
+  return selected.length && !isPlainAssistantReplay(selected)
+    ? selected
+    : undefined;
 }

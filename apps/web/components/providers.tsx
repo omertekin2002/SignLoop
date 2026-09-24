@@ -4,13 +4,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useUser } from "@clerk/nextjs";
 import { ThemeProvider } from "next-themes";
 import { Fragment, useEffect, useMemo } from "react";
+import { shouldRetryQuery } from "@/lib/api-client";
 
 function createQueryClient() {
   return new QueryClient({
     defaultOptions: {
       // Treat fetched data as fresh for 60s so tabbing back to the app doesn't refetch every list
       // on each window focus. Mutations still invalidate affected queries explicitly.
-      queries: { staleTime: 60_000 },
+      queries: { staleTime: 60_000, retry: shouldRetryQuery },
     },
   });
 }

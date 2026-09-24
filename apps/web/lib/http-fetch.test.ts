@@ -108,6 +108,54 @@ it("truncates oversized bodies", async () => {
   expect(result.body).toHaveLength(MAX_FETCH_RESPONSE_CHARACTERS);
 });
 
+it("cancels after the useful prefix without requesting a failed tail", async () => {
+  const cancel = vi.fn();
+  const pull = vi.fn((controller: ReadableStreamDefaultController<Uint8Array>) => {
+    if (pull.mock.calls.length > 1) {
+      controller.error(new Error("The unused tail failed"));
+      return;
+    }
+    controller.enqueue(new TextEncoder().encode("x".repeat(16000)));
+  });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+    new ReadableStream({ pull, cancel }, { highWaterMark: 0 }),
+  )));
+
+  expect(await httpGet("https://api.test/big")).toMatchObject({
+    body: "x".repeat(MAX_FETCH_RESPONSE_CHARACTERS), truncated: true,
+  });
+  expect(pull).toHaveBeenCalledOnce();
+  expect(cancel).toHaveBeenCalledOnce();
+});
+
+it("preserves multibyte text split across chunks and an exact-length response", async () => {
+  const expected = `${"😀".repeat(5999)}ab`;
+  const bytes = new TextEncoder().encode(expected);
+  const chunks = [bytes.subarray(0, 3), bytes.subarray(3, 17003), bytes.subarray(17003)];
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+    new ReadableStream({
+      pull(controller) {
+        const chunk = chunks.shift();
+        if (chunk) controller.enqueue(chunk);
+        else controller.close();
+      },
+    }),
+  )));
+  expect(await httpGet("https://api.test/unicode")).toMatchObject({
+    body: expected, truncated: false,
+  });
+});
+
+it("uses the declared charset when decoding and truncating incrementally", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+    new Uint8Array(MAX_FETCH_RESPONSE_CHARACTERS + 1).fill(0x80),
+    { headers: { "Content-Type": "text/plain; charset=windows-1252" } },
+  )));
+  expect(await httpGet("https://api.test/encoded")).toMatchObject({
+    body: "€".repeat(MAX_FETCH_RESPONSE_CHARACTERS), truncated: true,
+  });
+});
+
 it("wraps transport failures in a public-safe error", async () => {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED 1.2.3.4:443")));
   await expect(httpGet("https://api.test/down")).rejects.toMatchObject({

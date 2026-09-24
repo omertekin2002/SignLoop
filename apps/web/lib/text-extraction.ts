@@ -610,7 +610,38 @@ export async function extractTextFromWord(
   try {
     const wordExtractor = await getWordExtractor();
     const extracted = await wordExtractor.extract(buffer);
-    const text = extracted.getBody().trim();
+    const sections = [extracted.getBody().trim()].filter(Boolean);
+    let characters = sections[0]?.length ?? 0;
+    // Word stores these parts outside the body. Keep their provenance explicit rather than
+    // implying that a note or floating textbox occupied a particular position in the body.
+    // Headers/footers are included once per parsed part, not repeated for every rendered page:
+    // they can contain material terms as well as page furniture. Editorial comments are omitted.
+    const supplementaryParts = [
+      ["Footnotes", extracted.getFootnotes()],
+      ["Endnotes", extracted.getEndnotes()],
+      [
+        "Body textboxes",
+        extracted.getTextboxes({ includeHeadersAndFooters: false }),
+      ],
+      ["Headers and footers", extracted.getHeaders()],
+      [
+        "Header and footer textboxes",
+        extracted.getTextboxes({ includeBody: false }),
+      ],
+    ] as const;
+    for (const [label, value] of supplementaryParts) {
+      const content = value.trim();
+      if (!content) continue;
+      const section = `[${label}]\n${content}`;
+      characters += section.length + (sections.length ? 2 : 0);
+      sections.push(section);
+    }
+    if (characters > MAX_EXTRACTED_TEXT_LENGTH) {
+      throw new ExtractionLimitError(
+        "Word text exceeds the 2,000,000-character processing limit.",
+      );
+    }
+    const text = sections.join("\n\n");
 
     return {
       text,
@@ -618,6 +649,7 @@ export async function extractTextFromWord(
       confidence: 100,
     };
   } catch (error: unknown) {
+    if (error instanceof ExtractionLimitError) throw error;
     throw new Error(`Failed to parse Word document: ${getErrorMessage(error)}`);
   }
 }

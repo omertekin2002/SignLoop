@@ -1,7 +1,11 @@
 import type { ModelMessage } from "ai";
 import type { ChatMessage, ChatRole } from "@/lib/chat";
 import { isRecord } from "@/lib/utils";
-import { parseAgentMessages, parseWebSources } from "@/lib/chat-agent-history";
+import {
+  isPlainAssistantReplay,
+  parseAgentMessages,
+  parseWebSources,
+} from "@/lib/chat-agent-history";
 import { withAbort } from "@/lib/bounded-response";
 export { MAX_AGENT_STATE_CHARACTERS } from "@/lib/chat-agent-history";
 
@@ -274,6 +278,7 @@ export function boundCanonicalChatHistory(
     MAX_CHAT_TOTAL_MESSAGE_LENGTH - Math.max(0, Math.trunc(reservedCharacters)),
   );
   const selected: ChatMessage[] = [];
+  let includedSources = false;
 
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (selected.length >= MAX_CHAT_MESSAGES) break;
@@ -288,17 +293,22 @@ export function boundCanonicalChatHistory(
     if (!content) continue;
     if (content.length > remainingCharacters) break;
 
-    const sourceSize = message.webSources?.length
-      ? JSON.stringify({ webSources: message.webSources }).length
-      : 0;
+    // Catalogs accumulate across turns. Only the newest retained copy is read by generation.
+    const sourceSize =
+      !includedSources && message.webSources?.length
+        ? JSON.stringify({ webSources: message.webSources }).length
+        : 0;
     const includeSources =
       sourceSize > 0 && sourceSize + content.length <= remainingCharacters;
-    const agentStateSize = JSON.stringify({
-      agentMessages: message.agentMessages,
-    }).length;
+    const agentMessages =
+      message.agentMessages?.length &&
+      !isPlainAssistantReplay(message.agentMessages)
+        ? message.agentMessages
+        : undefined;
+    const agentStateSize = JSON.stringify({ agentMessages }).length;
     const includeAgentState =
       message.role === "assistant" &&
-      message.agentMessages?.length &&
+      agentMessages?.length &&
       agentStateSize + content.length + (includeSources ? sourceSize : 0) <=
         remainingCharacters;
     selected.push({
@@ -306,11 +316,12 @@ export function boundCanonicalChatHistory(
       content,
       ...(includeAgentState
         ? {
-            agentMessages: message.agentMessages,
+            agentMessages,
           }
         : {}),
       ...(includeSources ? { webSources: message.webSources } : {}),
     });
+    if (includeSources) includedSources = true;
     remainingCharacters -=
       content.length +
       (includeAgentState ? agentStateSize : 0) +
