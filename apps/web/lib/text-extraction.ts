@@ -3,12 +3,14 @@ import {
   MAX_EXTRACTED_TEXT_LENGTH,
   validateImageDimensions,
   validateDocxExpansion,
+  validatePdfExpansion,
 } from "@/lib/extraction-limits";
 export { ExtractionLimitError } from "@/lib/extraction-limits";
 import type { createWorker } from "tesseract.js";
 import type WordExtractor from "word-extractor";
 import { getErrorMessage } from "@/lib/utils";
 import { withAbort } from "@/lib/bounded-response";
+import { isOleCompoundFile, validateOleCompoundFile } from "@/lib/ole-guard";
 
 const MIN_TEXT_DENSITY = 50; // Minimum characters per page for non-scanned PDF
 // At or below this page count a sparse PDF may still be a legitimately short document, so the
@@ -357,7 +359,8 @@ export function validateMimeType(mimeType: string, fileName?: string): string {
 
 /**
  * Extract text from a PDF buffer using unpdf.
- * If the PDF appears to be scanned (low text density), returns a fallback message.
+ * If the PDF appears to be scanned (low text density), returns the extracted text with method
+ * pdf_scanned; callers attach a warning.
  */
 export async function extractTextFromPdf(
   buffer: Buffer,
@@ -417,9 +420,10 @@ export async function extractTextFromPdf(
     const isSparse = avgCharsPerPage < MIN_TEXT_DENSITY;
     const isShortDocument = pageCount <= SHORT_DOCUMENT_PAGE_COUNT;
     if (isSparse && (!isShortDocument || extractedText.length < 500)) {
-      // Scanned PDF with no usable text layer. Return the (possibly empty) extracted text so the
-      // caller's "no text extracted" handling applies, rather than a placeholder that would be
-      // saved as if it were real contract content. (OCR of rasterized PDF pages is not implemented.)
+      // Scanned PDF with no usable text layer (OCR of rasterized PDF pages is not implemented).
+      // Empty text is rejected by the callers' "no text extracted" check. Sparse non-empty text is
+      // kept and flagged pdf_scanned, and upload-pipeline turns that flag into a persisted warning.
+      // Stamps or page headers can be the only text, so for them the warning is the only guard.
       return {
         text: extractedText,
         method: "pdf_scanned",
@@ -608,6 +612,7 @@ export async function extractTextFromWord(
   buffer: Buffer,
 ): Promise<ExtractionResult> {
   try {
+    if (isOleCompoundFile(buffer)) validateOleCompoundFile(buffer);
     const wordExtractor = await getWordExtractor();
     const extracted = await wordExtractor.extract(buffer);
     const sections = [extracted.getBody().trim()].filter(Boolean);
@@ -679,6 +684,9 @@ export async function processValidatedFile(
 ): Promise<ExtractionResult> {
   options?.signal?.throwIfAborted();
   if (supportedMimeType === DOCX_MIME_TYPE) await validateDocxExpansion(buffer);
+  if (supportedMimeType === PDF_MIME_TYPE) {
+    await validatePdfExpansion(buffer, options?.signal);
+  }
   if (supportedMimeType.startsWith("image/")) validateImageDimensions(buffer);
 
   if (supportedMimeType === PDF_MIME_TYPE) {

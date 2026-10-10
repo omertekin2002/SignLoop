@@ -70,6 +70,60 @@ describe("saved chat admission", () => {
     expect(claimGenerationOperation).toHaveBeenCalledOnce();
     expect(admitChat).not.toHaveBeenCalled();
   });
+
+  const savedRequest = () =>
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        threadId: "11e3e947-f71f-4ecd-a901-adbf24edbb8a",
+        messages: [{ role: "user", content: "What does this mean?" }],
+      }),
+    });
+
+  it.each([
+    [30, "Chat is busy with other replies. Please try again shortly."],
+    [3600, "Chat is at its request limit. Please try again later."],
+    [86400, "Chat is at its request limit. Please try again later."],
+  ])(
+    "maps a rejected admission (Retry-After %i) to 429",
+    async (retryAfter, error) => {
+      const releaseLease = vi.fn().mockResolvedValue(undefined);
+      auth.mockResolvedValue({ userId: "owner" });
+      claimGenerationOperation.mockResolvedValue(releaseLease);
+      admitChat.mockResolvedValue({ retryAfter });
+
+      const response = await POST(savedRequest());
+
+      expect(response.status).toBe(429);
+      expect(response.headers.get("Retry-After")).toBe(String(retryAfter));
+      expect(await response.json()).toEqual({ error });
+      expect(admitChat).toHaveBeenCalledExactlyOnceWith("owner");
+      expect(releaseLease).toHaveBeenCalledOnce();
+      expect(generateChatReply).not.toHaveBeenCalled();
+      expect(generateChatReplyStream).not.toHaveBeenCalled();
+      expect(appendChatMessagesToThread).not.toHaveBeenCalled();
+    },
+  );
+
+  it("fails closed with 503 when admission cannot be checked", async () => {
+    const releaseLease = vi.fn().mockResolvedValue(undefined);
+    auth.mockResolvedValue({ userId: "owner" });
+    claimGenerationOperation.mockResolvedValue(releaseLease);
+    admitChat.mockRejectedValue(new Error("db down"));
+
+    const response = await POST(savedRequest());
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Retry-After")).toBeNull();
+    expect(await response.json()).toEqual({
+      error: "Chat is temporarily unavailable. Please try again shortly.",
+    });
+    expect(releaseLease).toHaveBeenCalledOnce();
+    expect(generateChatReply).not.toHaveBeenCalled();
+    expect(generateChatReplyStream).not.toHaveBeenCalled();
+    expect(appendChatMessagesToThread).not.toHaveBeenCalled();
+  });
 });
 
 describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {

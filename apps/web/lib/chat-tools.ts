@@ -27,7 +27,95 @@ const UNTRUSTED_END = "<<<END UNTRUSTED CONTENT>>>";
 
 /** Structural delimiters so injected text inside a page or document cannot impersonate the system voice. */
 export function fenceUntrusted(text: string): string {
-  return `${UNTRUSTED_BEGIN}\n${text}\n${UNTRUSTED_END}`;
+  // Break every "<<" and ">>" run so the payload cannot reproduce either marker.
+  const neutralised = text
+    .replace(/<(?=<)/g, "<\u200b")
+    .replace(/>(?=>)/g, ">\u200b");
+  return `${UNTRUSTED_BEGIN}\n${neutralised}\n${UNTRUSTED_END}`;
+}
+
+// Outbound URLs and search queries that repeat this many consecutive words of contract text
+// are refused, so the model cannot carry the user's document to an outside service.
+export const CONTRACT_EGRESS_SHINGLE_TOKENS = 8;
+export const CONTRACT_EGRESS_ERROR =
+  "This request repeats wording from the user's contract, which cannot be sent to an outside service. Rephrase the request without document text.";
+const MAX_OUTBOUND_DECODE_PASSES = 3;
+
+function egressTokens(text: string): string[] {
+  return (
+    text
+      .normalize("NFKD")
+      .toLowerCase()
+      .replace(/\p{M}/gu, "")
+      .match(/[\p{L}\p{N}]+/gu) ?? []
+  );
+}
+
+function decodeOutbound(value: string): string {
+  let decoded = value;
+  for (let pass = 0; pass < MAX_OUTBOUND_DECODE_PASSES; pass++) {
+    const next = decoded.replace(/(?:%[0-9a-f]{2})+/gi, (sequence) => {
+      try {
+        return decodeURIComponent(sequence);
+      } catch {
+        return " ";
+      }
+    });
+    if (next === decoded) break;
+    decoded = next;
+  }
+  return decoded;
+}
+
+export type ContractEgressGuard = {
+  addContractText: (text: string) => void;
+  /** Returns a tool error when the outbound URL or query repeats contract wording. */
+  check: (outbound: string) => { error: string } | null;
+};
+
+/** Per-turn guard; `seed` supplies contract text replayed from earlier turns and runs on first check. */
+export function createContractEgressGuard(
+  seed: () => Iterable<string> = () => [],
+): ContractEgressGuard {
+  const shingles = new Set<string>();
+  let pendingSeed: (() => Iterable<string>) | null = seed;
+  const addContractText = (text: string) => {
+    const tokens = egressTokens(text);
+    for (
+      let index = 0;
+      index + CONTRACT_EGRESS_SHINGLE_TOKENS <= tokens.length;
+      index++
+    )
+      shingles.add(
+        tokens.slice(index, index + CONTRACT_EGRESS_SHINGLE_TOKENS).join(" "),
+      );
+  };
+  return {
+    addContractText,
+    check: (outbound) => {
+      if (pendingSeed) {
+        const load = pendingSeed;
+        pendingSeed = null;
+        for (const text of load()) addContractText(text);
+      }
+      if (!shingles.size) return null;
+      const tokens = egressTokens(decodeOutbound(outbound));
+      for (
+        let index = 0;
+        index + CONTRACT_EGRESS_SHINGLE_TOKENS <= tokens.length;
+        index++
+      )
+        if (
+          shingles.has(
+            tokens
+              .slice(index, index + CONTRACT_EGRESS_SHINGLE_TOKENS)
+              .join(" "),
+          )
+        )
+          return { error: CONTRACT_EGRESS_ERROR };
+      return null;
+    },
+  };
 }
 
 export type ContractExcerpt = {
@@ -38,6 +126,10 @@ export type ContractExcerpt = {
   /** Keyword excerpts exceeded the character or excerpt-count budget. */
   truncated?: boolean;
 };
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /** Returns either a sequential window of the text or excerpts around keyword matches. */
 export function excerptContract(
@@ -57,31 +149,32 @@ export function excerptContract(
       nextOffset: end < text.length ? end : null,
     };
   }
-  const haystack = text.toLowerCase();
+  // Match against the original text so every index refers to `text`; lowercasing the whole
+  // text can change its length (U+0130 becomes two UTF-16 units).
   const terms = [
-    ...new Set(
+    ...new Map(
       find
-        .toLowerCase()
         .split(/\s+/)
-        .filter((term) => term.length >= 2),
-    ),
+        .filter((term) => term.length >= 2)
+        .map((term) => [term.toLowerCase(), term] as const),
+    ).values(),
   ];
   const positions: number[] = [];
   let unscannedOffset: number | null = null;
   for (const term of terms) {
-    let from = 0;
-    for (let count = 0; count < MAX_MATCHES_PER_TERM; count++) {
-      const at = haystack.indexOf(term, from);
-      if (at < 0) break;
-      positions.push(at);
-      from = at + term.length;
+    const pattern = new RegExp(escapeRegExp(term), "giu");
+    let count = 0;
+    for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+      if (count === MAX_MATCHES_PER_TERM) {
+        unscannedOffset = Math.min(
+          unscannedOffset ?? Infinity,
+          Math.max(0, match.index - EXCERPT_RADIUS),
+        );
+        break;
+      }
+      positions.push(match.index);
+      count++;
     }
-    const next = haystack.indexOf(term, from);
-    if (next >= 0)
-      unscannedOffset = Math.min(
-        unscannedOffset ?? Infinity,
-        Math.max(0, next - EXCERPT_RADIUS),
-      );
   }
   positions.sort((a, b) => a - b);
   const windows: Array<[number, number]> = [];
@@ -149,6 +242,7 @@ export function createUrlReaderTool(deps: {
   addSource: (source: WebSearchSource) => number;
   /** Raw fetched text, kept so the finished answer can be checked against what was actually read. */
   onEvidence?: (text: string) => void;
+  egressGuard?: ContractEgressGuard;
 }): ToolSet {
   const cache = new Map<string, Promise<unknown>>();
   let reads = 0;
@@ -158,6 +252,8 @@ export function createUrlReaderTool(deps: {
         "Read the main text of a specific public web page or PDF by its address. The page becomes a numbered source you can cite as [n]. Use it for links the user shares or pages found with search_web.",
       inputSchema: z.object({ url: z.string().trim().min(1).max(2048) }),
       execute: async ({ url }) => {
+        const refused = deps.egressGuard?.check(url);
+        if (refused) return refused;
         const key = urlCacheKey(url);
         const existing = cache.get(key);
         if (existing) return existing;
@@ -198,6 +294,7 @@ export function createHttpGetTool(deps: {
   signal: AbortSignal;
   addSource: (source: WebSearchSource) => number;
   onEvidence?: (text: string) => void;
+  egressGuard?: ContractEgressGuard;
 }): ToolSet {
   const cache = new Map<string, Promise<unknown>>();
   let fetches = 0;
@@ -207,6 +304,8 @@ export function createHttpGetTool(deps: {
         "Send an HTTP GET to any public URL and return the raw response body — JSON, CSV, XML, or plain text. Use this for APIs and structured data endpoints when you need an exact value (a price, a count, a status, a record field), and prefer it over read_url whenever a machine-readable source exists. Build the full URL yourself, including query parameters. The response becomes a numbered source you can cite as [n]. Quote values from the body verbatim; never fill in a field the response did not contain.",
       inputSchema: z.object({ url: z.string().trim().min(1).max(2048) }),
       execute: async ({ url }) => {
+        const refused = deps.egressGuard?.check(url);
+        if (refused) return refused;
         const key = urlCacheKey(url);
         const existing = cache.get(key);
         if (existing) return existing;
@@ -255,6 +354,7 @@ export function createContractTools(deps: {
   userId: string;
   signal: AbortSignal;
   onEvidence?: (text: string) => void;
+  egressGuard?: ContractEgressGuard;
 }): ToolSet {
   const documents = new Map<
     string,
@@ -276,6 +376,8 @@ export function createContractTools(deps: {
           deps.userId,
           { offset, query },
         );
+        for (const contract of contracts)
+          deps.egressGuard?.addContractText(contract.title);
         return {
           nextOffset,
           hasMore: nextOffset !== null,
@@ -380,6 +482,7 @@ export function createContractTools(deps: {
               excerpt.nextOffset = toCodePoints(excerpt.nextOffset);
           }
           deps.onEvidence?.(excerpt.content);
+          deps.egressGuard?.addContractText(excerpt.content);
           return {
             id: contract.id,
             title: contract.title,

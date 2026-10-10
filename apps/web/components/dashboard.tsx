@@ -1289,7 +1289,9 @@ const Dashboard = ({
               <span className="font-medium text-foreground">
                 {contractToDelete?.title}
               </span>{" "}
-              and all associated analyses. This action cannot be undone.
+              and all associated analyses, and removes the contract text the
+              assistant read in saved chats. Assistant replies that quoted it
+              stay until you delete those chats. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

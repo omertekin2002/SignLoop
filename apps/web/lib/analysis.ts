@@ -976,6 +976,13 @@ async function runAnalysisWithResponsesModel(
     if (initialError instanceof LlmResponseValidationError) {
       throw initialError;
     }
+    // Prose such as a refusal has no JSON to repair; the contract-less repair model could only
+    // fabricate an analysis from it.
+    if (!content.includes("{")) {
+      throw new LlmResponseValidationError(
+        "LLM response contained no JSON object",
+      );
+    }
 
     console.warn(
       "Primary analysis response failed parse/validation; attempting repair pass",

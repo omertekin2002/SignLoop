@@ -736,7 +736,10 @@ const ProjectDetails = () => {
             <AlertDialogTitle>Delete project?</AlertDialogTitle>
             <AlertDialogDescription>
               This permanently deletes {project.title}, all of its contracts,
-              analyses, and context documents. This action cannot be undone.
+              analyses, and context documents, and removes the contract text
+              the assistant read in saved chats. Assistant replies that quoted
+              it stay until you delete those chats. This action cannot be
+              undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

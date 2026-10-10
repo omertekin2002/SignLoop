@@ -57,6 +57,13 @@ import {
 } from "./server-db";
 import { buildAnalysisPrompt } from "./analysis";
 
+// db/test-integration.sh sets this and runs vitest directly, outside turbo's env filtering.
+// eslint-disable-next-line turbo/no-undeclared-env-vars
+if (process.env.REQUIRE_DB_TESTS === "1" && !connectionString)
+  throw new Error(
+    "REQUIRE_DB_TESTS=1 but SIGNLOOP_TEST_DATABASE_URL is unset; refusing to skip the database suite",
+  );
+
 describe.skipIf(!connectionString)("database integration", () => {
   beforeAll(async () => {
     const url = new URL(connectionString!);
@@ -387,6 +394,170 @@ describe.skipIf(!connectionString)("database integration", () => {
     ).toBe(1);
   });
 
+  const readContractTurn = (contractId: string, toolCallId: string) => [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId,
+          toolName: "read_contract",
+          input: { contractId },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId,
+          toolName: "read_contract",
+          output: {
+            type: "json",
+            value: { id: contractId, content: "Secret clause text" },
+          },
+        },
+      ],
+    },
+    { role: "assistant", content: [{ type: "text", text: "Summary" }] },
+  ];
+  async function saveTurn(userId: string, agentMessages: unknown[]) {
+    const thread = await createChatThreadForUser({ userId, title: "Replay" });
+    await appendChatMessagesToThread({
+      userId,
+      threadId: thread.id,
+      messages: [
+        { role: "user", content: "What does it say?" },
+        {
+          role: "assistant",
+          content: "It quotes the secret clause.",
+          metadata: {
+            agentMessages,
+            toolActivity: [
+              { id: "call", query: "contract", status: "complete" },
+            ],
+          },
+        },
+      ],
+    });
+    return async () =>
+      (await getRecentChatMessagesForThreadForUser(userId, thread.id, 10))?.at(
+        -1,
+      );
+  }
+
+  it("drops saved replay state that read a deleted contract and keeps unrelated turns", async () => {
+    const userId = "replay-owner";
+    const deleted = await createContractForUser({ userId, title: "Deleted" });
+    const kept = await createContractForUser({ userId, title: "Kept" });
+    const readDeleted = readContractTurn(deleted.id.toUpperCase(), "call-1");
+    const readKept = readContractTurn(kept.id, "call-2");
+    const listedDeleted = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-3",
+            toolName: "list_contracts",
+            input: {},
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-3",
+            toolName: "list_contracts",
+            output: {
+              type: "json",
+              value: { contracts: [{ id: deleted.id, title: "Deleted" }] },
+            },
+          },
+        ],
+      },
+      { role: "assistant", content: [{ type: "text", text: "One contract" }] },
+    ];
+    const deletedTurn = await saveTurn(userId, readDeleted);
+    const keptTurn = await saveTurn(userId, readKept);
+    const listedTurn = await saveTurn(userId, listedDeleted);
+    const otherOwnerTurn = await saveTurn("replay-intruder", readDeleted);
+
+    expect(
+      await deleteContractForUser({ userId, contractId: deleted.id }),
+    ).toEqual({ deleted: true });
+
+    const scrubbed = await deletedTurn();
+    expect(scrubbed?.content).toBe("It quotes the secret clause.");
+    expect(scrubbed?.agentMessages).toBeUndefined();
+    const { rows } = await pool.current!.query(
+      "SELECT metadata_json FROM chat_messages WHERE id = $1",
+      [scrubbed!.id],
+    );
+    expect(rows[0].metadata_json).toEqual({
+      toolActivity: [{ id: "call", query: "contract", status: "complete" }],
+    });
+    expect((await keptTurn())?.agentMessages).toEqual(readKept);
+    expect((await listedTurn())?.agentMessages).toEqual(listedDeleted);
+    expect((await otherOwnerTurn())?.agentMessages).toEqual(readDeleted);
+  });
+
+  it("drops saved replay state for contracts removed with their project", async () => {
+    const userId = "replay-project-owner";
+    const project = await createProjectForUser({ userId, title: "Replay" });
+    const child = await createContractForUser({
+      userId,
+      title: "Child",
+      projectId: project.id,
+    });
+    const turn = await saveTurn(userId, readContractTurn(child.id, "call-1"));
+    expect(
+      await deleteProjectForUser({ userId, projectId: project.id }),
+    ).toEqual({ deleted: true });
+    expect((await turn())?.agentMessages).toBeUndefined();
+  });
+
+  it("keeps the contract, project and replay state when the chat scrub fails", async () => {
+    const userId = "replay-failure-owner";
+    const project = await createProjectForUser({ userId, title: "Kept" });
+    const item = await createContractForUser({
+      userId,
+      title: "Kept",
+      projectId: project.id,
+    });
+    const agentMessages = readContractTurn(item.id, "call-1");
+    const turn = await saveTurn(userId, agentMessages);
+    const messageId = (await turn())!.id;
+    await pool.current!.query(
+      "CREATE FUNCTION fail_replay_scrub() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'replay scrub failed'; END $$",
+    );
+    try {
+      await pool.current!.query(
+        `CREATE TRIGGER fail_replay_scrub BEFORE UPDATE ON chat_messages FOR EACH ROW
+         WHEN (OLD.id = '${messageId}') EXECUTE FUNCTION fail_replay_scrub()`,
+      );
+      await expect(
+        deleteContractForUser({ userId, contractId: item.id }),
+      ).rejects.toThrow(/replay scrub failed/);
+      await expect(
+        deleteProjectForUser({ userId, projectId: project.id }),
+      ).rejects.toThrow(/replay scrub failed/);
+    } finally {
+      await pool.current!.query(
+        "DROP TRIGGER IF EXISTS fail_replay_scrub ON chat_messages",
+      );
+      await pool.current!.query("DROP FUNCTION IF EXISTS fail_replay_scrub()");
+    }
+    expect(
+      await getContractWithLatestAnalysisForUser(userId, item.id),
+    ).not.toBeNull();
+    expect(await getProjectByIdForUser(userId, project.id)).not.toBeNull();
+    expect((await turn())?.agentMessages).toEqual(agentMessages);
+  });
+
   it("bounds context excerpts to the prompt's own per-document budget", async () => {
     const project = await createProjectForUser({
       userId: "owner",
@@ -563,6 +734,44 @@ describe.skipIf(!connectionString)("database integration", () => {
     );
     expect(retry).not.toBeNull();
     await retry!();
+  });
+
+  async function expireGenerationLease(contractId: string) {
+    const { rowCount } = await pool.current!.query(
+      "UPDATE generation_operations SET expires_at = now() - interval '1 second' WHERE entity_key = $1",
+      [`contract:owner:${contractId}`],
+    );
+    expect(rowCount).toBe(1);
+  }
+
+  it("lets a new claim take over an expired generation lease", async () => {
+    const item = await contract();
+    const expired = await claimGenerationOperation("owner", "contract", item.id, 60);
+    expect(expired).not.toBeNull();
+    expect(
+      await claimGenerationOperation("owner", "contract", item.id, 60),
+    ).toBeNull();
+    await expireGenerationLease(item.id);
+    const takeover = await claimGenerationOperation("owner", "contract", item.id, 60);
+    expect(takeover).not.toBeNull();
+    await takeover!();
+  });
+
+  it("ignores a stale lease release after another claim took over", async () => {
+    const item = await contract();
+    const stale = await claimGenerationOperation("owner", "contract", item.id, 60);
+    expect(stale).not.toBeNull();
+    await expireGenerationLease(item.id);
+    const fresh = await claimGenerationOperation("owner", "contract", item.id, 60);
+    expect(fresh).not.toBeNull();
+    await stale!();
+    expect(
+      await claimGenerationOperation("owner", "contract", item.id, 60),
+    ).toBeNull();
+    await fresh!();
+    const again = await claimGenerationOperation("owner", "contract", item.id, 60);
+    expect(again).not.toBeNull();
+    await again!();
   });
 
   it("pages canonical messages and stores images outside transcript text", async () => {
@@ -906,5 +1115,48 @@ describe.skipIf(!connectionString)("database integration", () => {
       primaryModel: "model-test",
       personality: "signloop-assistant",
     });
+  });
+
+  it("applies each pending migration once when two runners race, without holding the lock afterwards", async () => {
+    const db = pool.current!;
+    const lockQuery =
+      "SELECT count(*)::integer AS count FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 AND objid = 736194821";
+    await db.query("DROP SCHEMA IF EXISTS migration_race CASCADE");
+    await db.query("CREATE SCHEMA migration_race");
+    const gate = await db.connect();
+    const runners = [await db.connect(), await db.connect()];
+    let running: Promise<unknown> | undefined;
+    try {
+      for (const runner of runners)
+        await runner.query("SET search_path TO migration_race");
+      await gate.query("BEGIN");
+      await gate.query("SELECT pg_advisory_xact_lock(736194821)");
+      // Both runners queue behind the gate, so both read an empty applied set and every file
+      // must be skipped by whichever runner reaches it second.
+      running = Promise.all(runners.map((runner) => runMigrations(runner)));
+      await vi.waitFor(
+        async () =>
+          expect(
+            (await db.query(`${lockQuery} AND NOT granted`)).rows[0].count,
+          ).toBe(2),
+        { timeout: 5_000 },
+      );
+      await gate.query("COMMIT");
+      await running;
+      const [raced, expected] = await Promise.all([
+        db.query(
+          "SELECT filename FROM migration_race.schema_migrations ORDER BY filename",
+        ),
+        db.query("SELECT filename FROM public.schema_migrations ORDER BY filename"),
+      ]);
+      expect(raced.rows).toEqual(expected.rows);
+      expect((await db.query(lockQuery)).rows[0].count).toBe(0);
+    } finally {
+      await gate.query("ROLLBACK").catch(() => {});
+      await running?.catch(() => {});
+      gate.release();
+      for (const runner of runners) runner.release(true);
+      await db.query("DROP SCHEMA IF EXISTS migration_race CASCADE");
+    }
   });
 });

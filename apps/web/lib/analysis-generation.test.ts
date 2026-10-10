@@ -81,6 +81,42 @@ describe("analysis response completion", () => {
     },
   );
 
+  it("rejects prose output without a repair call or another provider call", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        providerResponse("completed", "I'm sorry, I can't analyze this contract."),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const { analyzeText } = await import("./analysis");
+
+    await expect(analyzeText("Monthly payment agreement")).rejects.toThrow(
+      /no JSON object/,
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("sends malformed JSON with braces to exactly one repair call", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        providerResponse("completed", '{"risk_badge": "LOW", "key_points": [}'),
+      )
+      .mockResolvedValueOnce(providerResponse("completed", "not json either"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { analyzeText } = await import("./analysis");
+
+    await expect(analyzeText("Monthly payment agreement")).rejects.toThrow(
+      /invalid after repair attempt/,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("analysis.test");
+    const repairBody = JSON.parse(
+      String((fetchMock.mock.calls[1]?.[1] as RequestInit).body),
+    );
+    expect(repairBody.input).toContain('{"risk_badge": "LOW", "key_points": [}');
+  });
+
   it("rejects an incomplete repair without sending the contract to fallback", async () => {
     const fetchMock = vi
       .fn()

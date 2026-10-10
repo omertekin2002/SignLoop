@@ -71,6 +71,8 @@ export const maxDuration = 300;
 const ROUTE_TIMEOUT_MS = 275_000;
 // The lease must outlive the longest possible request so a stuck run cannot be double-started.
 const CHAT_LEASE_SECONDS = 360;
+// claimChatAdmission's Retry-After for a concurrency rejection, as opposed to the hourly/daily caps.
+const ADMISSION_BUSY_RETRY_AFTER_SECONDS = 30;
 
 function getPublicChatErrorMessage(error: unknown): string {
   return error instanceof GeminiWebSearchError ||
@@ -288,7 +290,12 @@ export async function POST(req: Request) {
       const admission = await admitChat(userId);
       if ("retryAfter" in admission)
         return NextResponse.json(
-          { error: "Chat is at its request limit. Please try again later." },
+          {
+            error:
+              admission.retryAfter === ADMISSION_BUSY_RETRY_AFTER_SECONDS
+                ? "Chat is busy with other replies. Please try again shortly."
+                : "Chat is at its request limit. Please try again later.",
+          },
           {
             status: 429,
             headers: { "Retry-After": String(admission.retryAfter) },

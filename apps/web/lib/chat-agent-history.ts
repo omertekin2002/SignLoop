@@ -1,26 +1,20 @@
 import { modelMessageSchema, type ModelMessage } from "ai";
 import { z } from "zod";
+import {
+  isPlainAssistantReplay,
+  MAX_AGENT_STATE_CHARACTERS,
+} from "@/lib/chat-history-shared";
+
+export {
+  isPlainAssistantReplay,
+  MAX_AGENT_STATE_CHARACTERS,
+  MAX_SOURCE_CATALOG_CHARACTERS,
+  MAX_SOURCE_COUNT,
+  MAX_SOURCE_TITLE_CHARACTERS,
+  parseWebSources,
+} from "@/lib/chat-history-shared";
 
 const historySchema = z.array(modelMessageSchema).max(36);
-export const MAX_AGENT_STATE_CHARACTERS = 20_000;
-export const MAX_SOURCE_CATALOG_CHARACTERS = 16_000;
-export const MAX_SOURCE_COUNT = 64;
-export const MAX_SOURCE_TITLE_CHARACTERS = 240;
-
-/** Plain answers already live in canonical message content; replay adds no tool evidence. */
-export function isPlainAssistantReplay(
-  messages: readonly ModelMessage[],
-): boolean {
-  return (
-    messages.length > 0 &&
-    messages.every(
-      (message) =>
-        message.role === "assistant" &&
-        (typeof message.content === "string" ||
-          message.content.every((part) => part.type === "text")),
-    )
-  );
-}
 
 /** Accept only server-persisted assistant/tool turns; never replay system instructions from metadata. */
 export function parseAgentMessages(value: unknown): ModelMessage[] | undefined {
@@ -39,27 +33,6 @@ export function parseAgentMessages(value: unknown): ModelMessage[] | undefined {
   )
     return undefined;
   return parsed.data;
-}
-
-const sourcesSchema = z
-  .array(
-    z.object({
-      title: z.string().max(MAX_SOURCE_TITLE_CHARACTERS),
-      url: z
-        .string()
-        .max(2048)
-        .url()
-        .refine((value) => /^https?:/.test(value)),
-      snippet: z.string().max(600).nullish(),
-    }),
-  )
-  .max(MAX_SOURCE_COUNT);
-
-export function parseWebSources(value: unknown) {
-  if (JSON.stringify(value ?? null).length > MAX_SOURCE_CATALOG_CHARACTERS)
-    return undefined;
-  const parsed = sourcesSchema.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
 }
 
 /** Keep recent complete assistant/tool exchanges; bound evidence without orphaning tool results. */

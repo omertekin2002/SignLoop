@@ -643,6 +643,109 @@ describe("agentic chat", () => {
     expect(continuation).not.toContain("secret details");
   });
 
+  describe("contract egress guard", () => {
+    const contractId = "11111111-1111-4111-8111-111111111111";
+    const clause =
+      "Clause 4.\nKeep all Confidential Information strictly secret for five years after termination.";
+    const leak = "keep all confidential information strictly secret for five";
+
+    it("blocks a search carrying contract text read in this turn, but not the next turn", async () => {
+      mocks.getContractText.mockResolvedValue({
+        id: contractId,
+        title: "NDA",
+        status: "DRAFT",
+        text: clause,
+        extractionWarning: null,
+      });
+      const model = sequencedModel([
+        toolStep(0, "read_contract", { contractId, find: "confidential" }),
+        toolStep(1, "search_web", { query: leak }),
+        toolStep(2, "search_web", { query: "typical NDA confidentiality period" }),
+      ]);
+      mocks.responses.mockReturnValue(model);
+      const reply = await generateChatReply(messages, {
+        enableWebSearch: true,
+        contractsUserId: "user-1",
+      });
+      expect(mocks.search.mock.calls.map((call) => call[0])).toEqual([
+        "typical NDA confidentiality period",
+      ]);
+      expect(
+        reply.toolActivity?.map((activity) => [activity.tool, activity.status]),
+      ).toEqual([
+        ["read_contract", "complete"],
+        ["search_web", "error"],
+        ["search_web", "complete"],
+      ]);
+      expect(JSON.stringify(model.doStreamCalls[2]?.prompt)).toContain(
+        "repeats wording from the user's contract",
+      );
+
+      mocks.responses.mockReturnValue(
+        sequencedModel([toolStep(0, "search_web", { query: leak })]),
+      );
+      const next = await generateChatReply(messages, {
+        enableWebSearch: true,
+        contractsUserId: "user-1",
+      });
+      expect(mocks.search).toHaveBeenLastCalledWith(leak, expect.anything());
+      expect(next.toolActivity?.[0]?.status).toBe("complete");
+    });
+
+    it.each([
+      [
+        "clipped",
+        {
+          type: "text" as const,
+          value: `${JSON.stringify({ type: "json", value: { content: clause } })}\n[Replay excerpt; read the source again for more detail.]`,
+        },
+      ],
+      ["structured", { type: "json" as const, value: { content: clause } }],
+    ])("blocks contract text replayed from an earlier turn (%s)", async (_label, output) => {
+      mocks.responses.mockReturnValue(
+        sequencedModel([toolStep(0, "search_web", { query: leak })]),
+      );
+      const reply = await generateChatReply(
+        [
+          { role: "user", content: "Summarise the NDA." },
+          {
+            role: "assistant",
+            content: "It is a five-year NDA.",
+            agentMessages: [
+              {
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool-call",
+                    toolCallId: "earlier",
+                    toolName: "read_contract",
+                    input: { contractId },
+                  },
+                ],
+              },
+              {
+                role: "tool",
+                content: [
+                  {
+                    type: "tool-result",
+                    toolCallId: "earlier",
+                    toolName: "read_contract",
+                    output,
+                  },
+                ],
+              },
+              { role: "assistant", content: "It is a five-year NDA." },
+            ],
+          },
+          { role: "user", content: "Search the web for that clause." },
+        ],
+        { enableWebSearch: true, contractsUserId: "user-1" },
+      );
+      expect(mocks.search).not.toHaveBeenCalled();
+      expect(reply.toolActivity?.[0]?.status).toBe("error");
+    });
+  });
+
   it("skips the primary endpoint when the user pins an OpenRouter model", async () => {
     const model = scriptedModel();
     mocks.responses.mockReturnValue(model);

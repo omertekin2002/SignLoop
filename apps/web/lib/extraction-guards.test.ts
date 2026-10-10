@@ -1,3 +1,4 @@
+import { deflateSync } from "node:zlib";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ import {
   ExtractionUnavailableError,
   extractTextFromImage,
   extractTextFromPdf,
+  processValidatedFile,
 } from "./text-extraction";
 
 beforeEach(() => {
@@ -51,6 +53,22 @@ describe("extraction resource guards", () => {
 
     expect(mocks.extractText).not.toHaveBeenCalled();
     expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a PDF whose Flate stream inflates past the budget before PDF.js parses it", async () => {
+    const bomb = deflateSync(Buffer.alloc(65 * 1024 * 1024, 0x20));
+    const pdf = Buffer.concat([
+      Buffer.from(
+        `%PDF-1.7\n1 0 obj\n<< /Length ${bomb.length} /Filter /FlateDecode >>\nstream\n`,
+      ),
+      bomb,
+      Buffer.from("\nendstream\nendobj\n%%EOF\n"),
+    ]);
+
+    await expect(
+      processValidatedFile(pdf, "application/pdf"),
+    ).rejects.toBeInstanceOf(ExtractionLimitError);
+    expect(mocks.getDocumentProxy).not.toHaveBeenCalled();
   });
 
   it("flags a long scanned PDF as scanned even when stray per-page text exceeds 500 characters", async () => {

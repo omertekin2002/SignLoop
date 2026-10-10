@@ -1023,16 +1023,56 @@ export async function deleteAnalysisForContract(input: {
   }
 }
 
+// Saved turns that read a contract the owner no longer has would replay its excerpts to the model.
+// Dropping the turn's agent state leaves the visible reply in place.
+const SCRUB_UNOWNED_CONTRACT_REPLAY = `
+  UPDATE chat_messages m SET metadata_json = m.metadata_json - 'agentMessages'
+  FROM chat_threads t
+  WHERE t.id = m.thread_id AND t.user_id = $1
+    AND m.metadata_json->'agentMessages' IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM jsonb_path_query(m.metadata_json, '$.agentMessages[*].content[*].input.contractId') AS ref(v)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM contracts c
+        WHERE c.user_id = $1 AND c.id::text = lower(btrim(ref.v #>> '{}'))
+      )
+    )`;
+
+async function deleteOwnedAndScrubChatReplay(
+  deleteStatement: string,
+  id: string,
+  userId: string,
+): Promise<{ deleted: boolean }> {
+  await ensureSchema();
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(deleteStatement, [id, userId]);
+    if (!result.rowCount) {
+      await client.query("ROLLBACK");
+      return { deleted: false };
+    }
+    await client.query(SCRUB_UNOWNED_CONTRACT_REPLAY, [userId]);
+    await client.query("COMMIT");
+    return { deleted: true };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function deleteContractForUser(input: {
   userId: string;
   contractId: string;
 }): Promise<{ deleted: boolean }> {
-  await ensureSchema();
-  const result = await sql.query(
+  return deleteOwnedAndScrubChatReplay(
     "DELETE FROM contracts WHERE id = $1 AND user_id = $2",
-    [input.contractId, input.userId],
+    input.contractId,
+    input.userId,
   );
-  return { deleted: Boolean(result.rowCount) };
 }
 
 export async function createProjectForUser(input: {
@@ -1412,12 +1452,11 @@ export async function deleteProjectForUser(input: {
   userId: string;
   projectId: string;
 }): Promise<{ deleted: boolean }> {
-  await ensureSchema();
-  const result = await sql.query(
+  return deleteOwnedAndScrubChatReplay(
     "DELETE FROM projects WHERE id = $1 AND user_id = $2",
-    [input.projectId, input.userId],
+    input.projectId,
+    input.userId,
   );
-  return { deleted: Boolean(result.rowCount) };
 }
 
 export async function getUserSettingsByUserId(

@@ -1,12 +1,18 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
+const { dnsLookup } = vi.hoisted(() => ({ dnsLookup: vi.fn() }));
+vi.mock("node:dns", () => ({ lookup: dnsLookup }));
 import { httpGet, MAX_FETCH_RESPONSE_CHARACTERS } from "./http-fetch";
-// Keep response/redirect tests deterministic; DNS/socket enforcement is covered separately.
+// Keep response/redirect tests deterministic; the connect-time DNS guard is exercised by the
+// redirect-hop test below and by public-http-dispatcher.test.ts.
 vi.mock("undici/index.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("undici/index.js")>(),
   fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args),
 }));
 
 afterEach(() => {
+  dnsLookup.mockReset();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -88,6 +94,30 @@ it.each(["http://169.254.169.254/latest/meta-data", "http://localhost.:3000/"])(
     publicMessage: expect.stringMatching(/http\(s\) web addresses/),
   });
   expect(fetchMock).toHaveBeenCalledOnce();
+});
+
+it("revalidates DNS at connect time on a redirect hop after the first", async () => {
+  const { fetch: realFetch } = await vi.importActual<typeof import("undici/index.js")>("undici/index.js");
+  let requests = 0;
+  const server = createServer((_request, response) => { requests++; response.end("private"); });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address() as AddressInfo;
+    dnsLookup.mockImplementation((_host, _options, callback) => callback(null, [{ address: "127.0.0.1", family: 4 }]));
+    // Hop 1 is a stub that never opens a socket; hop 2 runs real undici with the dispatcher httpGet passes.
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(redirect(`http://alias.test:${port}/probe`))
+      .mockImplementation((...args: Parameters<typeof realFetch>) => realFetch(...args)));
+    await expect(httpGet("https://api.test/start", { signal: AbortSignal.timeout(3000) })).rejects.toMatchObject({
+      name: "HttpFetchError",
+      publicMessage: expect.stringMatching(/could not be fetched/),
+    });
+    expect(dnsLookup).toHaveBeenCalledWith("alias.test", expect.anything(), expect.any(Function));
+    expect(requests).toBe(0);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 it("stops after too many redirects", async () => {

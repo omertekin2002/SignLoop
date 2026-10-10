@@ -473,7 +473,10 @@ const ContractDetails = () => {
                     <AlertDialogTitle>Delete this contract?</AlertDialogTitle>
                     <AlertDialogDescription>
                       This will permanently delete the contract and all
-                      associated analyses. This cannot be undone.
+                      associated analyses, and remove the contract text the
+                      assistant read in saved chats. Assistant replies that
+                      quoted it stay until you delete those chats. This cannot
+                      be undone.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>

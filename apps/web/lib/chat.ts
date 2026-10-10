@@ -23,6 +23,7 @@ import type { WebSearchMetadata } from "@/lib/gemini-search";
 import { searchWeb } from "@/lib/web-search";
 import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
 import {
+  createContractEgressGuard,
   createContractTools,
   createHttpGetTool,
   createImageTool,
@@ -140,6 +141,46 @@ export function describeToolInput(tool: ChatToolName, input: unknown): string {
     }
   }
 }
+const CONTRACT_TOOL_NAMES = new Set<string>([
+  "read_contract",
+  "list_contracts",
+]);
+
+function collectStrings(value: unknown, into: string[]): string[] {
+  if (typeof value === "string") into.push(value);
+  else if (Array.isArray(value))
+    for (const item of value) collectStrings(item, into);
+  else if (isRecord(value))
+    for (const item of Object.values(value)) collectStrings(item, into);
+  return into;
+}
+
+/** Contract text inside replayed read_contract/list_contracts results from earlier turns. */
+function* replayedContractText(
+  messages: readonly ChatMessage[],
+): Generator<string> {
+  for (const message of messages)
+    for (const replayed of message.agentMessages ?? []) {
+      if (replayed.role !== "tool") continue;
+      for (const part of replayed.content) {
+        if (
+          part.type !== "tool-result" ||
+          !CONTRACT_TOOL_NAMES.has(part.toolName)
+        )
+          continue;
+        const output = part.output;
+        if (output.type === "json" || output.type === "error-json")
+          yield* collectStrings(output.value, []);
+        else if (output.type === "text" || output.type === "error-text")
+          // Compacted replay stores clipped serialized JSON; drop its escapes so words stay separate.
+          yield output.value.replace(/\\(?:u[0-9a-fA-F]{4}|.)/g, " ");
+        else if (output.type === "content")
+          for (const item of output.value)
+            if (item.type === "text") yield item.text;
+      }
+    }
+}
+
 export type ChatReply = {
   message: string;
   provider: "primary-openai-compatible" | "openrouter";
@@ -391,6 +432,9 @@ export async function* generateChatReplyStream(
   };
   const toolNotes: string[] = [];
   const tools: ToolSet = {};
+  const egressGuard = createContractEgressGuard(() =>
+    replayedContractText(messages),
+  );
   if (options?.enableWebSearch) {
     toolNotes.push(TOOL_NOTES.search_web);
     tools.search_web = tool({
@@ -398,6 +442,8 @@ export async function* generateChatReplyStream(
         "Search the web and get back a ranked list of pages: title, address, and a short snippet for each. These are unread leads, not verified evidence and not citable on their own — open the relevant ones with read_url, or with http_get when the source is an API. You may search again with different keywords to find better pages.",
       inputSchema: z.object({ query: z.string().trim().min(1).max(2000) }),
       execute: async ({ query }) => {
+        const refused = egressGuard.check(query);
+        if (refused) return refused;
         const key = query.toLowerCase().replace(/\s+/g, " ").trim();
         const existing = cache.get(key);
         if (existing) return existing;
@@ -442,6 +488,7 @@ export async function* generateChatReplyStream(
         signal,
         addSource,
         onEvidence: (text) => evidence.push(text),
+        egressGuard,
       }),
     );
   }
@@ -453,6 +500,7 @@ export async function* generateChatReplyStream(
         signal,
         addSource,
         onEvidence: (text) => evidence.push(text),
+        egressGuard,
       }),
     );
   }
@@ -464,6 +512,7 @@ export async function* generateChatReplyStream(
         userId: options.contractsUserId,
         signal,
         onEvidence: (text) => evidence.push(text),
+        egressGuard,
       }),
     );
   }

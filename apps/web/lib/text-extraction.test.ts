@@ -1,6 +1,8 @@
+import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import {
   extractTextFromPlainText,
+  extractTextFromWord,
   validateFileSignature,
   validateMimeType,
 } from "./text-extraction";
@@ -137,5 +139,46 @@ describe("validateFileSignature", () => {
     await expect(extractTextFromPlainText(utf16be)).resolves.toMatchObject({
       text: "Contract text",
     });
+  });
+});
+
+describe("extractTextFromWord with legacy .doc files", () => {
+  // A two-paragraph Word 97 file written by macOS textutil, gzipped. It has no author metadata.
+  const WORD_97_FIXTURE_GZIP_BASE64 =
+    "H4sIAAAAAAACE+2cTUwTQRTH/92WQivQBQQr+FHRoImGIGriwRgIiIgG0JJ4FVq+khYIFIEbFxOPGA9eTAwknEyMRuJV9OBN5cJBTngk0YjcOMj63uwUCgUpxAjI+23ezux8983M7sxmX6c+58yOvir8ijVchRNLlgfuhDAHyYn4hQmc1GFLlmVxUIDEEvYU38bf6Q6dz31r93IOdaqDOz5Mko0wgQ0o4AQIDtpSjj9jWb5N/XEi6jymr8awOZzmIFLnDUkmyXvtxvnBIxo7x3eaUgFj5XqGJB/CbufTmnEkCLufKnSjCzH0ohkhcgNooZAwhsgXQysG6VyKLDqCdBVSqcMU10PpOU+7Ovegg8IG0EmpO3TOXkTRp/IKuxj9nF8UTewTMhvqnLhNUlXnX1nnzYli/hNoTZ71oQSZZcY914h7MmPeG8hq9A3nvMybzTf9FYWrEi/3v7AvcYgK9je58MFLw6CTXANOdVwEKn5aBrt0e6inNR+v5ZrVntxQu2x+dPBjpFE/SqK1Hldy2VdQWbFgjZLLd6VqWhO2USn9VA6vMxvXWUHW6NXoWsr1ewJ+z6TO+q7lSljBpCX4+YZmmKsy22+yOMN190hKw76JlBKlRvdRw+rJHSD3DjWQVdFF8ZeoHCOFcoK0mI6qZTUr8EKKtVeSWjq10lNtcS21MoL7dI5R3hDlDuAW+dpJuTH1gs6FsoyHfsxPUcM7VJkzNyMlLMl3A4e6dsFpOpJC4yEBJ+ZNmUXbZNw9mT6BCQwjt+zvl85js3hlWlI/ZYjKBUEQBEEQBGE/s0Q7apc3eXfJIbMPni0sNnSYzx9l4Ozp1194j+LXcSym3mTM/RI9CoIgCIIgCIIgCMJe3f8b0x+nn5YWmY+f0P7/3OIL2f8LgiAIgiAIgiAIwt7EoffwTtgfx/NX9PylfDrs/3XwkOslOQDbupmtObNJfDo+B2xDAOTBtr5nS/UCkkM6/jC5bHJURHKE5CjJMZLjOp6lOMG/JH/J8E9hg4ZuZY9xTdsBD21p/BQgzREvi8eQ22ObREza0TXr5TlFMqz959GEZrQggtZtjd9sGr2JvyeVPOozeG21cFdZt4RRTW4I/crgYz0LlI0ohOHgObSV+pFQfxqCqtaosoYZwg2qvW3Z4obNOLqVsclGnKH6DT13U63fXFX/2l++tfZcpvq3qn9/Qv2CIAjCzvAbp9MKUgBMAAA=";
+
+  it("still extracts a real Word 97 document after the structure check", async () => {
+    const source = gunzipSync(
+      Buffer.from(WORD_97_FIXTURE_GZIP_BASE64, "base64"),
+    );
+
+    await expect(extractTextFromWord(source)).resolves.toEqual({
+      text: "Contract body text.\n\nSecond paragraph with terms.",
+      method: "word_parse",
+      confidence: 100,
+    });
+  });
+
+  it("rejects a two-sector FAT cycle instead of looping in the Word parser", async () => {
+    // Sector 0 is the FAT and lists 0 -> 1 -> 0. word-extractor follows that chain for the
+    // short-sector table before anything else and, unguarded, never returns.
+    const source = Buffer.alloc(512 * 3, 0xff);
+    Buffer.from("d0cf11e0a1b11ae1", "hex").copy(source);
+    source.writeUInt16LE(9, 30);
+    source.writeUInt16LE(6, 32);
+    source.writeInt32LE(1, 44);
+    source.writeInt32LE(0, 48);
+    source.writeInt32LE(4096, 56);
+    source.writeInt32LE(0, 60);
+    source.writeInt32LE(2, 64);
+    source.writeInt32LE(-2, 68);
+    source.writeInt32LE(0, 72);
+    source.writeInt32LE(0, 76);
+    source.writeInt32LE(1, 512);
+    source.writeInt32LE(0, 516);
+
+    await expect(extractTextFromWord(source)).rejects.toThrow(
+      /Failed to parse Word document: .*loops back on itself/,
+    );
   });
 });
