@@ -363,7 +363,7 @@ Everything above is the upstream Dala reference. This section records how SignLo
 | CSS variables | `apps/web/app/globals.css` | The Quick Start `:root` block verbatim (range values such as `--section-gap` split into `-min`/`-max`), then the SignLoop extensions and semantic aliases below. |
 | Tailwind | `apps/web/tailwind.config.ts` | The repo runs Tailwind **v3.4**, so the v4 `@theme` block is translated into `theme.extend`. Colours go through `color-mix()` so opacity modifiers (`bg-primary/10`) work on the hex variables. |
 | Class merging | `apps/web/lib/utils.ts` | `cn()` is taught the custom type scale and radii. Without it, `tailwind-merge` reads `text-caption` as a colour and drops it. |
-| Clerk | `apps/web/lib/clerk-appearance.ts` | Literal hex copies of the tokens; Clerk cannot read CSS variables. |
+| Hosted authentication | WorkOS dashboard branding | AuthKit's hosted forms are configured separately from the app's CSS tokens. |
 
 Tailwind names match the v4 block: `bg-void`, `text-bone-white`, `text-ash-gray`, `text-silver-mist`, `bg-electric-iris`, `text-saffron-spark`, `bg-deep-verdant`; `text-caption` … `text-display` (the size tokens carry their line height and tracking); `font-ppneuemontreal`; `tracking-display` (-0.04em); `max-w-page`; `rounded-3xl`, `rounded-card`, `rounded-button`, `rounded-nav`, `rounded-tag`.
 
@@ -375,7 +375,7 @@ PPNeueMontreal is a licensed face and is not bundled. `--font-ppneuemontreal` li
 
 ### Theme
 
-Dark is the reference theme and the default. A light theme is a SignLoop extension: `next-themes` sets `.light` or `.dark` on `<html>` (default `dark`, `system` available), and the `.light` block in `globals.css` re-points only the **semantic** tokens (`--background`, `--foreground`, `--muted-foreground`, `--highlight`, …) at a white canvas. Electric Iris stays the single accent; greys, Saffron (`#a35f00`), red and verdant are deepened so text keeps 4.5:1 on white. Users switch from the sidebar toggle or Settings → Appearance. Style with semantic token classes so both themes follow; do not add `dark:` variants or raw Dala palette classes for surfaces or text. Clerk takes literal colours, so `lib/clerk-appearance.ts` mirrors both palettes.
+Dark is the reference theme and the default. A light theme is a SignLoop extension: `next-themes` sets `.light` or `.dark` on `<html>` (default `dark`, `system` available), and the `.light` block in `globals.css` re-points only the **semantic** tokens (`--background`, `--foreground`, `--muted-foreground`, `--highlight`, …) at a white canvas. Electric Iris stays the single accent; greys, Saffron (`#a35f00`), red and verdant are deepened so text keeps 4.5:1 on white. Users switch from the sidebar toggle or Settings → Appearance. Style with semantic token classes so both themes follow; do not add `dark:` variants or raw Dala palette classes for surfaces or text. WorkOS hosts the authentication forms; configure their branding in the WorkOS dashboard.
 
 ### SignLoop extensions (not in the Dala source)
 

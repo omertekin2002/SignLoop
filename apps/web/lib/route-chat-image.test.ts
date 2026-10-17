@@ -5,7 +5,7 @@ const { auth, getChatImageForUser } = vi.hoisted(() => ({
   getChatImageForUser: vi.fn(),
 }));
 
-vi.mock("@clerk/nextjs/server", () => ({ auth }));
+vi.mock("@/lib/auth", () => ({ auth }));
 vi.mock("@/lib/server-db", () => ({ getChatImageForUser }));
 
 import { GET } from "@/app/api/chat/threads/[id]/images/[imageId]/route";

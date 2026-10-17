@@ -8,7 +8,7 @@ const { auth, createChatThreadForUser, listChatThreadsByUserId } = vi.hoisted(
   }),
 );
 
-vi.mock("@clerk/nextjs/server", () => ({ auth }));
+vi.mock("@/lib/auth", () => ({ auth }));
 vi.mock("@/lib/server-db", () => ({
   createChatThreadForUser,
   listChatThreadsByUserId,

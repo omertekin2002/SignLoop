@@ -5,7 +5,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  outputFileTracingIncludes: { "/api/**/*": ["./db/migrations/*.sql"] },
+  outputFileTracingIncludes: {
+    "/api/**/*": ["./db/migrations/*.sql"],
+    "/callback": ["./db/migrations/*.sql"],
+  },
   turbopack: {
     root: path.resolve(__dirname, "../.."),
   },

@@ -1,17 +1,12 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { authkitProxy } from "@workos-inc/authkit-nextjs";
 
-const isPublicRoute = createRouteMatcher([
-  "/",
-  "/api/chat",
-  "/api/cron/storage-cleanup",
-  "/sign-in(.*)",
-  "/sign-up(.*)",
-]);
-
-export default clerkMiddleware(async (auth, req) => {
-  if (!isPublicRoute(req)) {
-    await auth.protect();
-  }
+export default authkitProxy({
+  middlewareAuth: {
+    enabled: true,
+    // API handlers enforce their own JSON 401 responses. Chat also supports anonymous
+    // temporary requests, and the cleanup cron authenticates with its bearer secret.
+    unauthenticatedPaths: ["/", "/api/:path*", "/callback", "/sign-in/:path*", "/sign-up/:path*"],
+  },
 });
 
 export const config = {

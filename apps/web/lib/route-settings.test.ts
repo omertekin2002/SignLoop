@@ -16,7 +16,7 @@ const {
   selectableFallbackModels: ["openrouter/free"],
 }));
 
-vi.mock("@clerk/nextjs/server", () => ({ auth }));
+vi.mock("@/lib/auth", () => ({ auth }));
 vi.mock("@/lib/server-db", () => ({
   getUserSettingsByUserId,
   upsertUserSettings,

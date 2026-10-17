@@ -6,7 +6,7 @@ const { auth, getChatThreadByIdForUser, deleteChatThreadForUser } = vi.hoisted((
   deleteChatThreadForUser: vi.fn(),
 }));
 
-vi.mock("@clerk/nextjs/server", () => ({ auth }));
+vi.mock("@/lib/auth", () => ({ auth }));
 vi.mock("@/lib/server-db", () => ({
   getChatThreadByIdForUser,
   deleteChatThreadForUser,

@@ -3,7 +3,7 @@
 ## Toolchain and Package Manager
 
 - Use **Bun** for dependency operations and scripts; do not use npm, yarn, pnpm, or npx.
-- Root `package.json` pins `bun@1.3.11` and requires **Node.js 22+**. Some scripts invoke Node directly.
+- Root `package.json` pins `bun@1.3.11` and requires **Node.js 22.11+**. Some scripts invoke Node directly.
 - Install dependencies from the repository root: `bun install`.
 - Add app dependencies from `apps/web`: `bun add <package>` (or `bun add -d <package>`).
 - Run scripts with `bun run <script>` and package binaries with `bunx <command>`.

@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { auth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 
 // Shared auth + body-parsing helpers for API route handlers, so every route enforces a

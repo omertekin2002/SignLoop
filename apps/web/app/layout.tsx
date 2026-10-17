@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ClerkProvider } from "@clerk/nextjs";
+import { AuthKitProvider } from "@workos-inc/authkit-nextjs/components";
 import { Inter } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import Providers from "@/components/providers";
@@ -25,9 +25,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
-      <html lang="en" className={inter.variable} suppressHydrationWarning>
-        <body className="font-sans antialiased bg-background text-foreground">
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
+      <body className="font-sans antialiased bg-background text-foreground">
+        <AuthKitProvider>
           <Providers>
             <div className="relative z-10">
               {children}
@@ -35,8 +35,8 @@ export default function RootLayout({
               <Toaster />
             </div>
           </Providers>
-        </body>
-      </html>
-    </ClerkProvider>
+        </AuthKitProvider>
+      </body>
+    </html>
   );
 }

@@ -22,7 +22,7 @@ const {
   getModelAvailabilitySnapshot: vi.fn(),
 }));
 
-vi.mock("@clerk/nextjs/server", () => ({ auth }));
+vi.mock("@/lib/auth", () => ({ auth }));
 vi.mock("@/lib/analysis", () => ({ analyzeText }));
 vi.mock("@/lib/server-db", () => ({
   claimGenerationOperation,

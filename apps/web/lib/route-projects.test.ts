@@ -6,7 +6,7 @@ const { auth, createProjectForUser, listProjectsByUserId } = vi.hoisted(() => ({
   listProjectsByUserId: vi.fn(),
 }));
 
-vi.mock("@clerk/nextjs/server", () => ({ auth }));
+vi.mock("@/lib/auth", () => ({ auth }));
 vi.mock("@/lib/server-db", () => ({
   createProjectForUser,
   listProjectsByUserId,

@@ -1,12 +1,12 @@
 # SignLoop
 
-SignLoop is an AI-assisted contract workspace built with Next.js 16, React, Clerk, PostgreSQL, and OpenAI-compatible model providers. Users can upload contracts, request structured analysis, organize supporting documents in projects, and use temporary or saved chat.
+SignLoop is a personal AI-assisted contract workspace built with Next.js 16, React, WorkOS AuthKit, PostgreSQL, and OpenAI-compatible model providers. Users can upload contracts, request structured analysis, organize supporting documents in projects, and use temporary or saved chat. Every account has its own workspace; organizations and team membership are not used.
 
 The Bun/Turborepo repository contains one application, `apps/web`, plus shared ESLint and TypeScript configuration packages. There is no separate API server or background inference worker: API Route Handlers perform extraction, analysis, and chat orchestration.
 
 ## Local setup
 
-Requirements: **Node.js 22+** and **Bun 1.3.11**, the version pinned in [package.json](package.json).
+Requirements: **Node.js 22.11+** (required by AuthKit) and **Bun 1.3.11**, the version pinned in [package.json](package.json).
 
 From the repository root:
 
@@ -15,7 +15,7 @@ bun install
 cp apps/web/.env.local.example apps/web/.env.local
 ```
 
-Fill in the Clerk and database credentials, then configure a primary model endpoint and/or OpenRouter for inference. Optional integrations in the example are commented out; enable only those you intend to use. The environment file belongs in `apps/web`, not the repository root.
+Fill in the WorkOS and database credentials, then configure a primary model endpoint and/or OpenRouter for inference. Optional integrations in the example are commented out; enable only those you intend to use. The environment file belongs in `apps/web`, not the repository root.
 
 ```bash
 bun run dev
@@ -61,12 +61,20 @@ Start with [apps/web/.env.local.example](apps/web/.env.local.example). Actual be
 
 ### Authentication and database
 
-- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` configure Clerk. The example also sets sign-in/sign-up routes and post-auth destinations.
+- `WORKOS_API_KEY` and `WORKOS_CLIENT_ID` configure WorkOS AuthKit. Use credentials from the same WorkOS environment.
+- `WORKOS_COOKIE_PASSWORD` encrypts session cookies and must be at least 32 characters. Generate it with `openssl rand -base64 32`; keep it secret and stable across instances. Rotating it signs users out.
+- `NEXT_PUBLIC_WORKOS_REDIRECT_URI` is the complete callback URL (`http://localhost:3000/callback` locally). Register the exact URL in your WorkOS application's Redirects settings. Use the deployed HTTPS origin in production.
 - `POSTGRES_URL` is used by runtime pooled SQL operations.
 - `POSTGRES_URL_NON_POOLING` is used by the standalone migration client.
 - `SKIP_SCHEMA_BOOTSTRAP=1` disables runtime migration checks. Otherwise the first database operation in a process runs pending migrations using the shared runner, with initialization reused by later operations. This is lazy initialization, not a startup job.
 
-The root page, sign-in/up pages, and `/api/chat` are public in [proxy.ts](apps/web/proxy.ts). The chat handler permits anonymous requests only in temporary mode. Other application APIs enforce authentication and owner-scoped data access.
+In the WorkOS dashboard, enable the personal sign-in methods you want (for example email/password or Google), set the **Initiate login URI** to `http://localhost:3000/sign-in`, and the **Sign-out URI** to `http://localhost:3000/`. Configure equivalent HTTPS URLs for production. Organization creation, SSO, directory sync, and invitations are not needed.
+
+`/sign-in` and `/sign-up` start AuthKit's hosted flow and set its PKCE cookie. `/callback` verifies the flow and returns to `/dashboard`. The root page and auth routes are public in [proxy.ts](apps/web/proxy.ts). API routes pass through session verification and enforce authorization in their handlers: unauthenticated requests receive JSON `401` responses, `/api/chat` permits anonymous temporary chat, and the cleanup cron uses its bearer secret.
+
+This migration starts with **new WorkOS accounts**, without importing or linking Clerk accounts. [017_auth_identities.sql](apps/web/db/migrations/017_auth_identities.sql) adds a stable application user ID and a unique WorkOS identity mapping. Each new WorkOS user receives a fresh personal workspace; provider metadata, email addresses, external IDs, and organization IDs cannot claim another workspace. Existing owner IDs and data are left untouched. [auth.ts](apps/web/lib/auth.ts) resolves the stable owner ID for all authenticated API operations, preserving the existing owner-scoped SQL. The callback also requires database access to initialize the mapping. Apply migrations before deployment if `SKIP_SCHEMA_BOOTSTRAP=1` is enabled.
+
+For the cutover, replace Clerk environment variables with the four WorkOS variables above in local and Vercel environments, register the production redirect/login/logout URLs, and redeploy. Existing Clerk sessions are not WorkOS sessions; users sign in again. Hosted form branding is configured in WorkOS rather than in app components. See the [AuthKit Next.js guide](https://workos.com/docs/authkit/nextjs) for provider setup.
 
 ### Model providers
 

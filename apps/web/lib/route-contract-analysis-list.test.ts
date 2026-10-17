@@ -6,7 +6,7 @@ const { auth, getContractMetaForUser, deleteAnalysisForContract } = vi.hoisted((
   deleteAnalysisForContract: vi.fn(),
 }));
 
-vi.mock("@clerk/nextjs/server", () => ({ auth }));
+vi.mock("@/lib/auth", () => ({ auth }));
 vi.mock("@/lib/server-db", () => ({
   getContractMetaForUser,
   deleteAnalysisForContract,

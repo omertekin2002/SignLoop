@@ -1,7 +1,7 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useUser } from "@clerk/nextjs";
+import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { ThemeProvider } from "next-themes";
 import { Fragment, useEffect, useMemo } from "react";
 import { shouldRetryQuery } from "@/lib/api-client";
@@ -17,7 +17,8 @@ function createQueryClient() {
 }
 
 export default function Providers({ children }: { children: React.ReactNode }) {
-  const { isLoaded, user } = useUser();
+  const { loading, user } = useAuth();
+  const isLoaded = !loading;
   const identityKey = isLoaded ? (user?.id ?? "anonymous") : "loading";
   // A separate client per resolved identity isolates both cached queries and late mutation
   // callbacks. An old account can only write to its retired client, never the next user's cache.

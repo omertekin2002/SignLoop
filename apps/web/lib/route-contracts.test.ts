@@ -8,7 +8,7 @@ const { auth, createContractForUser, listContractsByUserId } = vi.hoisted(
   }),
 );
 
-vi.mock("@clerk/nextjs/server", () => ({ auth }));
+vi.mock("@/lib/auth", () => ({ auth }));
 vi.mock("@/lib/server-db", () => ({
   createContractForUser,
   listContractsByUserId,

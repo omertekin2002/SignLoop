@@ -5,7 +5,7 @@ import {
 import { appendWebSourcesToMessage } from "@/lib/web-citations";
 import { NextResponse, after } from "next/server";
 import { flushTelemetry, isTelemetryEnabled } from "@/lib/telemetry";
-import { auth } from "@clerk/nextjs/server";
+import { auth } from "@/lib/auth";
 import {
   generateChatReply,
   generateChatReplyStream,

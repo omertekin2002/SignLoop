@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useClerk, useUser } from "@clerk/nextjs";
+import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { ArrowLeft, Loader2, Settings as SettingsIcon } from "lucide-react";
 import { apiClient, getApiErrorMessage } from "@/lib/api-client";
 import {
@@ -37,8 +37,9 @@ const PERSONALITY_LABELS: Record<string, string> = {
 };
 
 export default function SettingsPage() {
-  const { user } = useUser();
-  const { signOut } = useClerk();
+  const { user, loading, signOut } = useAuth();
+  const isLoaded = !loading;
+  const isSignedIn = !!user;
   const queryClient = useQueryClient();
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectedPersonality, setSelectedPersonality] = useState<string>("");
@@ -49,6 +50,7 @@ export default function SettingsPage() {
   const { data, isLoading, isFetching, isLoadingError, error, refetch } = useQuery({
     queryKey: ["settings"],
     queryFn: ({ signal }) => fetchSettings({ signal }),
+    enabled: isLoaded && isSignedIn,
     staleTime: 60_000,
   });
 
@@ -145,7 +147,7 @@ export default function SettingsPage() {
           </div>
           <div className="flex items-center gap-4">
             <span className="hidden text-sm text-muted-foreground sm:block">
-              Welcome, {user?.firstName}
+              Welcome, {user?.firstName?.trim() || "there"}
             </span>
             <Button variant="outline" onClick={() => signOut()}>
               Sign out

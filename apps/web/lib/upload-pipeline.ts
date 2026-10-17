@@ -234,7 +234,7 @@ export async function prepareUpload(
 }
 
 // Persist under an opaque, collision-resistant path. The object key deliberately contains no
-// Clerk ID, domain entity ID, or original filename because Blob URLs may be logged or shared.
+// owner ID, domain entity ID, or original filename because Blob URLs may be logged or shared.
 export async function storeUploadedFile(input: {
   signal?: AbortSignal;
   buffer: Buffer;

@@ -29,7 +29,7 @@ import {
 } from "react";
 import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useUser } from "@clerk/nextjs";
+import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
@@ -800,7 +800,8 @@ export function ChatPanel({
   landingHero = false,
   initialPrompt,
 }: ChatPanelProps) {
-  const { isLoaded: isUserLoaded, user } = useUser();
+  const { loading, user } = useAuth();
+  const isLoaded = !loading;
   const queryClient = useQueryClient();
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [landingBackdrop, setLandingBackdrop] = useState<HTMLDivElement | null>(
@@ -824,7 +825,7 @@ export function ChatPanel({
   }, [activeThreadId, selectedThreadId, temporary, temporarySessionKey, restoreGuard]);
 
   useEffect(() => {
-    if (!isUserLoaded) {
+    if (!isLoaded) {
       setPrivacyAcknowledged(false);
       return;
     }
@@ -835,7 +836,7 @@ export function ChatPanel({
     syncConsent();
     window.addEventListener(PRIVACY_CONSENT_EVENT, syncConsent);
     return () => window.removeEventListener(PRIVACY_CONSENT_EVENT, syncConsent);
-  }, [isUserLoaded, user?.id]);
+  }, [isLoaded, user?.id]);
 
   const activeThreadQuery = useQuery({
     queryKey: ["chat-thread", activeThreadId],

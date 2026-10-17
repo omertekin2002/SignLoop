@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { refreshWorkspaceList, useWorkspaceList } from "@/lib/use-workspace-list";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useUser, useClerk } from "@clerk/nextjs";
+import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import {
   Book,
   Calendar,
@@ -243,10 +243,11 @@ const Dashboard = ({
   startTemporary = false,
   initialTemporaryPrompt,
 }: DashboardProps) => {
-  const { user, isSignedIn } = useUser();
-  const { signOut } = useClerk();
+  const { user, loading, signOut } = useAuth();
+  const isLoaded = !loading;
+  const isSignedIn = !!user;
   const queryClient = useQueryClient();
-  const canUseSavedWorkspace = isSignedIn === true;
+  const canUseSavedWorkspace = isLoaded && isSignedIn;
   const [contractToDelete, setContractToDelete] = useState<Contract | null>(
     null,
   );
@@ -404,11 +405,12 @@ const Dashboard = ({
           {isContracts ? "contract analysis" : "project workspaces"} require
           login.
         </p>
+        {/* Auth endpoints set PKCE cookies and redirect across origins; use document navigation. */}
         <Button asChild className="mt-8">
-          <Link href="/sign-in">
+          <a href="/sign-in">
             <LogIn className="mr-2 h-4 w-4" />
             Log in
-          </Link>
+          </a>
         </Button>
       </div>
     );
@@ -941,10 +943,10 @@ const Dashboard = ({
                     variant="ghost"
                     className="w-full justify-start text-muted-foreground hover:text-foreground"
                   >
-                    <Link href="/sign-in" aria-label="Log in">
+                    <a href="/sign-in" aria-label="Log in">
                       <LogIn className="mr-3 h-4 w-4" />
                       <span>Log in</span>
-                    </Link>
+                    </a>
                   </Button>
                 )}
               </div>
@@ -1046,7 +1048,7 @@ const Dashboard = ({
                 <h1 className="app-title mt-3">{tabLabels[activeTab]}</h1>
                 <p className="app-lede mt-3">
                   {canUseSavedWorkspace
-                    ? `Welcome back, ${user?.firstName || "there"}`
+                    ? `Welcome back, ${user?.firstName?.trim() || "there"}`
                     : "Log in to create and manage saved workspace items."}
                 </p>
               </div>
@@ -1054,10 +1056,10 @@ const Dashboard = ({
                 {!canUseSavedWorkspace ? (
                   // The empty state below carries the filled pill; Dala allows one per view.
                   <Button asChild variant="outline">
-                    <Link href="/sign-in">
+                    <a href="/sign-in">
                       <LogIn className="mr-2 h-4 w-4" />
                       Log in
-                    </Link>
+                    </a>
                   </Button>
                 ) : activeTab === "contracts" ? (
                   <UploadDialog>
