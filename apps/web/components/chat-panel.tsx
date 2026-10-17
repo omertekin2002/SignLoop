@@ -58,6 +58,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { cn, isRecord } from "@/lib/utils";
 import { ApiRequestError } from "@/lib/api-client";
 import { createOperationGuard } from "@/lib/operation-guard";
+import { refreshWorkspaceList } from "@/lib/use-workspace-list";
 import {
   hasPrivacyConsent,
   PRIVACY_CONSENT_EVENT,
@@ -915,7 +916,7 @@ export function ChatPanel({
           newlyCreatedThreadIdsRef.current.add(threadId);
           setActiveThreadId(threadId);
           onThreadSelected?.(threadId);
-          queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+          void refreshWorkspaceList(queryClient, "chat-threads", "/chat/threads").catch(() => {});
         }
 
         // Saved-thread history is reconstructed from the database; submit only the new user turn.
@@ -967,7 +968,9 @@ export function ChatPanel({
 
         if (!temporary) {
           setPersistenceWarning(completedSnapshot.persisted === false);
-          queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+          if (completedSnapshot.persisted !== false) {
+            void refreshWorkspaceList(queryClient, "chat-threads", "/chat/threads").catch(() => {});
+          }
           if (
             completedSnapshot.persisted !== false &&
             completedSnapshot.storedMessages?.length

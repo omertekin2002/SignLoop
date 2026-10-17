@@ -94,11 +94,19 @@ export async function uploadObject(
   return cleanKey;
 }
 
-export async function deleteObject(storageKey: string): Promise<void> {
+export async function deleteObject(
+  storageKey: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
+  const deleteSignal = () => AbortSignal.any([
+    AbortSignal.timeout(30_000),
+    ...(signal ? [signal] : []),
+  ]);
   // Pre-write cleanup intents know the deterministic Blob pathname before put returns its URL.
   if (storageKey.startsWith("blob:")) {
     await del(storageKey.slice(5), {
-      abortSignal: AbortSignal.timeout(30_000),
+      abortSignal: deleteSignal(),
     });
     return;
   }
@@ -106,13 +114,15 @@ export async function deleteObject(storageKey: string): Promise<void> {
   // Select the backend from that recorded shape so an environment/config change cannot send a
   // local key to Blob or interpret a Blob URL as a local filesystem path.
   if (isRemoteObjectUrl(storageKey)) {
-    await del(storageKey, { abortSignal: AbortSignal.timeout(30_000) });
+    await del(storageKey, { abortSignal: deleteSignal() });
     return;
   }
 
   const absolutePath = toAbsolutePath(storageKey);
 
   await fs.rm(absolutePath, { force: true });
+  // fs.rm has no AbortSignal support; avoid starting another operation after expiry.
+  signal?.throwIfAborted();
   await fs.rm(`${absolutePath}.meta.json`, { force: true });
 }
 

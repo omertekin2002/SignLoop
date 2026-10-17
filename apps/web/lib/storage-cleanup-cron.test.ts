@@ -17,6 +17,7 @@ afterEach(() => {
     process.env.CRON_SECRET = originalSecret;
   }
   flushStorageDeletions.mockReset();
+  vi.useRealTimers();
 });
 
 describe("storage cleanup cron", () => {
@@ -59,6 +60,27 @@ describe("storage cleanup cron", () => {
       moreMayRemain: false,
     });
     expect(flushStorageDeletions).toHaveBeenCalledTimes(2);
-    expect(flushStorageDeletions).toHaveBeenCalledWith(20);
+    expect(flushStorageDeletions).toHaveBeenCalledWith(20, { deadline: expect.any(Number) });
+  });
+
+  it("passes one absolute deadline to every batch and leaves time for settlement", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    process.env.CRON_SECRET = "expected-secret";
+    flushStorageDeletions.mockImplementation((_limit, { deadline }) => new Promise((resolve) => {
+      setTimeout(() => resolve({ claimed: 20, completed: 16 }), Math.min(230_000, deadline - Date.now()) + 5_000);
+    }));
+
+    const result = GET(new Request("http://localhost/api/cron/storage-cleanup", {
+      headers: { authorization: "Bearer expected-secret" },
+    }));
+    await vi.advanceTimersByTimeAsync(245_000);
+    const response = await result;
+    expect(await response.json()).toEqual({ claimed: 40, completed: 32, batches: 2, moreMayRemain: true });
+    expect(flushStorageDeletions.mock.calls).toEqual([
+      [20, { deadline: 240_000 }],
+      [20, { deadline: 240_000 }],
+    ]);
+    expect(Date.now()).toBeLessThan(300_000);
   });
 });

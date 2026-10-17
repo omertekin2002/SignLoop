@@ -8,6 +8,14 @@ export const MAX_SOURCE_CATALOG_CHARACTERS = 16_000;
 export const MAX_SOURCE_COUNT = 64;
 export const MAX_SOURCE_TITLE_CHARACTERS = 240;
 
+/** Legacy catalogs used array positions. Explicit numbers survive catalog eviction. */
+export function sourceCitationNumber(
+  source: { number?: number },
+  index: number,
+): number {
+  return source.number ?? index + 1;
+}
+
 /** Plain answers already live in canonical message content; replay adds no tool evidence. */
 export function isPlainAssistantReplay(
   messages: readonly ModelMessage[],
@@ -26,6 +34,12 @@ export function isPlainAssistantReplay(
 const sourcesSchema = z
   .array(
     z.object({
+      number: z
+        .number()
+        .int()
+        .positive()
+        .max(Number.MAX_SAFE_INTEGER)
+        .optional(),
       title: z.string().max(MAX_SOURCE_TITLE_CHARACTERS),
       url: z
         .string()
@@ -35,7 +49,11 @@ const sourcesSchema = z
       snippet: z.string().max(600).nullish(),
     }),
   )
-  .max(MAX_SOURCE_COUNT);
+  .max(MAX_SOURCE_COUNT)
+  .refine((sources) => {
+    const numbers = sources.map(sourceCitationNumber);
+    return new Set(numbers).size === numbers.length;
+  }, "Source citation numbers must be unique");
 
 export function parseWebSources(value: unknown) {
   if (JSON.stringify(value ?? null).length > MAX_SOURCE_CATALOG_CHARACTERS)

@@ -69,10 +69,11 @@ it("compacts large tool results while retaining valid call/result pairs", () => 
     },
     { role: "assistant", content: "Answer" },
   ]);
-  expect(replay).toHaveLength(3);
+  expect(replay).toHaveLength(2);
   expect(JSON.stringify(replay).length).toBeLessThan(20000);
   expect(parseAgentMessages(replay)).toEqual(replay);
   expect(JSON.stringify(replay)).toContain("read the source again");
+  expect(JSON.stringify(replay)).not.toContain("Answer");
 });
 
 it("drops incomplete tool exchanges without leaving orphaned results", () => {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
 import { simulateReadableStream } from "ai";
+import { compactAgentMessages } from "./chat-agent-history";
 
 const mocks = vi.hoisted(() => ({
   search: vi.fn(),
@@ -221,6 +222,31 @@ describe("agentic chat", () => {
     }
   });
 
+  it.each([false, true])("keeps the full canonical answer after tool replay (legacy=%s)", async (legacy) => {
+    const answer = `${"x".repeat(2500)} The renewal deadline is September 30.`;
+    const transcript = [
+      { role: "assistant", content: [
+        { type: "text", text: "Old clipped commentary" },
+        { type: "tool-call", toolCallId: "c1", toolName: "read_url", input: { url: "https://law.test" } },
+      ] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: "read_url", output: { type: "text", value: "Source evidence" } }] },
+      { role: "assistant", content: answer.slice(0, 2000) },
+    ] as const;
+    const replay = compactAgentMessages(transcript);
+    const model = scriptedModel();
+    mocks.responses.mockReturnValue(model);
+    await generateChatReply([
+      { role: "user", content: "Explain the renewal." },
+      { role: "assistant", content: answer, agentMessages: legacy ? JSON.parse(JSON.stringify(transcript)) : replay },
+      { role: "user", content: "What was that deadline?" },
+    ]);
+    const prompt = JSON.stringify(model.doStreamCalls[0]?.prompt);
+    expect(prompt.match(/September 30/g)).toHaveLength(1);
+    expect(prompt).toContain("Source evidence");
+    expect(prompt).not.toContain("Old clipped commentary");
+    expect(model.doStreamCalls[0]?.prompt.filter((message) => message.role === "tool")).toHaveLength(1);
+  });
+
   it("does not expose search when the session lacks access", async () => {
     const model = scriptedModel();
     mocks.responses.mockReturnValue(model);
@@ -327,7 +353,7 @@ describe("agentic chat", () => {
     });
     // One source, contributed by the read rather than by the eight-result search.
     expect(reply.webSearch?.sources).toEqual([
-      { title: "Source", url: "https://source.test" },
+      { number: 1, title: "Source", url: "https://source.test" },
     ]);
   });
 
@@ -483,7 +509,7 @@ describe("agentic chat", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(reply.webSearch?.sources).toEqual([
-      { title: "Statute", url: "https://law.test/statute" },
+      { number: 1, title: "Statute", url: "https://law.test/statute" },
     ]);
     const continuation = JSON.stringify(model.doStreamCalls[1]?.prompt);
     expect(continuation).toContain("UNTRUSTED CONTENT");
@@ -499,6 +525,22 @@ describe("agentic chat", () => {
     expect(JSON.stringify(model.doStreamCalls[0]?.prompt)).toContain(
       "read_url",
     );
+  });
+
+  it("reads new evidence after a full inherited catalog and continues with stable citations", async () => {
+    mocks.readUrl.mockResolvedValue({ title: "New source", url: "https://new.test", content: "Fresh evidence", truncated: false, provider: "jina" });
+    const model = sequencedModel([toolStep(0, "read_url", { url: "https://new.test" })]);
+    mocks.responses.mockReturnValue(model);
+    const sources = Array.from({ length: 64 }, (_, index) => ({ title: `Old ${index}`, url: `https://old.test/${index}` }));
+    const reply = await generateChatReply([
+      { role: "assistant", content: "Old answer [64]", webSources: sources },
+      { role: "user", content: "Read this new source" },
+    ], { enableUrlReader: true });
+    expect(reply.toolActivity?.[0]?.status).toBe("complete");
+    expect(reply.readSources).toEqual([65]);
+    expect(reply.webSearch?.sources.at(-1)).toEqual({ number: 65, title: "New source", url: "https://new.test" });
+    expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain("Fresh evidence");
+    expect(reply.webSearch?.sources).toHaveLength(64);
   });
 
   it("reads the user's contracts only when a user is attached", async () => {

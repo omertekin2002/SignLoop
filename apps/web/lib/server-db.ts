@@ -18,6 +18,12 @@ import {
 
 type JsonObject = Record<string, unknown>;
 
+// Match PostgreSQL's UUID casing when building text keys or comparing returned IDs.
+// Owner IDs are case-sensitive text and must not pass through this helper.
+function canonicalUuid(id: string): string {
+  return id.toLowerCase();
+}
+
 export async function claimGenerationOperation(
   userId: string,
   kind: "contract" | "chat",
@@ -25,7 +31,7 @@ export async function claimGenerationOperation(
   seconds: number,
 ): Promise<(() => Promise<void>) | null> {
   await ensureSchema();
-  const entityKey = `${kind}:${userId}:${id}`;
+  const entityKey = `${kind}:${userId}:${canonicalUuid(id)}`;
   const token = randomUUID();
   const { rowCount } = await sql.query(
     `INSERT INTO generation_operations(entity_key, token, expires_at)
@@ -185,7 +191,7 @@ function clampPagination(opts?: PaginationOptions): {
 let schemaReadyPromise: Promise<void> | null = null;
 
 // Runtime setup and the deployment command execute the same versioned migrations.
-async function ensureSchema(): Promise<void> {
+export async function ensureSchema(): Promise<void> {
   if (process.env.SKIP_SCHEMA_BOOTSTRAP === "1") return;
   schemaReadyPromise ??= (async () => {
     const client = await sql.connect();
@@ -979,7 +985,9 @@ export async function deleteAnalysisForContract(input: {
       "SELECT id FROM analyses WHERE contract_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1",
       [input.contractId],
     );
-    const deletingLatest = latest.rows[0]?.id === input.analysisId;
+    const deletingLatest = Boolean(
+      input.analysisId && latest.rows[0]?.id === canonicalUuid(input.analysisId),
+    );
 
     const { rows } = await client.query<{ id: string }>(
       `DELETE FROM analyses

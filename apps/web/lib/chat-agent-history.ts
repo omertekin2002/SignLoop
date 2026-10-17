@@ -35,7 +35,7 @@ export function parseAgentMessages(value: unknown): ModelMessage[] | undefined {
   return parsed.data;
 }
 
-/** Keep recent complete assistant/tool exchanges; bound evidence without orphaning tool results. */
+/** Keep tool exchanges; the canonical answer is replayed separately, without clipping it twice. */
 export function compactAgentMessages(
   value: unknown,
 ): ModelMessage[] | undefined {
@@ -54,19 +54,19 @@ export function compactAgentMessages(
   const groups: ModelMessage[][] = [];
   for (const message of parsed.data) {
     if (message.role === "assistant") {
-      groups.push([
-        {
-          ...message,
-          content:
-            typeof message.content === "string"
-              ? clip(message.content)
-              : message.content.map((part) =>
-                  part.type === "text"
-                    ? { ...part, text: clip(part.text) }
-                    : part,
-                ),
-        },
-      ]);
+      const content = Array.isArray(message.content)
+        ? message.content.filter((part) => part.type !== "text")
+        : [];
+      groups.push(
+        content.length
+          ? [
+              {
+                ...message,
+                content,
+              },
+            ]
+          : [],
+      );
     } else if (message.role === "tool" && groups.length) {
       groups.at(-1)!.push({
         ...message,

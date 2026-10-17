@@ -46,6 +46,7 @@ vi.mock("@/lib/telemetry", () => ({
 import { POST } from "@/app/api/chat/route";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.resetAllMocks();
   vi.restoreAllMocks();
 });
@@ -233,6 +234,31 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
     expect(appendChatMessagesToThread).toHaveBeenCalledWith(
       expect.objectContaining({ generatedTitle: null }),
     );
+  });
+
+  it("saves the finished reply when the real title generator reaches its independent deadline", async () => {
+    const titles = await vi.importActual<typeof import("./chat-title")>("./chat-title");
+    vi.useFakeTimers();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    generateChatTitle.mockImplementation(titles.generateChatTitle);
+    let titleSignal: AbortSignal | undefined;
+    generateChatReply.mockImplementation((_messages, options) => {
+      if (options?.maxOutputTokens === 512) {
+        titleSignal = options.signal;
+        return new Promise(() => {});
+      }
+      return Promise.resolve(reply);
+    });
+    const result = POST(request()).then(completion);
+    await vi.waitFor(() => expect(titleSignal).toBeDefined());
+    expect(appendChatMessagesToThread).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(titles.CHAT_TITLE_TIMEOUT_MS);
+    expect((await result).persisted).toBe(true);
+    expect(titleSignal?.aborted).toBe(true);
+    expect(appendChatMessagesToThread).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ generatedTitle: null }),
+    );
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("does not generate a title for temporary chats", async () => {

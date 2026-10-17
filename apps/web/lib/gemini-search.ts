@@ -21,6 +21,8 @@ Do not address the user or add a standalone sources list; source metadata is han
 `.trim();
 
 export type WebSearchSource = {
+  /** Stable citation ID in chat catalogs; absent on search results and legacy saved turns. */
+  number?: number;
   title: string;
   url: string;
   snippet?: string | null;

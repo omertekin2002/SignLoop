@@ -135,7 +135,7 @@ Project detail returns 50 contracts and 50 context documents per page, with inde
 
 Temporary chat does not persist a thread or messages to the application database. It can be used anonymously or while signed in; provider processing and optional tracing are separate from thread persistence. Saved chat requires authentication and persists ordered user/assistant message pairs. Its model history is reconstructed from the database rather than trusted browser copies.
 
-New saved chats receive a short AI-generated title from their first user message. Naming runs alongside the first reply using the same selected model, chat pipeline, and provider fallbacks, with tools disabled. The title is saved with the first completed turn and appears in the sidebar's completion refresh. Existing or custom titles are preserved; if naming fails, the reply still saves with the default title.
+New saved chats receive a short AI-generated title from their first user message. Naming runs alongside the first reply using the same selected model, chat pipeline, and provider fallbacks, with tools disabled and an independent eight-second deadline. The title is saved with the first completed turn and appears in the sidebar's completion refresh. Existing or custom titles are preserved; if naming fails or times out, the reply still saves with the default title.
 
 URL prompts (`/?q=...`) populate a draft after privacy acknowledgement and require the user to press Send.
 
@@ -153,11 +153,11 @@ The default personality is `bare-llm`; signed-in users can select `signloop-assi
 
 Signed-in temporary and saved chats expose the research and contract tools. Image availability is checked separately. Missing integration keys can still cause tool errors. Anonymous chat exposes no tools. Retrieved document/page text is marked as untrusted; those textual markers are not an authorization boundary.
 
-Saved and temporary replies use the same SDK-backed replay schema. Replay is compacted to 20,000 serialized characters before persistence, preserving complete tool exchanges and shortened evidence. Source catalogs travel independently through temporary requests and responses, capped at 64 sources and 16,000 serialized characters. SQL bounds legacy replay projections before returning rows; canonical prompt history remains bounded. Follow-up citation IDs retain the catalog when it fits the history budget.
+Saved and temporary replies use the same SDK-backed replay schema. Replay is compacted to 20,000 serialized characters before persistence, preserving complete tool exchanges and shortened evidence; assistant prose is replayed once from canonical message content under the ordinary history limits. Source catalogs travel independently through temporary requests and responses, capped at 64 sources and 16,000 serialized characters. New sources retire older inherited entries when needed, with stable citation numbers that are never reassigned to another source. Sources read during the current turn remain protected. SQL bounds legacy replay projections before returning rows; canonical prompt history remains bounded.
 
 Text and tool activity stream as newline-delimited JSON. The final source footer lists fetched sources and any valid references to retained source numbers. Citation markers are normalized, but a source's presence does not prove that it supports the answer. The numerical check compares decimals/grouped thousands against web text fetched during the current turn. It does not cover contract evidence or earlier-turn evidence and does not verify the meaning of a numerical claim.
 
-New saved images are stored in `chat_attachments` and served through an ownership-checked route. Temporary images remain in browser conversation state. Saved chat initially loads the newest 50 messages, with older messages on demand; dashboard collections also use pages of 50.
+New saved images are stored in `chat_attachments` and served through an ownership-checked route. Temporary images remain in browser conversation state. Saved chat initially loads the newest 50 messages, with older messages on demand; dashboard collections also use pages of 50. Creating a chat or completing a saved reply refreshes only the first chat-list page and resets its pagination after that response arrives.
 
 ### Request budgets
 
@@ -185,7 +185,7 @@ Before uploading bytes, the server records a cleanup intent that becomes eligibl
 bun run storage:cleanup
 ```
 
-Cleanup atomically claims due rows with expiring leases and processes four objects concurrently. Failed deletions back off from one minute to at most one day so newer work can proceed. Acknowledgments require the claim token. The command continues while full batches of eligible work remain. Vercel Cron calls `/api/cron/storage-cleanup` daily at 03:00 UTC; the route processes bounded batches, and later runs pick up remaining work. Set a random `CRON_SECRET` in the production Vercel environment to authorize those requests. Deletion requests and the manual command can also process due items.
+Cleanup atomically claims due rows with expiring leases and processes four objects concurrently. Failed deletions back off from one minute to at most one day so newer work can proceed. Acknowledgments require the claim token. The command continues while full batches of eligible work remain. Vercel Cron calls `/api/cron/storage-cleanup` daily at 03:00 UTC; its 240-second work deadline cancels remote deletes and stops dispatching new objects within a batch. Remaining claims are deferred, reserving time for database acknowledgments before the 300-second platform limit. Set a random `CRON_SECRET` in the production Vercel environment to authorize those requests. Deletion requests and the manual command can also process due items.
 
 ## Deployment
 

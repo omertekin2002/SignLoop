@@ -176,6 +176,7 @@ describe.skipIf(!connectionString)("database integration", () => {
   });
 
   it("persists and reloads bounded agent tool exchanges in message metadata", async () => {
+    const answer = `${"x".repeat(2500)} The renewal deadline is September 30.`;
     const thread = await createChatThreadForUser({
       userId: "owner",
       title: "Agent",
@@ -203,9 +204,9 @@ describe.skipIf(!connectionString)("database integration", () => {
           },
         ],
       },
-      { role: "assistant", content: [{ type: "text", text: "Answer [1]" }] },
+      { role: "assistant", content: [{ type: "text", text: answer }] },
     ];
-    const webSources = [{ title: "Source", url: "https://source.test" }];
+    const webSources = [{ number: 65, title: "Source", url: "https://source.test" }];
     await appendChatMessagesToThread({
       userId: "owner",
       threadId: thread.id,
@@ -213,7 +214,7 @@ describe.skipIf(!connectionString)("database integration", () => {
         { role: "user", content: "Research rates" },
         {
           role: "assistant",
-          content: "Answer [1]",
+          content: answer,
           metadata: {
             agentMessages,
             webSources,
@@ -230,7 +231,8 @@ describe.skipIf(!connectionString)("database integration", () => {
       thread.id,
       10,
     );
-    expect(replayed?.at(-1)?.agentMessages).toEqual(agentMessages);
+    expect(replayed?.at(-1)?.agentMessages).toEqual(agentMessages.slice(0, 2));
+    expect(replayed?.at(-1)?.content).toBe(answer);
     expect(replayed?.at(-1)?.webSources).toEqual(webSources);
     expect(
       await getRecentChatMessagesForThreadForUser(
@@ -321,6 +323,29 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(
       (await getContractWithLatestAnalysisForUser("owner", item.id))?.status,
     ).toBe("DRAFT");
+  });
+
+  it("resets status when deleting the latest analysis with uppercase UUIDs while older results remain", async () => {
+    const item = await contract();
+    const older = await analyse(item.id);
+    const latest = await analyse(item.id);
+    expect(await deleteAnalysisForContract({
+      userId: "OWNER",
+      contractId: item.id.toUpperCase(),
+      analysisId: latest.id.toUpperCase(),
+    })).toBe(false);
+    expect((await getContractAnalysisGateForUser("owner", item.id))?.status).toBe("ANALYZED");
+
+    expect(await deleteAnalysisForContract({
+      userId: "owner",
+      contractId: item.id.toUpperCase(),
+      analysisId: latest.id.toUpperCase(),
+    })).toBe(true);
+    expect((await getContractAnalysisGateForUser("owner", item.id))?.status).toBe("DRAFT");
+    expect((await pool.current!.query(
+      "SELECT id FROM analyses WHERE contract_id = $1",
+      [item.id],
+    )).rows).toEqual([{ id: older.id }]);
   });
 
   it("cascades an analysis committed while project deletion waits on its contract", async () => {
@@ -500,9 +525,9 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(rows[0].metadata_json).toEqual({
       toolActivity: [{ id: "call", query: "contract", status: "complete" }],
     });
-    expect((await keptTurn())?.agentMessages).toEqual(readKept);
-    expect((await listedTurn())?.agentMessages).toEqual(listedDeleted);
-    expect((await otherOwnerTurn())?.agentMessages).toEqual(readDeleted);
+    expect((await keptTurn())?.agentMessages).toEqual(readKept.slice(0, 2));
+    expect((await listedTurn())?.agentMessages).toEqual(listedDeleted.slice(0, 2));
+    expect((await otherOwnerTurn())?.agentMessages).toEqual(readDeleted.slice(0, 2));
   });
 
   it("drops saved replay state for contracts removed with their project", async () => {
@@ -555,7 +580,7 @@ describe.skipIf(!connectionString)("database integration", () => {
       await getContractWithLatestAnalysisForUser(userId, item.id),
     ).not.toBeNull();
     expect(await getProjectByIdForUser(userId, project.id)).not.toBeNull();
-    expect((await turn())?.agentMessages).toEqual(agentMessages);
+    expect((await turn())?.agentMessages).toEqual(agentMessages.slice(0, 2));
   });
 
   it("bounds context excerpts to the prompt's own per-document budget", async () => {
@@ -717,24 +742,34 @@ describe.skipIf(!connectionString)("database integration", () => {
     ).rejects.toThrow(/changed/i);
   });
 
-  it("admits only one overlapping operation and permits retry after release", async () => {
-    const item = await contract();
-    const leases = await Promise.all(
-      Array.from({ length: 4 }, () =>
-        claimGenerationOperation("owner", "contract", item.id, 60),
-      ),
-    );
-    expect(leases.filter(Boolean)).toHaveLength(1);
-    await leases.find(Boolean)!();
-    const retry = await claimGenerationOperation(
-      "owner",
-      "contract",
-      item.id,
-      60,
-    );
-    expect(retry).not.toBeNull();
-    await retry!();
-  });
+  it.each(["contract", "chat"] as const)(
+    "admits only one overlapping %s operation across UUID casing and permits retry after release",
+    async (kind) => {
+      const item = kind === "contract"
+        ? await contract()
+        : await createChatThreadForUser({ userId: "owner" });
+      const leases = await Promise.all(
+        Array.from({ length: 4 }, (_, index) =>
+          claimGenerationOperation(
+            "owner",
+            kind,
+            index % 2 ? item.id.toUpperCase() : item.id,
+            60,
+          ),
+        ),
+      );
+      expect(leases.filter(Boolean)).toHaveLength(1);
+      await leases.find(Boolean)!();
+      const retry = await claimGenerationOperation(
+        "owner",
+        kind,
+        item.id.toUpperCase(),
+        60,
+      );
+      expect(retry).not.toBeNull();
+      await retry!();
+    },
+  );
 
   async function expireGenerationLease(contractId: string) {
     const { rowCount } = await pool.current!.query(
@@ -757,12 +792,14 @@ describe.skipIf(!connectionString)("database integration", () => {
     await takeover!();
   });
 
-  it("ignores a stale lease release after another claim took over", async () => {
+  it("ignores a stale lease release after another UUID casing took over", async () => {
     const item = await contract();
     const stale = await claimGenerationOperation("owner", "contract", item.id, 60);
     expect(stale).not.toBeNull();
     await expireGenerationLease(item.id);
-    const fresh = await claimGenerationOperation("owner", "contract", item.id, 60);
+    const fresh = await claimGenerationOperation(
+      "owner", "contract", item.id.toUpperCase(), 60,
+    );
     expect(fresh).not.toBeNull();
     await stale!();
     expect(

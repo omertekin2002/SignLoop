@@ -4,6 +4,7 @@ export const maxDuration = 300;
 
 const BATCH_SIZE = 20;
 const MAX_BATCHES = 100;
+// Reserve the remaining 60 seconds for non-cancellable claim/complete/defer queries.
 const WORK_DEADLINE_MS = 240_000;
 
 export async function GET(request: Request): Promise<Response> {
@@ -19,11 +20,11 @@ export async function GET(request: Request): Promise<Response> {
   const deadline = Date.now() + WORK_DEADLINE_MS;
 
   while (batches < MAX_BATCHES && Date.now() < deadline) {
-    const batch = await flushStorageDeletions(BATCH_SIZE);
+    const batch = await flushStorageDeletions(BATCH_SIZE, { deadline });
     claimed += batch.claimed;
     completed += batch.completed;
     batches += 1;
-    if (batch.claimed < BATCH_SIZE) {
+    if (batch.claimed < BATCH_SIZE && Date.now() < deadline) {
       moreMayRemain = false;
       break;
     }

@@ -33,10 +33,8 @@ import { verifyFigures, type FigureVerification } from "@/lib/web-citations";
 import { isRecord } from "@/lib/utils";
 import {
   compactAgentMessages,
-  isPlainAssistantReplay,
-  MAX_SOURCE_COUNT,
-  MAX_SOURCE_CATALOG_CHARACTERS,
 } from "@/lib/chat-agent-history";
+import { createChatSourceCatalog } from "@/lib/chat-source-catalog";
 
 // Search now returns leads rather than a brief, so a normal run is search -> several reads ->
 // answer. That needs more steps than a loop whose search already came back answer-shaped.
@@ -188,7 +186,7 @@ export type ChatReply = {
   webSearch: WebSearchMetadata | null;
   agentMessages?: ModelMessage[];
   toolActivity?: ChatToolActivity[];
-  /** 1-based catalog numbers of the pages fetched during this turn. */
+  /** Stable citation numbers of the pages fetched during this turn. */
   readSources?: number[];
   /** Whether the answer's measured figures trace back to the text that was fetched. */
   figures?: FigureVerification;
@@ -401,13 +399,10 @@ export async function* generateChatReplyStream(
     options?.firstChunkTimeoutMs,
   );
   // Carry the source catalog with saved tool exchanges so follow-up citations retain their IDs.
-  const sources: WebSearchMetadata["sources"] = [
-    ...([...messages].reverse().find((message) => message.webSources?.length)
-      ?.webSources ?? []),
-  ];
-  // Pages fetched during THIS turn, as 1-based catalog numbers. The catalog itself is seeded from
-  // earlier turns to keep citation numbers stable, so "in the catalog" is not "read just now".
-  const readThisTurn = new Set<number>();
+  const { sources, readThisTurn, addSource } = createChatSourceCatalog(
+    [...messages].reverse().find((message) => message.webSources?.length)
+      ?.webSources ?? [],
+  );
   const evidence: string[] = [];
   const queries: string[] = [];
   let successfulSearches = 0;
@@ -415,21 +410,6 @@ export async function* generateChatReplyStream(
   const cache = new Map<string, Promise<unknown>>();
   const activities = new Map<string, ChatToolActivity>();
   const agentMessages: ModelMessage[] = [];
-  const addSource = (source: WebSearchMetadata["sources"][number]): number => {
-    let index = sources.findIndex((existing) => existing.url === source.url);
-    if (index < 0) {
-      if (
-        sources.length >= MAX_SOURCE_COUNT ||
-        JSON.stringify([...sources, source]).length >
-          MAX_SOURCE_CATALOG_CHARACTERS
-      )
-        throw new Error("Source catalog limit reached");
-      index = sources.length;
-      sources.push(source);
-    }
-    readThisTurn.add(index + 1);
-    return index + 1;
-  };
   const toolNotes: string[] = [];
   const tools: ToolSet = {};
   const egressGuard = createContractEgressGuard(() =>
@@ -559,13 +539,14 @@ export async function* generateChatReplyStream(
     const result = await agent.stream({
       messages: messages
         .filter((message) => message.role !== "system")
-        .flatMap((message): ModelMessage[] =>
-          message.role === "assistant" &&
-          message.agentMessages?.length &&
-          !isPlainAssistantReplay(message.agentMessages)
-            ? message.agentMessages
-            : [{ role: message.role, content: message.content }],
-        ),
+        .flatMap((message): ModelMessage[] => [
+          // Also strips clipped prose from legacy replay metadata. Tool pairs remain intact;
+          // the full answer follows once under the ordinary canonical-history budget.
+          ...(message.role === "assistant" && message.agentMessages?.length
+            ? compactAgentMessages(message.agentMessages) ?? []
+            : []),
+          { role: message.role, content: message.content },
+        ]),
       abortSignal: signal,
     });
     for await (const part of result.fullStream) {

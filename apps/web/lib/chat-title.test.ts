@@ -1,12 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { generateChatReply } = vi.hoisted(() => ({
   generateChatReply: vi.fn(),
 }));
 vi.mock("@/lib/chat", () => ({ generateChatReply }));
-import { generateChatTitle } from "./chat-title";
+import { CHAT_TITLE_TIMEOUT_MS, generateChatTitle } from "./chat-title";
 
 beforeEach(() => vi.resetAllMocks());
+afterEach(() => vi.useRealTimers());
 
 describe("chat titles", () => {
   it("uses the chat generator with the selected model and no tools", async () => {
@@ -26,8 +27,33 @@ describe("chat titles", () => {
         expect.objectContaining({ role: "system" }),
         { role: "user", content: '"Explain my lease renewal."' },
       ],
-      { primaryModel: "selected-model", signal, maxOutputTokens: 512 },
+      { primaryModel: "selected-model", signal: expect.any(AbortSignal), maxOutputTokens: 512 },
     );
+  });
+
+  it("aborts optional naming after its own short deadline even if the provider ignores cancellation", async () => {
+    vi.useFakeTimers();
+    generateChatReply.mockReturnValue(new Promise(() => {}));
+    const controller = new AbortController();
+    const pending = generateChatTitle("Hello", { signal: controller.signal });
+    const rejected = expect(pending).rejects.toThrow("title generation timed out");
+    await vi.advanceTimersByTimeAsync(CHAT_TITLE_TIMEOUT_MS);
+    await rejected;
+    expect(generateChatReply.mock.calls[0]![1].signal.aborted).toBe(true);
+    expect(controller.signal.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("clears the naming timer and cancels provider work when the request is canceled", async () => {
+    vi.useFakeTimers();
+    generateChatReply.mockReturnValue(new Promise(() => {}));
+    const controller = new AbortController();
+    const pending = generateChatTitle("Hello", { signal: controller.signal });
+    const rejected = expect(pending).rejects.toThrow("Canceled");
+    controller.abort(new Error("Canceled"));
+    await rejected;
+    expect(generateChatReply.mock.calls[0]![1].signal.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("bounds quoted prompt content and titles without splitting Unicode characters", async () => {

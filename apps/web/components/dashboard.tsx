@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import { useWorkspaceList } from "@/lib/use-workspace-list";
+import { refreshWorkspaceList, useWorkspaceList } from "@/lib/use-workspace-list";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUser, useClerk } from "@clerk/nextjs";
 import {
@@ -474,8 +474,10 @@ const Dashboard = ({
 
     if (
       selectedChatThreadId &&
-      selectedChatThreadId === recentlyCreatedChatThreadId
+      selectedChatThreadId !== recentlyDeletedChatThreadId
     ) {
+      // A head-page refresh can omit a valid selected thread. Only an explicit deletion
+      // clears it; the detail query handles genuinely missing or inaccessible threads.
       return;
     }
 
@@ -508,7 +510,7 @@ const Dashboard = ({
       selectNewChatThread(thread.id);
       setActiveTab("chat");
       setOpenSections((previous) => ({ ...previous, chat: true }));
-      queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+      void refreshWorkspaceList(queryClient, "chat-threads", "/chat/threads").catch(() => {});
     },
     onError: (error: unknown) => {
       toast.error(getApiErrorMessage(error, "Failed to create chat"));
