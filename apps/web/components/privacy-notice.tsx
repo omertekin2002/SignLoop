@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import {
@@ -25,8 +26,11 @@ export function PrivacyNotice() {
   const isLoaded = !loading;
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  // The policy page must stay readable before the notice is accepted.
   const isAuthPage =
-    pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up");
+    pathname.startsWith("/sign-in") ||
+    pathname.startsWith("/sign-up") ||
+    pathname === "/privacy";
 
   useEffect(() => {
     if (!isLoaded || isAuthPage) {
@@ -49,7 +53,12 @@ export function PrivacyNotice() {
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>SignLoop Privacy Notice</AlertDialogTitle>
-          <AlertDialogDescription>{NOTICE_TEXT}</AlertDialogDescription>
+          <AlertDialogDescription>
+            {NOTICE_TEXT}{" "}
+            <Link href="/privacy" className="text-highlight underline underline-offset-4">
+              Read the privacy policy
+            </Link>
+          </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogAction onClick={handleAcknowledge}>

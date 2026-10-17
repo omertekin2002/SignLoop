@@ -6,7 +6,7 @@ const middlewareAuth = {
   enabled: true,
   // API handlers enforce their own JSON 401 responses. Chat also supports anonymous
   // temporary requests, and the cleanup cron authenticates with its bearer secret.
-  unauthenticatedPaths: ["/", "/api/:path*", "/callback", "/sign-in/:path*", "/sign-up/:path*"],
+  unauthenticatedPaths: ["/", "/privacy", "/api/:path*", "/callback", "/sign-in/:path*", "/sign-up/:path*"],
 };
 
 export default function proxy(request: NextRequest, event: NextFetchEvent) {

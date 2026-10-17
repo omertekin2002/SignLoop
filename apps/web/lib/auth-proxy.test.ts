@@ -45,7 +45,7 @@ describe("WorkOS route protection", () => {
     },
   );
 
-  it.each(["/", "/api/chat", "/api/projects", "/api/cron/storage-cleanup", "/callback", "/sign-in", "/sign-up"])(
+  it.each(["/", "/privacy", "/api/chat", "/api/projects", "/api/cron/storage-cleanup", "/callback", "/sign-in", "/sign-up"])(
     "passes %s to its handler without a login redirect",
     async (path) => {
       const response = await runProxy(path);

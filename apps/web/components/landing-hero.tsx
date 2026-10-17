@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import { ArrowDown, ArrowRight } from "lucide-react";
 import { Constellation, findScrollParent } from "@/components/constellation";
 import { TypingAnimation } from "@/components/typing-animation";
@@ -638,6 +639,14 @@ export function LandingHero({ backdrop }: { backdrop: HTMLElement | null }) {
               Start a review
               <ArrowRight className="h-4 w-4" />
             </Button>
+          </Reveal>
+          <Reveal delay={240} className="mt-12">
+            <Link
+              href="/privacy"
+              className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              Privacy policy
+            </Link>
           </Reveal>
         </Section>
       </div>
