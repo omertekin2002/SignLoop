@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 import { NextRequest } from "next/server";
 
@@ -22,10 +22,10 @@ afterAll(() => {
   vi.unstubAllGlobals();
 });
 
-async function runProxy(path: string, headers?: HeadersInit) {
+async function runProxy(path: string, headers?: HeadersInit, origin = "http://localhost:3000") {
   const requestHeaders = new Headers(headers);
   requestHeaders.set("Accept", "text/html");
-  return (await proxy(new NextRequest(`http://localhost:3000${path}`, { headers: requestHeaders }), {} as never)) as Response;
+  return (await proxy(new NextRequest(`${origin}${path}`, { headers: requestHeaders }), {} as never)) as Response;
 }
 
 describe("WorkOS route protection", () => {
@@ -64,5 +64,55 @@ describe("WorkOS route protection", () => {
     });
     expect(response.headers.has("x-middleware-request-x-workos-session")).toBe(false);
     expect(response.headers.get("x-middleware-request-x-redirect-uri")).toBe("http://localhost:3000/callback");
+  });
+});
+
+describe("WorkOS redirect URI on Vercel deployments", () => {
+  const branchHost = "signloop-git-feature-omertekin2002-4243s-projects.vercel.app";
+  const deploymentHost = "signloop-abc123xyz-omertekin2002-4243s-projects.vercel.app";
+
+  function stubVercel(environment: string) {
+    vi.stubEnv("VERCEL_ENV", environment);
+    vi.stubEnv("VERCEL_BRANCH_URL", branchHost);
+    vi.stubEnv("VERCEL_URL", deploymentHost);
+  }
+
+  afterEach(() => {
+    vi.stubEnv("VERCEL_ENV", "");
+    vi.stubEnv("VERCEL_BRANCH_URL", "");
+    vi.stubEnv("VERCEL_URL", "");
+  });
+
+  it.each([branchHost, deploymentHost])(
+    "returns a preview sign-in to the host that started it (%s)",
+    async (host) => {
+      stubVercel("preview");
+      const response = await runProxy("/dashboard", undefined, `https://${host}`);
+      const location = new URL(response.headers.get("Location")!);
+      expect(location.searchParams.get("redirect_uri")).toBe(`https://${host}/callback`);
+      expect(response.headers.get("Set-Cookie")).toContain("Secure");
+    },
+  );
+
+  it("forwards the preview callback to the sign-in route handler", async () => {
+    stubVercel("preview");
+    const response = await runProxy("/sign-in", undefined, `https://${branchHost}`);
+    expect(response.headers.get("x-middleware-request-x-redirect-uri")).toBe(
+      `https://${branchHost}/callback`,
+    );
+  });
+
+  it("falls back to the deployment URL instead of trusting an unknown Host", async () => {
+    stubVercel("preview");
+    const response = await runProxy("/dashboard", undefined, "https://attacker.example");
+    const location = new URL(response.headers.get("Location")!);
+    expect(location.searchParams.get("redirect_uri")).toBe(`https://${deploymentHost}/callback`);
+  });
+
+  it("keeps the configured redirect URI in production", async () => {
+    stubVercel("production");
+    const response = await runProxy("/dashboard", undefined, `https://${deploymentHost}`);
+    const location = new URL(response.headers.get("Location")!);
+    expect(location.searchParams.get("redirect_uri")).toBe("http://localhost:3000/callback");
   });
 });

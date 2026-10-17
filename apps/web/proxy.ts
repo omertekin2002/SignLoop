@@ -1,13 +1,22 @@
 import { authkitProxy } from "@workos-inc/authkit-nextjs";
+import type { NextFetchEvent, NextRequest } from "next/server";
+import { previewRedirectUri } from "@/lib/auth-redirect";
 
-export default authkitProxy({
-  middlewareAuth: {
-    enabled: true,
-    // API handlers enforce their own JSON 401 responses. Chat also supports anonymous
-    // temporary requests, and the cleanup cron authenticates with its bearer secret.
-    unauthenticatedPaths: ["/", "/api/:path*", "/callback", "/sign-in/:path*", "/sign-up/:path*"],
-  },
-});
+const middlewareAuth = {
+  enabled: true,
+  // API handlers enforce their own JSON 401 responses. Chat also supports anonymous
+  // temporary requests, and the cleanup cron authenticates with its bearer secret.
+  unauthenticatedPaths: ["/", "/api/:path*", "/callback", "/sign-in/:path*", "/sign-up/:path*"],
+};
+
+export default function proxy(request: NextRequest, event: NextFetchEvent) {
+  // An undefined redirectUri keeps AuthKit's NEXT_PUBLIC_WORKOS_REDIRECT_URI default.
+  // The proxy forwards it to getSignInUrl()/getSignUpUrl() through x-redirect-uri.
+  return authkitProxy({
+    middlewareAuth,
+    redirectUri: previewRedirectUri(request.nextUrl.host),
+  })(request, event);
+}
 
 export const config = {
   matcher: [

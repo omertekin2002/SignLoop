@@ -36,6 +36,7 @@
     "CHAT_CONCURRENCY_LIMIT",
     "CRON_SECRET"
   ],
+  "globalPassThroughEnv": ["VERCEL_ENV", "VERCEL_URL", "VERCEL_BRANCH_URL"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

@@ -149,7 +149,7 @@ export default function SettingsPage() {
             <span className="hidden text-sm text-muted-foreground sm:block">
               Welcome, {user?.firstName?.trim() || "there"}
             </span>
-            <Button variant="outline" onClick={() => signOut()}>
+            <Button variant="outline" onClick={() => signOut({ returnTo: `${window.location.origin}/` })}>
               Sign out
             </Button>
           </div>

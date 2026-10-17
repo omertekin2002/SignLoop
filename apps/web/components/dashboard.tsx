@@ -931,7 +931,7 @@ const Dashboard = ({
                       variant="ghost"
                       aria-label="Sign out"
                       className="w-full justify-start text-muted-foreground hover:text-destructive"
-                      onClick={() => signOut()}
+                      onClick={() => signOut({ returnTo: `${window.location.origin}/` })}
                     >
                       <LogOut className="mr-3 h-4 w-4" />
                       <span>Sign out</span>
