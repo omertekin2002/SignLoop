@@ -41,3 +41,37 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
     : undefined;
   return { ...result, source, ...(flags ? { red_flags: flags } : {}) };
 }
+
+/**
+ * Everything the analyze route does to a model result before storing it: extraction-quality
+ * warnings from the contract and its context documents lead the coverage notices, then model
+ * evidence is replaced by server-verified citations. The evaluation harness calls this too, so
+ * scored output cannot drift from what users see.
+ */
+export function finalizeAnalysisResult<
+  T extends Record<string, unknown> & { coverage_notices?: readonly string[] },
+>(
+  result: T,
+  contract: { id: string; text: string; extractionWarning?: string | null },
+  contextDocuments: readonly {
+    title: string;
+    extractionWarning?: string | null;
+  }[] = [],
+) {
+  const qualityWarnings = [
+    contract.extractionWarning,
+    ...contextDocuments.map((document) =>
+      document.extractionWarning
+        ? `${document.title}: ${document.extractionWarning}`
+        : null,
+    ),
+  ].filter((warning): warning is string => Boolean(warning));
+  return attachAnalysisSources(
+    {
+      ...result,
+      coverage_notices: [...qualityWarnings, ...(result.coverage_notices ?? [])],
+    },
+    contract.id,
+    contract.text,
+  );
+}

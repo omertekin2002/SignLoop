@@ -46,6 +46,8 @@ Turbo may return cached results. Use `bun run build --force` for a fresh build. 
 
 From `apps/web`, `bun run test` invokes Vitest directly; a path narrows the run, for example `bun run test lib/chat-tools.test.ts`.
 
+Tests include the [contract analysis evaluations](apps/web/evals/README.md), which replay hand-written model outputs through the production analysis path. They make no provider calls.
+
 Database tests skip unless `SIGNLOOP_TEST_DATABASE_URL` is supplied. The supported disposable-database workflow is:
 
 ```bash

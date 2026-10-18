@@ -28,6 +28,7 @@ The production server is `bun run start` after a successful build. Build and typ
 - `components/`: dashboard, chat, upload, privacy, and shared UI.
 - `lib/`: SQL, extraction, analysis, chat tools/providers, client helpers, and tests.
 - `db/`: ordered migrations, migration runner, cleanup command, and integration-test setup.
+- `evals/`: deterministic contract analysis evaluations replayed through the production pipeline ([README](evals/README.md)).
 - `proxy.ts`: Clerk route protection.
 - `instrumentation.ts`: optional AI SDK chat telemetry.
 

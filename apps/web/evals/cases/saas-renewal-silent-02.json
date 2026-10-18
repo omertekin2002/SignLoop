@@ -1,0 +1,30 @@
+{
+  "id": "saas-renewal-silent-02",
+  "title": "SaaS order form that never mentions renewal",
+  "provenance": "synthetic/hand-written",
+  "contract": "contracts/saas-renewal-silent-02.txt",
+  "context": [],
+  "notes": "Renewal is not addressed, so auto_renew must be null; guessing false is the critical error. The thirty-day payment term is not a cancellation notice.",
+  "clauses": [
+    { "category": "limitation_of_liability", "required": true, "span": "each party's total liability arising out of or relating to this Order shall not exceed the fees paid by Customer in the twelve (12) months preceding the claim" },
+    { "category": "non_refundable", "required": false, "span": "Fees are non-refundable except as expressly stated in these terms." },
+    { "category": "unilateral_termination", "required": false, "span": "Provider may suspend access if an invoice remains unpaid after Provider has sent a written reminder." }
+  ],
+  "absent": ["auto_renewal", "arbitration"],
+  "fields": {
+    "summary.renewal.auto_renew": null,
+    "summary.renewal.renewal_period": null,
+    "summary.cancellation.notice_period_text": null,
+    "summary.cancellation.notice_period_days": null
+  },
+  "key_dates": [
+    { "type": "OTHER", "date": "2026-04-15" },
+    { "type": "OTHER", "date": "2026-04-02", "required": false },
+    { "type": "OTHER", "date": "2027-04-14", "required": false },
+    { "type": "OTHER", "date": "2027-04-15", "required": false }
+  ],
+  "parties": [
+    { "name": "Lumenfold Analytics, Inc.", "aliases": ["Lumenfold Analytics"] },
+    { "name": "Cedar Row Bakery Co.", "aliases": ["Cedar Row Bakery"] }
+  ]
+}

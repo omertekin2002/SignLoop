@@ -1,0 +1,33 @@
+{
+  "id": "subscription-schedule-fees-06",
+  "title": "Long subscription agreement with its fee escalator and exit fee in an end schedule",
+  "provenance": "synthetic/hand-written",
+  "contract": "contracts/subscription-schedule-fees-06.txt",
+  "context": [],
+  "notes": "Renewal terms sit in the head segment; the fee escalator and early termination fee sit in Schedule C, inside the tail segment, so tail offsets are absolute.",
+  "clauses": [
+    { "category": "auto_renewal", "required": true, "segment": "head", "span": "This Agreement renews automatically for successive twelve (12) month periods" },
+    { "category": "cancellation_notice", "required": true, "segment": "head", "span": "unless either party gives written notice of non-renewal at least 60 days before the end of the then-current term" },
+    { "category": "price_increase", "required": true, "segment": "tail", "span": "the Subscription Fees increase by five percent (5%) on each anniversary of the Effective Date" },
+    { "category": "early_termination_fee", "required": true, "segment": "tail", "span": "Customer shall pay an early termination fee equal to all Subscription Fees remaining for the then-current term" }
+  ],
+  "absent": ["arbitration"],
+  "fields": {
+    "summary.renewal.auto_renew": true,
+    "summary.renewal.renewal_period": { "canon": [12, "month"] },
+    "summary.cancellation.notice_period_text": { "canon": [60, "day"] },
+    "summary.cancellation.notice_period_days": 60
+  },
+  "key_dates": [
+    { "type": "OTHER", "date": "2026-08-01" },
+    { "type": "OTHER", "date": "2026-07-20", "required": false },
+    { "type": "OTHER", "date": "2027-07-31", "required": false },
+    { "type": "RENEWAL", "date": "2027-08-01", "required": false },
+    { "type": "NOTICE_CUTOFF", "date": "2027-06-01", "required": false },
+    { "type": "NOTICE_CUTOFF", "date": "2027-06-02", "required": false }
+  ],
+  "parties": [
+    { "name": "Kestrel Point Software Ltd.", "aliases": ["Kestrel Point Software"] },
+    { "name": "Bluefin Dental Group PLLC", "aliases": ["Bluefin Dental Group"] }
+  ]
+}

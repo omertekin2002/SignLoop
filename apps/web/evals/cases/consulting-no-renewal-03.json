@@ -1,0 +1,29 @@
+{
+  "id": "consulting-no-renewal-03",
+  "title": "Benign consulting agreement that expressly does not renew",
+  "provenance": "synthetic/hand-written",
+  "contract": "contracts/consulting-no-renewal-03.txt",
+  "context": [],
+  "benign": true,
+  "notes": "Explicit non-renewal makes auto_renew false. Digit-led calendar-day notice may populate the numeric field. Nothing here warrants a high-severity flag.",
+  "clauses": [
+    { "category": "termination_for_convenience", "required": false, "span": "Either party may terminate this Agreement for any reason by giving the other party 15 calendar days' written notice." },
+    { "category": "limitation_of_liability", "required": false, "span": "Each party's liability under this Agreement is limited to the total fees paid or payable under this Agreement, except for breaches of Section 6." }
+  ],
+  "absent": ["auto_renewal", "early_termination_fee", "arbitration"],
+  "fields": {
+    "summary.renewal.auto_renew": false,
+    "summary.renewal.renewal_period": null,
+    "summary.cancellation.notice_period_text": { "canon": [15, "day"] },
+    "summary.cancellation.notice_period_days": 15
+  },
+  "key_dates": [
+    { "type": "OTHER", "date": "2026-05-11" },
+    { "type": "OTHER", "date": "2026-11-30" },
+    { "type": "OTHER", "date": "2026-05-04", "required": false }
+  ],
+  "parties": [
+    { "name": "Marigold Lane Consulting LLC", "aliases": ["Marigold Lane Consulting"] },
+    { "name": "Teal Harbor Community Alliance" }
+  ]
+}

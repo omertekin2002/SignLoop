@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
 import { isUuid } from "@/lib/utils";
-import { attachAnalysisSources } from "@/lib/analysis-sources";
+import { finalizeAnalysisResult } from "@/lib/analysis-sources";
 import { analyzeText } from "@/lib/analysis";
 import { admitAnalysis } from "@/lib/chat-admission";
 import {
@@ -136,25 +136,21 @@ export async function POST(
             originalCharacterCount: document.originalCharacterCount,
           })),
         });
-      const qualityWarnings = [
-        contract.extractionWarning,
-        ...contextDocuments.map((document) =>
-          document.extractionWarning
-            ? `${document.title}: ${document.extractionWarning}`
-            : null,
-        ),
-      ].filter((warning): warning is string => Boolean(warning));
-      result.coverage_notices = [
-        ...qualityWarnings,
-        ...(result.coverage_notices ?? []),
-      ];
       const created = await createAnalysisForContract({
         userId,
         contractId: contract.id,
         expectedRevision: contract.revision,
         riskBadge:
           typeof result.risk_badge === "string" ? result.risk_badge : null,
-        resultJson: attachAnalysisSources(result as Record<string, unknown>, contract.id, contract.text),
+        resultJson: finalizeAnalysisResult(
+          result,
+          {
+            id: contract.id,
+            text: contract.text,
+            extractionWarning: contract.extractionWarning,
+          },
+          contextDocuments,
+        ),
         llmProvider: provider ?? null,
         llmModel: model ?? null,
         llmPromptTokens: promptTokens,

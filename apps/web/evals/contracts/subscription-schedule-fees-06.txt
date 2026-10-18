@@ -1,0 +1,167 @@
+SOFTWARE SUBSCRIPTION AGREEMENT
+
+This Software Subscription Agreement (the "Agreement") is made on July 20, 2026 between Kestrel Point Software Ltd. ("Provider") and Bluefin Dental Group PLLC ("Customer"). It takes effect on August 1, 2026 (the "Effective Date").
+
+1. SUBSCRIPTION AND ACCESS
+
+1.1 Subscription. Provider grants Customer a non-exclusive, non-transferable subscription to access and use the Kestrel Point practice-management software (the "Software") during the term, for the practice locations and number of users stated in Schedule A.
+1.2 Users. Customer may allow its dentists, hygienists, and administrative staff to use the Software. Each user must have a unique login, and Customer will ensure that users keep their credentials secure.
+1.3 Restrictions. Customer will not copy, modify, or reverse engineer the Software, resell access to it, or use it to provide services to practices that are not listed in Schedule A.
+1.4 Updates. Provider will provide all updates and new releases of the Software that it makes generally available to its subscription customers at no additional charge.
+1.5 Third-party services. The Software can connect to insurance clearinghouses, imaging devices, and payment processors chosen by Customer. Those services are provided by third parties under their own terms, and Provider is not responsible for their availability or performance.
+
+2. TERM AND RENEWAL
+
+2.1 Initial term. The initial term of this Agreement begins on the Effective Date and ends on July 31, 2027 (the "Initial Term").
+2.2 Renewal. This Agreement renews automatically for successive twelve (12) month periods (each a "Renewal Term") unless either party gives written notice of non-renewal at least 60 days before the end of the then-current term.
+2.3 Renewal fees. Fees for each Renewal Term are calculated as set out in Schedule C.
+
+3. IMPLEMENTATION
+
+3.1 Implementation services. Provider will configure the Software, migrate patient scheduling and billing records from Customer's existing system, and train Customer's staff as described in the implementation plan in Schedule A.
+3.2 Customer cooperation. Customer will provide a project lead, timely access to its existing system and data, and the decisions needed for configuration. Delays caused by Customer may extend the implementation timeline.
+3.3 Timeline. Provider will use reasonable efforts to complete implementation within forty-five (45) days after the Effective Date.
+3.4 Acceptance. Each location is considered live when Provider confirms that scheduling, charting, and billing work for that location and Customer does not report a material defect within five (5) business days after that confirmation.
+3.5 Data migration. Provider will migrate up to seven (7) years of historical appointment and billing records. Older records, scanned paper charts, and images stored outside Customer's existing system are excluded unless the parties agree a separate statement of work.
+
+4. FEES AND PAYMENT
+
+4.1 Fees. Customer will pay the fees set out in Schedule C.
+4.2 Invoices. Invoices are payable within 20 days of the invoice date by bank transfer or card payment.
+4.3 Suspension. If any undisputed amount remains unpaid for more than thirty (30) days after its due date, Provider may suspend access to the Software after giving Customer at least ten (10) days' written notice.
+4.4 Taxes. All fees are exclusive of taxes, which Customer will pay in addition.
+4.5 Disputed invoices. Customer may withhold a disputed amount if it notifies Provider of the dispute in writing before the due date and pays the undisputed part of the invoice on time.
+
+5. SUPPORT AND AVAILABILITY
+
+5.1 Support hours. Provider will provide support by telephone and through its online portal from 7:00 a.m. to 8:00 p.m. Central Time, Monday through Saturday.
+5.2 Urgent issues. Provider will respond to urgent issues that prevent a practice from scheduling or billing patients within one (1) hour during support hours.
+5.3 Availability. Provider will meet the availability commitment and response targets in Schedule B.
+5.4 Scheduled maintenance. Provider will perform scheduled maintenance outside Customer's normal clinic hours and will announce it in the Software at least two (2) business days in advance.
+5.5 Training resources. Provider will keep an online library of training videos and guides for the current release of the Software.
+
+6. PATIENT DATA AND PRIVACY
+
+6.1 Customer data. Customer owns all patient, scheduling, and billing data that it enters into the Software ("Customer Data").
+6.2 Business associate terms. The parties will comply with the business associate agreement signed with this Agreement, which governs Provider's handling of protected health information.
+6.3 Security. Provider will encrypt Customer Data in transit and at rest, restrict access to personnel who need it to provide the Software, and maintain audit logs of access to Customer Data.
+6.4 Export. During the term and for thirty (30) days after it ends, Customer may export Customer Data in a standard format at no charge.
+6.5 Backups. Provider will back up Customer Data at least daily and will test the restoration of backups at least once each quarter.
+6.6 Hosting. Provider will host Customer Data in data centres located in the United States that hold current independent security certifications.
+
+7. CONFIDENTIALITY
+
+7.1 Obligations. Each party will keep confidential all non-public information received from the other party and will use it only to perform this Agreement.
+7.2 Exclusions. These obligations do not apply to information that becomes public through no fault of the recipient or that the recipient already knew or independently developed.
+7.3 Duration. The obligations in this Section continue for three (3) years after this Agreement ends, and indefinitely for trade secrets and protected health information.
+
+8. WARRANTIES
+
+8.1 Software warranty. Provider warrants that the Software will perform materially in accordance with its documentation. If it does not, Provider will correct the problem within a reasonable time.
+8.2 Customer warranty. Customer warrants that it has all rights and consents needed to provide Customer Data to Provider.
+8.3 Disclaimer. Except as stated in this Section 8, the Software is provided "as is", and Provider disclaims all implied warranties.
+
+9. LIABILITY
+
+9.1 Excluded losses. Neither party is liable for indirect or consequential losses, or for loss of profits or goodwill.
+9.2 Cap. Each party's total liability under this Agreement in any year of the term is limited to the fees paid or payable in that year, except for Customer's payment obligations and either party's breach of the business associate agreement.
+
+10. TERMINATION
+
+10.1 Termination for breach. Either party may terminate this Agreement by written notice if the other party commits a material breach that remains uncured thirty (30) days after written notice of the breach.
+10.2 Termination by Customer. Termination by Customer for any other reason is subject to Schedule C.
+10.3 Effect of termination. On termination, Provider will make Customer Data available for export under Section 6.4 and will then delete it from its systems, except for backups that are overwritten in the ordinary course.
+
+11. ACCEPTABLE USE
+
+11.1 Lawful use. Customer will use the Software only for lawful purposes related to the operation of its dental practices.
+11.2 Prohibited conduct. Customer will not upload malicious code, attempt to gain unauthorised access to the Software or to other customers' data, or interfere with the operation of the Software.
+11.3 Patient messages. Customer will not use the Software to send marketing messages to patients who have not given any consent required by applicable law.
+11.4 Access restrictions. Provider may temporarily restrict a user's access if that user's activity threatens the security or integrity of the Software, and will notify Customer promptly when it does so.
+
+12. COMPLIANCE
+
+12.1 Laws. Each party will comply with the laws and professional rules that apply to it in connection with this Agreement, including laws that govern the privacy and security of health information.
+12.2 Clinical decisions. Customer is responsible for the clinical and billing decisions made by its staff. The Software supports those decisions but does not replace professional judgement.
+12.3 Payer changes. Provider will update the Software to reflect changes in claim formats and code sets required by payers within a reasonable time after those changes are published.
+12.4 Referrals. Neither party will offer or accept any payment or benefit in exchange for patient referrals in connection with this Agreement.
+
+13. INDEMNIFICATION
+
+13.1 By Provider. Provider will defend Customer against any third-party claim alleging that the Software infringes that third party's intellectual property rights, and will pay any damages finally awarded or agreed in settlement.
+13.2 By Customer. Customer will defend Provider against any third-party claim arising from Customer Data or from Customer's use of the Software in breach of this Agreement, and will pay any damages finally awarded or agreed in settlement.
+13.3 Remedies. If the Software becomes the subject of an infringement claim, Provider may obtain the right for Customer to continue using it, modify it so that it is no longer infringing, or, if neither option is reasonably available, end the subscription and refund prepaid fees for the unused part of the term.
+13.4 Procedure. The indemnified party must promptly notify the indemnifying party of the claim, allow it to control the defence and settlement, and provide reasonable cooperation at the indemnifying party's expense.
+
+14. INSURANCE
+
+14.1 Coverage. Provider will maintain professional liability insurance that includes cyber liability coverage, and commercial general liability insurance, each with reputable insurers.
+14.2 Certificates. Provider will provide certificates of insurance on Customer's reasonable request.
+
+15. SUBCONTRACTORS AND PERSONNEL
+
+15.1 Subcontractors. Provider may use subcontractors to host the Software and to perform implementation services. Provider remains responsible for its subcontractors' performance.
+15.2 Training. Provider will ensure that personnel who can access Customer Data have completed privacy and security training and are bound by confidentiality obligations.
+15.3 Subcontractor list. Provider will maintain a list of the subcontractors that can access protected health information and will provide it to Customer on request.
+
+16. RECORDS AND AUDIT
+
+16.1 Records. Provider will keep accurate records of the fees invoiced under this Agreement.
+16.2 Audit. Once in any year of the term, Customer may ask an independent auditor bound by confidentiality obligations to verify the fees invoiced against those records. Customer will bear the cost of the audit unless it shows that Customer was overcharged by more than five percent (5%).
+
+17. DISPUTE RESOLUTION
+
+17.1 Escalation. If a dispute arises, either party may give the other a written description of it. Each party will then appoint a senior representative, and the representatives will meet, in person or by video conference, within fifteen (15) business days to try to resolve the dispute.
+17.2 Courts. If the dispute is not resolved within thirty (30) days after the written description is given, either party may start proceedings in the courts named in Section 20.3.
+17.3 Urgent relief. Nothing in this Section prevents a party from seeking urgent injunctive relief to protect its confidential information or intellectual property.
+
+18. FORCE MAJEURE
+
+18.1 Excused delay. Neither party is liable for a delay or failure to perform caused by events beyond its reasonable control, such as natural disasters, utility failures, or acts of government, other than payment obligations.
+18.2 Mitigation. The affected party will notify the other party promptly and use reasonable efforts to resume performance.
+
+19. MISCELLANEOUS
+
+19.1 Independent contractors. The parties are independent contractors. Nothing in this Agreement creates a partnership, joint venture, or employment relationship.
+19.2 Publicity. Provider may identify Customer as a customer in its client list, but will not otherwise use Customer's name or logo without Customer's prior written consent.
+19.3 Severability. If any provision of this Agreement is held unenforceable, the remaining provisions remain in effect.
+19.4 Waiver. A failure or delay in enforcing a provision is not a waiver of it.
+19.5 Counterparts. This Agreement may be signed electronically and in counterparts, each of which is an original.
+19.6 Survival. Sections 6, 7, 9, 13, and 17, and any accrued payment obligations, survive the end of this Agreement.
+
+20. GENERAL
+
+20.1 Notices. Notices must be in writing and sent to Provider at contracts@example.net and to Customer at office.manager@example.com.
+20.2 Assignment. Customer may not assign this Agreement without Provider's prior written consent, which Provider will not unreasonably withhold.
+20.3 Governing law. This Agreement is governed by the laws of the State of Texas, and the courts of Travis County, Texas have exclusive jurisdiction.
+20.4 Entire agreement. This Agreement, including its Schedules, is the entire agreement between the parties and supersedes all earlier proposals.
+
+SIGNED by the authorised representatives of the parties.
+
+Kestrel Point Software Ltd.
+By: Taylor Example, Head of Customer Contracts
+
+Bluefin Dental Group PLLC
+By: Robin Placeholder, Practice Operations Director
+
+SCHEDULE A - SUBSCRIPTION DETAILS
+
+Practice locations: Bluefin Dental - Northgate; Bluefin Dental - Lakeshore; Bluefin Dental - Riverside
+Named users: up to forty (40)
+Modules: scheduling, charting, billing, patient reminders, and reporting
+Implementation plan: kickoff within ten (10) business days of the Effective Date, followed by data migration and staff training for one location at a time. Each location receives two (2) on-site training days and access to the online training library. Provider will deliver a written cut-over checklist to each location before it goes live, and Customer will confirm the checklist before its existing system is switched to read-only access.
+
+SCHEDULE B - SERVICE LEVELS
+
+B.1 Availability. The Software will be available at least 99.5% of the time in each calendar month, excluding scheduled maintenance announced under Section 5.4.
+B.2 Service credits. If availability in a month falls below 99.5%, Customer will receive a credit of five percent (5%) of that month's Subscription Fees for each full percentage point of shortfall, up to a maximum of twenty percent (20%) of that month's Subscription Fees.
+B.3 Response targets. Urgent issues: one (1) hour. High-priority issues: four (4) hours. Normal issues: one (1) business day.
+B.4 Credits. Credits are applied to the next invoice and are Customer's sole monetary remedy for availability failures.
+
+SCHEDULE C - FEES
+
+C.1 Subscription Fees: $2,150.00 per month for the practice locations and users in Schedule A, invoiced monthly in advance.
+C.2 Annual adjustment: the Subscription Fees increase by five percent (5%) on each anniversary of the Effective Date.
+C.3 Implementation fee: a one-time fee of $4,500.00, invoiced on the Effective Date and non-refundable once data migration has started.
+C.4 Early termination: if Customer terminates this Agreement before the end of the then-current term for any reason other than Provider's uncured material breach, Customer shall pay an early termination fee equal to all Subscription Fees remaining for the then-current term.
+C.5 Additional locations: $650.00 per month for each additional practice location.

@@ -1,0 +1,14 @@
+{
+  "id": "paraphrased-quote",
+  "case": "gym-autorenew-01",
+  "description": "The renewal finding paraphrases the clause instead of quoting it, so production cannot verify it and the clause is no longer found.",
+  "patch": [
+    { "path": "/red_flags/0/evidence/quote", "value": "Membership automatically renews for successive 12-month terms" }
+  ],
+  "targets": [
+    "clauses.category.auto_renewal",
+    "clauses.recall",
+    "quotes.diagnosis.near_miss",
+    "quotes.verification_rate"
+  ]
+}

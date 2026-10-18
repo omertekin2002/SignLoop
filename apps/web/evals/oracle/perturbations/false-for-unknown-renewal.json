@@ -1,0 +1,7 @@
+{
+  "id": "false-for-unknown-renewal",
+  "case": "saas-renewal-silent-02",
+  "description": "The model guesses that a contract silent on renewal does not renew, the critical abstention error.",
+  "patch": [{ "path": "/summary/renewal/auto_renew", "value": false }],
+  "targets": ["auto_renew.critical", "fields.summary.renewal.auto_renew"]
+}

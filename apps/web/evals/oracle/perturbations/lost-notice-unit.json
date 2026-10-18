@@ -1,0 +1,7 @@
+{
+  "id": "lost-notice-unit",
+  "case": "gym-autorenew-01",
+  "description": "The notice wording drops its business-day unit, turning ten business days into ten calendar days.",
+  "patch": [{ "path": "/summary/cancellation/notice_period_text", "value": "10 days" }],
+  "targets": ["fields.summary.cancellation.notice_period_text"]
+}

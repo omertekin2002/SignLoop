@@ -1,0 +1,109 @@
+{
+  "case": "saas-renewal-silent-02",
+  "note": "Ideal answer: renewal is not addressed, so auto_renew, renewal period, and notice stay null instead of guessing.",
+  "output": {
+    "risk_badge": "LOW",
+    "key_points": [
+      "The subscription runs for twelve months from April 15, 2026.",
+      "The order does not say whether the subscription renews; confirm renewal terms with the Provider.",
+      "Fees of $7,200.00 are invoiced upfront and are non-refundable except under the warranty remedy.",
+      "Liability on both sides is capped at the fees paid in the prior twelve months."
+    ],
+    "summary": {
+      "what_it_is": "A twelve-month SaaS order form and subscription terms for an analytics service.",
+      "payments": {
+        "amount": "$7,200.00 for the Subscription Term",
+        "frequency": "Annually in advance",
+        "fees": []
+      },
+      "term": {
+        "start": "2026-04-15",
+        "end": "2027-04-14",
+        "minimum_term": "12 months"
+      },
+      "renewal": {
+        "auto_renew": null,
+        "renewal_period": null
+      },
+      "cancellation": {
+        "how": "Either party may terminate for an uncured material breach after written notice; no termination for convenience is described.",
+        "notice_period_days": null,
+        "notice_period_text": null,
+        "penalties": [
+          "Fees are non-refundable except as expressly stated in the terms"
+        ]
+      }
+    },
+    "red_flags": [
+      {
+        "type": "Liability cap",
+        "severity": 4,
+        "explanation": "Each party's total liability is capped at the fees paid in the twelve months before a claim, which may not cover a serious data loss.",
+        "where": "Section 6",
+        "confidence": 90,
+        "evidence": {
+          "quote": "each party's total liability arising out of or relating to this Order shall not exceed the fees paid by Customer in the twelve (12) months preceding the claim",
+          "segment": "full"
+        }
+      },
+      {
+        "type": "Non-refundable fees",
+        "severity": 3,
+        "explanation": "The annual fee is paid upfront and cannot be refunded except under the warranty remedy.",
+        "where": "Section 2",
+        "confidence": 85,
+        "evidence": {
+          "quote": "Fees are non-refundable except as expressly stated in these terms.",
+          "segment": "full"
+        }
+      },
+      {
+        "type": "Suspension for late payment",
+        "severity": 3,
+        "explanation": "The Provider can suspend access after a single written reminder, with no grace period stated.",
+        "where": "Section 2",
+        "confidence": 75,
+        "evidence": {
+          "quote": "Provider may suspend access if an invoice remains unpaid after Provider has sent a written reminder.",
+          "segment": "full"
+        }
+      }
+    ],
+    "normal_in_region": [
+      {
+        "topic": "Liability cap",
+        "typical_range": "Commonly twelve months of fees for SaaS subscriptions",
+        "yours": "Fees paid in the twelve months before the claim",
+        "label": "typical"
+      }
+    ],
+    "next_actions": {
+      "questions_to_ask": [
+        "Does the subscription renew after April 2027, and if so on what terms and notice?",
+        "Is there a grace period before access is suspended for a late invoice?"
+      ],
+      "email_templates": [
+        {
+          "subject": "Question about subscription renewal",
+          "body": "Hello, our order form does not describe what happens at the end of the twelve-month Subscription Term. Could you confirm whether the subscription renews and what notice is required to end it? Thank you."
+        }
+      ]
+    },
+    "key_dates": [
+      {
+        "type": "OTHER",
+        "date": "2026-04-15",
+        "derived_from": "Effective Date"
+      }
+    ],
+    "obligations": [
+      "Pay each invoice within thirty days of the invoice date",
+      "Use the service only for internal business purposes"
+    ],
+    "parties": [
+      "Lumenfold Analytics, Inc. (Provider)",
+      "Cedar Row Bakery Co. (Customer)"
+    ],
+    "disclaimer": "This is an AI analysis, not legal advice."
+  }
+}

@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# Evaluation contracts are byte-exact: gold offsets and SHA-256 revisions depend on their line endings.
+apps/web/evals/contracts/** -text

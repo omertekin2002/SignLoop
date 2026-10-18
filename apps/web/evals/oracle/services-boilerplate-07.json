@@ -1,0 +1,114 @@
+{
+  "case": "services-boilerplate-07",
+  "note": "Ideal answer: findings quote the distinguishing clause text, never the repeated survival sentence on its own.",
+  "output": {
+    "risk_badge": "MEDIUM",
+    "key_points": [
+      "The initial term is twelve months from September 1, 2026, then the agreement renews automatically for three-month periods.",
+      "Either party may end the agreement for convenience on 45 days' written notice.",
+      "Client may not solicit or hire Provider's staff for 24 months after the agreement ends; a breach costs 50% of that person's annual compensation."
+    ],
+    "summary": {
+      "what_it_is": "A website hosting and maintenance services agreement for a veterinary clinic.",
+      "payments": {
+        "amount": "$240.00 per month",
+        "frequency": "Monthly",
+        "fees": [
+          "$95.00 per hour for work beyond the monthly allowance",
+          "Interest of 1.5% per month on overdue amounts"
+        ]
+      },
+      "term": {
+        "start": "2026-09-01",
+        "end": null,
+        "minimum_term": "12 months"
+      },
+      "renewal": {
+        "auto_renew": true,
+        "renewal_period": "3 months"
+      },
+      "cancellation": {
+        "how": "Either party may terminate for convenience by written notice, or immediately for an uncured material breach.",
+        "notice_period_days": 45,
+        "notice_period_text": "45 days",
+        "penalties": []
+      }
+    },
+    "red_flags": [
+      {
+        "type": "Automatic renewal",
+        "severity": 4,
+        "explanation": "After the first year the agreement renews for three-month periods unless ended under Section 9.",
+        "where": "Section 2",
+        "confidence": 90,
+        "evidence": {
+          "quote": "Thereafter this Agreement renews automatically for successive three (3) month periods",
+          "segment": "full"
+        }
+      },
+      {
+        "type": "Non-solicitation and no-hire restriction",
+        "severity": 6,
+        "explanation": "Client cannot hire Provider's staff during the agreement or for 24 months afterwards.",
+        "where": "Section 7",
+        "confidence": 90,
+        "evidence": {
+          "quote": "During the term of this Agreement and for twenty-four (24) months afterwards, Client shall not, directly or indirectly, solicit for employment or hire any employee or contractor of Provider who worked on Client's account.",
+          "segment": "full"
+        }
+      },
+      {
+        "type": "Placement fee",
+        "severity": 5,
+        "explanation": "Breaching the non-solicitation clause costs half of the person's annual compensation.",
+        "where": "Section 7",
+        "confidence": 85,
+        "evidence": {
+          "quote": "If Client breaches this Section, Client shall pay Provider a placement fee equal to fifty percent (50%) of that person's annual compensation.",
+          "segment": "full"
+        }
+      },
+      {
+        "type": "Late payment interest",
+        "severity": 3,
+        "explanation": "Overdue invoices accrue 1.5% interest per month, about 18% per year.",
+        "where": "Section 4",
+        "confidence": 85,
+        "evidence": {
+          "quote": "Overdue amounts accrue interest at 1.5% per month.",
+          "segment": "full"
+        }
+      }
+    ],
+    "normal_in_region": [
+      {
+        "topic": "Non-solicitation period",
+        "typical_range": "Often six to twelve months",
+        "yours": "24 months after the agreement ends",
+        "label": "unusual"
+      }
+    ],
+    "next_actions": {
+      "questions_to_ask": [
+        "Can the non-solicitation period be reduced to twelve months?"
+      ],
+      "email_templates": []
+    },
+    "key_dates": [
+      {
+        "type": "OTHER",
+        "date": "2026-09-01",
+        "derived_from": "Start Date"
+      }
+    ],
+    "obligations": [
+      "Client pays the monthly care fee within 15 days of invoice",
+      "Provider hosts, updates, and backs up the website"
+    ],
+    "parties": [
+      "Sparrowhawk Web Studio LLC (Provider)",
+      "Riverbend Veterinary Clinic, P.C. (Client)"
+    ],
+    "disclaimer": "This is an AI analysis, not legal advice."
+  }
+}

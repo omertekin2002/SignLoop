@@ -1,0 +1,133 @@
+{
+  "case": "subscription-schedule-fees-06",
+  "note": "Ideal answer: renewal findings cite the head segment and Schedule C findings cite the tail segment, so citations carry absolute tail offsets.",
+  "output": {
+    "risk_badge": "MEDIUM",
+    "key_points": [
+      "Coverage is incomplete: part of the middle of the agreement was not reviewed.",
+      "The subscription renews automatically for twelve-month periods unless notice of non-renewal is given at least 60 days before the term ends.",
+      "Schedule C raises the Subscription Fees by 5% on each anniversary and charges all remaining fees on early termination."
+    ],
+    "summary": {
+      "what_it_is": "A practice-management software subscription for three dental locations.",
+      "payments": {
+        "amount": "$2,150.00 per month",
+        "frequency": "Monthly in advance",
+        "fees": [
+          "$4,500.00 one-time implementation fee",
+          "$650.00 per month for each additional location",
+          "5% increase on each anniversary of the Effective Date"
+        ]
+      },
+      "term": {
+        "start": "2026-08-01",
+        "end": "2027-07-31",
+        "minimum_term": "Initial Term to July 31, 2027"
+      },
+      "renewal": {
+        "auto_renew": true,
+        "renewal_period": "12 months"
+      },
+      "cancellation": {
+        "how": "Written notice of non-renewal before the end of the current term; termination at other times triggers the Schedule C early termination fee.",
+        "notice_period_days": 60,
+        "notice_period_text": "60 days",
+        "penalties": [
+          "Early termination fee equal to all Subscription Fees remaining for the then-current term"
+        ]
+      }
+    },
+    "red_flags": [
+      {
+        "type": "Automatic renewal",
+        "severity": 5,
+        "explanation": "The subscription renews for another twelve months unless notice is given in time.",
+        "where": "Section 2.2",
+        "confidence": 95,
+        "evidence": {
+          "quote": "This Agreement renews automatically for successive twelve (12) month periods",
+          "segment": "head"
+        }
+      },
+      {
+        "type": "Non-renewal notice deadline",
+        "severity": 4,
+        "explanation": "Notice of non-renewal must be given at least 60 days before the term ends.",
+        "where": "Section 2.2",
+        "confidence": 90,
+        "evidence": {
+          "quote": "unless either party gives written notice of non-renewal at least 60 days before the end of the then-current term",
+          "segment": "head"
+        }
+      },
+      {
+        "type": "Annual fee escalator",
+        "severity": 5,
+        "explanation": "The monthly Subscription Fees rise by 5% on every anniversary, including renewals.",
+        "where": "Schedule C, C.2",
+        "confidence": 90,
+        "evidence": {
+          "quote": "the Subscription Fees increase by five percent (5%) on each anniversary of the Effective Date",
+          "segment": "tail"
+        }
+      },
+      {
+        "type": "Early termination fee",
+        "severity": 7,
+        "explanation": "Ending the agreement early requires paying every remaining Subscription Fee for the current term.",
+        "where": "Schedule C, C.4",
+        "confidence": 90,
+        "evidence": {
+          "quote": "Customer shall pay an early termination fee equal to all Subscription Fees remaining for the then-current term",
+          "segment": "tail"
+        }
+      }
+    ],
+    "normal_in_region": [
+      {
+        "topic": "Early termination fee",
+        "typical_range": "Often limited to a few months of fees",
+        "yours": "All Subscription Fees remaining for the then-current term",
+        "label": "unusual"
+      }
+    ],
+    "next_actions": {
+      "questions_to_ask": [
+        "Can the early termination fee be limited to a fixed number of months?",
+        "Can the annual 5% increase be capped or waived for the first renewal?"
+      ],
+      "email_templates": [
+        {
+          "subject": "Notice of non-renewal",
+          "body": "Hello, this is our written notice that we do not wish to renew the Software Subscription Agreement at the end of the current term. Please confirm receipt. Thank you."
+        }
+      ]
+    },
+    "key_dates": [
+      {
+        "type": "OTHER",
+        "date": "2026-08-01",
+        "derived_from": "Effective Date"
+      },
+      {
+        "type": "RENEWAL",
+        "date": "2027-08-01",
+        "derived_from": "The first Renewal Term starts after the Initial Term ends on July 31, 2027"
+      },
+      {
+        "type": "NOTICE_CUTOFF",
+        "date": "2027-06-01",
+        "derived_from": "60 days before the Initial Term ends on July 31, 2027"
+      }
+    ],
+    "obligations": [
+      "Customer pays monthly Subscription Fees in advance",
+      "Provider provides support, updates, and the service levels in Schedule B"
+    ],
+    "parties": [
+      "Kestrel Point Software Ltd. (Provider)",
+      "Bluefin Dental Group PLLC (Customer)"
+    ],
+    "disclaimer": "This is an AI analysis, not legal advice."
+  }
+}

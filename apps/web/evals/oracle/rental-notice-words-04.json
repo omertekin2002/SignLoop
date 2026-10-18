@@ -1,0 +1,115 @@
+{
+  "case": "rental-notice-words-04",
+  "note": "Ideal answer: the notice wording is preserved and notice_period_days is 30, as the prompt allows for an explicit calendar-day duration. Production rejects that pair because calendarNoticeDays only parses digit-led wording, so the payload is normalized and the numeric days become null.",
+  "ideal": {
+    "parse.path": "normalized",
+    "fields.summary.cancellation.notice_period_days": "false_abstention"
+  },
+  "output": {
+    "risk_badge": "MEDIUM",
+    "key_points": [
+      "The initial rental period is six months from delivery on June 1, 2026.",
+      "Afterwards the rental continues month to month until terminated.",
+      "Termination after the initial period requires not less than thirty days' prior written notice.",
+      "Returning the Equipment during the first six months still requires the remaining rent."
+    ],
+    "summary": {
+      "what_it_is": "A rental agreement for two commercial espresso machines with grinders.",
+      "payments": {
+        "amount": "$310.00 per month",
+        "frequency": "Monthly in advance",
+        "fees": [
+          "$500.00 refundable security deposit"
+        ]
+      },
+      "term": {
+        "start": "2026-06-01",
+        "end": null,
+        "minimum_term": "6 months"
+      },
+      "renewal": {
+        "auto_renew": true,
+        "renewal_period": "1 month (month to month)"
+      },
+      "cancellation": {
+        "how": "After the initial rental period, either party may terminate by prior written notice; the Equipment must be available for collection on the termination date.",
+        "notice_period_days": 30,
+        "notice_period_text": "thirty (30) days",
+        "penalties": [
+          "Rent for the remainder of the initial rental period if the Equipment is returned early"
+        ]
+      }
+    },
+    "red_flags": [
+      {
+        "type": "Month-to-month continuation",
+        "severity": 4,
+        "explanation": "After six months the rental continues automatically each month until either party gives notice.",
+        "where": "Section 1",
+        "confidence": 90,
+        "evidence": {
+          "quote": "After the initial rental period, this Agreement continues automatically from month to month until terminated under Section 6.",
+          "segment": "full"
+        }
+      },
+      {
+        "type": "Termination notice",
+        "severity": 3,
+        "explanation": "Ending the rental after the initial period requires at least thirty days' prior written notice.",
+        "where": "Section 6",
+        "confidence": 90,
+        "evidence": {
+          "quote": "either party may terminate this Agreement by giving the other party not less than thirty (30) days’ prior written notice",
+          "segment": "full"
+        }
+      },
+      {
+        "type": "Early return charge",
+        "severity": 5,
+        "explanation": "Returning the machines early still requires paying rent for the rest of the six-month period.",
+        "where": "Section 7",
+        "confidence": 90,
+        "evidence": {
+          "quote": "Renter shall pay the rent for the remainder of the initial rental period",
+          "segment": "full"
+        }
+      }
+    ],
+    "normal_in_region": [
+      {
+        "topic": "Notice to end a month-to-month rental",
+        "typical_range": "Usually 30 days",
+        "yours": "thirty (30) days",
+        "label": "typical"
+      }
+    ],
+    "next_actions": {
+      "questions_to_ask": [
+        "Can the security deposit be applied to the final month's rent?"
+      ],
+      "email_templates": [
+        {
+          "subject": "Notice to end equipment rental",
+          "body": "Hello, this is our written notice to terminate the equipment rental. The Equipment will be available for collection on the termination date, at least thirty days from today. Please confirm a collection time."
+        }
+      ]
+    },
+    "key_dates": [
+      {
+        "type": "OTHER",
+        "date": "2026-06-01",
+        "derived_from": "Delivery date and start of the initial rental period"
+      }
+    ],
+    "obligations": [
+      "Pay rent monthly in advance",
+      "Keep and clean the Equipment as instructed",
+      "Make the Equipment available for collection on termination"
+    ],
+    "parties": [
+      "Copperleaf Equipment Rentals Ltd. (Owner)",
+      "Juniper Street Studio LLC (Renter)"
+    ],
+    "disclaimer": "This is an AI analysis, not legal advice."
+  }
+}

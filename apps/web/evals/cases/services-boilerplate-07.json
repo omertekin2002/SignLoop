@@ -1,0 +1,32 @@
+{
+  "id": "services-boilerplate-07",
+  "title": "Services agreement with repeated survival boilerplate",
+  "provenance": "synthetic/hand-written",
+  "contract": "contracts/services-boilerplate-07.txt",
+  "context": [],
+  "notes": "\"This obligation survives termination or expiry of this Agreement.\" appears three times. Quoting it alone is ambiguous and cannot be verified; evidence must quote the distinguishing clause text.",
+  "clauses": [
+    { "category": "auto_renewal", "required": true, "span": "Thereafter this Agreement renews automatically for successive three (3) month periods" },
+    { "category": "non_solicitation", "required": true, "span": "During the term of this Agreement and for twenty-four (24) months afterwards, Client shall not, directly or indirectly, solicit for employment or hire any employee or contractor of Provider who worked on Client's account." },
+    { "category": "liquidated_damages", "required": false, "span": "If Client breaches this Section, Client shall pay Provider a placement fee equal to fifty percent (50%) of that person's annual compensation." },
+    { "category": "late_payment", "required": false, "span": "Overdue amounts accrue interest at 1.5% per month." },
+    { "category": "cancellation_notice", "required": false, "span": "Either party may terminate this Agreement for convenience by giving 45 days' written notice." }
+  ],
+  "absent": ["arbitration"],
+  "fields": {
+    "summary.renewal.auto_renew": true,
+    "summary.renewal.renewal_period": { "canon": [3, "month"] },
+    "summary.cancellation.notice_period_text": { "canon": [45, "day"] },
+    "summary.cancellation.notice_period_days": 45
+  },
+  "key_dates": [
+    { "type": "OTHER", "date": "2026-09-01" },
+    { "type": "OTHER", "date": "2026-08-24", "required": false },
+    { "type": "OTHER", "date": "2027-08-31", "required": false },
+    { "type": "RENEWAL", "date": "2027-09-01", "required": false }
+  ],
+  "parties": [
+    { "name": "Sparrowhawk Web Studio LLC", "aliases": ["Sparrowhawk Web Studio"] },
+    { "name": "Riverbend Veterinary Clinic, P.C.", "aliases": ["Riverbend Veterinary Clinic"] }
+  ]
+}

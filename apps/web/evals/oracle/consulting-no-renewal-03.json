@@ -1,0 +1,86 @@
+{
+  "case": "consulting-no-renewal-03",
+  "note": "Ideal answer: explicit non-renewal is false, the digit-led calendar-day notice fills the numeric field, and nothing is flagged as high risk.",
+  "output": {
+    "risk_badge": "LOW",
+    "key_points": [
+      "The agreement runs from May 11, 2026 to November 30, 2026 and does not renew automatically.",
+      "Fees are hourly with a $12,000.00 cap unless Client approves more hours in writing.",
+      "Either party may terminate on 15 calendar days' written notice without a termination fee.",
+      "Client owns the grant applications and workshop materials prepared for it."
+    ],
+    "summary": {
+      "what_it_is": "A fixed-term consulting agreement for grant-writing workshops and application reviews.",
+      "payments": {
+        "amount": "$95.00 per hour, capped at $12,000.00 for the term",
+        "frequency": "Monthly in arrears",
+        "fees": [
+          "Pre-approved travel expenses"
+        ]
+      },
+      "term": {
+        "start": "2026-05-11",
+        "end": "2026-11-30",
+        "minimum_term": null
+      },
+      "renewal": {
+        "auto_renew": false,
+        "renewal_period": null
+      },
+      "cancellation": {
+        "how": "Either party may terminate for any reason by written notice; Client pays for services performed through the termination date.",
+        "notice_period_days": 15,
+        "notice_period_text": "15 calendar days",
+        "penalties": []
+      }
+    },
+    "red_flags": [
+      {
+        "type": "Termination for convenience",
+        "severity": 2,
+        "explanation": "Either party can end the agreement on 15 calendar days' notice; Client pays only for work already performed.",
+        "where": "Section 5",
+        "confidence": 90,
+        "evidence": {
+          "quote": "Either party may terminate this Agreement for any reason by giving the other party 15 calendar days' written notice.",
+          "segment": "full"
+        }
+      }
+    ],
+    "normal_in_region": [
+      {
+        "topic": "Termination notice",
+        "typical_range": "Two to four weeks for consulting engagements",
+        "yours": "15 calendar days",
+        "label": "typical"
+      }
+    ],
+    "next_actions": {
+      "questions_to_ask": [
+        "Which staff members will attend the workshops, and are the dates fixed?"
+      ],
+      "email_templates": []
+    },
+    "key_dates": [
+      {
+        "type": "OTHER",
+        "date": "2026-05-11",
+        "derived_from": "Start of the term"
+      },
+      {
+        "type": "OTHER",
+        "date": "2026-11-30",
+        "derived_from": "End of the term"
+      }
+    ],
+    "obligations": [
+      "Client pays hourly fees monthly, up to the $12,000.00 cap",
+      "Consultant delivers two workshops and up to four application reviews"
+    ],
+    "parties": [
+      "Marigold Lane Consulting LLC (Consultant)",
+      "Teal Harbor Community Alliance (Client)"
+    ],
+    "disclaimer": "This is an AI analysis, not legal advice."
+  }
+}

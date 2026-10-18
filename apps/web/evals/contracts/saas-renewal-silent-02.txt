@@ -1,0 +1,32 @@
+LUMENFOLD ANALYTICS, INC.
+ORDER FORM AND SUBSCRIPTION TERMS
+
+Order number: LF-2026-0412
+Order date: April 2, 2026
+Provider: Lumenfold Analytics, Inc. ("Provider")
+Customer: Cedar Row Bakery Co. ("Customer")
+Customer billing contact: accounts@example.org
+
+Subscription: Lumenfold Insights Standard, 25 named users
+Subscription Term: twelve (12) months beginning on April 15, 2026 (the "Effective Date")
+Fees: $7,200.00 for the Subscription Term, invoiced in full on the Effective Date
+
+SUBSCRIPTION TERMS
+
+1. Access. Provider grants Customer a non-exclusive, non-transferable right to access and use the subscribed service during the Subscription Term for Customer's internal business purposes.
+
+2. Fees and payment. Customer shall pay each invoice within thirty (30) days of the invoice date. Fees are non-refundable except as expressly stated in these terms. Provider may suspend access if an invoice remains unpaid after Provider has sent a written reminder.
+
+3. Customer data. Customer owns its data. Provider will process Customer data only to provide the service and will apply reasonable administrative, physical, and technical safeguards.
+
+4. Support. Standard support is available by email at support@example.org on business days.
+
+5. Warranties. Provider warrants that the service will perform materially as described in its documentation. Customer's exclusive remedy for a breach of this warranty is for Provider to correct the non-conformity or, if Provider cannot do so, to terminate the affected subscription and refund prepaid fees for the remainder of the Subscription Term.
+
+6. Limitation of liability. Except for Customer's payment obligations, each party's total liability arising out of or relating to this Order shall not exceed the fees paid by Customer in the twelve (12) months preceding the claim. Neither party is liable for lost profits or for indirect, special, or consequential damages.
+
+7. Termination for breach. Either party may terminate this Order if the other party materially breaches it and fails to cure the breach after receiving written notice describing it. On termination, Customer's access ends and Provider will make Customer data available for export upon request.
+
+8. Governing law. This Order is governed by the laws of the State of Washington, and the parties submit to the courts located in King County, Washington.
+
+9. Entire agreement. This Order Form and these Subscription Terms are the entire agreement between the parties for the subscription described above.

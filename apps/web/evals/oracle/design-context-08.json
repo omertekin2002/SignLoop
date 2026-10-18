@@ -1,0 +1,98 @@
+{
+  "case": "design-context-08",
+  "note": "Ideal answer: the prior retainer informs a key point but is never quoted, and its renewal and arbitration terms are not imported.",
+  "output": {
+    "risk_badge": "LOW",
+    "key_points": [
+      "The project fee is $6,400.00, paid 40% on signing and 60% on delivery of the final files.",
+      "Client may terminate on 14 days' written notice but then owes a kill fee of 50% of the unpaid balance plus completed work.",
+      "The prior 2025 retainer in the project context renewed automatically and required arbitration; this agreement contains neither term."
+    ],
+    "summary": {
+      "what_it_is": "A fixed-fee freelance agreement for packaging design.",
+      "payments": {
+        "amount": "$6,400.00",
+        "frequency": "40% on signing and 60% on delivery of the final files",
+        "fees": [
+          "$85.00 per hour for additional revision rounds"
+        ]
+      },
+      "term": {
+        "start": "2026-10-05",
+        "end": null,
+        "minimum_term": null
+      },
+      "renewal": {
+        "auto_renew": null,
+        "renewal_period": null
+      },
+      "cancellation": {
+        "how": "Client may terminate at any time by written notice to Designer.",
+        "notice_period_days": 14,
+        "notice_period_text": "14 days",
+        "penalties": [
+          "Kill fee of 50% of the unpaid balance of the project fee, plus fees for completed work"
+        ]
+      }
+    },
+    "red_flags": [
+      {
+        "type": "Kill fee on early termination",
+        "severity": 5,
+        "explanation": "Terminating before final delivery costs half of the unpaid project fee on top of completed work.",
+        "where": "Section 4",
+        "confidence": 90,
+        "evidence": {
+          "quote": "Client shall pay a kill fee equal to fifty percent (50%) of the unpaid balance of the project fee, in addition to fees for work already completed",
+          "segment": "full"
+        }
+      },
+      {
+        "type": "Copyright transfers only after full payment",
+        "severity": 3,
+        "explanation": "Client does not own the final designs until every fee has been paid.",
+        "where": "Section 5",
+        "confidence": 85,
+        "evidence": {
+          "quote": "Designer assigns copyright in the final Deliverables to Client upon receipt of full payment.",
+          "segment": "full"
+        }
+      }
+    ],
+    "normal_in_region": [
+      {
+        "topic": "Kill fee",
+        "typical_range": "Commonly 25% to 50% of the remaining fee",
+        "yours": "50% of the unpaid balance plus completed work",
+        "label": "typical"
+      }
+    ],
+    "next_actions": {
+      "questions_to_ask": [
+        "Does the copyright assignment cover unused concepts if Client wants to buy them?"
+      ],
+      "email_templates": []
+    },
+    "key_dates": [
+      {
+        "type": "OTHER",
+        "date": "2026-10-26",
+        "derived_from": "Initial concepts due"
+      },
+      {
+        "type": "OTHER",
+        "date": "2026-12-07",
+        "derived_from": "Final files due"
+      }
+    ],
+    "obligations": [
+      "Client gives consolidated feedback within five business days of each delivery",
+      "Designer delivers concepts, two revision rounds, and print-ready files"
+    ],
+    "parties": [
+      "Quillfeather Design Studio (Designer)",
+      "Brambleberry Tea Company Ltd. (Client)"
+    ],
+    "disclaimer": "This is an AI analysis, not legal advice."
+  }
+}

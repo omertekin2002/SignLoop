@@ -1,0 +1,27 @@
+{
+  "id": "msa-omitted-renewal-05",
+  "title": "Long services agreement whose renewal clause falls in the unsent middle",
+  "provenance": "synthetic/hand-written",
+  "contract": "contracts/msa-omitted-renewal-05.txt",
+  "context": [],
+  "notes": "Section 9 renews automatically, but it lies between the 9,750 code point head and the 5,250 code point tail. The model cannot see it, so renewal and notice must stay null and the coverage notice must be kept.",
+  "clauses": [
+    { "category": "price_increase", "required": true, "segment": "head", "span": "Provider may increase the Fees with effect from the start of each Contract Year by up to seven percent (7%) over the Fees for the preceding Contract Year" },
+    { "category": "late_payment", "required": false, "segment": "head", "span": "Undisputed amounts that are not paid when due accrue interest at the lower of one percent (1%) per month and the highest rate permitted by Applicable Law." },
+    { "category": "auto_renewal", "required": false, "segment": "omitted", "span": "Upon expiry of the Initial Term, this Agreement shall renew automatically for successive one (1) year renewal terms" },
+    { "category": "cancellation_notice", "required": false, "segment": "omitted", "span": "unless either party gives the other at least ninety (90) days' written notice of non-renewal before the end of the then-current Term" },
+    { "category": "limitation_of_liability", "required": true, "segment": "tail", "span": "each party's aggregate liability arising out of or relating to this Agreement shall not exceed the Fees paid or payable by Customer in the twelve (12) months before the event giving rise to the claim" }
+  ],
+  "absent": ["arbitration"],
+  "fields": {
+    "summary.renewal.auto_renew": null,
+    "summary.renewal.renewal_period": null,
+    "summary.cancellation.notice_period_text": null,
+    "summary.cancellation.notice_period_days": null
+  },
+  "key_dates": [{ "type": "OTHER", "date": "2026-07-01" }],
+  "parties": [
+    { "name": "Silverpine Data Systems LLC", "aliases": ["Silverpine Data Systems"] },
+    { "name": "Orchid Ridge Logistics, Inc.", "aliases": ["Orchid Ridge Logistics"] }
+  ]
+}

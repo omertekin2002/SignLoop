@@ -106,7 +106,8 @@ const NON_SUBSTANTIVE_VALUES = new Set([
   "contract clarification request",
 ]);
 
-function isSubstantiveText(value: string | null | undefined): boolean {
+/** False for placeholders such as "Not specified"; the evaluation suite scores these as abstentions. */
+export function isSubstantiveText(value: string | null | undefined): boolean {
   if (typeof value !== "string") return false;
   const normalized = value
     .trim()

@@ -1,0 +1,23 @@
+WEBSITE CARE SERVICES AGREEMENT
+
+This Website Care Services Agreement (the "Agreement") is made on August 24, 2026 between Sparrowhawk Web Studio LLC ("Provider") and Riverbend Veterinary Clinic, P.C. ("Client").
+
+1. Services. Provider will host, update, and monitor Client's website at riverbend-vet.example and make up to four (4) hours of content changes each month.
+
+2. Start date and term. Services begin on September 1, 2026 (the "Start Date"). The initial term is twelve (12) months from the Start Date. Thereafter this Agreement renews automatically for successive three (3) month periods unless either party ends it under Section 9.
+
+3. Client responsibilities. Client will provide content, images, and approvals in a timely manner and is responsible for the accuracy of the content it supplies.
+
+4. Fees. Client shall pay a monthly care fee of $240.00, invoiced on the first business day of each month and due within 15 days. Overdue amounts accrue interest at 1.5% per month. This obligation survives termination or expiry of this Agreement.
+
+5. Additional work. Work beyond the monthly allowance is charged at $95.00 per hour after Client approves an estimate.
+
+6. Confidentiality. Each party shall keep the other party's confidential information secret and use it only to perform this Agreement. This obligation survives termination or expiry of this Agreement.
+
+7. Non-solicitation. During the term of this Agreement and for twenty-four (24) months afterwards, Client shall not, directly or indirectly, solicit for employment or hire any employee or contractor of Provider who worked on Client's account. If Client breaches this Section, Client shall pay Provider a placement fee equal to fifty percent (50%) of that person's annual compensation. This obligation survives termination or expiry of this Agreement.
+
+8. Data. Provider will keep daily backups of the website for thirty (30) days and will return a full export of the website files within ten (10) business days after the end of this Agreement.
+
+9. Termination. Either party may terminate this Agreement for convenience by giving 45 days' written notice. Either party may terminate immediately if the other party materially breaches this Agreement and does not cure the breach within a reasonable period after written notice.
+
+10. Governing law. This Agreement is governed by the laws of the State of Vermont.

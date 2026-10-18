@@ -1,0 +1,153 @@
+MASTER SERVICES AGREEMENT
+
+This Master Services Agreement (the "Agreement") is dated July 1, 2026 (the "Effective Date") and is made between Silverpine Data Systems LLC, a Delaware limited liability company ("Provider"), and Orchid Ridge Logistics, Inc., an Ohio corporation ("Customer"). Provider and Customer are each a "party" and together the "parties".
+
+BACKGROUND
+
+Customer operates regional freight and warehousing services and wishes to engage Provider to host, operate, and support a shipment-tracking platform for its dispatch teams, carriers, and consignees. Provider is willing to provide those services on the terms of this Agreement.
+
+1. DEFINITIONS
+
+In this Agreement the following terms have the meanings given below.
+
+1.1 "Affiliate" means any entity that directly or indirectly controls, is controlled by, or is under common control with a party, where "control" means ownership of more than fifty percent (50%) of the voting interests of the entity.
+1.2 "Applicable Law" means all laws, regulations, and binding governmental orders that apply to a party's performance under this Agreement.
+1.3 "Confidential Information" means non-public information disclosed by one party to the other in connection with this Agreement that is marked as confidential or that a reasonable person would understand to be confidential, but excludes information that is or becomes public through no fault of the recipient, was already known to the recipient, is independently developed by the recipient, or is lawfully received from a third party without restriction.
+1.4 "Contract Year" means each successive period of twelve (12) months beginning on the Effective Date or on an anniversary of the Effective Date.
+1.5 "Customer Data" means all data, records, and content that Customer or its users submit to the Services, including shipment, consignee, and carrier information.
+1.6 "Deliverables" means the reports, configurations, integrations, and other materials that Provider creates specifically for Customer under a Statement of Work.
+1.7 "Documentation" means Provider's then-current user guides and technical specifications for the Platform.
+1.8 "Fees" means the amounts payable by Customer under Section 5 and each Statement of Work.
+1.9 "Platform" means Provider's hosted shipment-tracking software, including updates that Provider makes generally available to its customers.
+1.10 "Services" means access to the Platform, the support and maintenance services described in Section 3, and any professional services described in a Statement of Work.
+1.11 "Statement of Work" or "SOW" means a document signed by both parties that describes professional services, Deliverables, and related fees.
+1.12 "Term" means the Initial Term together with any Renewal Terms, each as described in Section 9.
+
+2. SERVICES
+
+2.1 Provision of the Services. Provider will make the Platform available to Customer and its authorised users during the Term in accordance with the Documentation and this Agreement.
+2.2 Authorised users. Customer may permit its employees and contractors to use the Platform solely for Customer's internal business purposes. Customer is responsible for the acts and omissions of its authorised users and will keep login credentials confidential.
+2.3 Statements of Work. The parties may agree professional services in one or more Statements of Work. Each SOW is governed by this Agreement. If an SOW conflicts with this Agreement, this Agreement prevails unless the SOW expressly states that a specific provision of this Agreement is varied for that SOW.
+2.4 Changes to the Platform. Provider may update the Platform from time to time, provided that an update does not materially reduce the core shipment-tracking functionality described in the Documentation.
+2.5 Subcontractors. Provider may use subcontractors to perform parts of the Services. Provider remains responsible for the performance of its subcontractors as if it had performed the Services itself.
+2.6 Carrier integrations. Provider will maintain the carrier integrations listed in the Documentation. Where a carrier changes its interface, Provider will use commercially reasonable efforts to restore the integration, but Provider is not responsible for outages of carrier systems.
+2.7 Training. Provider will provide up to two (2) remote training sessions for Customer's dispatch supervisors during onboarding and will make recorded training materials available through the Platform.
+
+3. SUPPORT AND SERVICE LEVELS
+
+3.1 Support hours. Provider will provide telephone and email support from 7:00 a.m. to 7:00 p.m. Eastern Time on business days. Support requests may be sent to support@example.com.
+3.2 Availability target. Provider will use commercially reasonable efforts to make the Platform available ninety-nine and one-half percent (99.5%) of the time in each calendar month, excluding scheduled maintenance announced in advance and outages caused by events outside Provider's reasonable control.
+3.3 Service credits. If availability in a calendar month falls below the availability target, Customer will receive a service credit of five percent (5%) of the monthly portion of the platform Fees for each full percentage point below the target, up to a maximum of twenty-five percent (25%) of that monthly portion. Service credits are Customer's sole monetary remedy for availability failures.
+3.4 Incident response. Provider will acknowledge critical incidents within one hour and will provide status updates at least every four hours until the incident is resolved or a workaround is in place.
+3.5 Maintenance windows. Provider will schedule routine maintenance outside Customer's peak dispatch hours where reasonably practicable and will publish a maintenance calendar through the Platform.
+3.6 Support tiers. Customer's support requests are classified as critical, high, normal, or low priority based on their impact on Customer's dispatch operations. Provider will publish its response targets for each priority level in the Documentation and will review them with Customer at least once each Contract Year.
+
+4. CUSTOMER RESPONSIBILITIES
+
+4.1 Customer will provide accurate shipment and carrier information, maintain its own network connections, and promptly notify Provider of any suspected unauthorised access to the Platform.
+4.2 Customer will not reverse engineer the Platform, use the Platform to build a competing product, or upload content that infringes the rights of any third party.
+4.3 Customer is responsible for obtaining any consents required under Applicable Law for Provider to process Customer Data in accordance with this Agreement.
+4.4 Customer will appoint a primary contact who has authority to approve configuration changes and Statements of Work on Customer's behalf.
+4.5 Customer systems. Customer is responsible for the hardware, software, and telecommunications services it uses to access the Platform, including the handheld scanners used by its warehouse teams.
+
+5. FEES AND PAYMENT
+
+5.1 Platform fees. Customer will pay platform Fees of $18,000.00 per Contract Year, invoiced quarterly in advance.
+5.2 Professional services. Professional services are charged at the rates stated in the applicable SOW or, if none are stated, at Provider's standard rate of $165.00 per hour.
+5.3 Fee adjustments. Provider may increase the Fees with effect from the start of each Contract Year by up to seven percent (7%) over the Fees for the preceding Contract Year by giving Customer written notice of the new Fees before that Contract Year begins.
+5.4 Payment terms. Invoices are payable in US dollars within thirty (30) days of the invoice date. Customer may dispute an invoice in good faith by notifying Provider before the due date and paying the undisputed portion.
+5.5 Late payment. Undisputed amounts that are not paid when due accrue interest at the lower of one percent (1%) per month and the highest rate permitted by Applicable Law.
+5.6 Expenses. Customer will reimburse reasonable travel expenses for on-site professional services that Customer approves in writing in advance.
+
+6. TAXES
+
+6.1 Fees exclude sales, use, value added, and similar taxes. Customer will pay those taxes, other than taxes on Provider's net income, or provide a valid exemption certificate.
+
+7. CONFIDENTIALITY
+
+7.1 Obligations. The recipient of Confidential Information will use it only to perform or receive the Services, will not disclose it to anyone other than its employees, contractors, and advisers who need to know it and are bound by obligations at least as protective as this Section, and will protect it using at least reasonable care.
+7.2 Compelled disclosure. The recipient may disclose Confidential Information if required by law, provided that it gives the discloser prompt notice where legally permitted and cooperates with any effort to obtain protective treatment.
+7.3 Return or destruction. On request after the end of the Term, each party will return or destroy the other party's Confidential Information, except for copies retained in routine backups or as required by law, which remain subject to this Section.
+
+8. DATA PROTECTION AND SECURITY
+
+8.1 Processing. Provider will process Customer Data only on Customer's documented instructions, which are set out in this Agreement and the Documentation, and only to provide the Services.
+8.2 Security measures. Provider will maintain administrative, physical, and technical safeguards designed to protect Customer Data against unauthorised access, loss, or alteration, including encryption of Customer Data in transit and at rest, role-based access controls, and annual third-party penetration testing.
+8.3 Security incidents. Provider will notify Customer without undue delay after becoming aware of a security incident affecting Customer Data, and will provide information reasonably requested by Customer to meet its own obligations.
+8.4 Data location. Provider will host Customer Data in data centres located in the United States.
+8.5 Data export. During the Term and for a reasonable period afterwards, Customer may export Customer Data in a commonly used, machine-readable format.
+8.6 Subprocessors. Provider will maintain a list of the subprocessors that process Customer Data and will notify Customer before adding a new subprocessor. Customer may object to a new subprocessor on reasonable data protection grounds, and the parties will discuss the objection in good faith.
+8.7 Security reviews. Once in each Contract Year, Customer may request a copy of Provider's most recent independent security assessment report and may send Provider a reasonable security questionnaire, which Provider will answer within a reasonable time.
+
+9. TERM AND RENEWAL
+
+9.1 Initial Term. This Agreement begins on the Effective Date and continues for an initial term of three (3) years (the "Initial Term").
+9.2 Renewal. Upon expiry of the Initial Term, this Agreement shall renew automatically for successive one (1) year renewal terms (each a "Renewal Term") unless either party gives the other at least ninety (90) days' written notice of non-renewal before the end of the then-current Term.
+9.3 Statements of Work. Each SOW continues for the period stated in it, but no SOW extends beyond the end of the Term unless the parties agree otherwise in writing.
+
+10. INTELLECTUAL PROPERTY
+
+10.1 Provider materials. Provider and its licensors own the Platform, the Documentation, and all improvements to them. Except for the rights expressly granted in this Agreement, no rights are granted to Customer.
+10.2 Customer Data. Customer owns Customer Data. Customer grants Provider a non-exclusive licence to host, copy, and process Customer Data solely to provide the Services.
+10.3 Deliverables. On payment of the applicable Fees, Customer owns the Deliverables, excluding any Provider materials incorporated in them, which Provider licenses to Customer on a non-exclusive basis for use with the Services.
+10.4 Feedback. Provider may use suggestions and feedback from Customer to improve the Platform without obligation to Customer.
+
+11. WARRANTIES
+
+11.1 Mutual warranties. Each party warrants that it has the authority to enter into this Agreement and that its performance will comply with Applicable Law.
+11.2 Service warranty. Provider warrants that the Services will be performed in a professional and workmanlike manner and that the Platform will perform materially in accordance with the Documentation.
+11.3 Disclaimer. Except as expressly stated in this Agreement, the Services are provided without any other warranties, whether express or implied, including implied warranties of merchantability and fitness for a particular purpose.
+
+12. INDEMNIFICATION
+
+12.1 By Provider. Provider will defend Customer against any third-party claim alleging that the Platform infringes that third party's intellectual property rights and will pay any damages finally awarded or agreed in settlement.
+12.2 By Customer. Customer will defend Provider against any third-party claim arising from Customer Data or from Customer's use of the Platform in breach of this Agreement and will pay any damages finally awarded or agreed in settlement.
+12.3 Procedure. The indemnified party must give prompt written notice of the claim, allow the indemnifying party to control the defence and settlement, and provide reasonable cooperation at the indemnifying party's expense.
+
+13. LIMITATION OF LIABILITY
+
+13.1 Exclusion. Neither party is liable for lost profits, lost revenue, or indirect, incidental, special, or consequential damages, even if advised of their possibility.
+13.2 Cap. Except for indemnification obligations and breaches of Section 7, each party's aggregate liability arising out of or relating to this Agreement shall not exceed the Fees paid or payable by Customer in the twelve (12) months before the event giving rise to the claim.
+
+14. TERMINATION
+
+14.1 Termination for breach. Either party may terminate this Agreement if the other party materially breaches it and does not cure the breach within a reasonable period after receiving written notice describing it.
+14.2 Insolvency. Either party may terminate this Agreement immediately by written notice if the other party becomes insolvent, makes an assignment for the benefit of creditors, or becomes subject to bankruptcy proceedings that are not promptly dismissed.
+14.3 Effect of termination. On termination or expiry, Customer's right to use the Platform ends, Customer will pay all Fees accrued up to the effective date of termination, and Sections 7, 10, 12, 13, and 15 survive.
+
+15. GENERAL
+
+15.1 Notices. Notices under this Agreement must be in writing and sent by email with confirmation of receipt or by recognised courier. Notices to Provider go to legal@example.com and notices to Customer go to contracts@example.org, or to another address a party designates by notice.
+15.2 Assignment. Neither party may assign this Agreement without the other party's prior written consent, except to an Affiliate or to a successor in a merger or sale of substantially all of its assets, provided that the successor agrees in writing to be bound by this Agreement.
+15.3 Force majeure. Neither party is liable for delay or failure to perform caused by events beyond its reasonable control, other than payment obligations.
+15.4 Governing law and venue. This Agreement is governed by the laws of the State of Delaware, without regard to its conflict of laws rules. The state and federal courts located in Wilmington, Delaware have exclusive jurisdiction over any dispute arising out of this Agreement.
+15.5 Entire agreement. This Agreement, together with all SOWs, is the entire agreement between the parties about its subject matter and supersedes all prior agreements and understandings.
+15.6 Amendment and waiver. Any amendment must be in writing and signed by both parties. A failure to enforce a provision is not a waiver of it.
+15.7 Counterparts. This Agreement may be signed in counterparts, including by electronic signature, each of which is an original.
+
+16. INSURANCE
+
+16.1 Provider will maintain, at its own cost, commercial general liability insurance, professional liability insurance that includes cyber liability coverage, and workers' compensation insurance as required by Applicable Law, each with reputable insurers.
+16.2 On request, Provider will provide Customer with certificates of insurance showing the coverage required by this Section.
+
+17. RECORDS, AUDIT, AND DISPUTE ESCALATION
+
+17.1 Records. Provider will keep accurate records of the Fees invoiced and the Services performed under each SOW and will make relevant records available to Customer on reasonable request.
+17.2 Audit. Customer may, at its own cost and not more than once in any Contract Year, appoint an independent auditor bound by confidentiality obligations to verify Provider's invoices against those records.
+17.3 Escalation. Before starting court proceedings, a party will give the other party written details of the dispute, and senior representatives of both parties will meet within a reasonable time to try to resolve it in good faith. This Section does not prevent a party from seeking urgent injunctive relief.
+17.4 Publicity. Neither party will use the other party's name or logo in marketing materials without the other party's prior written consent.
+
+SIGNED by the authorised representatives of the parties on the Effective Date.
+
+Silverpine Data Systems LLC
+By: Morgan Example, Chief Operating Officer
+
+Orchid Ridge Logistics, Inc.
+By: Casey Placeholder, Vice President, Operations
+
+SCHEDULE 1 - SERVICE CREDIT EXAMPLES
+
+The following examples illustrate Section 3.3 and do not change it.
+Example A: monthly availability of 99.2% is below the target by less than one full percentage point, so no service credit is due.
+Example B: monthly availability of 98.4% is one full percentage point below the target, so Customer receives a credit of five percent (5%) of the monthly portion of the platform Fees.
+Example C: monthly availability of 93.0% is six full percentage points below the target, so Customer receives the maximum credit of twenty-five percent (25%) of the monthly portion of the platform Fees.
