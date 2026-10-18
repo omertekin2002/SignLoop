@@ -282,6 +282,7 @@ describe("clause recall and span precision", () => {
       "parties.recall": 0,
       "parse.path": "rejected",
       "coverage.notice": false,
+      "comparisons.withheld": false,
       "fields.summary.renewal.auto_renew": "no_result",
       "fields.summary.renewal.renewal_period": "no_result",
       "fields.summary.cancellation.notice_period_text": "no_result",
@@ -413,6 +414,36 @@ describe("negative controls, dates, and parties", () => {
     ).toBe(2);
   });
 
+  it("counts comparisons proposed without a jurisdiction and requires the stored report to withhold them", () => {
+    const analysis = idealAnalysis();
+    analysis.normal_in_region = [
+      {
+        topic: "Cancellation notice",
+        typical_range: "Usually 30 days",
+        yours: "10 business days",
+        label: "typical",
+      },
+    ];
+    const run = runOf(analysis);
+    expect(scoreCase(renewing, run).comparisons).toEqual({
+      proposed: 1,
+      withheld: true,
+    });
+
+    // A report that kept the comparisons, or lost the server's flag, fails the stored-side check.
+    for (const stored of [
+      { ...run.stored!, normal_in_region: analysis.normal_in_region },
+      { ...run.stored!, comparisons_withheld: false },
+    ]) {
+      expect(
+        imperfections(caseMetrics(scoreCase(renewing, { ...run, stored }))),
+      ).toEqual({
+        "negatives.unsupported_comparisons": 1,
+        "comparisons.withheld": false,
+      });
+    }
+  });
+
   it("matches ISO dates and party aliases", () => {
     const analysis = idealAnalysis();
     analysis.key_dates = [
@@ -492,6 +523,21 @@ describe("metric isolation", () => {
         analysis.summary.cancellation.notice_period_text = "10 days";
       },
       moved: ["fields.summary.cancellation.notice_period_text"],
+    },
+    {
+      name: "unsupported comparison",
+      target: renewing,
+      change: (analysis: AnalysisResult) => {
+        analysis.normal_in_region = [
+          {
+            topic: "Cancellation notice",
+            typical_range: "Usually 30 days",
+            yours: "10 business days",
+            label: "typical",
+          },
+        ];
+      },
+      moved: ["negatives.unsupported_comparisons"],
     },
   ])("$name moves only its targeted metrics", ({ target, change, moved }) => {
     const before = metricsOf(idealAnalysis(target), target);

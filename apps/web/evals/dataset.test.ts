@@ -82,7 +82,7 @@ describe("evaluation cases", () => {
       cases.map((loaded) => loaded.spec.id),
     );
     const perturbations = loadPerturbations();
-    expect(perturbations).toHaveLength(4);
+    expect(perturbations).toHaveLength(5);
     for (const perturbation of perturbations) {
       const oracle = oracles.find(
         (candidate) => candidate.case === perturbation.case,

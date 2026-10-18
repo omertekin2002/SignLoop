@@ -59,14 +59,7 @@
         }
       }
     ],
-    "normal_in_region": [
-      {
-        "topic": "Kill fee",
-        "typical_range": "Commonly 25% to 50% of the remaining fee",
-        "yours": "50% of the unpaid balance plus completed work",
-        "label": "typical"
-      }
-    ],
+    "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [
         "Does the copyright assignment cover unused concepts if Client wants to buy them?"

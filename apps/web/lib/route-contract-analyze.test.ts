@@ -519,7 +519,7 @@ describe("POST /api/contracts/[id]/analyze", () => {
         contractId: CONTRACT_ID,
         expectedRevision: REVISION,
         riskBadge: "HIGH",
-        resultJson: { risk_badge: "HIGH", summary: "Risky clauses found", coverage_notices: [], source: expect.objectContaining({ contract_id: CONTRACT_ID, revision: expect.stringMatching(/^sha256:/) }) },
+        resultJson: { risk_badge: "HIGH", summary: "Risky clauses found", coverage_notices: [], normal_in_region: [], comparisons_withheld: true, source: expect.objectContaining({ contract_id: CONTRACT_ID, revision: expect.stringMatching(/^sha256:/) }) },
         llmProvider: "primary",
         llmModel: "gpt-5",
         llmPromptTokens: 1200,
@@ -559,6 +559,37 @@ describe("POST /api/contracts/[id]/analyze", () => {
         contract_id: CONTRACT_ID,
       });
       expect(stored.red_flags[1].citation).toBeNull();
+    });
+
+    it("withholds regional comparisons without a confirmed jurisdiction, whatever flag the model sends", async () => {
+      arrangeRunnableContract();
+      analyzeText.mockResolvedValue(
+        analysisOutput({
+          result: {
+            risk_badge: "LOW",
+            comparisons_withheld: false,
+            normal_in_region: [
+              {
+                topic: "Notice period",
+                jurisdiction: "Ontario",
+                typical_range: "30 days",
+                yours: "10 days",
+                label: "unusual",
+              },
+            ],
+          },
+        }),
+      );
+
+      expect((await POST(postRequest(), params(CONTRACT_ID))).status).toBe(200);
+      expect(analyzeText).toHaveBeenCalledWith(
+        expect.any(String),
+        undefined,
+        expect.any(Object),
+      );
+      expect(
+        createAnalysisForContract.mock.calls[0]![0].resultJson,
+      ).toMatchObject({ normal_in_region: [], comparisons_withheld: true });
     });
 
     it("releases the lease only after the analysis has been persisted", async () => {
@@ -689,6 +720,8 @@ describe("POST /api/contracts/[id]/analyze", () => {
               "Playbook: Truncated at 100 pages.",
               "Excerpted from the middle.",
             ],
+            normal_in_region: [],
+            comparisons_withheld: true,
           },
         }),
       );
@@ -702,7 +735,7 @@ describe("POST /api/contracts/[id]/analyze", () => {
 
       expect(createAnalysisForContract).toHaveBeenCalledWith(
         expect.objectContaining({
-          resultJson: { risk_badge: "LOW", coverage_notices: [], source: expect.objectContaining({ contract_id: CONTRACT_ID, revision: expect.stringMatching(/^sha256:/) }) },
+          resultJson: { risk_badge: "LOW", coverage_notices: [], normal_in_region: [], comparisons_withheld: true, source: expect.objectContaining({ contract_id: CONTRACT_ID, revision: expect.stringMatching(/^sha256:/) }) },
         }),
       );
     });

@@ -125,6 +125,8 @@ export async function POST(
         settings?.primaryModel,
         modelSnapshot.availablePrimaryModels,
       );
+      // No jurisdiction is confirmed yet. Once one is, pass it to both analyzeText and
+      // finalizeAnalysisResult; without it, finalization withholds regional comparisons.
       const { result, provider, model, promptTokens, completionTokens } =
         await analyzeText(contract.text, undefined, {
           primaryModel: selectedPrimaryModel,

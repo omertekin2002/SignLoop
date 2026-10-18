@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { withholdUnsupportedComparisons } from "@/lib/regional-comparisons";
 import { contractAnalysisSegments, verifyQuote } from "@/lib/source-citations";
 
 export function contractSourceRevision(text: string): string {
@@ -44,15 +45,22 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
 
 /**
  * Everything the analyze route does to a model result before storing it: extraction-quality
- * warnings from the contract and its context documents lead the coverage notices, then model
- * evidence is replaced by server-verified citations. The evaluation harness calls this too, so
- * scored output cannot drift from what users see.
+ * warnings from the contract and its context documents lead the coverage notices, regional
+ * comparisons are withheld unless a region was confirmed, then model evidence is replaced by
+ * server-verified citations. The evaluation harness calls this too, so scored output cannot drift
+ * from what users see.
  */
 export function finalizeAnalysisResult<
   T extends Record<string, unknown> & { coverage_notices?: readonly string[] },
 >(
   result: T,
-  contract: { id: string; text: string; extractionWarning?: string | null },
+  contract: {
+    id: string;
+    text: string;
+    extractionWarning?: string | null;
+    /** The jurisdiction the user confirmed, as given to analyzeText. Nothing collects one yet. */
+    region?: string | null;
+  },
   contextDocuments: readonly {
     title: string;
     extractionWarning?: string | null;
@@ -70,6 +78,7 @@ export function finalizeAnalysisResult<
     {
       ...result,
       coverage_notices: [...qualityWarnings, ...(result.coverage_notices ?? [])],
+      ...withholdUnsupportedComparisons(result.normal_in_region, contract.region),
     },
     contract.id,
     contract.text,

@@ -239,6 +239,8 @@ describe("oracle responses through the production pipeline", () => {
       criticalErrors: 0,
       falseFlags: 0,
       benignAlarms: 0,
+      unsupportedComparisons: 0,
+      comparisonsWithheld: 8,
       dateRecall: 1,
       unsupportedDates: 0,
       partyRecall: 1,

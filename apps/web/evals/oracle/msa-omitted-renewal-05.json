@@ -69,14 +69,7 @@
         }
       }
     ],
-    "normal_in_region": [
-      {
-        "topic": "Annual fee increase cap",
-        "typical_range": "Often 3% to 7% per year for hosted software",
-        "yours": "Up to 7% per Contract Year",
-        "label": "typical"
-      }
-    ],
+    "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [
         "What does Section 9 say about the length of the term, renewal, and notice of non-renewal?"

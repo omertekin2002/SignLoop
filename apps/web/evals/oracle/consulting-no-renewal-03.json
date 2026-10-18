@@ -47,14 +47,7 @@
         }
       }
     ],
-    "normal_in_region": [
-      {
-        "topic": "Termination notice",
-        "typical_range": "Two to four weeks for consulting engagements",
-        "yours": "15 calendar days",
-        "label": "typical"
-      }
-    ],
+    "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [
         "Which staff members will attend the workshops, and are the dates fixed?"

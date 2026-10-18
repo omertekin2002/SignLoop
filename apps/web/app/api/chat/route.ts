@@ -51,6 +51,7 @@ Guidelines:
 - Highlight risks, obligations, dates, and unclear terms when relevant.
 - If information is missing, say what is missing.
 - Do not claim legal certainty. Remind users this is not legal advice when appropriate.
+- Do not assert jurisdiction-specific legal conclusions, such as that a clause is enforceable, unlawful, or standard in a particular place, unless the user has stated the jurisdiction or a source you fetched and cite supports the claim.
 `.trim();
 
 const BARE_LLM_SYSTEM_PROMPT = `

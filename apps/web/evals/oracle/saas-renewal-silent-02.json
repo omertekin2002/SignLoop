@@ -69,14 +69,7 @@
         }
       }
     ],
-    "normal_in_region": [
-      {
-        "topic": "Liability cap",
-        "typical_range": "Commonly twelve months of fees for SaaS subscriptions",
-        "yours": "Fees paid in the twelve months before the claim",
-        "label": "typical"
-      }
-    ],
+    "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [
         "Does the subscription renew after April 2027, and if so on what terms and notice?",

@@ -95,20 +95,7 @@
         }
       }
     ],
-    "normal_in_region": [
-      {
-        "topic": "Cancellation notice",
-        "typical_range": "Many gym memberships allow cancellation with 30 days' notice or less",
-        "yours": "10 business days before renewal",
-        "label": "typical"
-      },
-      {
-        "topic": "Early termination fee",
-        "typical_range": "Often a flat fee or one to two months of dues",
-        "yours": "50% of the remaining dues in the first year",
-        "label": "unusual"
-      }
-    ],
+    "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [
         "What is the exact last day to cancel before the March 1, 2027 renewal?",

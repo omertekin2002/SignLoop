@@ -3,10 +3,15 @@ import { CitationSchema, EvidenceProposalSchema, SourceIdentitySchema } from "@/
 import { calendarNoticeDays } from "@/lib/notice-period";
 
 const CoverageNoticesSchema = z.array(z.string()).optional();
+// Server-owned like `source`: finalizeAnalysisResult overwrites whatever the model sends.
+const ComparisonsWithheldSchema = z.boolean().optional().catch(undefined);
+// The jurisdiction a comparison assumes. The prompt asks for it only once a region is confirmed.
+const ComparisonJurisdictionSchema = z.string().nullable().optional();
 
 const BaseAnalysisResultSchema = z.object({
   source: SourceIdentitySchema.nullable().optional().catch(null),
   coverage_notices: CoverageNoticesSchema,
+  comparisons_withheld: ComparisonsWithheldSchema,
   risk_badge: z.enum(["LOW", "MEDIUM", "HIGH"]),
 
   key_points: z.array(z.string()),
@@ -51,6 +56,7 @@ const BaseAnalysisResultSchema = z.object({
   normal_in_region: z.array(
     z.object({
       topic: z.string(),
+      jurisdiction: ComparisonJurisdictionSchema,
       typical_range: z.string(),
       yours: z.string().nullable(),
       label: z.enum(["typical", "unusual"]),
@@ -120,7 +126,9 @@ export function isSubstantiveText(value: string | null | undefined): boolean {
 /**
  * Defaults make partial provider output safe to render, but defaults alone are not an analysis.
  * Require at least one concrete observation before the payload can be accepted or persisted.
- * Risk level and the legal-advice disclaimer intentionally do not count as observations.
+ * Risk level and the legal-advice disclaimer intentionally do not count as observations. Neither
+ * do regional comparisons: they describe outside norms rather than this contract, and stored
+ * reports withhold them unless a jurisdiction was confirmed.
  */
 export function hasSubstantiveAnalysisContent(result: AnalysisResult): boolean {
   const { summary } = result;
@@ -143,12 +151,6 @@ export function hasSubstantiveAnalysisContent(result: AnalysisResult): boolean {
     result.red_flags.some(
       (flag) =>
         isSubstantiveText(flag.type) || isSubstantiveText(flag.explanation),
-    ) ||
-    result.normal_in_region.some(
-      (item) =>
-        isSubstantiveText(item.topic) ||
-        isSubstantiveText(item.typical_range) ||
-        isSubstantiveText(item.yours),
     ) ||
     result.next_actions.questions_to_ask.some(isSubstantiveText) ||
     result.next_actions.email_templates.some(
@@ -193,6 +195,7 @@ export const PartialAnalysisResultSchema = z
   .object({
     source: SourceIdentitySchema.nullable().optional().catch(null),
     coverage_notices: CoverageNoticesSchema,
+    comparisons_withheld: ComparisonsWithheldSchema,
     risk_badge: z.enum(["LOW", "MEDIUM", "HIGH"]),
     key_points: z.array(z.string()).optional().default([]),
     summary: z.object({
@@ -254,6 +257,7 @@ export const PartialAnalysisResultSchema = z
       .array(
         z.object({
           topic: z.string(),
+          jurisdiction: ComparisonJurisdictionSchema,
           typical_range: z.string(),
           yours: z.string().nullable().optional().default(null),
           label: z.enum(["typical", "unusual"]),

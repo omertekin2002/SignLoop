@@ -83,14 +83,7 @@
         }
       }
     ],
-    "normal_in_region": [
-      {
-        "topic": "Early termination fee",
-        "typical_range": "Often limited to a few months of fees",
-        "yours": "All Subscription Fees remaining for the then-current term",
-        "label": "unusual"
-      }
-    ],
+    "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [
         "Can the early termination fee be limited to a fixed number of months?",

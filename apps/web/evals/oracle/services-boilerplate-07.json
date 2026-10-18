@@ -80,14 +80,7 @@
         }
       }
     ],
-    "normal_in_region": [
-      {
-        "topic": "Non-solicitation period",
-        "typical_range": "Often six to twelve months",
-        "yours": "24 months after the agreement ends",
-        "label": "unusual"
-      }
-    ],
+    "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [
         "Can the non-solicitation period be reduced to twelve months?"

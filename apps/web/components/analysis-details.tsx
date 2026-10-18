@@ -1,5 +1,13 @@
 import type { AnalysisResult } from "@/lib/schemas";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { regionalComparisonsView } from "@/lib/regional-comparisons";
+import { cn } from "@/lib/utils";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 function TextList({ values }: { values: unknown }) {
   const items = Array.isArray(values)
@@ -25,9 +33,7 @@ export function AnalysisDetails({
   result: Partial<AnalysisResult>;
 }) {
   const term = result.summary?.term;
-  const comparisons = Array.isArray(result.normal_in_region)
-    ? result.normal_in_region
-    : [];
+  const comparisons = regionalComparisonsView(result);
   return (
     <div className="space-y-6">
       <Card>
@@ -54,33 +60,52 @@ export function AnalysisDetails({
           </section>
         </CardContent>
       </Card>
-      {comparisons.length > 0 && (
+      {comparisons?.status === "withheld" && (
+        <div role="note" className="rounded-card border px-4 py-3 text-sm">
+          <p className="text-foreground">Regional comparisons not shown</p>
+          <p className="mt-1 text-muted-foreground">
+            No jurisdiction was confirmed for this contract, and what is typical
+            or allowed depends on where it applies. This analysis describes
+            risks from the contract text alone. You&apos;ll be able to confirm
+            a jurisdiction in a later update.
+          </p>
+        </div>
+      )}
+      {comparisons && comparisons.status !== "withheld" && (
         <Card>
           <CardHeader>
             <CardTitle>Regional comparisons</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Model-generated comparisons; verify applicable local rules.
-            </p>
+            {/* Reports saved before withholding carry no flag; their comparisons
+                were generated against "Region: Unknown". */}
+            <CardDescription
+              className={cn(
+                comparisons.status === "unconfirmed" && "text-highlight",
+              )}
+            >
+              {comparisons.status === "confirmed"
+                ? "Compared with typical practice in the jurisdiction you confirmed. General information, not legal advice."
+                : "Generated without a confirmed jurisdiction — treat as general information, not local law."}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
-            {comparisons.map(
-              (item, index) =>
-                item && (
-                  <section
-                    key={index}
-                    className="border-b border-border pb-4 last:border-0 last:pb-0"
-                  >
-                    <h3 className="font-medium">
-                      {item.topic}{" "}
-                      <span className="text-muted-foreground">
-                        ({item.label})
-                      </span>
-                    </h3>
-                    <p className="mt-2">Typical: {item.typical_range}</p>
-                    <p>Your contract: {item.yours || "Not specified"}</p>
-                  </section>
-                ),
-            )}
+            {comparisons.items.map((item, index) => (
+              <section
+                key={index}
+                className="border-b border-border pb-4 last:border-0 last:pb-0"
+              >
+                <h3 className="font-medium">
+                  {item.topic}{" "}
+                  <span className="text-muted-foreground">({item.label})</span>
+                </h3>
+                {item.jurisdiction && (
+                  <p className="mt-1 text-muted-foreground">
+                    Jurisdiction: {item.jurisdiction}
+                  </p>
+                )}
+                <p className="mt-2">Typical: {item.typical_range}</p>
+                <p>Your contract: {item.yours || "Not specified"}</p>
+              </section>
+            ))}
           </CardContent>
         </Card>
       )}

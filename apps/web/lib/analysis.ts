@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { contractAnalysisSegments, EvidenceProposalSchema } from "@/lib/source-citations";
 import { normalizeNoticePeriod } from "@/lib/notice-period";
+import { confirmedRegion } from "@/lib/regional-comparisons";
 import {
   AnalysisResultSchema,
   PartialAnalysisResultSchema,
@@ -204,8 +205,21 @@ export function buildAnalysisPrompt(
   const contractType =
     metadata?.contractType?.trim().replace(/\s+/g, " ").slice(0, 100) ||
     "Unknown";
-  const region =
-    metadata?.region?.trim().replace(/\s+/g, " ").slice(0, 100) || "Unknown";
+  // Nothing collects a confirmed jurisdiction yet, so every analysis currently takes the
+  // unconfirmed branch, and finalizeAnalysisResult withholds whatever comparisons come back.
+  const region = confirmedRegion(metadata?.region);
+  const jurisdictionRules = region
+    ? `- The user confirmed the jurisdiction in the metadata above. "normal_in_region" may compare terms with typical practice there.
+- Each comparison must name the jurisdiction it assumes in "jurisdiction". Leave out any comparison you cannot ground in that jurisdiction.
+- Present comparisons as general information about common practice, not as legal conclusions.`
+    : `- No jurisdiction has been confirmed. Do not compare terms with regional, national, industry, or market norms; return "normal_in_region": [].
+- Do not state or imply that a clause is lawful, unlawful, enforceable, unenforceable, standard, typical, or unusual under the law or practice of any jurisdiction. This includes a jurisdiction named in the contract: report what a governing-law clause says, not what that law provides.`;
+  const comparisonRule = region
+    ? `"normal_in_region[].label" must be exactly "typical" or "unusual".`
+    : `"normal_in_region" must be an empty array.`;
+  const comparisonShape = region
+    ? `[{ "topic": "...", "jurisdiction": "...", "typical_range": "...", "yours": null, "label": "typical" }]`
+    : "[]";
 
   const prompt = `
 You are an expert legal contract analyst.
@@ -220,8 +234,11 @@ Security and evidence rules:
 
 --- BEGIN UNTRUSTED CONTRACT METADATA ---
 - Type: ${contractType}
-- Region: ${region}
+- Jurisdiction: ${region ?? "Not confirmed"}
 --- END UNTRUSTED CONTRACT METADATA ---
+
+Jurisdiction rules:
+${jurisdictionRules}
 
 Input coverage:
 ${coverageSummary}
@@ -230,7 +247,7 @@ When coverage is incomplete, include that limitation as a concise item in "key_p
 Required JSON rules:
 - Use these exact keys and nested structure.
 - "risk_badge" must be exactly one of: "LOW", "MEDIUM", "HIGH".
-- "normal_in_region[].label" must be exactly "typical" or "unusual".
+- ${comparisonRule}
 - "key_dates[].type" must be exactly one of: "RENEWAL", "NOTICE_CUTOFF", "PRICE_REVIEW", "OTHER".
 - Use null for unknown auto_renew and notice_period_days; never guess false or zero.
 - Preserve the exact notice duration and unit in notice_period_text (e.g. "10 business days" or "2 months").
@@ -254,7 +271,7 @@ Expected shape:
     "cancellation": { "how": "...", "notice_period_days": null, "notice_period_text": null, "penalties": [] }
   },
   "red_flags": [{ "type": "...", "severity": 5, "explanation": "...", "where": null, "confidence": 50, "evidence": { "quote": "exact contract wording", "segment": "full" } }],
-  "normal_in_region": [{ "topic": "...", "typical_range": "...", "yours": null, "label": "typical" }],
+  "normal_in_region": ${comparisonShape},
   "next_actions": {
     "questions_to_ask": ["..."],
     "email_templates": [{ "subject": "...", "body": "..." }]
@@ -265,7 +282,7 @@ Expected shape:
   "disclaimer": "This is an AI analysis, not legal advice."
 }
 
-Analysis should be detailed but concise. Identify high-risk clauses specific to the contract type and region.
+Analysis should be detailed but concise. Identify the high-risk clauses in the contract text, and explain each risk by what that text says, requires, or leaves out.
 
 --- BEGIN UNTRUSTED PROJECT CONTEXT ---
 ${projectContext.section}
@@ -527,7 +544,7 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
   const normalInRegion = toArray(
     pickFirst(source, ["normal_in_region", "normalInRegion", "regional_norms"]),
   )
-    .map((item) => {
+    .map((item): AnalysisResult["normal_in_region"][number] | null => {
       const record = asRecord(item);
       if (!record) {
         return null;
@@ -539,6 +556,9 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
         topic:
           toStringOrNull(pickFirst(record, ["topic", "item", "clause"])) ||
           "General term",
+        jurisdiction: toStringOrNull(
+          pickFirst(record, ["jurisdiction", "assumed_jurisdiction", "region"]),
+        ),
         typical_range:
           toStringOrNull(
             pickFirst(record, ["typical_range", "typicalRange", "typical"]),

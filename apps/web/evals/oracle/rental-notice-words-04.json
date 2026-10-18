@@ -75,14 +75,7 @@
         }
       }
     ],
-    "normal_in_region": [
-      {
-        "topic": "Notice to end a month-to-month rental",
-        "typical_range": "Usually 30 days",
-        "yours": "thirty (30) days",
-        "label": "typical"
-      }
-    ],
+    "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [
         "Can the security deposit be applied to the final month's rent?"

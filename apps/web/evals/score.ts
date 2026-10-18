@@ -391,6 +391,12 @@ export type CaseScore = {
     }>;
     benignAlarms: number | null;
   };
+  comparisons: {
+    /** Regional comparisons in the model's answer. No case confirms a jurisdiction to support one. */
+    proposed: number;
+    /** The stored report carries the server's withheld flag and none of those comparisons. */
+    withheld: boolean;
+  };
   dates: {
     required: number;
     matched: number;
@@ -590,6 +596,9 @@ export function scoreCase(loaded: LoadedCase, run: RunOutput): CaseScore {
   const reportedNotices = Array.isArray(stored?.coverage_notices)
     ? stored.coverage_notices
     : [];
+  const storedComparisons = Array.isArray(stored?.normal_in_region)
+    ? stored.normal_in_region.length
+    : 0;
 
   return {
     caseId: spec.id,
@@ -615,6 +624,11 @@ export function scoreCase(loaded: LoadedCase, run: RunOutput): CaseScore {
     fields,
     autoRenew,
     negatives: { falseFlags, benignAlarms },
+    comparisons: {
+      proposed: run.analysis?.normal_in_region.length ?? 0,
+      withheld:
+        stored?.comparisons_withheld === true && storedComparisons === 0,
+    },
     dates: {
       required: requiredDates.length,
       matched: matchedDates.length,
@@ -656,6 +670,8 @@ export function caseMetrics(score: CaseScore): CaseMetrics {
     "quotes.evidence_rate": score.quotes.evidenceRate,
     "quotes.verification_rate": score.quotes.verificationRate,
     "negatives.false_flags": score.negatives.falseFlags.length,
+    "negatives.unsupported_comparisons": score.comparisons.proposed,
+    "comparisons.withheld": score.comparisons.withheld,
     "dates.recall": score.dates.recall,
     "dates.unsupported": score.dates.unsupported.length,
     "parties.recall": score.parties.recall,
@@ -691,7 +707,8 @@ function isIdeal(key: string, value: MetricValue): boolean {
     return value === 0;
   }
   if (key === "parse.path") return value === "strict";
-  if (key === "coverage.notice") return value === true;
+  if (key === "coverage.notice" || key === "comparisons.withheld")
+    return value === true;
   if (
     key.startsWith("clauses.") ||
     /^(?:labels|spans|quotes|dates|parties)\.(?:recall|precision|evidence_rate|verification_rate)$/.test(
@@ -807,6 +824,9 @@ export function summarizeScores(scores: readonly CaseScore[]) {
     criticalErrors: autoRenewConfusion.null.false,
     falseFlags: sum((s) => s.negatives.falseFlags.length),
     benignAlarms: sum((s) => s.negatives.benignAlarms ?? 0),
+    unsupportedComparisons: sum((s) => s.comparisons.proposed),
+    /** Cases whose stored report withheld comparisons, as every case without a jurisdiction must. */
+    comparisonsWithheld: scores.filter((s) => s.comparisons.withheld).length,
     dateRecall: ratio(
       sum((s) => s.dates.matched),
       sum((s) => s.dates.required),
