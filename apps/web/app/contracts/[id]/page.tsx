@@ -46,6 +46,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ContractSourceProvider, FindingSource, OpenContractSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
 import type { AnalysisResult } from "@/lib/schemas";
 
@@ -63,6 +64,7 @@ type ContractDetail = {
   title?: string | null;
   status?: string | null;
   createdAt?: string | Date | null;
+  updatedAt?: string | Date | null;
   analyses?: AnalysisRecord[] | null;
 };
 
@@ -423,6 +425,7 @@ const ContractDetails = () => {
   }
 
   return (
+    <ContractSourceProvider key={`${id}:${analysis?.id ?? "none"}:${contract.updatedAt ?? ""}`} contractId={id} analysisId={analysis?.id} result={resultJson}>
     <div className="app-page pb-12">
       <div className="app-header">
         <div className="mx-auto max-w-7xl px-4 pb-6 pt-10 sm:px-6 lg:px-8">
@@ -444,7 +447,8 @@ const ContractDetails = () => {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <OpenContractSource />
               {analysis && (
                 <Button
                   onClick={() => analyzeMutation.mutate({ force: true })}
@@ -779,6 +783,7 @@ const ContractDetails = () => {
                               <p className="text-sm">
                                 {explanation || "No explanation provided."}
                               </p>
+                              <FindingSource index={idx} />
                               {where && (
                                 <p className="text-xs text-muted-foreground mt-1">
                                   Found in: {where}
@@ -1067,6 +1072,7 @@ const ContractDetails = () => {
         )}
       </div>
     </div>
+    </ContractSourceProvider>
   );
 };
 

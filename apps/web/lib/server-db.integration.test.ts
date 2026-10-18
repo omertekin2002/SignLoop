@@ -32,6 +32,8 @@ import {
   completeStorageDeletion,
   createUploadCleanupIntent,
   getContractWindowForUser,
+  getContractSourceForUser,
+  getAnalysisForUser,
   upsertUserSettings,
   getUserSettingsByUserId,
   appendChatMessagesToThread,
@@ -56,6 +58,8 @@ import {
   listContractsForChat,
   saveContractUploadForUser,
 } from "./server-db";
+import { attachAnalysisSources, contractSourceRevision } from "./analysis-sources";
+import { citationForReport } from "./source-citations";
 import { buildAnalysisPrompt } from "./analysis";
 
 // db/test-integration.sh sets this and runs vitest directly, outside turbo's env filtering.
@@ -102,6 +106,201 @@ describe.skipIf(!connectionString)("database integration", () => {
       llmModel: "test",
     });
   }
+
+  it("serves bounded source pages with Unicode/hash agreement and owner isolation", async () => {
+    const item = await contract();
+    const text = "😀e\u0301東京" + "x".repeat(20000) + "TAIL FEE";
+    await pool.current!.query(
+      "UPDATE contracts SET text_content = $1, extraction_warning = 'Missing scanned pages' WHERE id = $2",
+      [text, item.id],
+    );
+    const revision = contractSourceRevision(text);
+    const first = await getContractSourceForUser({
+      userId: "owner",
+      contractId: item.id,
+      offset: 0,
+      revision: null,
+    });
+    expect(first?.revision).toBe(revision);
+    expect(first?.totalCharacters).toBe(Array.from(text).length);
+    expect(Array.from(first!.text!)).toHaveLength(6000);
+    expect(first?.extractionWarning).toBe("Missing scanned pages");
+    const second = await getContractSourceForUser({
+      userId: "owner",
+      contractId: item.id,
+      offset: 6000,
+      revision,
+    });
+    expect(second?.text).toBe(Array.from(text).slice(6000, 12000).join(""));
+    expect(
+      await getContractSourceForUser({
+        userId: "intruder",
+        contractId: item.id,
+        offset: 0,
+        revision,
+      }),
+    ).toBeNull();
+    expect(
+      (
+        await getContractSourceForUser({
+          userId: "owner",
+          contractId: item.id,
+          offset: 0,
+          revision: contractSourceRevision("wrong"),
+        })
+      )?.text,
+    ).toBeNull();
+  });
+
+  it("preserves JSON receipts through status/context updates but rejects replacement and deleted sources", async () => {
+    const project = await createProjectForUser({
+      userId: "owner",
+      title: "Source test",
+    });
+    const item = await createContractForUser({
+      userId: "owner",
+      title: "Source test",
+      projectId: project.id,
+    });
+    const text = "😀 Original fee clause.";
+    await pool.current!.query(
+      "UPDATE contracts SET text_content = $1 WHERE id = $2",
+      [text, item.id],
+    );
+    const before = await getContractWithLatestAnalysisForUser("owner", item.id);
+    const resultJson = attachAnalysisSources(
+      {
+        red_flags: [
+          { evidence: { quote: "Original fee clause.", segment: "full" } },
+        ],
+      },
+      item.id,
+      text,
+    );
+    const saved = await createAnalysisForContract({
+      userId: "owner",
+      contractId: item.id,
+      expectedRevision: before!.revision,
+      riskBadge: "LOW",
+      resultJson,
+      llmProvider: "test",
+      llmModel: "test",
+    });
+    const read = await getAnalysisForUser("owner", item.id, saved.id);
+    const citation = citationForReport(read?.resultJson, item.id, 0)!;
+    const input = {
+      userId: "owner",
+      contractId: item.id,
+      analysisId: saved.id,
+      offset: 0,
+      revision: citation.revision,
+      citation,
+    };
+    expect((await getContractSourceForUser(input))?.highlightMatches).toBe(
+      true,
+    );
+    await pool.current!.query(
+      "INSERT INTO context_documents(project_id, title, extracted_text) VALUES ($1, 'Changed context', 'context')",
+      [project.id],
+    );
+    expect((await getContractSourceForUser(input))?.highlightMatches).toBe(
+      true,
+    );
+    const snapshot = await getContractWithLatestAnalysisForUser(
+      "owner",
+      item.id,
+    );
+    await saveContractUploadForUser({
+      userId: "owner",
+      contractId: item.id,
+      projectId: project.id,
+      title: "Replacement",
+      fileName: "replacement.txt",
+      storageKey: "source-test-replacement",
+      bucket: "test",
+      contentType: "text/plain",
+      sizeBytes: 20,
+      extractionMethod: "test",
+      extractionConfidence: 1,
+      text: "Replacement fee clause.",
+    });
+    const changed = await getContractSourceForUser(input);
+    expect(changed?.text).toBeNull();
+    expect(changed?.highlightMatches).toBe(false);
+    expect(
+      (await getAnalysisForUser("owner", item.id, saved.id))?.resultJson,
+    ).toEqual(resultJson);
+    await expect(
+      createAnalysisForContract({
+        userId: "owner",
+        contractId: item.id,
+        expectedRevision: snapshot!.revision,
+        riskBadge: "LOW",
+        resultJson,
+        llmProvider: "test",
+        llmModel: "test",
+      }),
+    ).rejects.toThrow(/changed/i);
+    await deleteContractForUser({ userId: "owner", contractId: item.id });
+    expect(await getContractSourceForUser(input)).toBeNull();
+    expect(await getAnalysisForUser("owner", item.id, saved.id)).toBeNull();
+  });
+
+  it("rechecks report existence and rejects mismatched or omitted-middle spans", async () => {
+    const item = await contract();
+    const text = "x".repeat(10000) + "MIDDLE" + "x".repeat(10000) + "END";
+    await pool.current!.query(
+      "UPDATE contracts SET text_content = $1 WHERE id = $2",
+      [text, item.id],
+    );
+    const saved = await analyse(item.id);
+    const revision = contractSourceRevision(text);
+    const base = {
+      userId: "owner",
+      contractId: item.id,
+      analysisId: saved.id,
+      offset: 0,
+      revision,
+    };
+    const citation = {
+      contract_id: item.id,
+      revision,
+      index_unit: "unicode-code-points" as const,
+      status: "verified" as const,
+      quote: "MIDDLE",
+      start: 10000,
+      end: 10006,
+    };
+    expect(
+      (await getContractSourceForUser({ ...base, citation }))?.highlightMatches,
+    ).toBe(false);
+    expect(
+      (
+        await getContractSourceForUser({
+          ...base,
+          citation: { ...citation, start: 0, end: 6 },
+        })
+      )?.highlightMatches,
+    ).toBe(false);
+    expect(
+      (
+        await getContractSourceForUser({
+          ...base,
+          citation: { ...citation, quote: "END", start: 20006, end: 20009 },
+        })
+      )?.highlightMatches,
+    ).toBe(true);
+    await deleteAnalysisForContract({
+      userId: "owner",
+      contractId: item.id,
+      analysisId: saved.id,
+    });
+    expect(await getContractSourceForUser(base)).toBeNull();
+    expect(
+      (await getContractSourceForUser({ ...base, analysisId: undefined }))
+        ?.revision,
+    ).toBe(revision);
+  });
 
   it("saves the first generated chat title atomically and preserves it on later turns", async () => {
     const thread = await createChatThreadForUser({ userId: "title-owner" });

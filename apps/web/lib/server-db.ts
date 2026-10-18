@@ -1,3 +1,4 @@
+import { CONTRACT_ANALYSIS_LIMIT, CONTRACT_HEAD_LENGTH, CONTRACT_TAIL_LENGTH, MAX_EVIDENCE_QUOTE, SOURCE_PAGE_SIZE, type SourceCitation } from "@/lib/source-citations";
 import { parseContractEvidence, validateContractReplay, STALE_CONTRACT_REPLY, type ContractEvidence } from "@/lib/contract-evidence";
 import {
   compactAgentMessages,
@@ -722,6 +723,55 @@ export async function getContractWindowForUser(
       extraction_warning AS "extractionWarning"
     FROM contracts WHERE id = ${contractId} AND user_id = ${userId} LIMIT 1
   `;
+  return rows[0] ?? null;
+}
+
+/** One owner-scoped snapshot; a changed revision never returns replacement text. */
+export async function getContractSourceForUser(input: {
+  userId: string;
+  contractId: string;
+  offset: number;
+  revision: string | null;
+  analysisId?: string;
+  citation?: SourceCitation;
+}): Promise<{
+  revision: string;
+  text: string | null;
+  totalCharacters: number;
+  extractionWarning: string | null;
+  highlightMatches: boolean;
+} | null> {
+  await ensureSchema();
+  const { rows } = await sql.query<{
+    revision: string;
+    text: string | null;
+    totalCharacters: number;
+    extractionWarning: string | null;
+    highlightMatches: boolean;
+  }>(`
+    WITH source AS MATERIALIZED (
+      SELECT text_content, extraction_warning,
+        'sha256:' || encode(digest(convert_to(coalesce(text_content, ''), 'UTF8'), 'sha256'), 'hex') AS revision,
+        coalesce(char_length(text_content), 0)::integer AS total
+      FROM contracts c WHERE c.id = $1 AND c.user_id = $2
+        AND ($8::uuid IS NULL OR EXISTS (
+          SELECT 1 FROM analyses a WHERE a.id = $8 AND a.contract_id = c.id
+        ))
+    )
+    SELECT revision, total AS "totalCharacters", extraction_warning AS "extractionWarning",
+      CASE WHEN $3::text IS NULL OR revision = $3
+        THEN coalesce(substring(text_content FROM $4::integer + 1 FOR ${SOURCE_PAGE_SIZE}), '')
+        ELSE NULL END AS text,
+      coalesce(revision = $3 AND $5::integer >= 0 AND $6::integer > $5
+        AND $6 <= total AND $6 - $5 <= ${MAX_EVIDENCE_QUOTE}
+        AND (total <= ${CONTRACT_ANALYSIS_LIMIT} OR $6 <= ${CONTRACT_HEAD_LENGTH} OR $5 >= total - ${CONTRACT_TAIL_LENGTH})
+        AND substring(text_content FROM $5::integer + 1 FOR $6::integer - $5::integer) = $7,
+        false) AS "highlightMatches"
+    FROM source`, [
+    input.contractId, input.userId, input.revision, input.offset,
+    input.citation?.start ?? null, input.citation?.end ?? null,
+    input.citation?.quote ?? null, input.analysisId ?? null,
+  ]);
   return rows[0] ?? null;
 }
 

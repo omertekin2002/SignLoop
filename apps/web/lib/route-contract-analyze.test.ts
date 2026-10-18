@@ -519,7 +519,7 @@ describe("POST /api/contracts/[id]/analyze", () => {
         contractId: CONTRACT_ID,
         expectedRevision: REVISION,
         riskBadge: "HIGH",
-        resultJson: { risk_badge: "HIGH", summary: "Risky clauses found", coverage_notices: [] },
+        resultJson: { risk_badge: "HIGH", summary: "Risky clauses found", coverage_notices: [], source: expect.objectContaining({ contract_id: CONTRACT_ID, revision: expect.stringMatching(/^sha256:/) }) },
         llmProvider: "primary",
         llmModel: "gpt-5",
         llmPromptTokens: 1200,
@@ -527,6 +527,38 @@ describe("POST /api/contracts/[id]/analyze", () => {
         processingTimeMs: 2500,
       });
       expect(release).toHaveBeenCalledOnce();
+    });
+
+    it("replaces forged verification with server-derived receipts without an extra inference call", async () => {
+      arrangeRunnableContract(contractRecord({ text: "A fee applies." }));
+      analyzeText.mockResolvedValue(
+        analysisOutput({
+          result: {
+            risk_badge: "HIGH",
+            source: { revision: "forged" },
+            red_flags: [
+              {
+                evidence: { quote: "fee", segment: "full" },
+                citation: { start: 999, status: "verified" },
+              },
+              {
+                evidence: { quote: "project context", segment: "full" },
+                citation: { status: "verified" },
+              },
+            ],
+          },
+        }),
+      );
+      expect((await POST(postRequest(), params(CONTRACT_ID))).status).toBe(200);
+      expect(analyzeText).toHaveBeenCalledOnce();
+      const stored = createAnalysisForContract.mock.calls[0]![0].resultJson;
+      expect(stored.red_flags[0].citation).toMatchObject({
+        start: 2,
+        end: 5,
+        quote: "fee",
+        contract_id: CONTRACT_ID,
+      });
+      expect(stored.red_flags[1].citation).toBeNull();
     });
 
     it("releases the lease only after the analysis has been persisted", async () => {
@@ -650,6 +682,7 @@ describe("POST /api/contracts/[id]/analyze", () => {
       expect(createAnalysisForContract).toHaveBeenCalledWith(
         expect.objectContaining({
           resultJson: {
+            source: expect.objectContaining({ contract_id: CONTRACT_ID, index_unit: "unicode-code-points", revision: expect.stringMatching(/^sha256:/) }),
             risk_badge: "LOW",
             coverage_notices: [
               "Scanned pages were skipped.",
@@ -669,7 +702,7 @@ describe("POST /api/contracts/[id]/analyze", () => {
 
       expect(createAnalysisForContract).toHaveBeenCalledWith(
         expect.objectContaining({
-          resultJson: { risk_badge: "LOW", coverage_notices: [] },
+          resultJson: { risk_badge: "LOW", coverage_notices: [], source: expect.objectContaining({ contract_id: CONTRACT_ID, revision: expect.stringMatching(/^sha256:/) }) },
         }),
       );
     });

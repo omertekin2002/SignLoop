@@ -1,9 +1,11 @@
 import { z } from "zod";
+import { CitationSchema, EvidenceProposalSchema, SourceIdentitySchema } from "@/lib/source-citations";
 import { calendarNoticeDays } from "@/lib/notice-period";
 
 const CoverageNoticesSchema = z.array(z.string()).optional();
 
 const BaseAnalysisResultSchema = z.object({
+  source: SourceIdentitySchema.nullable().optional().catch(null),
   coverage_notices: CoverageNoticesSchema,
   risk_badge: z.enum(["LOW", "MEDIUM", "HIGH"]),
 
@@ -40,6 +42,8 @@ const BaseAnalysisResultSchema = z.object({
       severity: z.number().min(1).max(10).nullable(),
       explanation: z.string(),
       where: z.string().nullable(),
+      evidence: EvidenceProposalSchema.nullable().optional().catch(null),
+      citation: CitationSchema.nullable().optional().catch(null),
       confidence: z.number().min(0).max(100).nullable(),
     }),
   ),
@@ -186,6 +190,7 @@ export const AnalysisResultSchema = BaseAnalysisResultSchema.superRefine(
 
 export const PartialAnalysisResultSchema = z
   .object({
+    source: SourceIdentitySchema.nullable().optional().catch(null),
     coverage_notices: CoverageNoticesSchema,
     risk_badge: z.enum(["LOW", "MEDIUM", "HIGH"]),
     key_points: z.array(z.string()).optional().default([]),
@@ -231,6 +236,8 @@ export const PartialAnalysisResultSchema = z
             .default(null),
           explanation: z.string(),
           where: z.string().nullable().optional().default(null),
+          evidence: EvidenceProposalSchema.nullable().optional().catch(null),
+          citation: CitationSchema.nullable().optional().catch(null),
           confidence: z
             .number()
             .min(0)

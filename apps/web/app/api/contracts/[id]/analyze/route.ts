@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
 import { isUuid } from "@/lib/utils";
+import { attachAnalysisSources } from "@/lib/analysis-sources";
 import { analyzeText } from "@/lib/analysis";
 import { admitAnalysis } from "@/lib/chat-admission";
 import {
@@ -153,7 +154,7 @@ export async function POST(
         expectedRevision: contract.revision,
         riskBadge:
           typeof result.risk_badge === "string" ? result.risk_badge : null,
-        resultJson: result as Record<string, unknown>,
+        resultJson: attachAnalysisSources(result as Record<string, unknown>, contract.id, contract.text),
         llmProvider: provider ?? null,
         llmModel: model ?? null,
         llmPromptTokens: promptTokens,

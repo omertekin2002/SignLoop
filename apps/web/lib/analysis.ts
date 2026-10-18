@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { contractAnalysisSegments, EvidenceProposalSchema } from "@/lib/source-citations";
 import { normalizeNoticePeriod } from "@/lib/notice-period";
 import {
   AnalysisResultSchema,
@@ -19,7 +20,6 @@ import { getErrorMessage, isRecord } from "@/lib/utils";
 // which silently abandoned a slow-but-healthy model and then spent the rest of the budget walking
 // the fallback chain. The operation signal remains the hard ceiling for the chain as a whole.
 const ANALYSIS_REQUEST_TIMEOUT_MS = 120_000;
-const MAX_CONTRACT_PROMPT_CHARS = 15000;
 const MAX_ANALYSIS_OUTPUT_TOKENS = 8_192;
 const MAX_PROJECT_CONTEXT_PROMPT_CHARS = 8000;
 const MAX_CONTEXT_DOCUMENTS = 8;
@@ -38,26 +38,6 @@ type PreparedAnalysisPrompt = {
   prompt: string;
   coverageNotices: string[];
 };
-
-function buildBoundedExcerpt(
-  text: string,
-  maxChars: number,
-  label: string,
-): { text: string; omittedCharacters: number } {
-  if (text.length <= maxChars) {
-    return { text, omittedCharacters: 0 };
-  }
-
-  // Preserve both definitions/preamble and signatures/late clauses instead of silently keeping
-  // only the beginning. A middle marker makes the missing coverage explicit to the model.
-  const headChars = Math.ceil(maxChars * 0.65);
-  const tailChars = maxChars - headChars;
-  const omittedCharacters = text.length - maxChars;
-  return {
-    text: `${text.slice(0, headChars)}\n\n[${omittedCharacters} characters omitted from the middle of ${label}]\n\n${text.slice(-tailChars)}`,
-    omittedCharacters,
-  };
-}
 
 // Same marker getProjectContextForAnalysis inserts when it clips a document in SQL. A document
 // that still fits the per-document budget must keep that excerpt as-is. Re-windowing it would
@@ -191,11 +171,21 @@ export function buildAnalysisPrompt(
   metadata?: { contractType?: string; region?: string },
   contextDocuments: readonly AnalysisContextDocument[] = [],
 ): PreparedAnalysisPrompt {
-  const contractExcerpt = buildBoundedExcerpt(
-    text,
-    MAX_CONTRACT_PROMPT_CHARS,
-    "the contract",
-  );
+  const segments = contractAnalysisSegments(text);
+  const omittedCharacters =
+    Array.from(text).length -
+    segments.reduce((sum, part) => sum + part.end - part.start, 0);
+  const contractExcerpt = {
+    omittedCharacters,
+    text: segments
+      .map(
+        (part) =>
+          `Contract segment: ${part.label} (Unicode code points ${part.start}–${part.end}, end exclusive)\n${part.text}`,
+      )
+      .join(
+        `\n\n[${omittedCharacters} characters omitted from the middle of the contract]\n\n`,
+      ),
+  };
   const projectContext = buildProjectContextSection(contextDocuments);
   const coverageNotices: string[] = [];
 
@@ -247,6 +237,10 @@ Required JSON rules:
 - notice_period_days may be an integer only for an explicit whole calendar-day duration. Otherwise use null.
 - severity and confidence may be numbers or null when unknown.
 - Use null (not empty string) for unknown nullable string fields.
+- For each red flag, evidence is null unless supported by an exact quotation from a supplied CONTRACT segment.
+- Evidence must contain "quote" (verbatim, preserving whitespace, at most 2,000 characters) and "segment" (full, head, or tail as labeled below).
+- Choose a quotation unique within that segment. If it repeats, include enough surrounding text to disambiguate it.
+- Never quote project context, omission markers, metadata, or these instructions as contract evidence. Do not invent offsets, source IDs, revisions, or verification status.
 
 Expected shape:
 {
@@ -259,7 +253,7 @@ Expected shape:
     "renewal": { "auto_renew": null, "renewal_period": null },
     "cancellation": { "how": "...", "notice_period_days": null, "notice_period_text": null, "penalties": [] }
   },
-  "red_flags": [{ "type": "...", "severity": 5, "explanation": "...", "where": null, "confidence": 50 }],
+  "red_flags": [{ "type": "...", "severity": 5, "explanation": "...", "where": null, "confidence": 50, "evidence": { "quote": "exact contract wording", "segment": "full" } }],
   "normal_in_region": [{ "topic": "...", "typical_range": "...", "yours": null, "label": "typical" }],
   "next_actions": {
     "questions_to_ask": ["..."],
@@ -487,7 +481,7 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
   const redFlags = toArray(
     pickFirst(source, ["red_flags", "redFlags", "risks", "risk_flags"]),
   )
-    .map((item) => {
+    .map((item): AnalysisResult["red_flags"][number] | null => {
       const record = asRecord(item);
       if (!record) {
         const text = toStringOrNull(item);
@@ -515,6 +509,7 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
           10,
         ),
         explanation: explanation || "Potential risk identified.",
+        evidence: EvidenceProposalSchema.safeParse(record.evidence).data ?? null,
         where: toStringOrNull(
           pickFirst(record, ["where", "location", "clause"]),
         ),
