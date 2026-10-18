@@ -25,10 +25,12 @@ From `apps/web`:
 
 - `bun run test` runs Vitest directly. Pass a file to focus a run, e.g. `bun run test lib/chat-tools.test.ts`.
 - `bun run test:integration` creates a disposable local PostgreSQL database, applies migrations, runs database regressions, and removes it. Set `POSTGRES_BIN` if PostgreSQL binaries are not in `/opt/homebrew/opt/postgresql@16/bin`.
-- Database integration tests skip in ordinary test runs unless `SIGNLOOP_TEST_DATABASE_URL` is set. The disposable-database script sets this itself and does not use `POSTGRES_URL`.
+- Database integration tests skip in ordinary test runs unless `SIGNLOOP_TEST_DATABASE_URL` is set. The disposable-database script sets this itself, or uses an already-set URL for an empty `localhost` `signloop_test` database (as CI does), and does not use `POSTGRES_URL`.
 - `bun run storage:cleanup` processes the real storage-deletion outbox using configured database/storage credentials.
 
 For application changes, run appropriate tests and the root build, lint, and type checks. Turbo can reuse cached results; use `bun run build --force` when a fresh build is needed. Run build and `check-types` sequentially because both generate `.next` files. Documentation-only edits need command/link/configuration checks rather than an application rebuild.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs lint, `check-types`, tests, and the build without secrets, plus `bun run test:integration` against a `postgres:16` service container, on pull requests and pushes to `main`.
 
 ## Repository Map
 

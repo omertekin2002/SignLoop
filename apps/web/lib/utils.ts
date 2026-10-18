@@ -33,6 +33,7 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 // Coerce an unknown value (string | Date | nullish) to a valid Date, or null if it isn't one.
+// ISO date-only strings parse as UTC midnight; display them through formatDate, which keeps the day.
 export function coerceDate(value: unknown): Date | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value as string);
@@ -72,24 +73,94 @@ function pad2(value: number): string {
   return value < 10 ? `0${value}` : `${value}`;
 }
 
+// One-based month; hour and minute are zero for calendar dates.
+type DateParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+};
+
+// ISO date-only strings ("2026-12-01", or the reduced "2026-12" and "2026") are calendar dates,
+// such as contract terms. `new Date()` reads them as UTC midnight, so local time west of UTC would
+// show the previous day.
+const ISO_DATE_ONLY = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/;
+
+function calendarDateParts(match: RegExpExecArray): DateParts | null {
+  const year = Number(match[1]);
+  const month = Number(match[2] ?? 1);
+  const day = Number(match[3] ?? 1);
+  // Reject impossible days (2026-02-30) rather than rolling them into the next month as Date does.
+  // setUTCFullYear, unlike Date.UTC, keeps years 0-99 literal.
+  const check = new Date(0);
+  check.setUTCFullYear(year, month - 1, day);
+  return check.getUTCMonth() === month - 1 && check.getUTCDate() === day
+    ? { year, month, day, hour: 0, minute: 0 }
+    : null;
+}
+
+const zonedFormatters = new Map<string, Intl.DateTimeFormat>();
+
+// The wall-clock fields of an instant in `timeZone`, or in the runtime's local zone when omitted.
+function zonedParts(date: Date, timeZone: string | undefined): DateParts {
+  let formatter = zonedFormatters.get(timeZone ?? "");
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      hourCycle: "h23",
+    });
+    zonedFormatters.set(timeZone ?? "", formatter);
+  }
+  const parts: Record<string, number> = {};
+  for (const { type, value } of formatter.formatToParts(date))
+    parts[type] = Number(value);
+  return {
+    year: parts.year ?? 0,
+    month: parts.month ?? 0,
+    day: parts.day ?? 0,
+    hour: parts.hour ?? 0,
+    minute: parts.minute ?? 0,
+  };
+}
+
+function dateParts(
+  value: unknown,
+  timeZone: string | undefined,
+): DateParts | null {
+  const isoDate =
+    typeof value === "string" ? ISO_DATE_ONLY.exec(value.trim()) : null;
+  if (isoDate) return calendarDateParts(isoDate);
+  const instant = coerceDate(value);
+  return instant ? zonedParts(instant, timeZone) : null;
+}
+
 // Safely format a date-ish value, returning `fallback` when the value is missing or invalid.
-// Supports the token subset the app uses (yyyy, MMMM, MMM, d, HH, mm) in local time — a tiny,
-// dependency-free replacement for date-fns `format`.
+// Supports the token subset the app uses (yyyy, MMMM, MMM, d, HH, mm) — a tiny, dependency-free
+// replacement for date-fns `format`. Timestamps render in local time, or in `timeZone` (an IANA
+// name) when given; ISO date-only strings render as the written calendar date in every zone.
 export function formatDate(
   value: unknown,
   formatStr: string,
   fallback = "",
+  timeZone?: string,
 ): string {
-  const date = coerceDate(value);
-  if (!date) return fallback;
+  const parts = dateParts(value, timeZone);
+  if (!parts) return fallback;
+  const { year, month, day, hour, minute } = parts;
 
   const replacements: Record<string, () => string> = {
-    yyyy: () => String(date.getFullYear()),
-    MMMM: () => MONTHS_LONG[date.getMonth()] ?? "",
-    MMM: () => MONTHS_SHORT[date.getMonth()] ?? "",
-    HH: () => pad2(date.getHours()),
-    mm: () => pad2(date.getMinutes()),
-    d: () => String(date.getDate()),
+    yyyy: () => String(year),
+    MMMM: () => MONTHS_LONG[month - 1] ?? "",
+    MMM: () => MONTHS_SHORT[month - 1] ?? "",
+    HH: () => pad2(hour),
+    mm: () => pad2(minute),
+    d: () => String(day),
   };
 
   return formatStr.replace(

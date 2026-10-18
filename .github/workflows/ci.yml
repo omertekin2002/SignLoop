@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, type-check, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # Reads the bun@ version pinned by packageManager in the root package.json.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      # The hoisted linker mirrors the Vercel install command in vercel.json.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --linker hoisted
+
+      # None of these steps needs secrets or placeholder configuration: the app reads its
+      # environment at request time, and the database suites skip without a test database.
+      - name: Lint
+        run: bun run lint
+
+      - name: Type-check
+        run: bun run check-types
+
+      - name: Test
+        run: bun run test
+
+      - name: Build
+        run: bun run build
+
+  database:
+    name: Database integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: signloop_test
+          POSTGRES_DB: signloop_test
+          # A disposable database, initialised like db/test-integration.sh's temporary cluster.
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_INITDB_ARGS: --encoding=UTF8 --no-locale
+        ports:
+          - 5432:5432
+        # TCP readiness skips the socket-only server the image runs while initialising.
+        options: >-
+          --health-cmd "pg_isready -h localhost -U signloop_test -d signloop_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --linker hoisted
+
+      # The suites apply every migration with the shared runner before testing. db:migrate is not
+      # used: @vercel/postgres connects through Neon's WebSocket proxy, not plain PostgreSQL.
+      - name: Run database integration tests
+        working-directory: apps/web
+        env:
+          SIGNLOOP_TEST_DATABASE_URL: postgresql://signloop_test@localhost:5432/signloop_test
+        run: bun run test:integration
