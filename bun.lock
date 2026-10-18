@@ -29,6 +29,7 @@
         "@radix-ui/react-select": "^2.3.3",
         "@radix-ui/react-slot": "^1.3.0",
         "@tanstack/react-query": "^5.101.2",
+        "@tesseract.js-data/eng": "1.0.0",
         "@vercel/blob": "^2.6.1",
         "@vercel/otel": "^2.1.3",
         "@vercel/postgres": "^0.10.0",
@@ -462,6 +463,8 @@
     "@tanstack/query-core": ["@tanstack/query-core@5.101.2", "", {}, "sha512-hH5MLoJhF7KaIGd7q3xTXGXvslI+GYlM1Z/35aSHHWaCJWB7XvTSHYuV3eM7tw+aE0mT/xMro4M4Q9rCGHT0lw=="],
 
     "@tanstack/react-query": ["@tanstack/react-query@5.101.2", "", { "dependencies": { "@tanstack/query-core": "5.101.2" }, "peerDependencies": { "react": "^18 || ^19" } }, "sha512-seDkr6kzGzX1okaaTtZPtgA688CDPlXUz1C6xSg0ESqn04Vuc8tlrYms1s3de+znBqhPVxFRfpAfUf+6XvfPWg=="],
+
+    "@tesseract.js-data/eng": ["@tesseract.js-data/eng@1.0.0", "", {}, "sha512-mbTumm6KQPUHyzTPQaF3ObXYnx0SqqfV2nabqFVQBwD6Kl7PhGSLSzOlfFTWy0P3BjghaSKA2W9GB19Jk+ZcTg=="],
 
     "@turbo/darwin-64": ["@turbo/darwin-64@2.10.4", "", { "os": "darwin", "cpu": "x64" }, "sha512-m1MUEI4MJ69r5CwfMYxmHi0H0rrgiYCBOp0tgBZ9x/YVvOb5uu/lRIDyDwdtH054R2yWeQaIigUGu6aCX9f8cA=="],
 

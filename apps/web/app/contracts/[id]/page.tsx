@@ -63,6 +63,8 @@ type ContractDetail = {
   analysesHasMore?: boolean;
   title?: string | null;
   status?: string | null;
+  /** Quality warning for the current extracted text; absent when extraction was clean. */
+  extractionWarning?: string | null;
   createdAt?: string | Date | null;
   updatedAt?: string | Date | null;
   analyses?: AnalysisRecord[] | null;
@@ -266,6 +268,16 @@ const ContractDetails = () => {
     : [];
   const keyFindings = keyPoints.filter(
     (point) => !coverageNotices.includes(point),
+  );
+  const extractionWarning =
+    typeof contract?.extractionWarning === "string" &&
+    contract.extractionWarning.trim()
+      ? contract.extractionWarning
+      : null;
+  // A report carries the extraction warning from its own run; the page-level notice already
+  // shows the current one, so the same sentence is not repeated under Analysis coverage.
+  const reportCoverageNotices = coverageNotices.filter(
+    (notice) => notice !== extractionWarning,
   );
   const summaryCancellation =
     summary?.cancellation && typeof summary.cancellation === "object"
@@ -509,6 +521,17 @@ const ContractDetails = () => {
       </div>
 
       <div className="mx-auto max-w-7xl px-4 py-8 space-y-6 sm:px-6 lg:px-8">
+        {/* Shown before and after analysis: it describes the text the next analysis will read. */}
+        {extractionWarning && (
+          <div
+            role="status"
+            className="rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground"
+          >
+            <p className="text-highlight">Text extraction</p>
+            <p className="mt-1">{extractionWarning}</p>
+          </div>
+        )}
+
         {/* Analysis Result Section */}
         {analysis ? (
           <>
@@ -563,14 +586,14 @@ const ContractDetails = () => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {coverageNotices.length > 0 && (
+                  {reportCoverageNotices.length > 0 && (
                     <div
                       role="status"
                       className="mb-4 rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground"
                     >
                       <p className="text-highlight">Analysis coverage</p>
                       <ul className="mt-2 list-disc pl-5">
-                        {coverageNotices.map((notice) => (
+                        {reportCoverageNotices.map((notice) => (
                           <li key={notice}>{notice}</li>
                         ))}
                       </ul>

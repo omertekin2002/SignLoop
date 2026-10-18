@@ -57,7 +57,7 @@ bun run test:integration
 
 It initializes local PostgreSQL, applies migrations, runs database ownership/concurrency tests, and removes the temporary database. It never uses `POSTGRES_URL`. The default binary directory is `/opt/homebrew/opt/postgresql@16/bin`; set `POSTGRES_BIN` for another installation. If `SIGNLOOP_TEST_DATABASE_URL` is already set, the script skips the temporary cluster and runs the same suites against that database instead; it must be an empty, disposable `signloop_test` database on `localhost`, such as a `postgres:16` container. This is separate from testing against production credentials or live model services.
 
-GitHub Actions ([ci.yml](.github/workflows/ci.yml)) runs on pull requests and pushes to `main`. One job installs dependencies with Vercel's hoisted linker, then runs lint, type checking, tests, and the build; none of them needs secrets or environment files. A second job runs `bun run test:integration` against an empty `postgres:16` service container.
+GitHub Actions ([ci.yml](.github/workflows/ci.yml)) runs on pull requests and pushes to `main`. One job installs dependencies with Vercel's hoisted linker, then runs lint, type checking, tests, and the build, and checks the OCR build traces; none of them needs secrets or environment files. A second job runs `bun run test:integration` against an empty `postgres:16` service container.
 
 ## Configuration
 
@@ -129,11 +129,11 @@ See [object-storage.ts](apps/web/lib/object-storage.ts) and [upload-pipeline.ts]
 
 The UI creates a contract, then uploads its file to `/api/contracts/:id/upload`. Project context uploads use `/api/projects/:id/context`.
 
-The shared pipeline checks ownership at the route boundary, bounds multipart input, and validates file size, MIME type, and signatures. Files are limited to **4 MiB**. PDF text uses the PDF.js proxy from `unpdf`, `.doc`/`.docx` extraction uses `word-extractor`, images use Tesseract OCR, and plain text is decoded directly.
+The shared pipeline checks ownership at the route boundary, bounds multipart input, and validates file size, MIME type, and signatures. Files are limited to **4 MiB**. PDF text uses the PDF.js proxy from `unpdf`, `.doc`/`.docx` extraction uses `word-extractor`, images use Tesseract OCR, and plain text is decoded directly. OCR runs tesseract.js in a worker thread with the English LSTM model from the pinned `@tesseract.js-data/eng` package; nothing is downloaded or cached on disk at runtime.
 
-PDF pages are read sequentially, with at most 500 pages and 2,000,000 extracted characters. Images are limited to 25 megapixels before decoding. DOCX archives are inspected before expansion, with limits of 16 MiB expanded data and 2,000 entries. OCR allows one active job and one queued job; its 150-second deadline includes queue wait. The upload deadline also covers reading the request and storing the file. These bounds do not provide parser process isolation.
+PDF pages are read sequentially, with at most 500 pages and 2,000,000 extracted characters. Images are limited to 25 megapixels before decoding. DOCX archives are inspected before expansion, with limits of 16 MiB expanded data and 2,000 entries. OCR allows one active job and one queued job; its 150-second deadline includes queue wait. If the OCR worker cannot start, or its thread dies, the upload returns 503 and the next upload starts a fresh worker. The upload deadline also covers reading the request and storing the file. These bounds do not provide parser process isolation.
 
-Scanned PDFs are detected through low text density; their pages are **not** rasterized for OCR. Contract and context uploads reject extraction failures or empty text. Usable but low-quality extraction can be stored with a warning. Original bytes go to object storage, while extracted text and metadata go to PostgreSQL. Reuploads replace active contract text and invalidate current analysis state; prior file records remain until deletion.
+Scanned PDFs are detected through low text density across the document. In an otherwise digital PDF, each page with fewer than 20 non-whitespace characters (typically an appended scanned schedule or signature page) is named in a warning, and the extraction confidence becomes the share of pages read. Scanned pages are **not** rasterized for OCR. Contract and context uploads reject extraction failures or empty text. Usable but low-quality extraction can be stored with a warning, which the contract page shows before and after analysis. Original bytes go to object storage, while extracted text and metadata go to PostgreSQL. Reuploads replace active contract text and invalidate current analysis state; prior file records remain until deletion.
 
 ### Analysis and projects
 
@@ -216,7 +216,7 @@ Root [vercel.json](vercel.json) configures:
 - Output: `apps/web/.next`.
 - Cron: daily storage-deletion outbox cleanup, authenticated with `CRON_SECRET`.
 
-Keep the hoisted linker so repository-root framework discovery can resolve Next.js. The build command does not apply migrations. Run migrations against the intended environment before setting `SKIP_SCHEMA_BOOTSTRAP=1`. API output traces include SQL migration files through [next.config.js](apps/web/next.config.js).
+Keep the hoisted linker so repository-root framework discovery can resolve Next.js. The build command does not apply migrations. Run migrations against the intended environment before setting `SKIP_SCHEMA_BOOTSTRAP=1`. API output traces include SQL migration files through [next.config.js](apps/web/next.config.js). The OCR upload routes leave tesseract.js unbundled and trace its worker modules, WebAssembly core builds, and English model; `bun run check:ocr-trace` in `apps/web` verifies those traces after a build.
 
 The configured ignore command considers changes under `apps/web`, `packages`, and the listed root build/dependency configuration files; a root README/AGENTS-only commit is eligible to skip deployment. The repository configuration does not establish the current state of a live deployment.
 

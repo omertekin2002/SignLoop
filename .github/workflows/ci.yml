@@ -53,6 +53,12 @@ jobs:
       - name: Build
         run: bun run build
 
+      # Vercel deploys each route with only its traced files; OCR loads its worker, WebAssembly
+      # core and language model at runtime, so a missing file would surface only on upload.
+      - name: Check OCR build traces
+        working-directory: apps/web
+        run: bun run check:ocr-trace
+
   database:
     name: Database integration tests
     runs-on: ubuntu-latest

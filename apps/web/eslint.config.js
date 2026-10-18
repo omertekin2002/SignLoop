@@ -19,7 +19,7 @@ const evalForbiddenModules = [
 export default [
   ...nextJsConfig,
   {
-    files: ["db/**/*.js"],
+    files: ["db/**/*.js", "scripts/**/*.mjs"],
     languageOptions: { globals: { process: "readonly" } },
   },
   {

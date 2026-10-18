@@ -27,6 +27,7 @@ From `apps/web`:
 - `bun run test:integration` creates a disposable local PostgreSQL database, applies migrations, runs database regressions, and removes it. Set `POSTGRES_BIN` if PostgreSQL binaries are not in `/opt/homebrew/opt/postgresql@16/bin`.
 - Database integration tests skip in ordinary test runs unless `SIGNLOOP_TEST_DATABASE_URL` is set. The disposable-database script sets this itself, or uses an already-set URL for an empty `localhost` `signloop_test` database (as CI does), and does not use `POSTGRES_URL`.
 - `bun run storage:cleanup` processes the real storage-deletion outbox using configured database/storage credentials.
+- `bun run check:ocr-trace` runs after a build and verifies that the OCR upload routes trace tesseract.js's worker modules, WebAssembly core builds, and English model, and that server output contains no unexpected build-machine (`/ROOT/node_modules`) paths. CI runs it after the build.
 
 For application changes, run appropriate tests and the root build, lint, and type checks. Turbo can reuse cached results; use `bun run build --force` when a fresh build is needed. Run build and `check-types` sequentially because both generate `.next` files. Documentation-only edits need command/link/configuration checks rather than an application rebuild.
 
@@ -70,4 +71,4 @@ The repository is configured for Vercel in root `vercel.json`:
 - Build: `bunx turbo build --filter=web`.
 - Output: `apps/web/.next`.
 
-Keep the hoisted linker for repository-root deployment so Vercel can resolve Next.js from root `node_modules`. The build does not run migrations. SQL migration files are included in API deployment traces through `apps/web/next.config.js`. Vercel Cron runs the storage-deletion outbox cleanup daily at 03:00 UTC through an authenticated route. Set `CRON_SECRET` in the production environment.
+Keep the hoisted linker for repository-root deployment so Vercel can resolve Next.js from root `node_modules`. The build does not run migrations. SQL migration files are included in API deployment traces through `apps/web/next.config.js`. The same file keeps tesseract.js unbundled and lists the OCR runtime files for the upload routes; the shared facts live in `apps/web/lib/ocr-assets.js`. Update them together when changing OCR packages or routes. Vercel Cron runs the storage-deletion outbox cleanup daily at 03:00 UTC through an authenticated route. Set `CRON_SECRET` in the production environment.

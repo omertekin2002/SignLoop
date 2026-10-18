@@ -1,3 +1,8 @@
+import { constants as fsConstants } from "node:fs";
+import { access } from "node:fs/promises";
+import { createRequire } from "node:module";
+import path from "node:path";
+import type { Worker as NodeWorker } from "node:worker_threads";
 import {
   ExtractionLimitError,
   MAX_EXTRACTED_TEXT_LENGTH,
@@ -6,6 +11,11 @@ import {
   validatePdfExpansion,
 } from "@/lib/extraction-limits";
 export { ExtractionLimitError } from "@/lib/extraction-limits";
+import {
+  ENGLISH_MODEL_DIRECTORY,
+  ENGLISH_MODEL_FILE,
+  TESSERACT_CORE_BUILDS,
+} from "@/lib/ocr-assets";
 import type { createWorker } from "tesseract.js";
 import type WordExtractor from "word-extractor";
 import { getErrorMessage } from "@/lib/utils";
@@ -16,6 +26,10 @@ const MIN_TEXT_DENSITY = 50; // Minimum characters per page for non-scanned PDF
 // At or below this page count a sparse PDF may still be a legitimately short document, so the
 // absolute-length check applies. Above it, low density is decisive on its own.
 const SHORT_DOCUMENT_PAGE_COUNT = 2;
+// A page with fewer non-whitespace characters than this has no usable text layer of its own: it
+// is blank or, typically for appended schedules and signature pages, a scanned image that carries
+// at most a stamp or page number.
+const MIN_PAGE_TEXT_CHARACTERS = 20;
 const MAX_PDF_PAGES = 500;
 const DOC_MIME_TYPE = "application/msword";
 const DOCX_MIME_TYPE =
@@ -25,6 +39,9 @@ const PDF_MIME_TYPE = "application/pdf";
 const MAX_PENDING_OCR_JOBS = 2;
 const OCR_WORKER_INIT_TIMEOUT_MS = 60_000;
 const OCR_RECOGNITION_TIMEOUT_MS = 90_000;
+const OCR_LANGUAGE = "eng";
+const OCR_UNAVAILABLE_MESSAGE =
+  "Image text extraction is unavailable right now. Please try again shortly.";
 const FILE_SIGNATURE_ERROR =
   "File contents do not match the selected file type";
 
@@ -32,11 +49,19 @@ const FILE_SIGNATURE_ERROR =
 // imported lazily inside the extractor that needs it — a PDF upload no longer pulls in the OCR
 // wasm or the Word parser, and validate-only callers load none of them.
 
-// Reuse a single Tesseract worker across requests so we don't re-spin a worker and reload the
-// English language model on every image upload (the dominant cost in tesseract.js). On failure
-// the cached promise is cleared so the next call can retry.
-let ocrWorkerPromise: Promise<Awaited<ReturnType<typeof createWorker>>> | null =
-  null;
+type TesseractWorker = Awaited<ReturnType<typeof createWorker>>;
+
+/** A started tesseract.js worker. `failed` rejects if its thread dies or startup fails. */
+type OcrEngine = {
+  worker: TesseractWorker;
+  failed: Promise<never>;
+  terminate(): Promise<void>;
+};
+
+// Reuse a single OCR engine across requests so we don't re-spin a worker thread and reload the
+// English language model on every image upload (the dominant cost in tesseract.js). An engine
+// that fails to start or whose thread dies is dropped so the next call starts a fresh one.
+let ocrEnginePromise: Promise<OcrEngine> | null = null;
 let ocrQueue: Promise<void> = Promise.resolve();
 let pendingOcrJobs = 0;
 
@@ -64,23 +89,164 @@ async function runSerializedOcr<T>(
   }
 }
 
-function getOcrWorker(): Promise<Awaited<ReturnType<typeof createWorker>>> {
-  if (!ocrWorkerPromise) {
-    const creationPromise = (async () => {
-      const { createWorker } = await import("tesseract.js");
-      return createWorker("eng");
-    })();
-    const cachedPromise = creationPromise.catch((error) => {
-      // A timed-out initialization may already have been replaced by a new worker promise. Only
-      // clear the cache if this failing promise is still the active one.
-      if (ocrWorkerPromise === cachedPromise) {
-        ocrWorkerPromise = null;
-      }
-      throw error;
-    });
-    ocrWorkerPromise = cachedPromise;
+/**
+ * Locate the OCR worker script, core builds and English model where they are deployed.
+ * tesseract.js and @tesseract.js-data/eng stay unbundled (serverExternalPackages in
+ * next.config.js), so paths they derive from their own `__dirname` are runtime paths; a bundled
+ * copy would carry build-machine paths instead. Every file is checked here because a missing
+ * worker script or WebAssembly file otherwise fails inside the worker thread, not as a rejection.
+ */
+async function resolveOcrAssets(): Promise<{
+  workerPath: string;
+  langPath: string;
+}> {
+  const [{ default: workerDefaults }, { default: englishData }] =
+    await Promise.all([
+      import("tesseract.js/src/worker/node/defaultOptions.js"),
+      import("@tesseract.js-data/eng"),
+    ]);
+  const { workerPath } = workerDefaults;
+  // The package's entry point names its legacy-engine directory; the model sits beside it.
+  const langPath = path.join(
+    path.dirname(englishData.langPath),
+    ENGLISH_MODEL_DIRECTORY,
+  );
+  // The worker requires its core build relative to its own location, so resolve from there.
+  const requireFromWorker = createRequire(workerPath);
+  const files = [workerPath, path.join(langPath, ENGLISH_MODEL_FILE)];
+  // The worker picks one of these at runtime (see lib/ocr-assets.js); all of them are traced.
+  for (const build of TESSERACT_CORE_BUILDS) {
+    const script = requireFromWorker.resolve(`tesseract.js-core/${build}.js`);
+    files.push(script, script.replace(/\.js$/, ".wasm"));
   }
-  return ocrWorkerPromise;
+  await Promise.all(files.map((file) => access(file, fsConstants.R_OK)));
+  return { workerPath, langPath };
+}
+
+async function startOcrEngine(): Promise<OcrEngine> {
+  let reportFailure!: (error: ExtractionUnavailableError) => void;
+  const failed = new Promise<never>((_resolve, reject) => {
+    reportFailure = reject;
+  });
+  // A recognition races `failed`, but an idle engine can also die with nobody waiting on it.
+  failed.catch(() => {});
+  let failure: ExtractionUnavailableError | null = null;
+  let stopping = false;
+  const fail = (reason: string, cause?: unknown) => {
+    if (failure) return failure;
+    const error = new ExtractionUnavailableError(OCR_UNAVAILABLE_MESSAGE, {
+      cause,
+    });
+    failure = error;
+    if (!stopping) console.error(`OCR worker ${reason}:`, cause);
+    reportFailure(error);
+    return error;
+  };
+
+  let tesseract: typeof import("tesseract.js");
+  let assets: Awaited<ReturnType<typeof resolveOcrAssets>>;
+  try {
+    [tesseract, assets] = await Promise.all([
+      import("tesseract.js"),
+      resolveOcrAssets(),
+    ]);
+  } catch (error: unknown) {
+    throw fail("assets are unavailable", error);
+  }
+
+  let thread: NodeWorker | undefined;
+  const watch = (spawned: NodeWorker) => {
+    thread = spawned;
+    spawned.on("error", (error) => fail("thread failed", error));
+    spawned.once("exit", (code) => fail(`thread exited with code ${code}`));
+    // An idle cached engine must not keep a process (a script or test run) alive. Work in
+    // progress still does, through the startup and recognition timeouts.
+    spawned.unref();
+  };
+  // tesseract.js spawns its worker thread synchronously inside createWorker() but watches it only
+  // through a browser-style `onerror` property, which Node ignores: a failed spawn or a crashed
+  // thread would be an uncaught exception in this process. Node announces each new thread from a
+  // nextTick callback queued by the Worker constructor, so a listener added from a callback queued
+  // just before createWorker() skips earlier threads and receives this one. The second callback
+  // removes the listener if no thread was spawned.
+  process.nextTick(() => process.once("worker", watch));
+  let started = false;
+  let creation: Promise<TesseractWorker>;
+  try {
+    creation = tesseract.createWorker(OCR_LANGUAGE, tesseract.OEM.LSTM_ONLY, {
+      workerPath: assets.workerPath,
+      // Pins the core to the builds traced for deployment (TESSERACT_CORE_BUILDS).
+      legacyCore: true,
+      langPath: assets.langPath,
+      gzip: true,
+      // The default cache reads and writes traineddata in the working directory, which is
+      // read-only on Vercel; read the bundled model directly instead.
+      cacheMethod: "none",
+      // Without a handler tesseract.js rethrows worker-reported failures inside its message
+      // listener (another uncaught exception), and a failed language load or initialization
+      // leaves createWorker() pending. Later reports also reject the recognize() call that
+      // caused them, which the caller handles.
+      errorHandler: (error: unknown) => {
+        if (!started) fail("could not start", error);
+      },
+    });
+  } catch (error: unknown) {
+    throw fail("could not start", error);
+  } finally {
+    process.nextTick(() => process.off("worker", watch));
+  }
+  // Settle tesseract.js's own promise quietly when `failed` decides the race below.
+  creation.catch(() => {});
+
+  let worker: TesseractWorker;
+  try {
+    worker = await Promise.race([creation, failed]);
+  } catch (error: unknown) {
+    const startupFailure = fail("could not start", error);
+    stopping = true;
+    void thread?.terminate().catch(() => {});
+    void creation
+      .then(
+        (late) => late.terminate(),
+        () => {},
+      )
+      .catch(() => {});
+    throw startupFailure;
+  }
+  started = true;
+  // The thread announcement is the primary hook; tesseract.js also exposes its handle.
+  const handle = (worker as TesseractWorker & { worker?: NodeWorker }).worker;
+  if (handle && handle !== thread) watch(handle);
+  return {
+    worker,
+    failed,
+    terminate: async () => {
+      stopping = true;
+      await worker.terminate();
+    },
+  };
+}
+
+function getOcrEngine(): Promise<OcrEngine> {
+  if (!ocrEnginePromise) {
+    const enginePromise = startOcrEngine().then(
+      (engine) => {
+        // A crashed engine must not stay cached; the next request starts a fresh one.
+        engine.failed.catch(() => {
+          if (ocrEnginePromise === enginePromise) ocrEnginePromise = null;
+        });
+        return engine;
+      },
+      (error: unknown) => {
+        // A timed-out initialization may already have been replaced by a new engine promise.
+        // Only clear the cache if this failing promise is still the active one.
+        if (ocrEnginePromise === enginePromise) ocrEnginePromise = null;
+        throw error;
+      },
+    );
+    ocrEnginePromise = enginePromise;
+  }
+  return ocrEnginePromise;
 }
 
 // Lazily construct and cache a single WordExtractor instance on first .doc/.docx use.
@@ -103,13 +269,16 @@ export interface ExtractionResult {
   method:
     "pdf_parse" | "pdf_scanned" | "tesseract_ocr" | "word_parse" | "plain_text";
   confidence?: number;
+  /** One-based numbers of PDF pages whose content was not read for lack of a text layer. */
+  pagesWithoutText?: number[];
 }
 
 export type ExtractionMethod = ExtractionResult["method"];
 
+/** A transient, server-side failure; its message is shown to the uploader. */
 export class ExtractionUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "ExtractionUnavailableError";
   }
 }
@@ -360,7 +529,8 @@ export function validateMimeType(mimeType: string, fileName?: string): string {
 /**
  * Extract text from a PDF buffer using unpdf.
  * If the PDF appears to be scanned (low text density), returns the extracted text with method
- * pdf_scanned; callers attach a warning.
+ * pdf_scanned. Otherwise individual pages without a text layer are listed in pagesWithoutText.
+ * Callers turn either into a warning.
  */
 export async function extractTextFromPdf(
   buffer: Buffer,
@@ -382,6 +552,7 @@ export async function extractTextFromPdf(
     }
 
     const pages: string[] = [];
+    const pagesWithoutText: number[] = [];
     let characters = 0;
     // Read one page at a time: unpdf's convenience helper materializes every page in parallel.
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
@@ -399,7 +570,14 @@ export async function extractTextFromPdf(
             );
           parts.push(item.str + (item.hasEOL ? "\n" : ""));
         }
-        pages.push(parts.join(""));
+        const pageText = parts.join("");
+        pages.push(pageText);
+        // Counted per page because joining and whitespace collapsing below lose page boundaries.
+        // Only this tally is kept; the stored text, and the offsets citations take into it, are
+        // unchanged.
+        if (pageText.replace(/\s+/g, "").length < MIN_PAGE_TEXT_CHARACTERS) {
+          pagesWithoutText.push(pageNumber);
+        }
       } finally {
         page.cleanup();
       }
@@ -428,6 +606,19 @@ export async function extractTextFromPdf(
         text: extractedText,
         method: "pdf_scanned",
         confidence: 0,
+      };
+    }
+
+    if (pagesWithoutText.length > 0) {
+      // A text PDF with some image-only pages (typically appended scans of schedules or signed
+      // pages). The document-wide average cannot see them, so report them by page; confidence
+      // is the share of pages that were actually read, kept below a full read.
+      const readPages = pageCount - pagesWithoutText.length;
+      return {
+        text: extractedText,
+        method: "pdf_parse",
+        confidence: Math.min(99, Math.floor((readPages / pageCount) * 100)),
+        pagesWithoutText,
       };
     }
 
@@ -475,45 +666,49 @@ export async function extractTextFromImage(
   pendingOcrJobs += 1;
   try {
     return await runSerializedOcr(async () => {
-      let worker: Awaited<ReturnType<typeof createWorker>> | null = null;
+      let engine: OcrEngine | null = null;
       try {
-        const workerPromise = getOcrWorker();
-        let workerInitTimeout: ReturnType<typeof setTimeout> | undefined;
+        const enginePromise = getOcrEngine();
+        let engineInitTimeout: ReturnType<typeof setTimeout> | undefined;
+        let initTimedOut = false;
         try {
-          worker = await withAbort(
+          engine = await withAbort(
             Promise.race([
-              workerPromise,
+              enginePromise,
               new Promise<never>((_resolve, reject) => {
-                workerInitTimeout = setTimeout(
-                  () =>
-                    reject(
-                      new ExtractionUnavailableError(
-                        "Image text extraction could not start. Please try again shortly.",
-                      ),
+                engineInitTimeout = setTimeout(() => {
+                  initTimedOut = true;
+                  reject(
+                    new ExtractionUnavailableError(
+                      "Image text extraction could not start. Please try again shortly.",
                     ),
-                  OCR_WORKER_INIT_TIMEOUT_MS,
-                );
+                  );
+                }, OCR_WORKER_INIT_TIMEOUT_MS);
               }),
             ]),
             signal,
           );
         } catch (error: unknown) {
-          if (error instanceof ExtractionUnavailableError || signal.aborted) {
-            // A late worker must not remain orphaned or become the cached worker after this request
-            // has already failed. Terminate it asynchronously when initialization eventually ends.
-            ocrWorkerPromise = null;
-            void workerPromise
-              .then((lateWorker) => lateWorker.terminate())
-              .catch((lateWorkerError: unknown) => {
+          if (initTimedOut || signal.aborted) {
+            // A late engine must not remain orphaned or become the cached engine after this
+            // request has already failed. Terminate it asynchronously when startup eventually ends;
+            // a startup failure is already logged and uncached by getOcrEngine.
+            if (ocrEnginePromise === enginePromise) ocrEnginePromise = null;
+            void enginePromise
+              .then(
+                (lateEngine) => lateEngine.terminate(),
+                () => {},
+              )
+              .catch((lateEngineError: unknown) => {
                 console.warn(
                   "Failed to clean up a late OCR worker:",
-                  lateWorkerError,
+                  lateEngineError,
                 );
               });
           }
           throw error;
         } finally {
-          if (workerInitTimeout) clearTimeout(workerInitTimeout);
+          if (engineInitTimeout) clearTimeout(engineInitTimeout);
         }
 
         let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -529,10 +724,15 @@ export async function extractTextFromImage(
           );
         });
 
-        let result: Awaited<ReturnType<typeof worker.recognize>>;
+        let result: Awaited<ReturnType<TesseractWorker["recognize"]>>;
         try {
+          // `failed` ends the wait at once if the worker thread dies mid-recognition.
           result = await withAbort(
-            Promise.race([worker.recognize(buffer), timeoutPromise]),
+            Promise.race([
+              engine.worker.recognize(buffer),
+              engine.failed,
+              timeoutPromise,
+            ]),
             signal,
           );
         } finally {
@@ -547,10 +747,10 @@ export async function extractTextFromImage(
       } catch (error: unknown) {
         // Recognition failures can leave Tesseract's cached worker in an unusable state. Clear it
         // and terminate the failed instance so the next request gets a clean worker.
-        ocrWorkerPromise = null;
-        if (worker) {
+        ocrEnginePromise = null;
+        if (engine) {
           try {
-            await withAbort(worker.terminate(), AbortSignal.timeout(2_000));
+            await withAbort(engine.terminate(), AbortSignal.timeout(2_000));
           } catch (terminationError: unknown) {
             console.warn(
               "Failed to terminate OCR worker after recognition error:",

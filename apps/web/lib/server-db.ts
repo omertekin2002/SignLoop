@@ -233,6 +233,8 @@ export type ContractSummaryRecord = {
 };
 
 export type ContractRecord = ContractSummaryRecord & {
+  /** Quality warning for the current extracted text, recorded by its upload. */
+  extractionWarning: string | null;
   analysesHasMore: boolean;
   analyses: AnalysisRecord[];
 };
@@ -564,13 +566,18 @@ export async function getContractByIdForUser(
 ): Promise<ContractRecord | null> {
   await ensureSchema();
 
-  const { rows: contractRows } = await sql<ContractSummaryRecord>`
+  // The warning belongs to the active text (saved with it by each upload), so the page can show
+  // it before any analysis exists. The text itself stays out of this response.
+  const { rows: contractRows } = await sql<
+    ContractSummaryRecord & { extractionWarning: string | null }
+  >`
     select
       id,
       user_id as "userId",
       project_id as "projectId",
       title,
       status,
+      extraction_warning as "extractionWarning",
       created_at as "createdAt",
       updated_at as "updatedAt"
     from contracts

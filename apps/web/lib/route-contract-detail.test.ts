@@ -43,6 +43,7 @@ const contractRecord = () => ({
   projectId: null,
   title: "Master services agreement",
   status: "analyzed",
+  extractionWarning: null,
   createdAt: "2026-10-01T10:00:00.000Z",
   updatedAt: "2026-10-01T10:05:00.000Z",
   analyses: [
@@ -116,6 +117,29 @@ describe("GET /api/contracts/[id]", () => {
       0,
     );
     expect(after).not.toHaveBeenCalled();
+  });
+
+  it("includes the current extraction warning so the page can show it before analysis", async () => {
+    const warning =
+      "Pages 7–9 have little or no selectable text and were not read; they may be scanned images. Verify those pages in the original before relying on the analysis.";
+    auth.mockResolvedValue({ userId: "owner" });
+    getContractByIdForUser.mockResolvedValue({
+      ...contractRecord(),
+      status: "DRAFT",
+      analyses: [],
+      analysesHasMore: false,
+      extractionWarning: warning,
+    });
+
+    const response = await GET(getRequest(), params(CONTRACT_ID));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ extractionWarning: warning, analyses: [] });
+    // Contract text is only served by the paged, owner-scoped source route.
+    for (const key of ["text", "textContent", "text_content"]) {
+      expect(body).not.toHaveProperty(key);
+    }
   });
 
   it("accepts an upper-case contract uuid", async () => {

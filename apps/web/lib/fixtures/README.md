@@ -1,7 +1,12 @@
-# Synthetic Word extraction fixtures
+# Synthetic extraction fixtures
 
-These small DOCX archives contain no user documents. They are consumed by
-`../word-extraction.integration.test.ts` using the real installed Word parser.
+These small files contain no user documents. Tests read them with the real
+installed parsers rather than mocks.
+
+## Word
+
+These DOCX archives are consumed by `../word-extraction.integration.test.ts`
+using the real installed Word parser.
 
 - `word-semantic-parts.docx` contains a payment clause in the body, a termination
   fee in a footnote, renewal terms in an endnote, and a liability cap in a body
@@ -29,3 +34,29 @@ bun --no-env-file run test lib/word-extraction.integration.test.ts
 
 The tests also assert that parsing leaves original bytes unchanged, preserving
 the upload pipeline's subsequent storage operation.
+
+## Image OCR
+
+`ocr-notice-terms.png` is a 520×130 8-bit grayscale PNG with two lines of black
+text on white: `Termination fee: 250 USD` and `Notice period: 30 days`. It was
+drawn with Pillow 12.1.1 in DejaVu Sans at 32 px (left margin 24 px, lines at
+y = 20 and 68 px) and saved with `optimize=True`. The font is only rasterized;
+no font file is distributed. `../image-extraction.integration.test.ts` runs the
+installed tesseract.js worker, WebAssembly core and the bundled
+`@tesseract.js-data/eng` model on it, without network access.
+
+## PDF with a scanned page
+
+`pdf-scanned-middle-page.pdf` is a hand-assembled three-page PDF 1.4 file
+(US Letter, uncompressed streams, no metadata or document ID). Pages 1 and 3
+have a text layer in the standard Helvetica font with WinAnsiEncoding: an
+agreement title and clauses 1–2, then clauses 3–4. Page 2 stands in for a
+scanned signature page: it paints one 8×8 DeviceGray raster and has no text
+operators. `../pdf-extraction.integration.test.ts` and
+`../upload-pipeline.test.ts` expect page 2 to be reported as unread and the
+other pages' text to be kept exactly. `.gitattributes` marks both files binary,
+since line-ending conversion would break the PDF's cross-reference offsets.
+
+```sh
+bun --no-env-file run test lib/image-extraction.integration.test.ts lib/pdf-extraction.integration.test.ts
+```

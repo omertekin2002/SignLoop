@@ -48,6 +48,7 @@ import {
   getChatImageForUser,
   getChatThreadByIdForUser,
   getContractAnalysisGateForUser,
+  getContractByIdForUser,
   getContractTextForUser,
   getContractWithLatestAnalysisForUser,
   getProjectByIdForUser,
@@ -106,6 +107,52 @@ describe.skipIf(!connectionString)("database integration", () => {
       llmModel: "test",
     });
   }
+
+  it("returns the active text's extraction warning in contract detail, owner-scoped and without the text", async () => {
+    const item = await contract();
+    const warning =
+      "Page 2 has little or no selectable text and was not read; it may be a scanned image. Verify that page in the original before relying on the analysis.";
+    const upload = {
+      userId: "owner",
+      contractId: item.id,
+      projectId: null,
+      title: "Test",
+      fileName: "agreement.pdf",
+      storageKey: `extraction-warning-${item.id}`,
+      bucket: "test",
+      contentType: "application/pdf",
+      sizeBytes: 1727,
+      extractionMethod: "pdf_parse",
+      extractionConfidence: 66,
+    };
+    await saveContractUploadForUser({
+      ...upload,
+      text: "Readable clause text.",
+      extractionWarning: warning,
+    });
+
+    const detail = await getContractByIdForUser("owner", item.id);
+    expect(detail).toMatchObject({
+      id: item.id,
+      status: "DRAFT",
+      extractionWarning: warning,
+      analyses: [],
+      analysesHasMore: false,
+    });
+    expect(detail).not.toHaveProperty("text");
+    expect(await getContractByIdForUser("intruder", item.id)).toBeNull();
+
+    // The warning follows the active text: a clean re-upload clears it.
+    await saveContractUploadForUser({
+      ...upload,
+      storageKey: `${upload.storageKey}-clean`,
+      text: "Replacement clause text.",
+      extractionWarning: null,
+    });
+    expect(
+      (await getContractByIdForUser("owner", item.id))?.extractionWarning,
+    ).toBeNull();
+  });
 
   it("serves bounded source pages with Unicode/hash agreement and owner isolation", async () => {
     const item = await contract();
