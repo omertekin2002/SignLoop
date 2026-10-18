@@ -197,7 +197,7 @@ function ModelSelector({
             disabled && "cursor-default opacity-80 hover:bg-transparent",
           )}
         >
-          {showBrand ? <SignLoopWordmark /> : null}
+          {showBrand ? <SignLoopWordmark className="hidden sm:inline-flex" /> : null}
           <span className="max-w-[96px] truncate text-sm text-muted-foreground sm:max-w-[180px]">
             {activeModel}
           </span>
@@ -270,6 +270,8 @@ const Dashboard = ({
   const [isTemporaryChatSelected, setIsTemporaryChatSelected] =
     useState(startTemporary);
   const [temporaryChatKey, setTemporaryChatKey] = useState(0);
+  const [hasTemporaryContent, setHasTemporaryContent] = useState(false);
+  const [confirmNewTemporary, setConfirmNewTemporary] = useState(false);
   const [isRefreshingModels, setIsRefreshingModels] = useState(false);
   const modelRefreshPromiseRef = useRef<Promise<boolean> | null>(null);
 
@@ -381,7 +383,16 @@ const Dashboard = ({
     setRecentlyDeletedChatThreadId(null);
     setSelectedChatThreadId(null);
     setIsTemporaryChatSelected(true);
+  };
+
+  const resetTemporaryChat = () => {
+    selectTemporaryChat();
     setTemporaryChatKey((key) => key + 1);
+    setHasTemporaryContent(false);
+  };
+  const startNewTemporaryChat = () => {
+    if (hasTemporaryContent) setConfirmNewTemporary(true);
+    else resetTemporaryChat();
   };
 
   const renderLoginRequired = (resource: "contracts" | "projects") => {
@@ -521,7 +532,7 @@ const Dashboard = ({
 
   const startNewChat = async () => {
     if (!canUseSavedWorkspace) {
-      selectTemporaryChat();
+      startNewTemporaryChat();
       return;
     }
 
@@ -963,7 +974,7 @@ const Dashboard = ({
       >
         <header className="relative z-20 flex h-14 shrink-0 items-center px-2 gap-0.5">
           {!sidebarOpen && (
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               <Button
                 type="button"
                 variant="ghost"
@@ -1012,7 +1023,20 @@ const Dashboard = ({
             </div>
           )}
 
-          <div className="flex items-center">
+          <div className="flex min-w-0 items-center">
+            {activeTab === "chat" && isTemporaryChatSelected && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="shrink-0 gap-2"
+                title="New temporary chat"
+                aria-label="New temporary chat"
+                onClick={startNewTemporaryChat}
+              >
+                <Plus className="h-4 w-4" />
+                <span className="hidden sm:inline">New temporary chat</span>
+              </Button>
+            )}
             {activeTab === "chat" && (
               <ModelSelector
                 activeModel={activeModel}
@@ -1254,31 +1278,46 @@ const Dashboard = ({
               activeTab === "chat" ? "flex" : "hidden",
             )}
           >
-            <ChatPanel
-              selectedThreadId={
-                isTemporaryChatSelected ? null : selectedChatThreadId
-              }
-              temporary={isTemporaryChatSelected}
-              temporarySessionKey={temporaryChatKey}
-              landingHero={landingHero}
-              initialPrompt={
-                temporaryChatKey === 0 ? initialTemporaryPrompt : undefined
-              }
-              onThreadSelected={(threadId) => {
-                if (threadId) {
-                  selectNewChatThread(threadId);
-                  return;
-                }
-
-                setSelectedChatThreadId(null);
-              }}
-            />
+            <div className={cn("h-full min-h-0", !isTemporaryChatSelected && "hidden")}>
+              <ChatPanel
+                temporary
+                active={activeTab === "chat" && isTemporaryChatSelected}
+                temporarySessionKey={temporaryChatKey}
+                onContentChange={setHasTemporaryContent}
+                landingHero={landingHero}
+                initialPrompt={temporaryChatKey === 0 ? initialTemporaryPrompt : undefined}
+              />
+            </div>
+            {canUseSavedWorkspace && (
+              <div className={cn("h-full min-h-0", isTemporaryChatSelected && "hidden")}>
+                <ChatPanel
+                  active={activeTab === "chat" && !isTemporaryChatSelected}
+                  selectedThreadId={selectedChatThreadId}
+                  onThreadSelected={(threadId) => {
+                    if (threadId) selectNewChatThread(threadId);
+                    else setSelectedChatThreadId(null);
+                  }}
+                />
+              </div>
+            )}
           </div>
         </div>
         {activeTab === "contracts" && renderLoadMore(contractList)}
         {activeTab === "projects" && renderLoadMore(projectList)}
       </main>
 
+      <AlertDialog open={confirmNewTemporary} onOpenChange={setConfirmNewTemporary}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Start a new temporary chat?</AlertDialogTitle>
+            <AlertDialogDescription>The current temporary conversation and draft will be discarded.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep conversation</AlertDialogCancel>
+            <AlertDialogAction onClick={resetTemporaryChat}>Start new chat</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog
         open={!!contractToDelete}
         onOpenChange={(open) => {

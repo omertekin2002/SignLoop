@@ -91,62 +91,33 @@ describe("analysis response completion", () => {
     const { analyzeText } = await import("./analysis");
 
     await expect(analyzeText("Monthly payment agreement")).rejects.toThrow(
-      /no JSON object/,
+      /could not be parsed/,
     );
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("sends malformed JSON with braces to exactly one repair call", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        providerResponse("completed", '{"risk_badge": "LOW", "key_points": [}'),
-      )
-      .mockResolvedValueOnce(providerResponse("completed", "not json either"));
-    vi.stubGlobal("fetch", fetchMock);
-    const { analyzeText } = await import("./analysis");
-
-    await expect(analyzeText("Monthly payment agreement")).rejects.toThrow(
-      /invalid after repair attempt/,
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("analysis.test");
-    const repairBody = JSON.parse(
-      String((fetchMock.mock.calls[1]?.[1] as RequestInit).body),
-    );
-    expect(repairBody.input).toContain('{"risk_badge": "LOW", "key_points": [}');
-  });
-
-  it("rejects an incomplete repair without sending the contract to fallback", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(providerResponse("completed", "{"))
-      .mockResolvedValueOnce(providerResponse("incomplete"));
-    vi.stubGlobal("fetch", fetchMock);
-    const { analyzeText } = await import("./analysis");
-
-    await expect(analyzeText("Monthly payment agreement")).rejects.toThrow(
-      /Analysis response did not complete.*max_output_tokens/,
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it.each([false, true])(
-    "accepts completed output (repair: %s)",
-    async (repair) => {
-      const fetchMock = vi.fn();
-      if (repair)
-        fetchMock.mockResolvedValueOnce(providerResponse("completed", "{"));
-      fetchMock.mockResolvedValueOnce(providerResponse("completed"));
+  it.each(["{", '{"risk_badge": "LOW", "key_points": [}', 'Refusal with a stray {']) (
+    "rejects unrecoverable output %s without repair or fallback", async (malformed) => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(providerResponse("completed", malformed))
+        .mockResolvedValueOnce(providerResponse("completed"));
       vi.stubGlobal("fetch", fetchMock);
       const { analyzeText } = await import("./analysis");
+      await expect(analyzeText("Monthly payment agreement")).rejects.toThrow(/could not be parsed/);
+      expect(fetchMock).toHaveBeenCalledOnce();
+    },
+  );
 
+  it.each([payload, `\`\`\`json\n${payload}\n\`\`\``, payload.replace(/}$/, ",}")])(
+    "accepts complete facts with deterministic syntax recovery", async (content) => {
+      const fetchMock = vi.fn().mockResolvedValue(providerResponse("completed", content));
+      vi.stubGlobal("fetch", fetchMock);
+      const { analyzeText } = await import("./analysis");
       const answer = await analyzeText("Monthly payment agreement");
       expect(answer.result.key_points).toContain("Payment is monthly");
-      expect(answer.provider).toBe("primary-openai-compatible");
-      expect(answer.promptTokens).toBe(repair ? 24 : 12);
-      expect(answer.completionTokens).toBe(repair ? 14 : 7);
-      expect(fetchMock).toHaveBeenCalledTimes(repair ? 2 : 1);
+      expect(answer.promptTokens).toBe(12);
+      expect(answer.completionTokens).toBe(7);
+      expect(fetchMock).toHaveBeenCalledOnce();
     },
   );
 });

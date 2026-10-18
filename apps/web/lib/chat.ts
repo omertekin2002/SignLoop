@@ -1,3 +1,4 @@
+import type { ContractEvidence } from "@/lib/contract-evidence";
 import {
   ToolLoopAgent,
   isStepCount,
@@ -35,6 +36,7 @@ import {
   compactAgentMessages,
 } from "@/lib/chat-agent-history";
 import { createChatSourceCatalog } from "@/lib/chat-source-catalog";
+import { chatTelemetryOptions } from "@/lib/telemetry-policy";
 
 // Search now returns leads rather than a brief, so a normal run is search -> several reads ->
 // answer. That needs more steps than a loop whose search already came back answer-shaped.
@@ -44,9 +46,6 @@ const MAX_SEARCHES = 3;
 const GENERATION_TIMEOUT_MS = 260_000;
 // A provider that accepts the request but sends nothing back is treated as down and skipped.
 const FIRST_CHUNK_TIMEOUT_MS = 20_000;
-// Langfuse records prompts and completions by default; contracts are sensitive, so allow opting out.
-const RECORD_TELEMETRY_CONTENT =
-  process.env.LANGFUSE_RECORD_CONTENT !== "false";
 const TOOL_NOTES = {
   search_web:
     "Use search_web to find pages about a topic. It returns a ranked list of titles, addresses, and snippets — leads, not evidence. Open the promising ones with read_url (or http_get for an API) and answer from what you read; a snippet alone is not enough to state a fact. Refine the keywords and search again when the results are off-target.",
@@ -80,6 +79,7 @@ export type ChatMessage = {
   role: ChatRole;
   content: string;
   agentMessages?: ModelMessage[];
+  contractEvidence?: ContractEvidence[];
   webSources?: WebSearchMetadata["sources"];
 };
 export type ChatToolName =
@@ -185,6 +185,7 @@ export type ChatReply = {
   model: string;
   webSearch: WebSearchMetadata | null;
   agentMessages?: ModelMessage[];
+  contractEvidence?: ContractEvidence[];
   toolActivity?: ChatToolActivity[];
   /** Stable citation numbers of the pages fetched during this turn. */
   readSources?: number[];
@@ -210,6 +211,8 @@ type ChatGenerationOptions = {
   /** Passed through to the image endpoint's `user` field for abuse attribution. */
   userId?: string | null;
   firstChunkTimeoutMs?: number;
+  /** Temporary chat disables AI tracing even when the deployment opts into content recording. */
+  recordTelemetry?: boolean;
 };
 
 type RoutedCandidate = ReturnType<ReturnType<typeof createOpenAI>["responses"]>;
@@ -410,6 +413,15 @@ export async function* generateChatReplyStream(
   const cache = new Map<string, Promise<unknown>>();
   const activities = new Map<string, ChatToolActivity>();
   const agentMessages: ModelMessage[] = [];
+  // Carry dependencies through follow-ups even when the model reuses earlier evidence without
+  // calling a tool. Keep conflicting revisions: persistence must reject a mixed snapshot.
+  const contractEvidence = new Map<string, ContractEvidence>();
+  const rememberContract = (ref: ContractEvidence) => {
+    contractEvidence.set(`${ref.id}:${ref.revision}`, ref);
+  };
+  for (const message of messages) {
+    for (const ref of message.contractEvidence ?? []) rememberContract(ref);
+  }
   const toolNotes: string[] = [];
   const tools: ToolSet = {};
   const egressGuard = createContractEgressGuard(() =>
@@ -490,6 +502,7 @@ export async function* generateChatReplyStream(
       tools,
       createContractTools({
         userId: options.contractsUserId,
+        onContractEvidence: rememberContract,
         signal,
         onEvidence: (text) => evidence.push(text),
         egressGuard,
@@ -522,11 +535,7 @@ export async function* generateChatReplyStream(
     maxOutputTokens: options?.maxOutputTokens ?? 4096,
     maxRetries: 0,
     providerOptions: { openai: { store: false } },
-    telemetry: {
-      functionId: "chat",
-      recordInputs: RECORD_TELEMETRY_CONTENT,
-      recordOutputs: RECORD_TELEMETRY_CONTENT,
-    },
+    telemetry: chatTelemetryOptions(options?.recordTelemetry !== false),
     prepareStep: ({ stepNumber }) =>
       stepNumber >= MAX_STEPS - 1 ? { toolChoice: "none" as const } : {},
     onStepEnd: ({ response }) => {
@@ -619,6 +628,7 @@ export async function* generateChatReplyStream(
             }
           : null,
         agentMessages: compactAgentMessages(agentMessages),
+        contractEvidence: [...contractEvidence.values()],
         toolActivity: [...activities.values()],
         readSources: [...readThisTurn],
         figures: verifyFigures(answer, evidence),

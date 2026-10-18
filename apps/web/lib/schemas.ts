@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { calendarNoticeDays } from "@/lib/notice-period";
 
 const CoverageNoticesSchema = z.array(z.string()).optional();
 
@@ -21,12 +22,13 @@ const BaseAnalysisResultSchema = z.object({
       minimum_term: z.string().nullable(),
     }),
     renewal: z.object({
-      auto_renew: z.boolean(),
+      auto_renew: z.boolean().nullable(),
       renewal_period: z.string().nullable(),
     }),
     cancellation: z.object({
       how: z.string().trim().min(1),
-      notice_period_days: z.number().int().nonnegative(),
+      notice_period_days: z.number().int().nonnegative().nullable(),
+      notice_period_text: z.string().trim().min(1).nullable().optional(),
       penalties: z.array(z.string()),
     }),
   }),
@@ -130,7 +132,8 @@ export function hasSubstantiveAnalysisContent(result: AnalysisResult): boolean {
     summary.renewal.auto_renew ||
     isSubstantiveText(summary.renewal.renewal_period) ||
     isSubstantiveText(summary.cancellation.how) ||
-    summary.cancellation.notice_period_days > 0 ||
+    (summary.cancellation.notice_period_days ?? 0) > 0 ||
+    isSubstantiveText(summary.cancellation.notice_period_text) ||
     summary.cancellation.penalties.some(isSubstantiveText) ||
     result.red_flags.some(
       (flag) =>
@@ -160,6 +163,15 @@ function addSubstantiveContentIssue(
   result: AnalysisResult,
   context: z.RefinementCtx,
 ): void {
+  const notice = result.summary.cancellation;
+  if (notice.notice_period_days !== null && notice.notice_period_text &&
+      calendarNoticeDays(notice.notice_period_text) !== notice.notice_period_days) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["summary", "cancellation", "notice_period_days"],
+      message: "Calendar days must agree with the original notice wording",
+    });
+  }
   if (hasSubstantiveAnalysisContent(result)) return;
 
   context.addIssue({
@@ -196,12 +208,13 @@ export const PartialAnalysisResultSchema = z
         .optional()
         .default({ start: null, end: null, minimum_term: null }),
       renewal: z.object({
-        auto_renew: z.boolean(),
+        auto_renew: z.boolean().nullable(),
         renewal_period: z.string().nullable().optional().default(null),
       }),
       cancellation: z.object({
         how: z.string().trim().min(1),
-        notice_period_days: z.number().int().nonnegative(),
+        notice_period_days: z.number().int().nonnegative().nullable(),
+        notice_period_text: z.string().trim().min(1).nullable().optional(),
         penalties: z.array(z.string()).optional().default([]),
       }),
     }),

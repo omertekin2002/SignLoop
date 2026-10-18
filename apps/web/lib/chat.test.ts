@@ -555,6 +555,7 @@ describe("agentic chat", () => {
           updatedAt: "2026-01-01",
           characterCount: 44,
           extractionWarning: null,
+          revision: "v1",
         },
       ],
       nextOffset: null,
@@ -565,6 +566,7 @@ describe("agentic chat", () => {
       status: "DRAFT",
       text: "Clause 1. Confidentiality lasts five years.",
       extractionWarning: null,
+      revision: "v1",
     });
     const model = sequencedModel([
       toolStep(0, "list_contracts", {}),
@@ -590,6 +592,15 @@ describe("agentic chat", () => {
       ["read_contract", "complete"],
     ]);
     expect(reply.webSearch).toBeNull();
+    expect(reply.contractEvidence).toEqual([{ id: contractId, revision: "v1" }]);
+    const followup = scriptedModel();
+    mocks.responses.mockReturnValue(followup);
+    const continued = await generateChatReply([
+      ...messages,
+      { role: "assistant", content: reply.message, contractEvidence: reply.contractEvidence },
+      { role: "user", content: "Explain the practical effect" },
+    ], { contractsUserId: "user-1" });
+    expect(continued.contractEvidence).toEqual(reply.contractEvidence);
 
     const anonymous = scriptedModel();
     mocks.responses.mockReturnValue(anonymous);
@@ -698,6 +709,7 @@ describe("agentic chat", () => {
         status: "DRAFT",
         text: clause,
         extractionWarning: null,
+      revision: "v1",
       });
       const model = sequencedModel([
         toolStep(0, "read_contract", { contractId, find: "confidential" }),

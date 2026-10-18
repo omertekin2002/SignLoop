@@ -104,6 +104,7 @@ it("exposes truncated keyword results and continuation through read_contract", a
   vi.mocked(getContractTextForUser).mockResolvedValueOnce({
     id: contractId,
     title: "Long contract",
+    revision: "2026-10-18T00:00:00.123456",
     status: "DRAFT",
     extractionWarning: null,
     text: Array.from({ length: 40 }, () => "indemnification " + "x".repeat(480)).join("\n"),
@@ -243,6 +244,7 @@ describe("contract egress guard", () => {
       title: "NDA",
       status: "DRAFT",
       extractionWarning: null,
+      revision: "2026-10-18T00:00:00.123456",
       text: `Clause 4. ${clause}`,
     });
     const guard = createContractEgressGuard();

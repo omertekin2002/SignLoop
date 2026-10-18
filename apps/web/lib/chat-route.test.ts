@@ -196,7 +196,7 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
       stream ? generateChatReplyStream : generateChatReply,
     ).toHaveBeenCalledWith(
       expect.any(Array),
-      expect.objectContaining({ primaryModel: "selected-model" }),
+      expect.objectContaining({ primaryModel: "selected-model", recordTelemetry: true }),
     );
     expect(appendChatMessagesToThread).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -265,6 +265,10 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
     await completion(await POST(request({ temporary: true })));
     expect(generateChatTitle).not.toHaveBeenCalled();
     expect(appendChatMessagesToThread).not.toHaveBeenCalled();
+    expect(stream ? generateChatReplyStream : generateChatReply).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ recordTelemetry: false }),
+    );
   });
 
   it("does not rename an existing conversation", async () => {

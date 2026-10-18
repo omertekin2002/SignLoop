@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { normalizeNoticePeriod } from "@/lib/notice-period";
 import {
   AnalysisResultSchema,
   PartialAnalysisResultSchema,
@@ -23,9 +24,6 @@ const MAX_ANALYSIS_OUTPUT_TOKENS = 8_192;
 const MAX_PROJECT_CONTEXT_PROMPT_CHARS = 8000;
 const MAX_CONTEXT_DOCUMENTS = 8;
 const MAX_CONTEXT_DOCUMENT_PROMPT_CHARS = 3000;
-// The repair pass operates on the model's (malformed) OUTPUT, not the contract input — give it a
-// generous budget so we don't hand the repairer pre-truncated JSON it can never make valid.
-const MAX_REPAIR_INPUT_CHARS = 60000;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -244,7 +242,10 @@ Required JSON rules:
 - "risk_badge" must be exactly one of: "LOW", "MEDIUM", "HIGH".
 - "normal_in_region[].label" must be exactly "typical" or "unusual".
 - "key_dates[].type" must be exactly one of: "RENEWAL", "NOTICE_CUTOFF", "PRICE_REVIEW", "OTHER".
-- "notice_period_days", "severity", and "confidence" must be numbers.
+- Use null for unknown auto_renew and notice_period_days; never guess false or zero.
+- Preserve the exact notice duration and unit in notice_period_text (e.g. "10 business days" or "2 months").
+- notice_period_days may be an integer only for an explicit whole calendar-day duration. Otherwise use null.
+- severity and confidence may be numbers or null when unknown.
 - Use null (not empty string) for unknown nullable string fields.
 
 Expected shape:
@@ -255,8 +256,8 @@ Expected shape:
     "what_it_is": "...",
     "payments": { "amount": null, "frequency": null, "fees": [] },
     "term": { "start": null, "end": null, "minimum_term": null },
-    "renewal": { "auto_renew": false, "renewal_period": null },
-    "cancellation": { "how": "...", "notice_period_days": 0, "penalties": [] }
+    "renewal": { "auto_renew": null, "renewal_period": null },
+    "cancellation": { "how": "...", "notice_period_days": null, "notice_period_text": null, "penalties": [] }
   },
   "red_flags": [{ "type": "...", "severity": 5, "explanation": "...", "where": null, "confidence": 50 }],
   "normal_in_region": [{ "topic": "...", "typical_range": "...", "yours": null, "label": "typical" }],
@@ -349,17 +350,6 @@ function toNumberOrNull(value: unknown): number | null {
   return null;
 }
 
-// A month, range, or business-day deadline cannot safely be presented as calendar days.
-function toNoticeDays(value: unknown): number | null {
-  const parsed =
-    typeof value === "string"
-      ? toNumberOrNull(value.trim().replace(/\s+(?:calendar\s+)?days?$/i, ""))
-      : toNumberOrNull(value);
-  return parsed !== null && Number.isInteger(parsed) && parsed >= 0
-    ? parsed
-    : null;
-}
-
 function toClampedNumberOrNull(
   value: unknown,
   min: number,
@@ -405,19 +395,14 @@ function hasExplicitCriticalSummaryFields(parsed: unknown): boolean {
 
   if (!renewal || !cancellation) return false;
 
-  const noticePeriodDays = toNoticeDays(
-    pickFirst(cancellation, [
-      "notice_period_days",
-      "noticeDays",
-      "notice_period",
-    ]),
+  const renewalValue = pickFirst(renewal, ["auto_renew", "autoRenew"]);
+  const notice = normalizeNoticePeriod(
+    pickFirst(cancellation, ["notice_period_days", "noticeDays"]),
+    pickFirst(cancellation, ["notice_period_text", "notice_period"]),
   );
-
   return Boolean(
-    isBooleanLike(pickFirst(renewal, ["auto_renew", "autoRenew"])) &&
-    toStringOrNull(pickFirst(cancellation, ["how", "method", "process"])) &&
-    noticePeriodDays !== null &&
-    noticePeriodDays >= 0,
+    (renewalValue === null || isBooleanLike(renewalValue)) &&
+    toStringOrNull(pickFirst(cancellation, ["how", "method", "process"])) && notice,
   );
 }
 
@@ -672,10 +657,8 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
         ),
       },
       renewal: {
-        auto_renew: toBoolean(
-          pickFirst(renewal, ["auto_renew", "autoRenew"]),
-          false,
-        ),
+        auto_renew: pickFirst(renewal, ["auto_renew", "autoRenew"]) === null
+          ? null : toBoolean(pickFirst(renewal, ["auto_renew", "autoRenew"])),
         renewal_period: toStringOrNull(
           pickFirst(renewal, ["renewal_period", "renewalPeriod", "period"]),
         ),
@@ -685,18 +668,10 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
           toStringOrNull(
             pickFirst(cancellation, ["how", "method", "process"]),
           ) || "Not specified",
-        notice_period_days: Math.max(
-          0,
-          Math.round(
-            toNoticeDays(
-              pickFirst(cancellation, [
-                "notice_period_days",
-                "noticeDays",
-                "notice_period",
-              ]),
-            ) ?? 0,
-          ),
-        ),
+        ...normalizeNoticePeriod(
+          pickFirst(cancellation, ["notice_period_days", "noticeDays"]),
+          pickFirst(cancellation, ["notice_period_text", "notice_period"]),
+        )!,
         penalties: toStringArray(
           pickFirst(cancellation, ["penalties", "fees", "charges"]),
         ),
@@ -899,49 +874,6 @@ function requireCompletedAnalysisResponse(
   }
 }
 
-async function repairJsonWithResponsesModel(
-  openai: OpenAI,
-  model: string,
-  malformedContent: string,
-  requestOptions?: LlmRequestOptions,
-): Promise<string> {
-  const repairPrompt = `
-You are a JSON repair tool.
-Return ONLY a valid JSON object.
-Do not include markdown or explanations.
-
-Required top-level keys:
-["risk_badge","key_points","summary","red_flags","normal_in_region","next_actions","key_dates","obligations","parties","disclaimer"]
-
-Enum constraints:
-- risk_badge: LOW | MEDIUM | HIGH
-- normal_in_region[].label: typical | unusual
-- key_dates[].type: RENEWAL | NOTICE_CUTOFF | PRICE_REVIEW | OTHER
-
-Type constraints:
-- severity, confidence, and notice_period_days must be numbers.
-- nullable text fields should be null if unknown.
-
-Repair this malformed JSON-like input:
-${malformedContent.slice(0, MAX_REPAIR_INPUT_CHARS)}
-    `;
-
-  const response = await createResponsesPreferringJson(
-    openai,
-    model,
-    "You fix malformed JSON and output only valid JSON.",
-    repairPrompt,
-    requestOptions,
-  );
-
-  requireCompletedAnalysisResponse(response);
-  const repairedContent = extractResponseOutputText(response);
-  if (!repairedContent) {
-    throw new Error("Empty response from AI during JSON repair");
-  }
-  return repairedContent;
-}
-
 async function runAnalysisWithResponsesModel(
   openai: OpenAI,
   model: string,
@@ -964,54 +896,13 @@ async function runAnalysisWithResponsesModel(
 
   try {
     return parseStrictJson<AnalysisResult>(content);
-  } catch (initialError) {
-    const initialMessage =
-      initialError instanceof Error
-        ? initialError.message
-        : "Unknown parse/validation error";
-
-    // Empty/default-only structured output is already valid JSON; a repair model has no missing
-    // contract evidence to recover and could only invent it. Reject immediately, without another
-    // model call or cross-provider resend.
-    if (initialError instanceof LlmResponseValidationError) {
-      throw initialError;
-    }
-    // Prose such as a refusal has no JSON to repair; the contract-less repair model could only
-    // fabricate an analysis from it.
-    if (!content.includes("{")) {
-      throw new LlmResponseValidationError(
-        "LLM response contained no JSON object",
-      );
-    }
-
-    console.warn(
-      "Primary analysis response failed parse/validation; attempting repair pass",
-      {
-        model,
-        initialMessage,
-      },
+  } catch (error) {
+    if (error instanceof LlmResponseValidationError) throw error;
+    // Deterministic parsing already handles fences and trailing commas. A model without
+    // the contract cannot safely recover missing facts; do not spend another inference call.
+    throw new LlmResponseValidationError(
+      "Analysis output could not be parsed without inventing missing facts. Please try again.",
     );
-
-    try {
-      const repairedContent = await repairJsonWithResponsesModel(
-        openai,
-        model,
-        content,
-        requestOptions,
-      );
-      return parseStrictJson<AnalysisResult>(repairedContent);
-    } catch (repairError) {
-      const repairMessage =
-        repairError instanceof Error
-          ? repairError.message
-          : "Unknown repair parse/validation error";
-      // The provider responded, so a schema/semantic failure is not evidence that a second
-      // provider should receive the same confidential contract. Keep retries within this
-      // provider's repair pass, then surface a non-fallback error.
-      throw new LlmResponseValidationError(
-        `LLM response invalid after repair attempt. Initial error: ${initialMessage}. Repair error: ${repairMessage}`,
-      );
-    }
   }
 }
 

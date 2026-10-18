@@ -1,3 +1,4 @@
+import { parseContractEvidence, validateContractReplay, STALE_CONTRACT_REPLY, type ContractEvidence } from "@/lib/contract-evidence";
 import {
   compactAgentMessages,
   parseAgentMessages,
@@ -294,6 +295,7 @@ export type ChatMessageRole = "system" | "user" | "assistant";
 
 export type ChatMessageRecord = {
   agentMessages?: import("ai").ModelMessage[];
+  contractEvidence?: ContractEvidence[];
   webSources?: import("@/lib/gemini-search").WebSearchSource[];
   toolActivity?: unknown;
   id: string;
@@ -622,6 +624,7 @@ export async function getContractMetaForUser(
 }
 
 export type ChatContractSummaryRecord = {
+  revision: string;
   id: string;
   title: string;
   status: string;
@@ -649,6 +652,7 @@ export async function listContractsForChat(
       id,
       title,
       status,
+      to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') as revision,
       project_id as "projectId",
       updated_at as "updatedAt",
       coalesce(char_length(text_content), 0)::integer as "characterCount",
@@ -668,6 +672,7 @@ export async function listContractsForChat(
 }
 
 export type ChatContractTextRecord = {
+  revision: string;
   id: string;
   title: string;
   status: string;
@@ -687,6 +692,7 @@ export async function getContractTextForUser(
       id,
       title,
       status,
+      to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') as revision,
       text_content as "text",
       extraction_warning as "extractionWarning"
     from contracts
@@ -709,7 +715,9 @@ export async function getContractWindowForUser(
   const { rows } = await sql<
     ChatContractTextRecord & { characterCount: number }
   >`
-    SELECT id, title, status, substring(text_content FROM ${start + 1} FOR 12000) AS text,
+    SELECT id, title, status,
+      to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS revision,
+      substring(text_content FROM ${start + 1} FOR 12000) AS text,
       coalesce(char_length(text_content), 0)::integer AS "characterCount",
       extraction_warning AS "extractionWarning"
     FROM contracts WHERE id = ${contractId} AND user_id = ${userId} LIMIT 1
@@ -1034,13 +1042,16 @@ export async function deleteAnalysisForContract(input: {
 // Saved turns that read a contract the owner no longer has would replay its excerpts to the model.
 // Dropping the turn's agent state leaves the visible reply in place.
 const SCRUB_UNOWNED_CONTRACT_REPLAY = `
-  UPDATE chat_messages m SET metadata_json = m.metadata_json - 'agentMessages'
+  UPDATE chat_messages m SET metadata_json = (m.metadata_json - 'agentMessages' - 'webSources') || '{"contractEvidenceInvalid":true}'::jsonb
   FROM chat_threads t
   WHERE t.id = m.thread_id AND t.user_id = $1
-    AND m.metadata_json->'agentMessages' IS NOT NULL
     AND EXISTS (
       SELECT 1
-      FROM jsonb_path_query(m.metadata_json, '$.agentMessages[*].content[*].input.contractId') AS ref(v)
+      FROM (
+        SELECT v FROM jsonb_path_query(m.metadata_json, '$.agentMessages[*].content[*].input.contractId') AS old(v)
+        UNION ALL
+        SELECT v FROM jsonb_path_query(m.metadata_json, '$.contractEvidence[*].id') AS receipt(v)
+      ) AS ref(v)
       WHERE NOT EXISTS (
         SELECT 1 FROM contracts c
         WHERE c.user_id = $1 AND c.id::text = lower(btrim(ref.v #>> '{}'))
@@ -1534,12 +1545,13 @@ function mapChatMessageRow(
     id: row.id,
     threadId: row.threadId,
     role,
-    content: row.content,
+    content: replayState === "include" && metadata.contractEvidenceInvalid === true ? STALE_CONTRACT_REPLY : row.content,
     position: row.position,
     createdAt: row.createdAt,
     ...(replayState === "include"
       ? {
           agentMessages: parseAgentMessages(metadata.agentMessages),
+          contractEvidence: metadata.contractEvidenceInvalid === true ? undefined : parseContractEvidence(metadata.contractEvidence) ?? undefined,
           webSources: parseWebSources(metadata.webSources),
         }
       : {}),
@@ -1619,6 +1631,24 @@ export async function listChatThreadsByUserId(
   return { data: rows, total: countRows[0]?.count ?? 0, limit, offset };
 }
 
+async function currentContractRevisions(
+  userId: string,
+  metadata: Record<string, unknown>[],
+  client?: VercelPoolClient,
+): Promise<Map<string, string>> {
+  const ids = [...new Set(metadata.flatMap((item) =>
+    (parseContractEvidence(item.contractEvidence) ?? []).map((ref) => ref.id),
+  ))].sort();
+  if (!ids.length) return new Map();
+  const { rows } = await (client ?? sql).query<{ id: string; revision: string }>(
+    `SELECT id, to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS revision
+     FROM contracts WHERE user_id = $1 AND id = ANY($2::uuid[])
+     ORDER BY id ${client ? "FOR SHARE" : ""}`,
+    [userId, ids],
+  );
+  return new Map(rows.map((row) => [row.id, row.revision]));
+}
+
 /**
  * Return a bounded canonical transcript, or null when the thread is absent/not owned. The inner
  * descending query selects the newest messages efficiently; the outer query restores conversation
@@ -1664,6 +1694,9 @@ export async function getRecentChatMessagesForThreadForUser(
         m.position,
         m.created_at as "createdAt",
         jsonb_build_object(
+          'contractEvidence', m.metadata_json->'contractEvidence',
+          'contractEvidenceInvalid', m.metadata_json->'contractEvidenceInvalid',
+          'toolActivity', m.metadata_json->'toolActivity',
           'agentMessages', CASE WHEN char_length((m.metadata_json->'agentMessages')::text) <= ${MAX_AGENT_STATE_CHARACTERS * 2}
             THEN m.metadata_json->'agentMessages' END,
           'webSources', CASE WHEN char_length((m.metadata_json->'webSources')::text) <= ${MAX_SOURCE_CATALOG_CHARACTERS * 2}
@@ -1683,8 +1716,14 @@ export async function getRecentChatMessagesForThreadForUser(
     return null;
   }
 
+  const metadata = rows.map((row) => parseJsonObject(row.metadata));
+  for (const item of metadata) if (item.contractEvidence === null) delete item.contractEvidence;
+  const revisions = await currentContractRevisions(userId, metadata);
+  const checkedRows = rows.map((row, index) => ({
+    ...row, metadata: validateContractReplay(metadata[index]!, revisions),
+  }));
   return (
-    rows
+    checkedRows
       .filter(
         (
           row,
@@ -1826,6 +1865,17 @@ export async function appendChatMessagesToThread(input: {
     if (!lockedThreadCount) {
       await client.query("ROLLBACK");
       throw new ChatThreadNotFoundError();
+    }
+
+    // Contract row locks serialize receipt validation with uploads/deletions. If a deletion
+    // already committed, the missing row invalidates the transcript before it can be inserted.
+    const revisions = await currentContractRevisions(
+      input.userId, cleanedMessages.map((message) => message.metadata ?? {}), client,
+    );
+    for (const message of cleanedMessages) {
+      if (message.metadata) {
+        message.metadata = validateContractReplay(message.metadata, revisions) as typeof message.metadata;
+      }
     }
 
     // Move every inline generated image out of the transcript text into chat_attachments, so a

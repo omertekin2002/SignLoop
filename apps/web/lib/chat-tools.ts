@@ -1,3 +1,4 @@
+import type { ContractEvidence } from "@/lib/contract-evidence";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import type { WebSearchSource } from "@/lib/gemini-search";
@@ -242,6 +243,7 @@ export function createUrlReaderTool(deps: {
   addSource: (source: WebSearchSource) => number;
   /** Raw fetched text, kept so the finished answer can be checked against what was actually read. */
   onEvidence?: (text: string) => void;
+  onContractEvidence?: (reference: ContractEvidence) => void;
   egressGuard?: ContractEgressGuard;
 }): ToolSet {
   const cache = new Map<string, Promise<unknown>>();
@@ -294,6 +296,7 @@ export function createHttpGetTool(deps: {
   signal: AbortSignal;
   addSource: (source: WebSearchSource) => number;
   onEvidence?: (text: string) => void;
+  onContractEvidence?: (reference: ContractEvidence) => void;
   egressGuard?: ContractEgressGuard;
 }): ToolSet {
   const cache = new Map<string, Promise<unknown>>();
@@ -354,6 +357,7 @@ export function createContractTools(deps: {
   userId: string;
   signal: AbortSignal;
   onEvidence?: (text: string) => void;
+  onContractEvidence?: (reference: ContractEvidence) => void;
   egressGuard?: ContractEgressGuard;
 }): ToolSet {
   const documents = new Map<
@@ -376,8 +380,10 @@ export function createContractTools(deps: {
           deps.userId,
           { offset, query },
         );
-        for (const contract of contracts)
+        for (const contract of contracts) {
           deps.egressGuard?.addContractText(contract.title);
+          deps.onContractEvidence?.({ id: contract.id, revision: contract.revision });
+        }
         return {
           nextOffset,
           hasMore: nextOffset !== null,
@@ -386,6 +392,7 @@ export function createContractTools(deps: {
             title: contract.title,
             status: contract.status,
             projectId: contract.projectId,
+            revision: contract.revision,
             updatedAt: contract.updatedAt,
             characterCount: contract.characterCount,
             ...(contract.extractionWarning
@@ -447,6 +454,7 @@ export function createContractTools(deps: {
               error:
                 "Contract not found. Call list_contracts to see available ids.",
             };
+          deps.onContractEvidence?.({ id: contract.id, revision: contract.revision });
           const text = contract.text ?? "";
           const characterCount =
             "characterCount" in contract
@@ -487,6 +495,7 @@ export function createContractTools(deps: {
             id: contract.id,
             title: contract.title,
             status: contract.status,
+            revision: contract.revision,
             characterCount,
             ...(contract.extractionWarning
               ? { extractionWarning: contract.extractionWarning }

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
+import { STALE_CONTRACT_REPLY, type ContractEvidence } from "./contract-evidence";
 import { runMigrations } from "../db/migrations.js";
 
 // Opt in only against the disposable database created by db/test-integration.sh.
@@ -447,7 +448,11 @@ describe.skipIf(!connectionString)("database integration", () => {
     },
     { role: "assistant", content: [{ type: "text", text: "Summary" }] },
   ];
-  async function saveTurn(userId: string, agentMessages: unknown[]) {
+  async function saveTurn(userId: string, agentMessages: unknown[], receipts?: ContractEvidence[]) {
+    const ids = JSON.stringify(agentMessages).match(/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/gi) ?? [];
+    const contractEvidence = receipts ?? (await pool.current!.query<ContractEvidence>(
+      `SELECT id, to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS revision FROM contracts WHERE id = ANY($1::uuid[])`, [ids],
+    )).rows;
     const thread = await createChatThreadForUser({ userId, title: "Replay" });
     await appendChatMessagesToThread({
       userId,
@@ -459,6 +464,7 @@ describe.skipIf(!connectionString)("database integration", () => {
           content: "It quotes the secret clause.",
           metadata: {
             agentMessages,
+            contractEvidence,
             toolActivity: [
               { id: "call", query: "contract", status: "complete" },
             ],
@@ -516,18 +522,50 @@ describe.skipIf(!connectionString)("database integration", () => {
     ).toEqual({ deleted: true });
 
     const scrubbed = await deletedTurn();
-    expect(scrubbed?.content).toBe("It quotes the secret clause.");
+    expect(scrubbed?.content).toBe(STALE_CONTRACT_REPLY);
+    expect((await getChatThreadByIdForUser(userId, scrubbed!.threadId))?.messages.at(-1)?.content).toBe("It quotes the secret clause.");
     expect(scrubbed?.agentMessages).toBeUndefined();
     const { rows } = await pool.current!.query(
       "SELECT metadata_json FROM chat_messages WHERE id = $1",
       [scrubbed!.id],
     );
-    expect(rows[0].metadata_json).toEqual({
+    expect(rows[0].metadata_json).toMatchObject({
+      contractEvidenceInvalid: true,
       toolActivity: [{ id: "call", query: "contract", status: "complete" }],
     });
     expect((await keptTurn())?.agentMessages).toEqual(readKept.slice(0, 2));
-    expect((await listedTurn())?.agentMessages).toEqual(listedDeleted.slice(0, 2));
-    expect((await otherOwnerTurn())?.agentMessages).toEqual(readDeleted.slice(0, 2));
+    expect((await listedTurn())?.agentMessages).toBeUndefined();
+    expect((await otherOwnerTurn())?.agentMessages).toBeUndefined();
+  });
+
+  it("does not resurrect deleted evidence when an in-flight reply saves afterwards", async () => {
+    const userId = "late-reply-owner";
+    const item = await createContractForUser({ userId, title: "Contract" });
+    const snapshot = await getContractWithLatestAnalysisForUser(userId, item.id);
+    const receipts = [{ id: item.id, revision: snapshot!.revision }];
+    const turn = readContractTurn(item.id, "in-flight");
+    await deleteContractForUser({ userId, contractId: item.id });
+    const read = await saveTurn(userId, turn, receipts);
+    const reply = (await read())!;
+    expect(reply.content).toBe(STALE_CONTRACT_REPLY);
+    expect(reply.agentMessages).toBeUndefined();
+    const stored = await pool.current!.query("SELECT metadata_json FROM chat_messages WHERE id = $1", [reply.id]);
+    expect(JSON.stringify(stored.rows[0].metadata_json)).not.toContain("Secret clause text");
+  });
+
+  it("invalidates saved evidence and dependent follow-ups after a reupload", async () => {
+    const userId = "revision-chat-owner";
+    const item = await createContractForUser({ userId, title: "Revision" });
+    const snapshot = await getContractWithLatestAnalysisForUser(userId, item.id);
+    const refs = [{ id: item.id, revision: snapshot!.revision }];
+    const first = await saveTurn(userId, readContractTurn(item.id, "read"), refs);
+    const followup = await saveTurn(userId, [], refs);
+    expect((await first())?.agentMessages).toBeDefined();
+    await pool.current!.query("UPDATE contracts SET text_content = 'New cancellation terms', updated_at = clock_timestamp() WHERE id = $1", [item.id]);
+    expect((await first())?.content).toBe(STALE_CONTRACT_REPLY);
+    expect((await followup())?.content).toBe(STALE_CONTRACT_REPLY);
+    const late = await saveTurn(userId, readContractTurn(item.id, "late"), refs);
+    expect((await late())?.agentMessages).toBeUndefined();
   });
 
   it("drops saved replay state for contracts removed with their project", async () => {

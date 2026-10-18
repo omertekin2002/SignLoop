@@ -26,9 +26,11 @@ const validPayload: AnalysisResult = {
 };
 
 describe("parseStrictJson", () => {
-  it.each(["2 months", "1 year", "15-30 days", "10 business days", "about 30 days", "1.5 days"])("rejects ambiguous calendar-day conversion: %s", (notice) => {
+  it.each(["2 months", "1 year", "15-30 days", "10 business days", "about 30 days", "1.5 days"])("preserves notice wording without converting it to calendar days: %s", (notice) => {
     const payload = { ...validPayload, summary: { ...validPayload.summary, cancellation: { how: "Email", notice_period: notice } } };
-    expect(() => parseStrictJson(JSON.stringify(payload))).toThrow(/omitted or unusable/);
+    const parsed = parseStrictJson<AnalysisResult>(JSON.stringify(payload));
+    expect(parsed.summary.cancellation.notice_period_days).toBeNull();
+    expect(parsed.summary.cancellation.notice_period_text).toBe(notice);
   });
 
   it("repairs syntax without altering quoted commas or escaped quotes", () => {

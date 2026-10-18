@@ -7,7 +7,7 @@ const { claimChatAdmission } = vi.hoisted(() => ({
 
 vi.mock("@/lib/server-db", () => ({ claimChatAdmission }));
 
-import { admitChat } from "@/lib/chat-admission";
+import { admitChat, admitAnalysis } from "@/lib/chat-admission";
 
 const ENV_KEYS = [
   "CHAT_DAILY_REQUEST_LIMIT",
@@ -162,4 +162,13 @@ describe.each([
       claimChatAdmission.mock.calls.map(([input]) => input[field]),
     ).toEqual([5, 7]);
   });
+});
+
+it("shares account and global budgets between chat and analysis", async () => {
+  const owner = "a84e8ac1-bda9-450c-a756-30972398b529";
+  await admitChat(owner);
+  await admitAnalysis(owner);
+  expect(claimChatAdmission.mock.calls[1]?.[0]).toEqual(
+    claimChatAdmission.mock.calls[0]?.[0],
+  );
 });

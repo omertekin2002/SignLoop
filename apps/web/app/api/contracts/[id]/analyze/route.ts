@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
 import { isUuid } from "@/lib/utils";
 import { analyzeText } from "@/lib/analysis";
+import { admitAnalysis } from "@/lib/chat-admission";
 import {
   claimGenerationOperation,
   createAnalysisForContract,
@@ -69,6 +70,7 @@ export async function POST(
     AbortSignal.timeout(270_000),
   ]);
   const startedAt = Date.now();
+  let releaseAdmission: (() => Promise<void>) | undefined;
   try {
     const contract = await getContractWithLatestAnalysisForUser(userId, id);
 
@@ -96,6 +98,21 @@ export async function POST(
     }
 
     try {
+      try {
+        const admission = await admitAnalysis(userId);
+        if ("retryAfter" in admission) {
+          return NextResponse.json(
+            { error: "Analysis and chat share a usage limit. Please try again later." },
+            { status: 429, headers: { "Retry-After": String(admission.retryAfter) } },
+          );
+        }
+        releaseAdmission = admission.release;
+      } catch {
+        return NextResponse.json(
+          { error: "Analysis is temporarily unavailable. Please try again shortly." },
+          { status: 503 },
+        );
+      }
       const [settings, contextDocuments, modelSnapshot] = await Promise.all([
         getUserSettingsByUserId(userId),
         contract.projectId
@@ -166,6 +183,9 @@ export async function POST(
       );
     }
   } finally {
+    await releaseAdmission?.().catch((error) =>
+      console.error("Analysis admission release failed", error),
+    );
     await release().catch((error) =>
       console.error("Analysis lease release failed", error),
     );

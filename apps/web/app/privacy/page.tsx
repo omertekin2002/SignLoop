@@ -101,6 +101,13 @@ export default function PrivacyPage() {
               for free models, may log your prompts, use them to train models, or publish them.
             </li>
             <li>
+              <strong>Langfuse (optional diagnostics).</strong> AI chat tracing is disabled by
+              default. If the operator explicitly enables content recording, saved-chat prompts,
+              replies, and tool inputs/results may be recorded in Langfuse. Temporary chats do
+              not enable AI tracing. Trace retention is configured separately by the operator;
+              deleting a workspace item does not automatically delete previously collected traces.
+            </li>
+            <li>
               <strong>Web search and page reading.</strong> When the assistant searches the web or
               reads a page, search queries and page addresses are sent to Firecrawl, Google
               Gemini with Google Search, or Jina Reader. The assistant may also fetch public web

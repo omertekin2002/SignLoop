@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   auth,
+  admitAnalysis,
   analyzeText,
   claimGenerationOperation,
   createAnalysisForContract,
@@ -12,6 +13,7 @@ const {
   getModelAvailabilitySnapshot,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
+  admitAnalysis: vi.fn(),
   analyzeText: vi.fn(),
   claimGenerationOperation: vi.fn(),
   createAnalysisForContract: vi.fn(),
@@ -23,6 +25,7 @@ const {
 }));
 
 vi.mock("@/lib/auth", () => ({ auth }));
+vi.mock("@/lib/chat-admission", () => ({ admitAnalysis }));
 vi.mock("@/lib/analysis", () => ({ analyzeText }));
 vi.mock("@/lib/server-db", () => ({
   claimGenerationOperation,
@@ -76,6 +79,7 @@ const analysisOutput = (overrides: Record<string, unknown> = {}) => ({
 });
 
 const release = vi.fn();
+const releaseAdmission = vi.fn();
 
 function arrangeRunnableContract(
   contract: Record<string, unknown> = contractRecord(),
@@ -98,6 +102,8 @@ function arrangeRunnableContract(
 
 beforeEach(() => {
   release.mockResolvedValue(undefined);
+  releaseAdmission.mockResolvedValue(undefined);
+  admitAnalysis.mockResolvedValue({ release: releaseAdmission });
   auth.mockResolvedValue({ userId: "owner" });
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -111,6 +117,41 @@ afterEach(() => {
 describe("POST /api/contracts/[id]/analyze", () => {
   it("reserves part of the route budget for persistence", () => {
     expect(maxDuration).toBe(300);
+  });
+
+  it("uses the stable owner for shared admission and releases it on success", async () => {
+    arrangeRunnableContract();
+    expect((await POST(postRequest(), params(CONTRACT_ID))).status).toBe(200);
+    expect(admitAnalysis).toHaveBeenCalledWith("owner");
+    expect(releaseAdmission).toHaveBeenCalledOnce();
+  });
+  it("bounds forced analyses and does not call a provider when the shared quota is full", async () => {
+    arrangeRunnableContract();
+    admitAnalysis.mockResolvedValue({ retryAfter: 3600 });
+    const response = await POST(postRequest("?force=true"), params(CONTRACT_ID));
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("3600");
+    expect(analyzeText).not.toHaveBeenCalled();
+    expect(getModelAvailabilitySnapshot).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+  });
+  it("fails closed when admission storage is unavailable", async () => {
+    arrangeRunnableContract();
+    admitAnalysis.mockRejectedValue(new Error("database unavailable"));
+    expect((await POST(postRequest(), params(CONTRACT_ID))).status).toBe(503);
+    expect(analyzeText).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+  });
+  it("releases admission after an inference failure", async () => {
+    arrangeRunnableContract();
+    analyzeText.mockRejectedValue(new Error("provider failed"));
+    expect((await POST(postRequest(), params(CONTRACT_ID))).status).toBe(500);
+    expect(releaseAdmission).toHaveBeenCalledOnce();
+  });
+  it("does not charge quota for cached analysis", async () => {
+    getContractAnalysisGateForUser.mockResolvedValue({ status: "ANALYZED", hasText: true, latestAnalysisId: ANALYSIS_ID });
+    expect((await POST(postRequest(), params(CONTRACT_ID))).status).toBe(200);
+    expect(admitAnalysis).not.toHaveBeenCalled();
   });
 
   describe("authentication and input validation", () => {

@@ -102,6 +102,7 @@ async function persistChatMessages(input: {
   assistantModel: string | null;
   assistantProvider: string | null;
   agentMessages?: ChatReply["agentMessages"];
+  contractEvidence?: ChatReply["contractEvidence"];
   webSources?: ChatMessage["webSources"];
   toolActivity?: ChatReply["toolActivity"];
   temporary: boolean;
@@ -137,6 +138,7 @@ async function persistChatMessages(input: {
           model: input.assistantModel,
           provider: input.assistantProvider,
           agentMessages: input.agentMessages ?? [],
+          contractEvidence: input.contractEvidence ?? [],
           webSources: input.webSources ?? [],
           toolActivity: input.toolActivity ?? [],
         },
@@ -353,6 +355,7 @@ export async function POST(req: Request) {
             role: message.role,
             content: message.content,
             agentMessages: message.agentMessages,
+            contractEvidence: message.contractEvidence,
             webSources: message.webSources,
           })),
         latestUserMessage.content.length,
@@ -409,6 +412,7 @@ export async function POST(req: Request) {
               enableUrlReader: enableWebSearch,
               enableHttpFetch: enableWebSearch,
               contractsUserId: userId,
+              recordTelemetry: !isTemporaryChat,
               enableImageGeneration: modelSnapshot.imageGenerationAvailable,
               userId,
             })) {
@@ -448,6 +452,7 @@ export async function POST(req: Request) {
                   latestUserMessage,
                   assistantMessage,
                   agentMessages: chunk.reply.agentMessages,
+                  contractEvidence: chunk.reply.contractEvidence,
                   webSources: chunk.reply.webSearch?.sources,
                   toolActivity: chunk.reply.toolActivity,
                   assistantModel: chunk.reply.model ?? null,
@@ -542,6 +547,7 @@ export async function POST(req: Request) {
       model,
       webSearch,
       agentMessages,
+      contractEvidence,
       toolActivity,
       readSources,
       figures,
@@ -552,6 +558,7 @@ export async function POST(req: Request) {
       enableUrlReader: enableWebSearch,
       enableHttpFetch: enableWebSearch,
       contractsUserId: userId,
+      recordTelemetry: !isTemporaryChat,
       enableImageGeneration: modelSnapshot.imageGenerationAvailable,
       userId,
     });
@@ -574,6 +581,7 @@ export async function POST(req: Request) {
           latestUserMessage,
           assistantMessage,
           agentMessages,
+          contractEvidence,
           webSources: webSearch?.sources,
           toolActivity,
           assistantModel: model ?? null,

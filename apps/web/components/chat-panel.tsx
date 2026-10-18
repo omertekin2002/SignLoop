@@ -9,6 +9,7 @@ import type { ModelMessage } from "ai";
 import type { ChatToolActivity, ChatToolName } from "@/lib/chat";
 
 import { toast } from "sonner";
+import { chatRequestFailure } from "@/lib/chat-request-error";
 import {
   boundTemporaryChatHistory,
   compactInlineImageDataUris,
@@ -32,6 +33,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import {
   AssistantRuntimeProvider,
+  ActionBarPrimitive,
+  ErrorPrimitive,
   ComposerPrimitive,
   MessagePartPrimitive,
   MessagePrimitive,
@@ -204,15 +207,7 @@ function toApiMessages(messages: readonly ThreadMessage[]): ChatApiMessage[] {
 }
 
 function parseError(payload: unknown, status: number): string {
-  if (
-    isRecord(payload) &&
-    typeof payload.error === "string" &&
-    payload.error.trim()
-  ) {
-    return payload.error;
-  }
-
-  return `Chat request failed (${status})`;
+  return chatRequestFailure(payload, status, null).message;
 }
 
 function parseSuccess(payload: unknown): ChatApiSuccess {
@@ -248,6 +243,37 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
     persisted:
       typeof payload.persisted === "boolean" ? payload.persisted : undefined,
   };
+}
+
+function ChatMessageError() {
+  const failure = useMessage((state) => state.metadata.custom?.requestError) as
+    ReturnType<typeof chatRequestFailure> | undefined;
+  const [now, setNow] = useState(Date.now);
+  const retryAt = failure?.retryAt ?? 0;
+  useEffect(() => {
+    if (retryAt <= Date.now()) return;
+    const timer = setInterval(() => {
+      const time = Date.now();
+      setNow(time);
+      if (time >= retryAt) clearInterval(timer);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [retryAt]);
+  const remaining = Math.max(0, Math.ceil((retryAt - now) / 1000));
+  return (
+    <div role="alert" className="mt-4 space-y-3 rounded-card border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm">
+      <p className="text-destructive"><ErrorPrimitive.Message /></p>
+      {failure?.status === 401 ? (
+        <Button asChild variant="outline" size="sm"><a href="/sign-in">Sign in</a></Button>
+      ) : (
+        <ActionBarPrimitive.Reload asChild>
+          <Button variant="outline" size="sm" disabled={remaining > 0}>
+            {remaining > 0 ? `Retry in ${remaining}s` : "Retry"}
+          </Button>
+        </ActionBarPrimitive.Reload>
+      )}
+    </div>
+  );
 }
 
 const TOOL_ACTIVITY_LABELS: Record<
@@ -706,13 +732,7 @@ const ChatMessage = () => {
               }}
             />
             <MessagePrimitive.Error>
-              <div
-                role="alert"
-                className="mt-4 flex items-center gap-2 rounded-card border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive"
-              >
-                <Square className="h-4 w-4" />
-                <p>Failed to generate a response. Please try again.</p>
-              </div>
+              <ChatMessageError />
             </MessagePrimitive.Error>
           </div>
           <MessageCopyButton className="self-start" />
@@ -790,6 +810,8 @@ type ChatPanelProps = {
   temporarySessionKey?: number;
   landingHero?: boolean;
   initialPrompt?: string;
+  active?: boolean;
+  onContentChange?: (hasContent: boolean) => void;
 };
 
 export function ChatPanel({
@@ -799,6 +821,8 @@ export function ChatPanel({
   temporarySessionKey = 0,
   landingHero = false,
   initialPrompt,
+  active = true,
+  onContentChange,
 }: ChatPanelProps) {
   const { loading, user } = useAuth();
   const isLoaded = !loading;
@@ -907,7 +931,12 @@ export function ChatPanel({
             error?: string;
           } | null;
 
-          if (!createThreadResponse.ok || !createPayload?.data?.id) {
+          if (!createThreadResponse.ok) {
+            const failure = chatRequestFailure(createPayload, createThreadResponse.status, createThreadResponse.headers.get("Retry-After"));
+            yield { metadata: { custom: { requestError: failure } } };
+            throw new Error(failure.message);
+          }
+          if (!createPayload?.data?.id) {
             throw new Error(
               createPayload?.error || "Failed to create chat thread.",
             );
@@ -940,6 +969,12 @@ export function ChatPanel({
           }),
           signal: abortSignal,
         });
+
+        if (!response.ok) {
+          const failure = chatRequestFailure(await response.json().catch(() => null), response.status, response.headers.get("Retry-After"));
+          yield { metadata: { custom: { requestError: failure } } };
+          throw new Error(failure.message);
+        }
 
         let completedSnapshot: ChatApiStreamSnapshot | null = null;
 
@@ -1010,6 +1045,20 @@ export function ChatPanel({
   );
 
   const runtime = useLocalRuntime(chatModel);
+  useEffect(() => {
+    if (!active) runtime.thread.cancelRun();
+  }, [active, runtime]);
+  useEffect(() => {
+    if (!onContentChange) return;
+    const update = () => onContentChange(
+      runtime.thread.getState().messages.length > 0 ||
+      Boolean(runtime.thread.composer.getState().text.trim()),
+    );
+    update();
+    const stopThread = runtime.thread.subscribe(update);
+    const stopComposer = runtime.thread.composer.subscribe(update);
+    return () => { stopThread(); stopComposer(); };
+  }, [runtime, onContentChange]);
   const isHydratingThread =
     !temporary &&
     activeThreadId !== null &&
@@ -1044,6 +1093,7 @@ export function ChatPanel({
 
     runtime.thread.cancelRun();
     runtime.thread.reset([]);
+    runtime.thread.composer.setText("");
     hydratedSignatureRef.current = signature;
     newlyCreatedThreadIdsRef.current.clear();
   }, [runtime, temporary, temporarySessionKey]);

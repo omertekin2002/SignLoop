@@ -1,5 +1,7 @@
 "use client";
 
+import { formatNoticePeriod } from "@/lib/notice-period";
+
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -294,7 +296,7 @@ const ContractDetails = () => {
     "MMM d, HH:mm",
     "Unknown time",
   );
-  const renewalLabel = summaryRenewal
+  const renewalLabel = typeof summaryRenewal?.auto_renew === "boolean"
     ? summaryRenewal.auto_renew
       ? "Auto-renews"
       : "Manual renewal"
@@ -701,10 +703,7 @@ const ContractDetails = () => {
                         Notice period
                       </h4>
                       <p className="text-sm">
-                        {typeof summaryCancellation.notice_period_days ===
-                        "number"
-                          ? `${summaryCancellation.notice_period_days} days`
-                          : "Not specified"}
+                        {formatNoticePeriod(summaryCancellation)}
                       </p>
                     </div>
                     <div className="p-4 rounded-lg bg-muted/40">
