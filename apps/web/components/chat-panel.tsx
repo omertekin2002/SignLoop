@@ -992,8 +992,9 @@ export function ChatPanel({
 
         if (!response.ok) {
           const failure = chatRequestFailure(await response.json().catch(() => null), response.status, response.headers.get("Retry-After"));
-          if (failure.status === 429)
-            void syncUsage(queryClient, failure.quota);
+          // Any failure may follow admission (e.g. a provider error before streaming), so refresh
+          // usage for all of them; 429s also carry the current quota.
+          void syncUsage(queryClient, failure.quota);
           yield { metadata: { custom: { requestError: failure } } };
           throw new Error(failure.message);
         }
