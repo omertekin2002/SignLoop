@@ -1,0 +1,101 @@
+{
+  "case": "msa-omitted-renewal-05",
+  "note": "Ideal answer: findings cite only the head and tail segments, renewal and notice stay null because Section 9 was not sent, and the coverage limitation is stated.",
+  "output": {
+    "risk_badge": "MEDIUM",
+    "key_points": [
+      "Coverage is incomplete: the middle of the agreement, including Section 9 on the term and any renewal, was not available for review.",
+      "Platform Fees are $18,000.00 per Contract Year, invoiced quarterly, and may rise by up to 7% each Contract Year.",
+      "Liability is capped at twelve months of Fees, except for indemnities and confidentiality breaches."
+    ],
+    "summary": {
+      "what_it_is": "A master services agreement for a hosted shipment-tracking platform.",
+      "payments": {
+        "amount": "$18,000.00 per Contract Year",
+        "frequency": "Quarterly in advance",
+        "fees": [
+          "Professional services at $165.00 per hour unless an SOW states otherwise",
+          "Interest on late undisputed amounts"
+        ]
+      },
+      "term": {
+        "start": "2026-07-01",
+        "end": null,
+        "minimum_term": null
+      },
+      "renewal": {
+        "auto_renew": null,
+        "renewal_period": null
+      },
+      "cancellation": {
+        "how": "Termination for uncured material breach or insolvency is visible; the term and renewal provisions in Section 9 were not reviewed.",
+        "notice_period_days": null,
+        "notice_period_text": null,
+        "penalties": []
+      }
+    },
+    "red_flags": [
+      {
+        "type": "Annual price increase",
+        "severity": 5,
+        "explanation": "Provider can raise the Fees by up to 7% at the start of each Contract Year.",
+        "where": "Section 5.3",
+        "confidence": 90,
+        "evidence": {
+          "quote": "Provider may increase the Fees with effect from the start of each Contract Year by up to seven percent (7%) over the Fees for the preceding Contract Year",
+          "segment": "head"
+        }
+      },
+      {
+        "type": "Liability cap",
+        "severity": 5,
+        "explanation": "Liability is capped at twelve months of Fees outside indemnities and confidentiality breaches, which may be low relative to a shipment-data incident.",
+        "where": "Section 13.2",
+        "confidence": 85,
+        "evidence": {
+          "quote": "each party's aggregate liability arising out of or relating to this Agreement shall not exceed the Fees paid or payable by Customer in the twelve (12) months before the event giving rise to the claim",
+          "segment": "tail"
+        }
+      },
+      {
+        "type": "Late payment interest",
+        "severity": 2,
+        "explanation": "Late undisputed amounts accrue interest of up to 1% per month.",
+        "where": "Section 5.5",
+        "confidence": 80,
+        "evidence": {
+          "quote": "Undisputed amounts that are not paid when due accrue interest at the lower of one percent (1%) per month and the highest rate permitted by Applicable Law.",
+          "segment": "head"
+        }
+      }
+    ],
+    "normal_in_region": [],
+    "next_actions": {
+      "questions_to_ask": [
+        "What does Section 9 say about the length of the term, renewal, and notice of non-renewal?"
+      ],
+      "email_templates": [
+        {
+          "subject": "Request for the full term and renewal section",
+          "body": "Hello, could you send the complete text of Section 9 (Term and Renewal) of the Master Services Agreement so we can review the term length and any renewal notice requirements? Thank you."
+        }
+      ]
+    },
+    "key_dates": [
+      {
+        "type": "OTHER",
+        "date": "2026-07-01",
+        "derived_from": "Effective Date"
+      }
+    ],
+    "obligations": [
+      "Customer pays platform Fees quarterly in advance",
+      "Provider maintains the Platform, support, and service levels"
+    ],
+    "parties": [
+      "Silverpine Data Systems LLC (Provider)",
+      "Orchid Ridge Logistics, Inc. (Customer)"
+    ],
+    "disclaimer": "This is an AI analysis, not legal advice."
+  }
+}

@@ -1,0 +1,134 @@
+{
+  "case": "gym-autorenew-01",
+  "note": "Ideal answer: every finding quotes unique contract text, and the notice keeps its business-day unit with numeric days left null.",
+  "output": {
+    "risk_badge": "MEDIUM",
+    "key_points": [
+      "The membership renews automatically for successive 12-month terms unless cancelled.",
+      "Cancellation requires written notice at least ten business days before the Renewal Date of March 1, 2027.",
+      "Cancelling during the first year costs 50% of the monthly dues remaining in the Initial Term.",
+      "The Club can change the dues for a renewal term by posting the new rate 30 days in advance."
+    ],
+    "summary": {
+      "what_it_is": "An annual all-access gym membership agreement that renews automatically.",
+      "payments": {
+        "amount": "$49.00 per month",
+        "frequency": "Monthly",
+        "fees": [
+          "$59.00 annual facility maintenance fee",
+          "$15.00 late fee for payments unpaid ten days after the due date",
+          "$10.00 per month for a membership freeze"
+        ]
+      },
+      "term": {
+        "start": "2026-03-01",
+        "end": "2027-02-28",
+        "minimum_term": "12 months"
+      },
+      "renewal": {
+        "auto_renew": true,
+        "renewal_period": "12 months"
+      },
+      "cancellation": {
+        "how": "Written notice delivered at the front desk or by email to the cancellations address before the Renewal Date.",
+        "notice_period_days": null,
+        "notice_period_text": "10 business days",
+        "penalties": [
+          "Early termination fee of 50% of the monthly dues remaining in the Initial Term, unless the member relocates more than 25 miles or cannot exercise for documented medical reasons"
+        ]
+      }
+    },
+    "red_flags": [
+      {
+        "type": "Automatic renewal",
+        "severity": 6,
+        "explanation": "The membership renews for another twelve months unless it is cancelled in time, committing the member to a further year of dues.",
+        "where": "Section 1.2",
+        "confidence": 95,
+        "evidence": {
+          "quote": "this Agreement renews automatically for successive twelve (12) month terms",
+          "segment": "full"
+        }
+      },
+      {
+        "type": "Unilateral price change at renewal",
+        "severity": 5,
+        "explanation": "The Club can raise dues for a renewal term by posting a notice at the front desk rather than notifying the member directly.",
+        "where": "Section 2.4",
+        "confidence": 85,
+        "evidence": {
+          "quote": "The Club may change the monthly dues for any Renewal Term by posting the new rate at the front desk at least thirty (30) days before that Renewal Term begins.",
+          "segment": "full"
+        }
+      },
+      {
+        "type": "Short cancellation window",
+        "severity": 5,
+        "explanation": "Cancellation must reach the Club ten business days before the Renewal Date, which is easy to miss.",
+        "where": "Section 4.1",
+        "confidence": 90,
+        "evidence": {
+          "quote": "the Member must deliver written notice to the Club at least ten (10) business days before the Renewal Date",
+          "segment": "full"
+        }
+      },
+      {
+        "type": "Early termination fee",
+        "severity": 6,
+        "explanation": "Leaving during the first year costs half of the remaining monthly dues.",
+        "where": "Section 4.2",
+        "confidence": 90,
+        "evidence": {
+          "quote": "the Member shall pay an early termination fee equal to fifty percent (50%) of the monthly dues remaining in the Initial Term",
+          "segment": "full"
+        }
+      },
+      {
+        "type": "Late payment fee",
+        "severity": 2,
+        "explanation": "A flat late fee applies to payments that remain unpaid for ten days.",
+        "where": "Section 2.3",
+        "confidence": 80,
+        "evidence": {
+          "quote": "A late fee of $15.00 applies to any payment that remains unpaid ten (10) days after its due date.",
+          "segment": "full"
+        }
+      }
+    ],
+    "normal_in_region": [],
+    "next_actions": {
+      "questions_to_ask": [
+        "What is the exact last day to cancel before the March 1, 2027 renewal?",
+        "Will the Club notify members directly before changing dues for a renewal term?"
+      ],
+      "email_templates": [
+        {
+          "subject": "Cancellation of membership at renewal",
+          "body": "Hello, I am giving written notice that I will not renew my All-Access Annual membership when the Initial Term ends on February 28, 2027. Please confirm receipt in writing. Thank you."
+        }
+      ]
+    },
+    "key_dates": [
+      {
+        "type": "RENEWAL",
+        "date": "2027-03-01",
+        "derived_from": "Section 1.2: the first Renewal Term begins on March 1, 2027"
+      },
+      {
+        "type": "OTHER",
+        "date": "2026-03-01",
+        "derived_from": "Start Date"
+      }
+    ],
+    "obligations": [
+      "Pay monthly dues of $49.00 and the annual $59.00 maintenance fee",
+      "Follow the posted Club rules",
+      "Give written notice at least ten business days before the Renewal Date to cancel"
+    ],
+    "parties": [
+      "Brightwater Athletic Club, LLC (Club)",
+      "Jordan Sample (Member)"
+    ],
+    "disclaimer": "This is an AI analysis, not legal advice."
+  }
+}

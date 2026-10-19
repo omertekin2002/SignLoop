@@ -12,6 +12,8 @@ import {
   getSettingsErrorMessage,
 } from "@/lib/settings";
 import { DEFAULT_PERSONALITY_MODE } from "@/lib/personality-settings";
+import { describeUsage, usageMeterTone, useUsage } from "@/lib/usage-client";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -36,6 +38,19 @@ const PERSONALITY_LABELS: Record<string, string> = {
   "signloop-assistant": "SignLoop Assistant",
 };
 
+// A neutral fill, Saffron when 20% or less remains, Signal Red at zero; never Iris or a gradient.
+const USAGE_METER_FILL = {
+  normal: "bg-foreground/60",
+  low: "bg-highlight",
+  empty: "bg-destructive",
+} as const;
+
+const SERVICE_NOTES = {
+  busy: "SignLoop is busy right now, so new requests may need to wait a moment.",
+  exhausted:
+    "SignLoop has reached its daily request limit. Requests resume after midnight UTC.",
+} as const;
+
 export default function SettingsPage() {
   const { user, loading, signOut } = useAuth();
   const isLoaded = !loading;
@@ -53,6 +68,12 @@ export default function SettingsPage() {
     enabled: isLoaded && isSignedIn,
     staleTime: 60_000,
   });
+  const usageQuery = useUsage(isLoaded && isSignedIn);
+  const usage = usageQuery.data?.account;
+  const usedRequests = usage ? Math.min(usage.used, usage.limit) : 0;
+  const service = usageQuery.data?.service;
+  const serviceNote =
+    service && service !== "ok" ? SERVICE_NOTES[service] : null;
 
   const handleModelSelectOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
@@ -283,6 +304,55 @@ export default function SettingsPage() {
                   </Button>
                 </div>
               </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Usage</CardTitle>
+            <CardDescription>
+              Chat replies and contract analyses draw on one hourly request
+              allowance.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {usage ? (
+              <>
+                <p className="text-sm text-foreground">
+                  {describeUsage(usage)}
+                </p>
+                <div
+                  role="meter"
+                  aria-label="Requests used this hour"
+                  aria-valuemin={0}
+                  aria-valuemax={usage.limit}
+                  aria-valuenow={usedRequests}
+                  aria-valuetext={`${usedRequests} of ${usage.limit} requests used`}
+                  className="h-1 w-full overflow-hidden rounded-full bg-secondary"
+                >
+                  <div
+                    className={cn(
+                      "h-full rounded-full",
+                      USAGE_METER_FILL[usageMeterTone(usage)],
+                    )}
+                    style={{
+                      width: `${(usedRequests / usage.limit) * 100}%`,
+                    }}
+                  />
+                </div>
+                {serviceNote ? (
+                  <p className="text-caption text-muted-foreground">
+                    {serviceNote}
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {usageQuery.isError
+                  ? "Usage is unavailable right now."
+                  : "Loading usage..."}
+              </p>
             )}
           </CardContent>
         </Card>

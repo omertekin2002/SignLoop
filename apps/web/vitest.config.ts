@@ -12,7 +12,8 @@ export default defineConfig({
     },
     test: {
         environment: 'node',
-        include: ['lib/**/*.test.ts'],
+        // evals/ holds the deterministic contract-quality suite; it replays fixtures, so it runs in CI.
+        include: ['lib/**/*.test.ts', 'evals/**/*.test.ts'],
         // Transform AuthKit's Next.js imports through Vite instead of native Node ESM.
         server: { deps: { inline: ['@workos-inc/authkit-nextjs'] } },
     },

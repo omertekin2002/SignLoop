@@ -9,7 +9,15 @@ import {
 } from "@/lib/chat-agent-history";
 import { runMigrations } from "../db/migrations.js";
 import { sql, type VercelPoolClient } from "@vercel/postgres";
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
+import {
+  admissionLimits,
+  type AccountQuota,
+  type AdmissionLimits,
+  type AdmissionReason,
+  type AdmissionResult,
+  type InferenceQuota,
+} from "@/lib/inference-policy";
 import type { PrimaryModel } from "@/lib/model-settings";
 import type { PersonalityMode } from "@/lib/personality-settings";
 import {
@@ -51,13 +59,96 @@ export async function claimGenerationOperation(
   };
 }
 
-export async function claimChatAdmission(input: {
-  principal: string;
-  hourlyLimit: number;
-  concurrency: number;
-  globalDailyLimit: number;
-  globalConcurrency: number;
-}): Promise<{ release: () => Promise<void> } | { retryAfter: number }> {
+// Admission windows: a clock hour per principal and a UTC day service-wide. Claims and quota reports
+// read the same state query below, so a report always sees the windows and live slots a claim would.
+const HOUR_WINDOW = "date_trunc('hour', now())";
+const DAY_WINDOW =
+  "(date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')";
+
+// Expired slots are excluded here as well as pruned by claims. Epochs are float8 so they arrive as
+// numbers; '24 hours' rather than '1 day' keeps the day reset independent of the session time zone.
+const ADMISSION_STATE_SQL = `
+  SELECT (SELECT count(*)::integer FROM chat_admissions WHERE expires_at > now()) AS active,
+    (SELECT count(*)::integer FROM chat_admissions WHERE principal = $1 AND expires_at > now()) AS own,
+    coalesce((SELECT requests FROM chat_request_budgets WHERE bucket = 'global' AND window_start = ${DAY_WINDOW}), 0) AS daily,
+    coalesce((SELECT requests FROM chat_request_budgets WHERE bucket = $1 AND window_start = ${HOUR_WINDOW}), 0) AS hourly,
+    extract(epoch FROM now())::float8 AS "dbNow",
+    extract(epoch FROM ${HOUR_WINDOW} + interval '1 hour')::float8 AS "hourResetsAt",
+    extract(epoch FROM ${DAY_WINDOW} + interval '24 hours')::float8 AS "dayResetsAt",
+    extract(epoch FROM (SELECT min(expires_at) FROM chat_admissions WHERE principal = $1 AND expires_at > now()))::float8 AS "ownSlotFreesAt",
+    extract(epoch FROM (SELECT min(expires_at) FROM chat_admissions WHERE expires_at > now()))::float8 AS "anySlotFreesAt"`;
+
+type AdmissionState = {
+  active: number;
+  own: number;
+  daily: number;
+  hourly: number;
+  dbNow: number;
+  hourResetsAt: number;
+  dayResetsAt: number;
+  ownSlotFreesAt: number | null;
+  anySlotFreesAt: number | null;
+};
+
+async function readAdmissionState(
+  principal: string,
+  client?: VercelPoolClient,
+): Promise<AdmissionState> {
+  const { rows } = await (client ?? sql).query<AdmissionState>(
+    ADMISSION_STATE_SQL,
+    [principal],
+  );
+  return rows[0]!;
+}
+
+function epochToIso(seconds: number): string {
+  return new Date(seconds * 1000).toISOString();
+}
+
+function toAccountQuota(
+  state: AdmissionState,
+  limits: AdmissionLimits,
+  claimed = 0,
+): AccountQuota {
+  const used = state.hourly + claimed;
+  return {
+    limit: limits.hourlyLimit,
+    used,
+    remaining: Math.max(0, limits.hourlyLimit - used),
+    resetAt: epochToIso(state.hourResetsAt),
+    concurrency: { limit: limits.concurrency, inUse: state.own + claimed },
+  };
+}
+
+// Slots normally free when their request finishes, so a concurrency rejection suggests a short
+// wait, or less when an abandoned slot expires sooner. Jitter spreads the retries.
+const BUSY_RETRY_SECONDS = 30;
+const RETRY_JITTER_SECONDS = 15;
+
+function admissionRejection(
+  state: AdmissionState,
+  limits: AdmissionLimits,
+): { reason: AdmissionReason; resetsAt: number } | null {
+  if (state.daily >= limits.globalDailyLimit)
+    return { reason: "daily", resetsAt: state.dayResetsAt };
+  if (state.hourly >= limits.hourlyLimit)
+    return { reason: "hourly", resetsAt: state.hourResetsAt };
+  const ownFull = state.own >= limits.concurrency;
+  if (!ownFull && state.active < limits.globalConcurrency) return null;
+  // Freeing one of the caller's own slots also frees a global one; otherwise any slot will do.
+  const slotFreesAt = ownFull ? state.ownSlotFreesAt : state.anySlotFreesAt;
+  return {
+    reason: "busy",
+    resetsAt: Math.min(
+      state.dbNow + BUSY_RETRY_SECONDS,
+      slotFreesAt ?? Number.POSITIVE_INFINITY,
+    ),
+  };
+}
+
+export async function claimChatAdmission(
+  limits: AdmissionLimits,
+): Promise<AdmissionResult> {
   await ensureSchema();
   const client = await sql.connect();
   const token = randomUUID();
@@ -68,42 +159,28 @@ export async function claimChatAdmission(input: {
     await client.query(
       "DELETE FROM chat_request_budgets WHERE window_start < now() - interval '2 days'",
     );
-    const { rows } = await client.query<{
-      active: number;
-      own: number;
-      daily: number;
-      hourly: number;
-    }>(
-      `
-      SELECT (SELECT count(*)::integer FROM chat_admissions) AS active,
-        (SELECT count(*)::integer FROM chat_admissions WHERE principal = $1) AS own,
-        coalesce((SELECT requests FROM chat_request_budgets WHERE bucket = 'global' AND window_start = date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), 0) AS daily,
-        coalesce((SELECT requests FROM chat_request_budgets WHERE bucket = $1 AND window_start = date_trunc('hour', now())), 0) AS hourly`,
-      [input.principal],
-    );
-    const state = rows[0]!;
-    const retryAfter =
-      state.daily >= input.globalDailyLimit
-        ? 86400
-        : state.hourly >= input.hourlyLimit
-          ? 3600
-          : state.active >= input.globalConcurrency ||
-              state.own >= input.concurrency
-            ? 30
-            : 0;
-    if (retryAfter) {
+    const state = await readAdmissionState(limits.principal, client);
+    const rejection = admissionRejection(state, limits);
+    if (rejection) {
       await client.query("ROLLBACK");
-      return { retryAfter };
+      return {
+        retryAfter:
+          Math.max(1, Math.ceil(rejection.resetsAt - state.dbNow)) +
+          randomInt(RETRY_JITTER_SECONDS + 1),
+        reason: rejection.reason,
+        resetAt: epochToIso(rejection.resetsAt),
+        quota: toAccountQuota(state, limits),
+      };
     }
     await client.query(
       `INSERT INTO chat_request_budgets(bucket, window_start, requests)
-      VALUES ('global', date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', 1), ($1, date_trunc('hour', now()), 1)
+      VALUES ('global', ${DAY_WINDOW}, 1), ($1, ${HOUR_WINDOW}, 1)
       ON CONFLICT (bucket, window_start) DO UPDATE SET requests = chat_request_budgets.requests + 1`,
-      [input.principal],
+      [limits.principal],
     );
     await client.query(
       "INSERT INTO chat_admissions(token, principal, expires_at) VALUES ($1, $2, now() + interval '360 seconds')",
-      [token, input.principal],
+      [token, limits.principal],
     );
     await client.query("COMMIT");
     return {
@@ -112,6 +189,7 @@ export async function claimChatAdmission(input: {
           token,
         ]);
       },
+      quota: toAccountQuota(state, limits, 1),
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
@@ -119,6 +197,28 @@ export async function claimChatAdmission(input: {
   } finally {
     client.release();
   }
+}
+
+/**
+ * Report a signed-in account's quota without claiming any: one pooled read of the claim's state
+ * query, with no admission lock and no writes. Service-wide counts only decide the coarse status
+ * and are never returned.
+ */
+export async function getInferenceQuota(
+  userId: string,
+): Promise<InferenceQuota> {
+  await ensureSchema();
+  const limits = admissionLimits(userId);
+  const state = await readAdmissionState(limits.principal);
+  return {
+    account: toAccountQuota(state, limits),
+    service:
+      state.daily >= limits.globalDailyLimit
+        ? "exhausted"
+        : state.active >= limits.globalConcurrency
+          ? "busy"
+          : "ok",
+  };
 }
 
 export async function claimStorageDeletions(limit = 20) {
@@ -233,6 +333,8 @@ export type ContractSummaryRecord = {
 };
 
 export type ContractRecord = ContractSummaryRecord & {
+  /** Quality warning for the current extracted text, recorded by its upload. */
+  extractionWarning: string | null;
   analysesHasMore: boolean;
   analyses: AnalysisRecord[];
 };
@@ -564,13 +666,18 @@ export async function getContractByIdForUser(
 ): Promise<ContractRecord | null> {
   await ensureSchema();
 
-  const { rows: contractRows } = await sql<ContractSummaryRecord>`
+  // The warning belongs to the active text (saved with it by each upload), so the page can show
+  // it before any analysis exists. The text itself stays out of this response.
+  const { rows: contractRows } = await sql<
+    ContractSummaryRecord & { extractionWarning: string | null }
+  >`
     select
       id,
       user_id as "userId",
       project_id as "projectId",
       title,
       status,
+      extraction_warning as "extractionWarning",
       created_at as "createdAt",
       updated_at as "updatedAt"
     from contracts

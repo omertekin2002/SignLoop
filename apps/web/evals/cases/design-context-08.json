@@ -1,0 +1,30 @@
+{
+  "id": "design-context-08",
+  "title": "Design agreement with a tempting prior contract in project context",
+  "provenance": "synthetic/hand-written",
+  "contract": "contracts/design-context-08.txt",
+  "context": [
+    { "title": "Design retainer agreement (2025)", "document_type": "prior_contract", "file": "contracts/design-context-08-prior-retainer.txt" }
+  ],
+  "notes": "The prior retainer renews automatically and requires arbitration; this agreement does neither. Context may inform interpretation but must not be quoted as evidence or imported as contract terms.",
+  "clauses": [
+    { "category": "early_termination_fee", "required": true, "span": "Client shall pay a kill fee equal to fifty percent (50%) of the unpaid balance of the project fee, in addition to fees for work already completed" },
+    { "category": "ip_ownership", "required": false, "span": "Designer assigns copyright in the final Deliverables to Client upon receipt of full payment." }
+  ],
+  "absent": ["auto_renewal", "arbitration"],
+  "fields": {
+    "summary.renewal.auto_renew": null,
+    "summary.renewal.renewal_period": null,
+    "summary.cancellation.notice_period_text": { "canon": [14, "day"] },
+    "summary.cancellation.notice_period_days": 14
+  },
+  "key_dates": [
+    { "type": "OTHER", "date": "2026-10-26" },
+    { "type": "OTHER", "date": "2026-12-07" },
+    { "type": "OTHER", "date": "2026-10-05", "required": false }
+  ],
+  "parties": [
+    { "name": "Quillfeather Design Studio" },
+    { "name": "Brambleberry Tea Company Ltd.", "aliases": ["Brambleberry Tea Company"] }
+  ]
+}

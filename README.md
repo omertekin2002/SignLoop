@@ -46,6 +46,8 @@ Turbo may return cached results. Use `bun run build --force` for a fresh build. 
 
 From `apps/web`, `bun run test` invokes Vitest directly; a path narrows the run, for example `bun run test lib/chat-tools.test.ts`.
 
+Tests include the [contract analysis evaluations](apps/web/evals/README.md), which replay hand-written model outputs through the production analysis path. They make no provider calls.
+
 Database tests skip unless `SIGNLOOP_TEST_DATABASE_URL` is supplied. The supported disposable-database workflow is:
 
 ```bash
@@ -53,7 +55,9 @@ cd apps/web
 bun run test:integration
 ```
 
-It initializes local PostgreSQL, applies migrations, runs database ownership/concurrency tests, and removes the temporary database. It never uses `POSTGRES_URL`. The default binary directory is `/opt/homebrew/opt/postgresql@16/bin`; set `POSTGRES_BIN` for another installation. This is separate from testing against production credentials or live model services.
+It initializes local PostgreSQL, applies migrations, runs database ownership/concurrency tests, and removes the temporary database. It never uses `POSTGRES_URL`. The default binary directory is `/opt/homebrew/opt/postgresql@16/bin`; set `POSTGRES_BIN` for another installation. If `SIGNLOOP_TEST_DATABASE_URL` is already set, the script skips the temporary cluster and runs the same suites against that database instead; it must be an empty, disposable `signloop_test` database on `localhost`, such as a `postgres:16` container. This is separate from testing against production credentials or live model services.
+
+GitHub Actions ([ci.yml](.github/workflows/ci.yml)) runs on pull requests and pushes to `main`. One job installs dependencies with Vercel's hoisted linker, then runs lint, type checking, tests, and the build, and checks the OCR build traces; none of them needs secrets or environment files. A second job runs `bun run test:integration` against an empty `postgres:16` service container.
 
 ## Configuration
 
@@ -125,11 +129,11 @@ See [object-storage.ts](apps/web/lib/object-storage.ts) and [upload-pipeline.ts]
 
 The UI creates a contract, then uploads its file to `/api/contracts/:id/upload`. Project context uploads use `/api/projects/:id/context`.
 
-The shared pipeline checks ownership at the route boundary, bounds multipart input, and validates file size, MIME type, and signatures. Files are limited to **4 MiB**. PDF text uses the PDF.js proxy from `unpdf`, `.doc`/`.docx` extraction uses `word-extractor`, images use Tesseract OCR, and plain text is decoded directly.
+The shared pipeline checks ownership at the route boundary, bounds multipart input, and validates file size, MIME type, and signatures. Files are limited to **4 MiB**. PDF text uses the PDF.js proxy from `unpdf`, `.doc`/`.docx` extraction uses `word-extractor`, images use Tesseract OCR, and plain text is decoded directly. OCR runs tesseract.js in a worker thread with the English LSTM model from the pinned `@tesseract.js-data/eng` package; nothing is downloaded or cached on disk at runtime.
 
-PDF pages are read sequentially, with at most 500 pages and 2,000,000 extracted characters. Images are limited to 25 megapixels before decoding. DOCX archives are inspected before expansion, with limits of 16 MiB expanded data and 2,000 entries. OCR allows one active job and one queued job; its 150-second deadline includes queue wait. The upload deadline also covers reading the request and storing the file. These bounds do not provide parser process isolation.
+PDF pages are read sequentially, with at most 500 pages and 2,000,000 extracted characters. Images are limited to 25 megapixels before decoding. DOCX archives are inspected before expansion, with limits of 16 MiB expanded data and 2,000 entries. OCR allows one active job and one queued job; its 150-second deadline includes queue wait. If the OCR worker cannot start, or its thread dies, the upload returns 503 and the next upload starts a fresh worker. The upload deadline also covers reading the request and storing the file. These bounds do not provide parser process isolation.
 
-Scanned PDFs are detected through low text density; their pages are **not** rasterized for OCR. Contract and context uploads reject extraction failures or empty text. Usable but low-quality extraction can be stored with a warning. Original bytes go to object storage, while extracted text and metadata go to PostgreSQL. Reuploads replace active contract text and invalidate current analysis state; prior file records remain until deletion.
+Scanned PDFs are detected through low text density across the document. In an otherwise digital PDF, each page with fewer than 20 non-whitespace characters (typically an appended scanned schedule or signature page) is named in a warning, and the extraction confidence becomes the share of pages read. Scanned pages are **not** rasterized for OCR. Contract and context uploads reject extraction failures or empty text. Usable but low-quality extraction can be stored with a warning, which the contract page shows before and after analysis. Original bytes go to object storage, while extracted text and metadata go to PostgreSQL. Reuploads replace active contract text and invalidate current analysis state; prior file records remain until deletion.
 
 ### Analysis and projects
 
@@ -137,7 +141,7 @@ Scanned PDFs are detected through low text density; their pages are **not** rast
 
 The prompt includes up to 15,000 contract characters, preserving the beginning and end when shortened. Context is limited to eight documents, up to 3,000 characters each within an 8,000-character total text budget; the per-document bound is applied in SQL, so the prompt builder assembles rather than re-trims. Coverage and extraction warnings are retained with the result; this is not full-document coverage for long inputs.
 
-Output passes through deterministic JSON parsing (including fences and trailing commas), schema validation, and supported normalization. Unrecoverable output is rejected without a model-based repair call, which could invent missing contract facts. Provider/request failures can use OpenRouter fallback; semantic validation failures do not trigger another provider solely to retry invalid analysis. The final database transaction checks the contract revision before storing the analysis and marking it `ANALYZED`. Contract/context changes invalidate previous results as current, while historical analyses remain accessible. The view includes parties, obligations, regional comparisons, fees, term dates, and the generated disclaimer. Unknown renewal and notice terms remain null. Notice wording and units are preserved in `notice_period_text`; `notice_period_days` is populated only for explicit whole calendar-day durations. Existing numeric reports remain readable. Provider-reported input/output token counts are stored when usage is available.
+Output passes through deterministic JSON parsing (including fences and trailing commas), schema validation, and supported normalization. Unrecoverable output is rejected without a model-based repair call, which could invent missing contract facts. Provider/request failures can use OpenRouter fallback; semantic validation failures do not trigger another provider solely to retry invalid analysis. The final database transaction checks the contract revision before storing the analysis and marking it `ANALYZED`. Contract/context changes invalidate previous results as current, while historical analyses remain accessible. The view includes parties, obligations, fees, term dates, and the generated disclaimer. Nothing collects a contract's jurisdiction yet, so the prompt asks for no regional or market comparisons and tells the model not to judge clauses under any jurisdiction's law or practice. The server also discards any comparisons the model returns and sets `comparisons_withheld`, which the view explains; comparisons never count as substantive analysis content. Reports saved earlier keep their comparisons, labelled as generated without a confirmed jurisdiction. Unknown renewal and notice terms remain null. Notice wording and units are preserved in `notice_period_text`; `notice_period_days` is populated only for explicit whole calendar-day durations. Existing numeric reports remain readable. Provider-reported input/output token counts are stored when usage is available.
 
 Project detail returns 50 contracts and 50 context documents per page, with independent `contractsOffset` and `contextOffset` query parameters. Contract detail returns 50 analysis records per page using `analysisOffset`; the UI can load older records. `contractsHasMore`, `contextHasMore`, and `analysesHasMore` indicate continuation.
 
@@ -155,7 +159,7 @@ New saved chats receive a short AI-generated title from their first user message
 
 URL prompts (`/?q=...`) populate a draft after privacy acknowledgement and require the user to press Send.
 
-Chat and analysis share admission across instances through PostgreSQL, keyed by the stable application owner ID resolved from WorkOS. Signed-in users may start 30 combined requests per hour with two concurrent runs; anonymous visitors share 10 requests per hour and one concurrent run. The global defaults are 1,000 requests per UTC day and eight concurrent runs, configurable using `CHAT_DAILY_REQUEST_LIMIT` and `CHAT_CONCURRENCY_LIMIT`. Cached analysis reuse does not consume quota; forced analyses do. The existing `CHAT_*` environment names remain compatible and now govern both operations. Rejected requests return 429 with `Retry-After`; unavailable admission storage returns 503. These are request limits, not exact monetary spending caps.
+Chat and analysis share admission across instances through PostgreSQL, keyed by the stable application owner ID resolved from WorkOS. Signed-in users may start 30 combined requests per hour with two concurrent runs; anonymous visitors share 10 requests per hour and one concurrent run. The global defaults are 1,000 requests per UTC day and eight concurrent runs, configurable using `CHAT_DAILY_REQUEST_LIMIT` and `CHAT_CONCURRENCY_LIMIT`. Cached analysis reuse does not consume quota; forced analyses do. Saved chat checks the thread before admission, so a missing or foreign thread returns 404 without consuming quota. The existing `CHAT_*` environment names remain compatible and now govern both operations. The limits live in [inference-policy.ts](apps/web/lib/inference-policy.ts), which both enforcement and the usage report read. Rejected requests return 429 with a reason and `Retry-After` (see [Request budgets](#request-budgets)); unavailable admission storage returns 503. These are request limits, not exact monetary spending caps.
 
 The default personality is `bare-llm`; signed-in users can select `signloop-assistant`. The answering model decides when to invoke tools:
 
@@ -167,7 +171,7 @@ The default personality is `bare-llm`; signed-in users can select `signloop-assi
 | `list_contracts` / `read_contract` | Lists and reads only the signed-in user's contracts. Sequential and keyword excerpts are bounded to 12,000 characters; truncated keyword results include a continuation offset. |
 | `generate_image`                   | Calls the available primary image model; image bytes are attached to the reply rather than replayed to the text model.                                                          |
 
-Signed-in temporary and saved chats expose the research and contract tools. Image availability is checked separately. Missing integration keys can still cause tool errors. Anonymous chat exposes no tools. Retrieved document/page text is marked as untrusted; those textual markers are not an authorization boundary.
+Signed-in temporary and saved chats expose the research and contract tools. Image availability is checked separately. Missing integration keys can still cause tool errors. Anonymous chat exposes no tools. Retrieved document/page text is marked as untrusted; those textual markers are not an authorization boundary. The `signloop-assistant` prompt and the contract-tool instructions (given to either personality) tell the model not to assert jurisdiction-specific legal conclusions unless the user states the jurisdiction or a fetched, cited source supports them; this is an instruction, not an enforced check.
 
 Saved and temporary replies use the same SDK-backed replay schema. Replay is compacted to 20,000 serialized characters before persistence, preserving complete tool exchanges and shortened evidence; assistant prose is replayed once from canonical message content under the ordinary history limits. Source catalogs travel independently through temporary requests and responses, capped at 64 sources and 16,000 serialized characters. New sources retire older inherited entries when needed, with stable citation numbers that are never reassigned to another source. Sources read during the current turn remain protected. SQL bounds legacy replay projections before returning rows; canonical prompt history remains bounded.
 
@@ -177,17 +181,21 @@ New saved images are stored in `chat_attachments` and served through an ownershi
 
 ### Request budgets
 
-| Operation               | Current implementation                                                                                                                                            |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Analysis                | 120-second per-request client timeout; 270-second operation deadline; 300-second route budget.                                                                                                           |
-| Chat                    | 260-second generation deadline; 275-second request deadline; 300-second route budget.                                                                             |
-| Chat tool loop          | Ten model steps; final step disables tools. Per-turn limits: three search executions, five page reads, five direct HTTP fetches, two image generations, ten contract reads with two cached keyword-search documents.           |
-| Provider stream opening | 20-second deadline per candidate until meaningful content/tool output; metadata-only streams retain the deadline. Opening events are capped at 256. |
-| Direct HTTP             | 30 seconds, five redirects, 2 MiB response bytes, and 12,000 returned characters.                                                                                 |
+| Operation               | Current implementation                                                                                                                                                                                               |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Analysis                | 120-second per-request client timeout; 270-second operation deadline; 300-second route budget.                                                                                                                       |
+| Chat                    | 260-second generation deadline; 275-second request deadline; 300-second route budget.                                                                                                                                |
+| Chat tool loop          | Ten model steps; final step disables tools. Per-turn limits: three search executions, five page reads, five direct HTTP fetches, two image generations, ten contract reads with two cached keyword-search documents. |
+| Provider stream opening | 20-second deadline per candidate until meaningful content/tool output; metadata-only streams retain the deadline. Opening events are capped at 256.                                                                  |
+| Direct HTTP             | 30 seconds, five redirects, 2 MiB response bytes, and 12,000 returned characters.                                                                                                                                    |
 
 Provider fallback can occur when opening a model step fails; an already-opened step is not replayed on another provider. SDK automatic retries are disabled in chat and analysis; application-level provider fallback and JSON-format compatibility retries still exist. Incomplete saved chat runs are not persisted. A completed answer whose persistence fails is shown with an unsaved warning.
 
-Budget sources: [chat.ts](apps/web/lib/chat.ts), [chat route](apps/web/app/api/chat/route.ts), [analysis route](apps/web/app/api/contracts/[id]/analyze/route.ts), and [chat-tools.ts](apps/web/lib/chat-tools.ts).
+Signed-in users can read the shared chat/analysis quota from `GET /api/usage`, which returns 401 when signed out and is sent with `Cache-Control: private, no-store`. It reads the admission tables without taking the admission lock, writes nothing, and never claims quota. The body is `{ account: { limit, used, remaining, resetAt, concurrency: { limit, inUse } }, shared: ["chat", "analysis"], service }`: `resetAt` is the end of the current clock hour, expired slots are not counted, and `service` is only a coarse `ok`, `busy`, or `exhausted`. Service-wide counts and the anonymous bucket are never reported.
+
+For signed-in users, the usage endpoint and chat and analysis responses, including 429s, carry IETF draft rate-limit fields: `RateLimit-Policy: "account";q=30;w=3600` and `RateLimit: "account";r=<remaining>;t=<seconds until reset>`. The chat `done` event and 429 bodies also include the account `quota` object, as of admission or rejection. A 429 body names its `reason` (`busy`, `hourly`, or `daily`) and `resetAt`. `Retry-After` is the time until that reset plus up to 15 seconds of jitter; a busy wait is at most 30 seconds, or less when a held slot expires sooner. Settings shows the hourly allowance with a meter, the chat composer counts down from five remaining requests and disables Send at zero until the reset, and the analysis buttons show the remaining allowance. Anonymous temporary chat shows none of these.
+
+Budget sources: [chat.ts](apps/web/lib/chat.ts), [chat route](apps/web/app/api/chat/route.ts), [analysis route](apps/web/app/api/contracts/[id]/analyze/route.ts), [chat-tools.ts](apps/web/lib/chat-tools.ts), [inference-policy.ts](apps/web/lib/inference-policy.ts), and the [usage route](apps/web/app/api/usage/route.ts).
 
 ## Persistence and operations
 
@@ -212,7 +220,7 @@ Root [vercel.json](vercel.json) configures:
 - Output: `apps/web/.next`.
 - Cron: daily storage-deletion outbox cleanup, authenticated with `CRON_SECRET`.
 
-Keep the hoisted linker so repository-root framework discovery can resolve Next.js. The build command does not apply migrations. Run migrations against the intended environment before setting `SKIP_SCHEMA_BOOTSTRAP=1`. API output traces include SQL migration files through [next.config.js](apps/web/next.config.js).
+Keep the hoisted linker so repository-root framework discovery can resolve Next.js. The build command does not apply migrations. Run migrations against the intended environment before setting `SKIP_SCHEMA_BOOTSTRAP=1`. API output traces include SQL migration files through [next.config.js](apps/web/next.config.js). The OCR upload routes leave tesseract.js unbundled and trace its worker modules, WebAssembly core builds, and English model; `bun run check:ocr-trace` in `apps/web` verifies those traces after a build.
 
 The configured ignore command considers changes under `apps/web`, `packages`, and the listed root build/dependency configuration files; a root README/AGENTS-only commit is eligible to skip deployment. The repository configuration does not establish the current state of a live deployment.
 

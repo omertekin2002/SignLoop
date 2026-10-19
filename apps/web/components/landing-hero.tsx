@@ -25,7 +25,7 @@ const formats = ["PDF", "DOCX", "DOC", "TXT", "JPG", "PNG", "TIFF"];
 const analysisOutputs = [
   "Red flags, ranked by severity",
   "Obligations, parties, and key dates",
-  "What's normal in your region",
+  "Plain-language risks, grounded in quoted contract text",
   "Next actions you can take today",
 ];
 

@@ -23,6 +23,7 @@ import {
 
 const MAX_MULTIPART_OVERHEAD = 64 * 1024;
 const LOW_OCR_CONFIDENCE = 60;
+const MAX_LISTED_PAGE_RANGES = 6;
 
 // Shared file-upload pipeline used by both the contract-upload and project-context routes,
 // so size/MIME validation, the single buffer conversion, and text extraction live in one place.
@@ -48,12 +49,40 @@ export type PreparedUpload = {
   extractionWarning: string | null;
 };
 
-function getExtractionWarning(input: {
+/** "Pages 7–9 and 12 …" for [7, 8, 9, 12]; a long list ends with a count of the other pages. */
+function describePagesWithoutText(pages: readonly number[]): string {
+  const ranges: Array<[number, number]> = [];
+  for (const page of pages) {
+    const previous = ranges.at(-1);
+    if (previous && page === previous[1] + 1) previous[1] = page;
+    else ranges.push([page, page]);
+  }
+  const listed = ranges
+    .slice(0, MAX_LISTED_PAGE_RANGES)
+    .map(([first, last]) => (first === last ? `${first}` : `${first}–${last}`));
+  const otherPages = ranges
+    .slice(MAX_LISTED_PAGE_RANGES)
+    .reduce((count, [first, last]) => count + last - first + 1, 0);
+  if (otherPages > 0) {
+    listed.push(`${otherPages} more ${otherPages === 1 ? "page" : "pages"}`);
+  }
+  const list = new Intl.ListFormat("en-US").format(listed);
+  return pages.length === 1
+    ? `Page ${list} has little or no selectable text and was not read; it may be a scanned image. Verify that page in the original before relying on the analysis.`
+    : `Pages ${list} have little or no selectable text and were not read; they may be scanned images. Verify those pages in the original before relying on the analysis.`;
+}
+
+export function getExtractionWarning(input: {
   method: ExtractionMethod | null;
   confidence: number | null;
+  pagesWithoutText?: readonly number[];
 }): string | null {
   if (input.method === "pdf_scanned") {
     return "This PDF appears to be scanned and may have an incomplete text layer. Verify the extracted text before relying on the analysis.";
+  }
+
+  if (input.pagesWithoutText?.length) {
+    return describePagesWithoutText(input.pagesWithoutText);
   }
 
   if (
@@ -201,7 +230,11 @@ export async function prepareUpload(
     method = extracted.method;
     confidence =
       typeof extracted.confidence === "number" ? extracted.confidence : null;
-    extractionWarning = getExtractionWarning({ method, confidence });
+    extractionWarning = getExtractionWarning({
+      method,
+      confidence,
+      pagesWithoutText: extracted.pagesWithoutText,
+    });
   } catch (error: unknown) {
     if (error instanceof ExtractionLimitError) {
       return { ok: false, status: 422, error: error.message };

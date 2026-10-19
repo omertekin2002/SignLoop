@@ -16,7 +16,7 @@ bun run check-types
 bun run build
 ```
 
-The production server is `bun run start` after a successful build. Build and type checking both generate `.next` files, so run them sequentially.
+The production server is `bun run start` after a successful build. Build and type checking both generate `.next` files, so run them sequentially. After a build, `bun run check:ocr-trace` verifies that the image-upload routes trace everything OCR loads at runtime.
 
 `bun run test lib/chat-tools.test.ts` focuses a test run. Database tests skip without `SIGNLOOP_TEST_DATABASE_URL`; use `bun run test:integration` to create and remove a disposable local PostgreSQL database. See the root README for the `POSTGRES_BIN` override.
 
@@ -28,6 +28,8 @@ The production server is `bun run start` after a successful build. Build and typ
 - `components/`: dashboard, chat, upload, privacy, and shared UI.
 - `lib/`: SQL, extraction, analysis, chat tools/providers, client helpers, and tests.
 - `db/`: ordered migrations, migration runner, cleanup command, and integration-test setup.
+- `evals/`: deterministic contract analysis evaluations replayed through the production pipeline ([README](evals/README.md)).
+- `scripts/`: post-build checks (OCR build traces).
 - `proxy.ts`: Clerk route protection.
 - `instrumentation.ts`: optional AI SDK chat telemetry.
 

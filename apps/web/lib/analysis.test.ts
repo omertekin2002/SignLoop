@@ -194,6 +194,40 @@ describe("parseStrictJson", () => {
     ).toThrow(/no substantive contract observations|failed validation/i);
   });
 
+  it("does not accept regional comparisons as the only observations", () => {
+    const comparisonsOnlyPayload: AnalysisResult = {
+      ...validPayload,
+      key_points: [],
+      summary: {
+        what_it_is: "Contract analysis",
+        payments: { amount: null, frequency: null, fees: [] },
+        term: { start: null, end: null, minimum_term: null },
+        renewal: { auto_renew: null, renewal_period: null },
+        cancellation: {
+          how: "Not specified",
+          notice_period_days: null,
+          penalties: [],
+        },
+      },
+      normal_in_region: [
+        {
+          topic: "Early termination fee",
+          jurisdiction: "Ontario",
+          typical_range: "One to two months of fees",
+          yours: "All remaining fees for the term",
+          label: "unusual",
+        },
+      ],
+      obligations: [],
+      parties: [],
+    };
+
+    // They describe outside norms rather than this contract, and are withheld when stored.
+    expect(() =>
+      parseStrictJson<AnalysisResult>(JSON.stringify(comparisonsOnlyPayload)),
+    ).toThrow(/no substantive contract observations/i);
+  });
+
   it("preserves a legitimate partial response when it contains a concrete observation", () => {
     const result = parseStrictJson<AnalysisResult>(
       JSON.stringify({
@@ -233,6 +267,44 @@ describe("parseStrictJson", () => {
 });
 
 describe("buildAnalysisPrompt", () => {
+  it.each([undefined, {}, { region: " \n " }, { region: "Unknown" }])(
+    "asks for no comparisons or jurisdiction judgments without a confirmed region: %j",
+    (metadata) => {
+      const { prompt } = buildAnalysisPrompt("Contract body", metadata);
+
+      expect(prompt).toContain("- Jurisdiction: Not confirmed");
+      expect(prompt).toContain('return "normal_in_region": [].');
+      expect(prompt).toContain('- "normal_in_region" must be an empty array.');
+      expect(prompt).toContain('"normal_in_region": [],');
+      expect(prompt).toContain(
+        "Do not state or imply that a clause is lawful, unlawful, enforceable, unenforceable, standard, typical, or unusual",
+      );
+      expect(prompt).toContain(
+        "explain each risk by what that text says, requires, or leaves out",
+      );
+      expect(prompt).not.toMatch(
+        /Region: Unknown|specific to the contract type and region|"typical" or "unusual"|"jurisdiction": "\.\.\."/,
+      );
+    },
+  );
+
+  it("allows comparisons that name their jurisdiction once a region is confirmed", () => {
+    const { prompt } = buildAnalysisPrompt("Contract body", {
+      region: "  Ontario,\n  Canada ",
+    });
+
+    expect(prompt).toContain("- Jurisdiction: Ontario, Canada");
+    expect(prompt).toContain(
+      'Each comparison must name the jurisdiction it assumes in "jurisdiction".',
+    );
+    expect(prompt).toContain(
+      '"normal_in_region[].label" must be exactly "typical" or "unusual".',
+    );
+    expect(prompt).toContain('"jurisdiction": "...", "typical_range": "..."');
+    expect(prompt).not.toContain("No jurisdiction has been confirmed");
+    expect(prompt).not.toContain("must be an empty array");
+  });
+
   it("keeps the head and tail of long contracts and explicitly marks omitted content", () => {
     const contract = `HEAD-CLAUSE\n${"middle ".repeat(3000)}\nTAIL-SIGNATURE`;
     const { prompt, coverageNotices } = buildAnalysisPrompt(contract);

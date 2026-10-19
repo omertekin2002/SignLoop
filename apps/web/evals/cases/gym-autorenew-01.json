@@ -1,0 +1,33 @@
+{
+  "id": "gym-autorenew-01",
+  "title": "Gym membership that renews automatically with a business-day cancellation notice",
+  "provenance": "synthetic/hand-written",
+  "contract": "contracts/gym-autorenew-01.txt",
+  "context": [],
+  "notes": "Notice is ten business days, so numeric calendar days must stay null. An astral emoji precedes every span, so UTF-16 and code point offsets differ.",
+  "clauses": [
+    { "category": "auto_renewal", "required": true, "span": "this Agreement renews automatically for successive twelve (12) month terms" },
+    { "category": "price_increase", "required": true, "span": "The Club may change the monthly dues for any Renewal Term by posting the new rate at the front desk at least thirty (30) days before that Renewal Term begins." },
+    { "category": "cancellation_notice", "required": true, "span": "the Member must deliver written notice to the Club at least ten (10) business days before the Renewal Date" },
+    { "category": "early_termination_fee", "required": true, "span": "the Member shall pay an early termination fee equal to fifty percent (50%) of the monthly dues remaining in the Initial Term" },
+    { "category": "late_payment", "required": false, "span": "A late fee of $15.00 applies to any payment that remains unpaid ten (10) days after its due date." }
+  ],
+  "absent": ["arbitration"],
+  "fields": {
+    "summary.renewal.auto_renew": true,
+    "summary.renewal.renewal_period": { "canon": [12, "month"] },
+    "summary.cancellation.notice_period_text": { "canon": [10, "business_day"] },
+    "summary.cancellation.notice_period_days": null
+  },
+  "key_dates": [
+    { "type": "RENEWAL", "date": "2027-03-01" },
+    { "type": "OTHER", "date": "2026-03-01", "required": false },
+    { "type": "OTHER", "date": "2027-02-28", "required": false },
+    { "type": "NOTICE_CUTOFF", "date": "2027-02-15", "required": false },
+    { "type": "PRICE_REVIEW", "date": "2027-01-30", "required": false }
+  ],
+  "parties": [
+    { "name": "Brightwater Athletic Club, LLC", "aliases": ["Brightwater Athletic Club"] },
+    { "name": "Jordan Sample" }
+  ]
+}

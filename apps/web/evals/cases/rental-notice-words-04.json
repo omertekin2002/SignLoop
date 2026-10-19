@@ -1,0 +1,29 @@
+{
+  "id": "rental-notice-words-04",
+  "title": "Equipment rental whose notice period is written out in words",
+  "provenance": "synthetic/hand-written",
+  "contract": "contracts/rental-notice-words-04.txt",
+  "context": [],
+  "notes": "Thirty calendar days is the truth, but notice-period.ts accepts only digit-led wording, so faithful wording forces notice_period_days to null. The notice span uses a typographic apostrophe.",
+  "clauses": [
+    { "category": "auto_renewal", "required": true, "span": "After the initial rental period, this Agreement continues automatically from month to month until terminated under Section 6." },
+    { "category": "cancellation_notice", "required": true, "span": "either party may terminate this Agreement by giving the other party not less than thirty (30) days’ prior written notice" },
+    { "category": "early_termination_fee", "required": true, "span": "Renter shall pay the rent for the remainder of the initial rental period" }
+  ],
+  "absent": ["arbitration"],
+  "fields": {
+    "summary.renewal.auto_renew": true,
+    "summary.renewal.renewal_period": { "canon": [1, "month"] },
+    "summary.cancellation.notice_period_text": { "canon": [30, "day"] },
+    "summary.cancellation.notice_period_days": 30
+  },
+  "key_dates": [
+    { "type": "OTHER", "date": "2026-06-01" },
+    { "type": "OTHER", "date": "2026-11-30", "required": false },
+    { "type": "OTHER", "date": "2026-12-01", "required": false }
+  ],
+  "parties": [
+    { "name": "Copperleaf Equipment Rentals Ltd.", "aliases": ["Copperleaf Equipment Rentals"] },
+    { "name": "Juniper Street Studio LLC", "aliases": ["Juniper Street Studio"] }
+  ]
+}

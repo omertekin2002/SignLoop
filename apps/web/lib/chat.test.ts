@@ -581,6 +581,9 @@ describe("agentic chat", () => {
       query: undefined,
     });
     expect(mocks.getContractText).toHaveBeenCalledWith("user-1", contractId);
+    expect(JSON.stringify(model.doStreamCalls[0]?.prompt)).toContain(
+      "do not assert how a particular jurisdiction's law treats it",
+    );
     expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain("NDA");
     expect(JSON.stringify(model.doStreamCalls[2]?.prompt)).toContain(
       "Confidentiality lasts",

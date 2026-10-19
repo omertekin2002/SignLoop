@@ -39,7 +39,12 @@ import {
   getUserSettingsByUserId,
 } from "@/lib/server-db";
 import { isRecord, isUuid } from "@/lib/utils";
-import { admitChat } from "@/lib/chat-admission";
+import { admissionRejectedResponse, admitChat } from "@/lib/chat-admission";
+import {
+  rateLimitHeaders,
+  type AccountQuota,
+  type AdmissionReason,
+} from "@/lib/inference-policy";
 import { generateChatTitle } from "@/lib/chat-title";
 
 const CHAT_SYSTEM_PROMPT = `
@@ -51,6 +56,7 @@ Guidelines:
 - Highlight risks, obligations, dates, and unclear terms when relevant.
 - If information is missing, say what is missing.
 - Do not claim legal certainty. Remind users this is not legal advice when appropriate.
+- Do not assert jurisdiction-specific legal conclusions, such as that a clause is enforceable, unlawful, or standard in a particular place, unless the user has stated the jurisdiction or a source you fetched and cite supports the claim.
 `.trim();
 
 const BARE_LLM_SYSTEM_PROMPT = `
@@ -71,8 +77,11 @@ export const maxDuration = 300;
 const ROUTE_TIMEOUT_MS = 275_000;
 // The lease must outlive the longest possible request so a stuck run cannot be double-started.
 const CHAT_LEASE_SECONDS = 360;
-// claimChatAdmission's Retry-After for a concurrency rejection, as opposed to the hourly/daily caps.
-const ADMISSION_BUSY_RETRY_AFTER_SECONDS = 30;
+const ADMISSION_REJECTIONS: Record<AdmissionReason, string> = {
+  busy: "Chat is busy with other replies. Please try again shortly.",
+  hourly: "Chat is at its hourly request limit. Please try again later.",
+  daily: "Chat is at its daily request limit. Please try again later.",
+};
 
 function getPublicChatErrorMessage(error: unknown): string {
   return error instanceof GeminiWebSearchError ||
@@ -170,6 +179,7 @@ function toDoneStreamEvent(input: {
   temporary: boolean;
   persisted?: boolean;
   storedMessages: ChatMessageRecord[];
+  quota?: AccountQuota;
 }): Record<string, unknown> {
   const { reply, message, temporary, persisted = true } = input;
 
@@ -187,6 +197,8 @@ function toDoneStreamEvent(input: {
     webSearchSuccessfulCount: reply.webSearch?.successfulSearches ?? 0,
     webSources: reply.webSearch?.sources ?? [],
     toolActivity: reply.toolActivity ?? [],
+    // The account quota as of this request's admission, so the client can update without a refetch.
+    quota: input.quota,
   };
 }
 
@@ -273,6 +285,7 @@ export async function POST(req: Request) {
 
     let conversationMessages = parsedMessages.messages;
     const latestUserMessage = conversationMessages.at(-1)!;
+    let persistedMessages: ChatMessageRecord[] = [];
 
     if (userId && !isTemporaryChat) {
       release = await claimGenerationOperation(
@@ -286,24 +299,30 @@ export async function POST(req: Request) {
           { error: "A reply is already running in this chat." },
           { status: 409 },
         );
+      // Read the owner-scoped thread before admission, so a missing or foreign thread costs no quota.
+      const recentMessages = await getRecentChatMessagesForThreadForUser(
+        userId,
+        threadId,
+        MAX_CHAT_MESSAGES - 1,
+      );
+      if (!recentMessages)
+        return NextResponse.json(
+          { error: "Chat thread not found" },
+          { status: 404 },
+        );
+      persistedMessages = recentMessages;
     }
 
+    let quota: AccountQuota | undefined;
     try {
       const admission = await admitChat(userId);
       if ("retryAfter" in admission)
-        return NextResponse.json(
-          {
-            error:
-              admission.retryAfter === ADMISSION_BUSY_RETRY_AFTER_SECONDS
-                ? "Chat is busy with other replies. Please try again shortly."
-                : "Chat is at its request limit. Please try again later.",
-          },
-          {
-            status: 429,
-            headers: { "Retry-After": String(admission.retryAfter) },
-          },
+        return admissionRejectedResponse(
+          admission,
+          ADMISSION_REJECTIONS[admission.reason],
         );
       releaseAdmission = admission.release;
+      quota = admission.quota;
     } catch {
       return NextResponse.json(
         { error: "Chat is temporarily unavailable. Please try again shortly." },
@@ -311,15 +330,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const [settings, persistedMessages, modelSnapshot] = await Promise.all([
+    const [settings, modelSnapshot] = await Promise.all([
       userId ? getUserSettingsByUserId(userId) : Promise.resolve(null),
-      userId && !isTemporaryChat
-        ? getRecentChatMessagesForThreadForUser(
-            userId,
-            threadId,
-            MAX_CHAT_MESSAGES - 1,
-          )
-        : Promise.resolve([]),
       // Anonymous chat uses the configured default model and gets no image tool, so it skips the
       // upstream /models round-trip rather than blocking on a 5s timeout for nothing.
       userId
@@ -338,13 +350,6 @@ export async function POST(req: Request) {
       : undefined;
 
     if (!isTemporaryChat) {
-      if (persistedMessages === null) {
-        return NextResponse.json(
-          { error: "Chat thread not found" },
-          { status: 404 },
-        );
-      }
-
       const canonicalMessages = boundCanonicalChatHistory(
         persistedMessages
           .filter(
@@ -383,7 +388,7 @@ export async function POST(req: Request) {
     // Catch here so a title failure never rejects (or creates an unhandled rejection during)
     // an otherwise successful reply.
     const generatedTitle =
-      !isTemporaryChat && persistedMessages?.length === 0
+      !isTemporaryChat && persistedMessages.length === 0
         ? generateChatTitle(latestUserMessage.content, {
             primaryModel: selectedPrimaryModel,
             signal: AbortSignal.any([operationSignal, titleController.signal]),
@@ -485,6 +490,7 @@ export async function POST(req: Request) {
                     temporary: isTemporaryChat,
                     persisted,
                     storedMessages,
+                    quota,
                   }),
                 ),
               );
@@ -537,6 +543,7 @@ export async function POST(req: Request) {
           "Content-Type": "application/x-ndjson; charset=utf-8",
           "Cache-Control": "no-cache, no-transform",
           "X-Accel-Buffering": "no",
+          ...rateLimitHeaders(quota),
         },
       });
     }
@@ -598,27 +605,31 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({
-      message: assistantMessageForClient(
-        assistantMessage,
-        storedMessages,
-        persisted && !isTemporaryChat,
-      ),
-      storedMessages: storedMessages.map(toPublicChatMessage),
-      provider,
-      model,
-      mode: isTemporaryChat ? "temporary-chat" : "chat",
-      persisted: isTemporaryChat ? undefined : persisted,
-      agentMessages: toTemporaryAgentMessages(
-        { agentMessages } as ChatReply,
-        isTemporaryChat,
-      ),
-      toolActivity: toolActivity ?? [],
-      webSearchQuery: webSearch?.query ?? null,
-      webSearchAttempts: webSearch?.attemptedQueries ?? [],
-      webSearchSuccessfulCount: webSearch?.successfulSearches ?? 0,
-      webSources: webSearch?.sources ?? [],
-    });
+    return NextResponse.json(
+      {
+        message: assistantMessageForClient(
+          assistantMessage,
+          storedMessages,
+          persisted && !isTemporaryChat,
+        ),
+        storedMessages: storedMessages.map(toPublicChatMessage),
+        provider,
+        model,
+        mode: isTemporaryChat ? "temporary-chat" : "chat",
+        persisted: isTemporaryChat ? undefined : persisted,
+        agentMessages: toTemporaryAgentMessages(
+          { agentMessages } as ChatReply,
+          isTemporaryChat,
+        ),
+        toolActivity: toolActivity ?? [],
+        webSearchQuery: webSearch?.query ?? null,
+        webSearchAttempts: webSearch?.attemptedQueries ?? [],
+        webSearchSuccessfulCount: webSearch?.successfulSearches ?? 0,
+        webSources: webSearch?.sources ?? [],
+        quota,
+      },
+      { headers: rateLimitHeaders(quota) },
+    );
   } catch (error: unknown) {
     console.error("Chat API error:", error);
     return NextResponse.json(

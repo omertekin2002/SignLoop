@@ -54,7 +54,7 @@ const TOOL_NOTES = {
   http_get:
     "Use http_get to call a public API or data endpoint directly and read its raw response. Prefer it over search_web and read_url for any question with one correct value — prices, rates, counts, dates, record fields — since search returns a summary you would have to paraphrase, and this returns the source data itself. Report values exactly as the response gives them, and if the response lacks a field, say so rather than supplying it from memory.",
   contracts:
-    "The user's uploaded contracts are available: call list_contracts to find them, then read_contract to read the text. Page with offset, or pass find with keywords to locate clauses. Quote clause text precisely and name the contract it comes from.",
+    "The user's uploaded contracts are available: call list_contracts to find them, then read_contract to read the text. Page with offset, or pass find with keywords to locate clauses. Quote clause text precisely and name the contract it comes from. Explain what a clause says; do not assert how a particular jurisdiction's law treats it unless the user has stated the jurisdiction or a source you fetched and cite supports the claim.",
   generate_image:
     "Use generate_image when the user asks for a picture, illustration, diagram, or other visual. Write a detailed prompt. The image is inserted into your reply automatically, so never embed or link it yourself; briefly describe what you generated.",
 };

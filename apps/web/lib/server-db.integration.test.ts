@@ -27,6 +27,7 @@ vi.mock("@vercel/postgres", () => {
 
 import {
   claimChatAdmission,
+  getInferenceQuota,
   claimStorageDeletions,
   deferStorageDeletion,
   completeStorageDeletion,
@@ -48,6 +49,7 @@ import {
   getChatImageForUser,
   getChatThreadByIdForUser,
   getContractAnalysisGateForUser,
+  getContractByIdForUser,
   getContractTextForUser,
   getContractWithLatestAnalysisForUser,
   getProjectByIdForUser,
@@ -61,6 +63,7 @@ import {
 import { attachAnalysisSources, contractSourceRevision } from "./analysis-sources";
 import { citationForReport } from "./source-citations";
 import { buildAnalysisPrompt } from "./analysis";
+import { admissionLimits, type AdmissionResult } from "./inference-policy";
 
 // db/test-integration.sh sets this and runs vitest directly, outside turbo's env filtering.
 // eslint-disable-next-line turbo/no-undeclared-env-vars
@@ -106,6 +109,52 @@ describe.skipIf(!connectionString)("database integration", () => {
       llmModel: "test",
     });
   }
+
+  it("returns the active text's extraction warning in contract detail, owner-scoped and without the text", async () => {
+    const item = await contract();
+    const warning =
+      "Page 2 has little or no selectable text and was not read; it may be a scanned image. Verify that page in the original before relying on the analysis.";
+    const upload = {
+      userId: "owner",
+      contractId: item.id,
+      projectId: null,
+      title: "Test",
+      fileName: "agreement.pdf",
+      storageKey: `extraction-warning-${item.id}`,
+      bucket: "test",
+      contentType: "application/pdf",
+      sizeBytes: 1727,
+      extractionMethod: "pdf_parse",
+      extractionConfidence: 66,
+    };
+    await saveContractUploadForUser({
+      ...upload,
+      text: "Readable clause text.",
+      extractionWarning: warning,
+    });
+
+    const detail = await getContractByIdForUser("owner", item.id);
+    expect(detail).toMatchObject({
+      id: item.id,
+      status: "DRAFT",
+      extractionWarning: warning,
+      analyses: [],
+      analysesHasMore: false,
+    });
+    expect(detail).not.toHaveProperty("text");
+    expect(await getContractByIdForUser("intruder", item.id)).toBeNull();
+
+    // The warning follows the active text: a clean re-upload clears it.
+    await saveContractUploadForUser({
+      ...upload,
+      storageKey: `${upload.storageKey}-clean`,
+      text: "Replacement clause text.",
+      extractionWarning: null,
+    });
+    expect(
+      (await getContractByIdForUser("owner", item.id))?.extractionWarning,
+    ).toBeNull();
+  });
 
   it("serves bounded source pages with Unicode/hash agreement and owner isolation", async () => {
     const item = await contract();
@@ -1192,6 +1241,25 @@ describe.skipIf(!connectionString)("database integration", () => {
         ?.content,
     ).toBe(stored!.content);
   });
+  // Retry-After is the wait until the limiting window resets plus 0-15 s of jitter; resetAt has none.
+  function expectRejection(
+    result: AdmissionResult,
+    reason: "busy" | "hourly" | "daily",
+    maxWaitSeconds: number,
+  ) {
+    expect(result).toMatchObject({ reason, resetAt: expect.any(String) });
+    if (!("retryAfter" in result)) throw new Error("expected a rejection");
+    const wait = (Date.parse(result.resetAt) - Date.now()) / 1000;
+    expect(wait).toBeGreaterThan(-1);
+    expect(wait).toBeLessThanOrEqual(maxWaitSeconds);
+    expect(Number.isInteger(result.retryAfter)).toBe(true);
+    expect(result.retryAfter).toBeGreaterThanOrEqual(
+      Math.max(1, Math.floor(wait)),
+    );
+    expect(result.retryAfter).toBeLessThanOrEqual(Math.ceil(wait) + 16);
+    return result;
+  }
+
   it("enforces shared admission atomically and retains hourly usage after release", async () => {
     await pool.current!.query("TRUNCATE chat_admissions, chat_request_budgets");
     const input = {
@@ -1206,12 +1274,24 @@ describe.skipIf(!connectionString)("database integration", () => {
     );
     const accepted = claims.filter((c) => "release" in c);
     expect(accepted).toHaveLength(1);
-    expect(claims.filter((c) => "retryAfter" in c)).toHaveLength(4);
+    const rejected = claims.filter((c) => "retryAfter" in c);
+    expect(rejected).toHaveLength(4);
+    for (const rejection of rejected) expectRejection(rejection, "busy", 30);
     await accepted[0]!.release();
     const second = await claimChatAdmission(input);
     expect(second).toHaveProperty("release");
     if ("release" in second) await second.release();
-    expect(await claimChatAdmission(input)).toEqual({ retryAfter: 3600 });
+    const hourly = expectRejection(
+      await claimChatAdmission(input),
+      "hourly",
+      3600,
+    );
+    expect(Date.parse(hourly.resetAt) % 1000).toBe(0);
+    expect(hourly.quota).toMatchObject({
+      used: 2,
+      remaining: 0,
+      resetAt: hourly.resetAt,
+    });
   });
 
   it("enforces global concurrency and daily limits across different principals", async () => {
@@ -1223,14 +1303,155 @@ describe.skipIf(!connectionString)("database integration", () => {
       globalConcurrency: 1,
     };
     const first = await claimChatAdmission({ ...input, principal: "one" });
-    expect(await claimChatAdmission({ ...input, principal: "two" })).toEqual({
-      retryAfter: 30,
-    });
+    expectRejection(
+      await claimChatAdmission({ ...input, principal: "two" }),
+      "busy",
+      30,
+    );
     if ("release" in first) await first.release();
     const second = await claimChatAdmission({ ...input, principal: "two" });
     if ("release" in second) await second.release();
-    expect(await claimChatAdmission({ ...input, principal: "three" })).toEqual({
-      retryAfter: 86400,
+    const daily = expectRejection(
+      await claimChatAdmission({ ...input, principal: "three" }),
+      "daily",
+      86400,
+    );
+    const today = new Date();
+    expect(daily.resetAt).toBe(
+      new Date(
+        Date.UTC(
+          today.getUTCFullYear(),
+          today.getUTCMonth(),
+          today.getUTCDate() + 1,
+        ),
+      ).toISOString(),
+    );
+  });
+
+  it("asks a busy caller to wait only until its earliest slot expires", async () => {
+    await pool.current!.query("TRUNCATE chat_admissions, chat_request_budgets");
+    const input = {
+      principal: "abandoned",
+      hourlyLimit: 10,
+      concurrency: 1,
+      globalDailyLimit: 20,
+      globalConcurrency: 8,
+    };
+    const held = await claimChatAdmission(input);
+    await pool.current!.query(
+      "UPDATE chat_admissions SET expires_at = now() + interval '5 seconds'",
+    );
+    expectRejection(await claimChatAdmission(input), "busy", 5);
+    if ("release" in held) await held.release();
+  });
+
+  it("reports the quota claims enforce without locking, pruning, or writing", async () => {
+    await pool.current!.query("TRUNCATE chat_admissions, chat_request_budgets");
+    const userId = "quota-owner";
+    const limits = admissionLimits(userId);
+    const granted = async () => {
+      const result = await claimChatAdmission(limits);
+      if (!("release" in result)) throw new Error("expected admission");
+      return result;
+    };
+    const tables = async () =>
+      (
+        await pool.current!.query(
+          `SELECT (SELECT json_agg(a ORDER BY a.token) FROM chat_admissions a) AS admissions,
+            (SELECT json_agg(b ORDER BY b.bucket, b.window_start) FROM chat_request_budgets b) AS budgets`,
+        )
+      ).rows[0];
+
+    const idle = await getInferenceQuota(userId);
+    expect(idle).toEqual({
+      account: {
+        limit: 30,
+        used: 0,
+        remaining: 30,
+        resetAt: expect.any(String),
+        concurrency: { limit: 2, inUse: 0 },
+      },
+      service: "ok",
+    });
+    expect(await tables()).toEqual({ admissions: null, budgets: null });
+
+    const first = await granted();
+    const second = await granted();
+    expect(second.quota).toMatchObject({
+      used: 2,
+      remaining: 28,
+      concurrency: { inUse: 2 },
+    });
+    expect((await getInferenceQuota(userId)).account).toEqual(second.quota);
+    const busy = expectRejection(await claimChatAdmission(limits), "busy", 30);
+    expect(busy.quota).toEqual(second.quota);
+
+    await first.release();
+    expect((await getInferenceQuota(userId)).account).toMatchObject({
+      used: 2,
+      remaining: 28,
+      concurrency: { inUse: 1 },
+    });
+    const third = await granted();
+    expect((await getInferenceQuota(userId)).account).toEqual(third.quota);
+    await second.release();
+    await third.release();
+    expect((await getInferenceQuota(userId)).account).toMatchObject({
+      used: 3,
+      remaining: 27,
+      concurrency: { inUse: 0 },
+    });
+
+    // Claims prune expired slots and old windows under the admission lock; a report does neither
+    // and must not wait for that lock.
+    await pool.current!.query(
+      "INSERT INTO chat_admissions(token, principal, expires_at) VALUES (gen_random_uuid(), $1, now() - interval '1 second')",
+      [limits.principal],
+    );
+    await pool.current!.query(
+      "INSERT INTO chat_request_budgets(bucket, window_start, requests) VALUES ($1, date_trunc('hour', now()) - interval '3 days', 9)",
+      [limits.principal],
+    );
+    const before = await tables();
+    const holder = await pool.current!.connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query("SELECT pg_advisory_xact_lock(736194822)");
+      expect((await getInferenceQuota(userId)).account).toMatchObject({
+        used: 3,
+        concurrency: { inUse: 0 },
+      });
+    } finally {
+      await holder.query("ROLLBACK");
+      holder.release();
+    }
+    expect(await tables()).toEqual(before);
+
+    await pool.current!.query(
+      "UPDATE chat_request_budgets SET requests = $2 WHERE bucket = $1 AND window_start = date_trunc('hour', now())",
+      [limits.principal, limits.hourlyLimit],
+    );
+    expect((await getInferenceQuota(userId)).account).toMatchObject({
+      used: 30,
+      remaining: 0,
+    });
+    expect(
+      expectRejection(await claimChatAdmission(limits), "hourly", 3600).quota,
+    ).toEqual((await getInferenceQuota(userId)).account);
+
+    // Service-wide state surfaces only as a coarse status.
+    await pool.current!.query(
+      "INSERT INTO chat_admissions(token, principal, expires_at) SELECT gen_random_uuid(), 'other-' || n, now() + interval '1 minute' FROM generate_series(1, $1) n",
+      [limits.globalConcurrency],
+    );
+    expect((await getInferenceQuota(userId)).service).toBe("busy");
+    await pool.current!.query(
+      "UPDATE chat_request_budgets SET requests = $1 WHERE bucket = 'global' AND window_start = date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
+      [limits.globalDailyLimit],
+    );
+    expect(await getInferenceQuota(userId)).toMatchObject({
+      account: { used: 30, concurrency: { inUse: 0 } },
+      service: "exhausted",
     });
   });
 

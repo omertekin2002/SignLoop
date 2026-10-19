@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { extractTextFromPdf } from "./text-extraction";
 
@@ -16,5 +17,26 @@ describe("real PDF extraction", () => {
     expect(["pdf_parse", "pdf_scanned"]).toContain(result.method);
     expect(source.equals(original)).toBe(true);
     expect(source.length).toBeGreaterThan(0);
+  });
+
+  it("reports an image-only page between text pages and keeps the text layer as read", async () => {
+    // Synthetic three-page PDF; page 2 is a raster with no text (fixtures/README.md).
+    const source = await readFile(
+      new URL("./fixtures/pdf-scanned-middle-page.pdf", import.meta.url),
+    );
+
+    const result = await extractTextFromPdf(source);
+
+    expect(result).toEqual({
+      text:
+        "MASTER SERVICES AGREEMENT " +
+        "1. Services. The Supplier will provide the services described in Schedule A. " +
+        "2. Fees. The Customer will pay the fees in Schedule B within thirty days of invoice. " +
+        "3. Term. This Agreement starts on the Effective Date and lasts twelve months. " +
+        "4. Termination. Either party may terminate on sixty days written notice.",
+      method: "pdf_parse",
+      confidence: 66,
+      pagesWithoutText: [2],
+    });
   });
 });

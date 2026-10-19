@@ -1,0 +1,19 @@
+{
+  "id": "unsupported-comparison",
+  "case": "gym-autorenew-01",
+  "description": "The model compares the early termination fee with gym-industry norms although no jurisdiction was confirmed. The stored report must still withhold it, so only the proposal count moves.",
+  "patch": [
+    {
+      "path": "/normal_in_region",
+      "value": [
+        {
+          "topic": "Early termination fee",
+          "typical_range": "Often a flat fee or one to two months of dues",
+          "yours": "50% of the remaining dues in the first year",
+          "label": "unusual"
+        }
+      ]
+    }
+  ],
+  "targets": ["negatives.unsupported_comparisons"]
+}

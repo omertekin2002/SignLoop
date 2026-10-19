@@ -7,7 +7,10 @@ const mocks = vi.hoisted(() => ({
   getDocumentProxy: vi.fn(),
 }));
 
-vi.mock("tesseract.js", () => ({ createWorker: mocks.createWorker }));
+vi.mock("tesseract.js", () => ({
+  createWorker: mocks.createWorker,
+  OEM: { LSTM_ONLY: 1 },
+}));
 vi.mock("unpdf", () => ({
   extractText: mocks.extractText,
   getDocumentProxy: mocks.getDocumentProxy,
@@ -41,6 +44,25 @@ function pdfFixture(
       }),
   };
 }
+
+/** One text item per page, so each page can have its own text layer (or none). */
+function pdfPagesFixture(pageTexts: string[]) {
+  return {
+    numPages: pageTexts.length,
+    destroy: vi.fn().mockResolvedValue(undefined),
+    getPage: vi.fn((pageNumber: number) =>
+      Promise.resolve({
+        cleanup: vi.fn(),
+        getTextContent: vi.fn().mockResolvedValue({
+          items: [{ str: pageTexts[pageNumber - 1] }],
+        }),
+      }),
+    ),
+  };
+}
+
+const CLAUSE =
+  "The Supplier will deliver the services described in Schedule A within thirty days. ";
 
 describe("extraction resource guards", () => {
   it("rejects excessive PDF page counts before text extraction and releases the parser", async () => {
@@ -112,11 +134,64 @@ describe("extraction resource guards", () => {
       totalPages: 20,
     });
 
-    await expect(
-      extractTextFromPdf(Buffer.from("%PDF-1.7")),
-    ).resolves.toMatchObject({
+    const result = await extractTextFromPdf(Buffer.from("%PDF-1.7"));
+
+    expect(result).toMatchObject({ method: "pdf_parse", confidence: 100 });
+    expect(result.pagesWithoutText).toBeUndefined();
+  });
+
+  it("names image-only pages of an otherwise digital PDF without changing its text", async () => {
+    // A 12-page agreement whose appended schedules (7-9) and signed final page (12) are scans:
+    // empty, or carrying only a scanner stamp.
+    const pageTexts = Array.from({ length: 12 }, (_, index) =>
+      [6, 7, 8, 11].includes(index)
+        ? index === 8
+          ? "  SCAN-0009  "
+          : ""
+        : CLAUSE.repeat(4),
+    );
+    mocks.getDocumentProxy.mockResolvedValue(pdfPagesFixture(pageTexts));
+
+    const result = await extractTextFromPdf(Buffer.from("%PDF-1.7"));
+
+    expect(result).toEqual({
+      // The stored text, and therefore every citation offset into it, is unchanged.
+      text: pageTexts.join("\n").replace(/\s+/g, " ").trim(),
       method: "pdf_parse",
-      confidence: 100,
+      confidence: 66,
+      pagesWithoutText: [7, 8, 9, 12],
+    });
+  });
+
+  it("counts non-whitespace characters per page against the 20-character threshold", async () => {
+    const letters = "abcdefghijklmnopqrst";
+    // 19 characters padded with whitespace still count as no text layer; 20 do not.
+    const nineteen = letters.slice(0, 19).split("").join(" \n\t");
+    const twenty = letters.split("").join(" ");
+    mocks.getDocumentProxy.mockResolvedValue(
+      pdfPagesFixture([CLAUSE.repeat(6), nineteen, twenty]),
+    );
+
+    const result = await extractTextFromPdf(Buffer.from("%PDF-1.7"));
+
+    expect(result).toMatchObject({
+      method: "pdf_parse",
+      confidence: 66,
+      pagesWithoutText: [2],
+    });
+  });
+
+  it("keeps the whole-document scanned result when most pages have no text", async () => {
+    mocks.getDocumentProxy.mockResolvedValue(
+      pdfPagesFixture(["", CLAUSE, "", "", ""]),
+    );
+
+    const result = await extractTextFromPdf(Buffer.from("%PDF-1.7"));
+
+    expect(result).toEqual({
+      text: CLAUSE.trim(),
+      method: "pdf_scanned",
+      confidence: 0,
     });
   });
 

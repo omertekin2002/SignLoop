@@ -8,6 +8,13 @@ import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, getApiErrorMessage, type ApiError } from "@/lib/api-client";
 import { formatDate, getRiskColor } from "@/lib/utils";
+import {
+  admissionRejectionMessage,
+  analysisUsageNote,
+  parseAdmissionRejection,
+  syncUsage,
+  useUsage,
+} from "@/lib/usage-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -63,6 +70,8 @@ type ContractDetail = {
   analysesHasMore?: boolean;
   title?: string | null;
   status?: string | null;
+  /** Quality warning for the current extracted text; absent when extraction was clean. */
+  extractionWarning?: string | null;
   createdAt?: string | Date | null;
   updatedAt?: string | Date | null;
   analyses?: AnalysisRecord[] | null;
@@ -188,11 +197,23 @@ const ContractDetails = () => {
       queryClient.invalidateQueries({ queryKey: ["contracts"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["project"] });
+      void syncUsage(queryClient);
     },
     onError: (error: ApiError) => {
-      toast.error(getApiErrorMessage(error, "Analysis failed to start"));
+      const rejection =
+        error.response?.status === 429
+          ? parseAdmissionRejection(error.response.data)
+          : null;
+      // A 429 carries the current quota; other failures may have been admitted before failing.
+      void syncUsage(queryClient, rejection?.quota);
+      toast.error(
+        (rejection && admissionRejectionMessage(rejection)) ||
+          getApiErrorMessage(error, "Analysis failed to start"),
+      );
     },
   });
+  const usageQuery = useUsage();
+  const analysisUsage = analysisUsageNote(usageQuery.data?.account);
 
   // Already ordered by the query (created_at desc, id desc); this only guards the shape.
   const sortedAnalyses = useMemo<AnalysisRecord[]>(
@@ -266,6 +287,16 @@ const ContractDetails = () => {
     : [];
   const keyFindings = keyPoints.filter(
     (point) => !coverageNotices.includes(point),
+  );
+  const extractionWarning =
+    typeof contract?.extractionWarning === "string" &&
+    contract.extractionWarning.trim()
+      ? contract.extractionWarning
+      : null;
+  // A report carries the extraction warning from its own run; the page-level notice already
+  // shows the current one, so the same sentence is not repeated under Analysis coverage.
+  const reportCoverageNotices = coverageNotices.filter(
+    (notice) => notice !== extractionWarning,
   );
   const summaryCancellation =
     summary?.cancellation && typeof summary.cancellation === "object"
@@ -503,12 +534,28 @@ const ContractDetails = () => {
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
+              {analysis && analysisUsage ? (
+                <p className="basis-full text-caption text-muted-foreground md:text-right">
+                  {analysisUsage}
+                </p>
+              ) : null}
             </div>
           </div>
         </div>
       </div>
 
       <div className="mx-auto max-w-7xl px-4 py-8 space-y-6 sm:px-6 lg:px-8">
+        {/* Shown before and after analysis: it describes the text the next analysis will read. */}
+        {extractionWarning && (
+          <div
+            role="status"
+            className="rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground"
+          >
+            <p className="text-highlight">Text extraction</p>
+            <p className="mt-1">{extractionWarning}</p>
+          </div>
+        )}
+
         {/* Analysis Result Section */}
         {analysis ? (
           <>
@@ -563,14 +610,14 @@ const ContractDetails = () => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {coverageNotices.length > 0 && (
+                  {reportCoverageNotices.length > 0 && (
                     <div
                       role="status"
                       className="mb-4 rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground"
                     >
                       <p className="text-highlight">Analysis coverage</p>
                       <ul className="mt-2 list-disc pl-5">
-                        {coverageNotices.map((notice) => (
+                        {reportCoverageNotices.map((notice) => (
                           <li key={notice}>{notice}</li>
                         ))}
                       </ul>
@@ -969,6 +1016,11 @@ const ContractDetails = () => {
                   >
                     Start Analysis
                   </Button>
+                  {analysisUsage ? (
+                    <p className="mt-3 text-caption text-muted-foreground">
+                      {analysisUsage}
+                    </p>
+                  ) : null}
                 </>
               )}
             </CardContent>
