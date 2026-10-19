@@ -25,7 +25,10 @@ const {
 }));
 
 vi.mock("@/lib/auth", () => ({ auth }));
-vi.mock("@/lib/chat-admission", () => ({ admitAnalysis }));
+vi.mock("@/lib/chat-admission", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./chat-admission")>()),
+  admitAnalysis,
+}));
 vi.mock("@/lib/analysis", () => ({ analyzeText }));
 vi.mock("@/lib/server-db", () => ({
   claimGenerationOperation,
@@ -80,6 +83,14 @@ const analysisOutput = (overrides: Record<string, unknown> = {}) => ({
 
 const release = vi.fn();
 const releaseAdmission = vi.fn();
+const resetAt = "2026-10-19T15:00:00.000Z";
+const quota = (used: number) => ({
+  limit: 30,
+  used,
+  remaining: 30 - used,
+  resetAt,
+  concurrency: { limit: 2, inUse: 1 },
+});
 
 function arrangeRunnableContract(
   contract: Record<string, unknown> = contractRecord(),
@@ -125,15 +136,67 @@ describe("POST /api/contracts/[id]/analyze", () => {
     expect(admitAnalysis).toHaveBeenCalledWith("owner");
     expect(releaseAdmission).toHaveBeenCalledOnce();
   });
+  it("reports the account quota in RateLimit headers on success", async () => {
+    arrangeRunnableContract();
+    admitAnalysis.mockResolvedValue({
+      release: releaseAdmission,
+      quota: quota(18),
+    });
+    const response = await POST(postRequest(), params(CONTRACT_ID));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("RateLimit-Policy")).toBe(
+      '"account";q=30;w=3600',
+    );
+    expect(response.headers.get("RateLimit")).toMatch(/^"account";r=12;t=\d+$/);
+  });
   it("bounds forced analyses and does not call a provider when the shared quota is full", async () => {
     arrangeRunnableContract();
-    admitAnalysis.mockResolvedValue({ retryAfter: 3600 });
+    admitAnalysis.mockResolvedValue({
+      retryAfter: 1_204,
+      reason: "hourly",
+      resetAt,
+      quota: quota(30),
+    });
     const response = await POST(postRequest("?force=true"), params(CONTRACT_ID));
     expect(response.status).toBe(429);
-    expect(response.headers.get("Retry-After")).toBe("3600");
+    expect(response.headers.get("Retry-After")).toBe("1204");
+    expect(response.headers.get("RateLimit-Policy")).toBe(
+      '"account";q=30;w=3600',
+    );
+    expect(response.headers.get("RateLimit")).toMatch(/^"account";r=0;t=\d+$/);
+    expect(await response.json()).toEqual({
+      error:
+        "Analysis and chat share an hourly usage limit. Please try again later.",
+      reason: "hourly",
+      resetAt,
+      quota: quota(30),
+    });
     expect(analyzeText).not.toHaveBeenCalled();
     expect(getModelAvailabilitySnapshot).not.toHaveBeenCalled();
     expect(release).toHaveBeenCalledOnce();
+  });
+  // Retry-After is the same for each case: the wording follows the reason alone.
+  it.each([
+    [
+      "busy",
+      "Analysis is waiting for other requests to finish. Please try again shortly.",
+    ],
+    [
+      "daily",
+      "Analysis is at its daily request limit. Please try again later.",
+    ],
+  ] as const)("words a %s rejection by its reason", async (reason, error) => {
+    arrangeRunnableContract();
+    admitAnalysis.mockResolvedValue({
+      retryAfter: 3_600,
+      reason,
+      resetAt,
+      quota: quota(4),
+    });
+    const response = await POST(postRequest(), params(CONTRACT_ID));
+    expect(response.status).toBe(429);
+    expect(await response.json()).toMatchObject({ error, reason });
+    expect(analyzeText).not.toHaveBeenCalled();
   });
   it("fails closed when admission storage is unavailable", async () => {
     arrangeRunnableContract();

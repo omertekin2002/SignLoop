@@ -10,6 +10,14 @@ import type { ChatToolActivity, ChatToolName } from "@/lib/chat";
 
 import { toast } from "sonner";
 import { chatRequestFailure } from "@/lib/chat-request-error";
+import type { AccountQuota } from "@/lib/inference-policy";
+import {
+  composerUsageNote,
+  formatResetTime,
+  parseAccountQuota,
+  syncUsage,
+  useUsage,
+} from "@/lib/usage-client";
 import {
   boundTemporaryChatHistory,
   compactInlineImageDataUris,
@@ -84,6 +92,8 @@ type ChatApiSuccess = {
   model?: string;
   persisted?: boolean;
   storedMessages?: ChatThreadMessage[];
+  /** The signed-in account's quota as of this request's admission. */
+  quota?: AccountQuota;
 };
 
 type ChatApiStreamEvent =
@@ -242,6 +252,7 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
     model: typeof payload.model === "string" ? payload.model : undefined,
     persisted:
       typeof payload.persisted === "boolean" ? payload.persisted : undefined,
+    quota: parseAccountQuota(payload.quota) ?? undefined,
   };
 }
 
@@ -268,7 +279,12 @@ function ChatMessageError() {
       ) : (
         <ActionBarPrimitive.Reload asChild>
           <Button variant="outline" size="sm" disabled={remaining > 0}>
-            {remaining > 0 ? `Retry in ${remaining}s` : "Retry"}
+            {/* An hourly or daily limit can be far off; name the time rather than count seconds. */}
+            {remaining > 90
+              ? `Retry at ${formatResetTime(retryAt, now)}`
+              : remaining > 0
+                ? `Retry in ${remaining}s`
+                : "Retry"}
           </Button>
         </ActionBarPrimitive.Reload>
       )}
@@ -827,6 +843,10 @@ export function ChatPanel({
   const { loading, user } = useAuth();
   const isLoaded = !loading;
   const queryClient = useQueryClient();
+  // Only accounts have a reportable quota; anonymous temporary chat shows none.
+  const usageQuery = useUsage(isLoaded && Boolean(user));
+  const usageNote = composerUsageNote(usageQuery.data?.account);
+  const quotaExhausted = usageQuery.data?.account.remaining === 0;
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [landingBackdrop, setLandingBackdrop] = useState<HTMLDivElement | null>(
     null,
@@ -972,30 +992,37 @@ export function ChatPanel({
 
         if (!response.ok) {
           const failure = chatRequestFailure(await response.json().catch(() => null), response.status, response.headers.get("Retry-After"));
+          if (failure.status === 429)
+            void syncUsage(queryClient, failure.quota);
           yield { metadata: { custom: { requestError: failure } } };
           throw new Error(failure.message);
         }
 
         let completedSnapshot: ChatApiStreamSnapshot | null = null;
 
-        for await (const snapshot of readChatApiResponse(response)) {
-          completedSnapshot = snapshot.done ? snapshot : completedSnapshot;
-          yield {
-            content: [{ type: "text", text: snapshot.message }] as const,
-            status: snapshot.done
-              ? ({ type: "complete", reason: "stop" } as const)
-              : undefined,
-            metadata: {
-              custom: {
-                provider: snapshot.provider ?? null,
-                model: snapshot.model ?? null,
-                toolActivity: snapshot.toolActivity ?? [],
-                // Retained so the next temporary turn can replay this turn's tool exchange.
-                agentMessages: snapshot.agentMessages ?? [],
-                webSources: snapshot.webSources ?? [],
+        // An admitted request counts against the hourly quota however it ends.
+        try {
+          for await (const snapshot of readChatApiResponse(response)) {
+            completedSnapshot = snapshot.done ? snapshot : completedSnapshot;
+            yield {
+              content: [{ type: "text", text: snapshot.message }] as const,
+              status: snapshot.done
+                ? ({ type: "complete", reason: "stop" } as const)
+                : undefined,
+              metadata: {
+                custom: {
+                  provider: snapshot.provider ?? null,
+                  model: snapshot.model ?? null,
+                  toolActivity: snapshot.toolActivity ?? [],
+                  // Retained so the next temporary turn can replay this turn's tool exchange.
+                  agentMessages: snapshot.agentMessages ?? [],
+                  webSources: snapshot.webSources ?? [],
+                },
               },
-            },
-          };
+            };
+          }
+        } finally {
+          void syncUsage(queryClient, completedSnapshot?.quota);
         }
 
         if (!completedSnapshot) {
@@ -1356,7 +1383,13 @@ export function ChatPanel({
               )}
             </ChatViewport>
 
-            <ComposerPrimitive.Root className="shrink-0 bg-transparent px-4 pb-2 pt-1 sm:px-6 sm:pb-3 sm:pt-2">
+            <ComposerPrimitive.Root
+              className="shrink-0 bg-transparent px-4 pb-2 pt-1 sm:px-6 sm:pb-3 sm:pt-2"
+              // Enter submits the form directly, so the zero-quota guard sits here as well as on Send.
+              onSubmit={(event) => {
+                if (quotaExhausted) event.preventDefault();
+              }}
+            >
               {persistenceWarning && !temporary ? (
                 <div
                   className="mx-auto mb-2 max-w-3xl rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground"
@@ -1405,7 +1438,7 @@ export function ChatPanel({
                       <Button
                         type="button"
                         size="icon"
-                        disabled={composerDisabled}
+                        disabled={composerDisabled || quotaExhausted}
                         className="h-9 w-9 shrink-0"
                       >
                         <Send className="h-4 w-4" />
@@ -1435,6 +1468,9 @@ export function ChatPanel({
                   : temporary
                     ? "Temporary chat is not saved. AI may produce inaccurate information."
                     : "AI may produce inaccurate information about laws or guidelines. Keep original records."}
+                {usageNote ? " · " : null}
+                {/* Rendered while empty so the count is announced when it first appears. */}
+                <span aria-live="polite">{usageNote}</span>
               </div>
             </ComposerPrimitive.Root>
           </ThreadPrimitive.Root>

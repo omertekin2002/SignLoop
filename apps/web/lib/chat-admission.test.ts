@@ -7,7 +7,12 @@ const { claimChatAdmission } = vi.hoisted(() => ({
 
 vi.mock("@/lib/server-db", () => ({ claimChatAdmission }));
 
-import { admitChat, admitAnalysis } from "@/lib/chat-admission";
+import {
+  admissionRejectedResponse,
+  admitAnalysis,
+  admitChat,
+} from "@/lib/chat-admission";
+import { admissionLimits, type AccountQuota } from "@/lib/inference-policy";
 
 const ENV_KEYS = [
   "CHAT_DAILY_REQUEST_LIMIT",
@@ -33,6 +38,16 @@ afterEach(() => {
   }
   vi.resetAllMocks();
 });
+
+const release = async () => {};
+const resetAt = "2026-10-19T15:00:00.000Z";
+const quota: AccountQuota = {
+  limit: 30,
+  used: 18,
+  remaining: 12,
+  resetAt,
+  concurrency: { limit: 2, inUse: 1 },
+};
 
 function claimedInput() {
   expect(claimChatAdmission).toHaveBeenCalledOnce();
@@ -93,15 +108,30 @@ describe("admitChat", () => {
   });
 
   it.each([
-    [{ release: expect.any(Function) }, undefined],
-    [{ retryAfter: 30 }, { retryAfter: 30 }],
-    [{ retryAfter: 3600 }, { retryAfter: 3600 }],
-    [{ retryAfter: 86400 }, { retryAfter: 86400 }],
-  ])("returns the claim result unchanged (%o)", async (expected, resolved) => {
-    if (resolved) claimChatAdmission.mockResolvedValue(resolved);
+    { release, quota },
+    { retryAfter: 37, reason: "busy", resetAt, quota },
+    { retryAfter: 1_204, reason: "hourly", resetAt, quota },
+    { retryAfter: 40_012, reason: "daily", resetAt, quota },
+  ])("returns an account's claim result unchanged (%o)", async (resolved) => {
+    claimChatAdmission.mockResolvedValue({ ...resolved });
 
-    await expect(admitChat("user_123")).resolves.toEqual(expected);
+    await expect(admitChat("user_123")).resolves.toEqual(resolved);
   });
+
+  it.each([
+    { release, quota },
+    { retryAfter: 1_204, reason: "hourly", resetAt, quota },
+  ])(
+    "never returns the shared anonymous bucket's quota (%o)",
+    async (resolved) => {
+      claimChatAdmission.mockResolvedValue({ ...resolved });
+
+      const result = await admitChat(null);
+
+      expect(result).not.toHaveProperty("quota");
+      expect(result).toEqual({ ...resolved, quota: undefined });
+    },
+  );
 
   it("propagates a failed claim so the route can fail closed", async () => {
     claimChatAdmission.mockRejectedValue(new Error("db down"));
@@ -171,4 +201,51 @@ it("shares account and global budgets between chat and analysis", async () => {
   expect(claimChatAdmission.mock.calls[1]?.[0]).toEqual(
     claimChatAdmission.mock.calls[0]?.[0],
   );
+  // getInferenceQuota resolves its principal and limits through the same policy function.
+  expect(claimChatAdmission.mock.calls[0]?.[0]).toEqual(admissionLimits(owner));
+});
+
+describe("admissionRejectedResponse", () => {
+  it("returns 429 with Retry-After, the reason, and the account's RateLimit fields", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse(resetAt) - 900_500);
+    try {
+      const response = admissionRejectedResponse(
+        { retryAfter: 908, reason: "hourly", resetAt, quota },
+        "Chat is at its hourly request limit. Please try again later.",
+      );
+
+      expect(response.status).toBe(429);
+      expect(response.headers.get("Retry-After")).toBe("908");
+      expect(response.headers.get("RateLimit-Policy")).toBe(
+        '"account";q=30;w=3600',
+      );
+      expect(response.headers.get("RateLimit")).toBe('"account";r=12;t=901');
+      expect(await response.json()).toEqual({
+        error: "Chat is at its hourly request limit. Please try again later.",
+        reason: "hourly",
+        resetAt,
+        quota,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("describes no quota for anonymous rejections but keeps Retry-After", async () => {
+    const response = admissionRejectedResponse(
+      { retryAfter: 41, reason: "busy", resetAt },
+      "Chat is busy with other replies. Please try again shortly.",
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("41");
+    expect(response.headers.get("RateLimit")).toBeNull();
+    expect(response.headers.get("RateLimit-Policy")).toBeNull();
+    expect(await response.json()).toEqual({
+      error: "Chat is busy with other replies. Please try again shortly.",
+      reason: "busy",
+      resetAt,
+    });
+  });
 });

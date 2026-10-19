@@ -8,6 +8,13 @@ import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, getApiErrorMessage, type ApiError } from "@/lib/api-client";
 import { formatDate, getRiskColor } from "@/lib/utils";
+import {
+  admissionRejectionMessage,
+  analysisUsageNote,
+  parseAdmissionRejection,
+  syncUsage,
+  useUsage,
+} from "@/lib/usage-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -190,11 +197,23 @@ const ContractDetails = () => {
       queryClient.invalidateQueries({ queryKey: ["contracts"] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["project"] });
+      void syncUsage(queryClient);
     },
     onError: (error: ApiError) => {
-      toast.error(getApiErrorMessage(error, "Analysis failed to start"));
+      const rejection =
+        error.response?.status === 429
+          ? parseAdmissionRejection(error.response.data)
+          : null;
+      // A 429 carries the current quota; other failures may have been admitted before failing.
+      void syncUsage(queryClient, rejection?.quota);
+      toast.error(
+        (rejection && admissionRejectionMessage(rejection)) ||
+          getApiErrorMessage(error, "Analysis failed to start"),
+      );
     },
   });
+  const usageQuery = useUsage();
+  const analysisUsage = analysisUsageNote(usageQuery.data?.account);
 
   // Already ordered by the query (created_at desc, id desc); this only guards the shape.
   const sortedAnalyses = useMemo<AnalysisRecord[]>(
@@ -515,6 +534,11 @@ const ContractDetails = () => {
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
+              {analysis && analysisUsage ? (
+                <p className="basis-full text-caption text-muted-foreground md:text-right">
+                  {analysisUsage}
+                </p>
+              ) : null}
             </div>
           </div>
         </div>
@@ -992,6 +1016,11 @@ const ContractDetails = () => {
                   >
                     Start Analysis
                   </Button>
+                  {analysisUsage ? (
+                    <p className="mt-3 text-caption text-muted-foreground">
+                      {analysisUsage}
+                    </p>
+                  ) : null}
                 </>
               )}
             </CardContent>

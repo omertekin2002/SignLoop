@@ -37,13 +37,25 @@ vi.mock("@/lib/model-settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./model-settings")>()),
   getModelAvailabilitySnapshot,
 }));
-vi.mock("@/lib/chat-admission", () => ({ admitChat }));
+vi.mock("@/lib/chat-admission", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./chat-admission")>()),
+  admitChat,
+}));
 vi.mock("@/lib/telemetry", () => ({
   isTelemetryEnabled: false,
   flushTelemetry: vi.fn(),
 }));
 
 import { POST } from "@/app/api/chat/route";
+
+const resetAt = "2026-10-19T15:00:00.000Z";
+const quota = (used: number) => ({
+  limit: 30,
+  used,
+  remaining: 30 - used,
+  resetAt,
+  concurrency: { limit: 2, inUse: 1 },
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -82,23 +94,75 @@ describe("saved chat admission", () => {
       }),
     });
 
+  it("checks the thread before admission, so a missing or foreign thread costs no quota", async () => {
+    const releaseLease = vi.fn().mockResolvedValue(undefined);
+    auth.mockResolvedValue({ userId: "owner" });
+    claimGenerationOperation.mockResolvedValue(releaseLease);
+    getRecentChatMessagesForThreadForUser.mockResolvedValue(null);
+
+    const response = await POST(savedRequest());
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Chat thread not found" });
+    expect(getRecentChatMessagesForThreadForUser).toHaveBeenCalledWith(
+      "owner",
+      "11e3e947-f71f-4ecd-a901-adbf24edbb8a",
+      expect.any(Number),
+    );
+    expect(admitChat).not.toHaveBeenCalled();
+    expect(releaseLease).toHaveBeenCalledOnce();
+    expect(response.headers.get("RateLimit")).toBeNull();
+    expect(generateChatReply).not.toHaveBeenCalled();
+    expect(generateChatReplyStream).not.toHaveBeenCalled();
+  });
+
+  // The Retry-After values are deliberately mismatched with the reasons: wording follows the reason.
   it.each([
-    [30, "Chat is busy with other replies. Please try again shortly."],
-    [3600, "Chat is at its request limit. Please try again later."],
-    [86400, "Chat is at its request limit. Please try again later."],
-  ])(
-    "maps a rejected admission (Retry-After %i) to 429",
-    async (retryAfter, error) => {
+    [
+      "busy",
+      3_600,
+      "Chat is busy with other replies. Please try again shortly.",
+    ],
+    [
+      "hourly",
+      30,
+      "Chat is at its hourly request limit. Please try again later.",
+    ],
+    [
+      "daily",
+      30,
+      "Chat is at its daily request limit. Please try again later.",
+    ],
+  ] as const)(
+    "maps a %s rejection to 429 by its reason (Retry-After %i)",
+    async (reason, retryAfter, error) => {
       const releaseLease = vi.fn().mockResolvedValue(undefined);
       auth.mockResolvedValue({ userId: "owner" });
       claimGenerationOperation.mockResolvedValue(releaseLease);
-      admitChat.mockResolvedValue({ retryAfter });
+      getRecentChatMessagesForThreadForUser.mockResolvedValue([]);
+      admitChat.mockResolvedValue({
+        retryAfter,
+        reason,
+        resetAt,
+        quota: quota(30),
+      });
 
       const response = await POST(savedRequest());
 
       expect(response.status).toBe(429);
       expect(response.headers.get("Retry-After")).toBe(String(retryAfter));
-      expect(await response.json()).toEqual({ error });
+      expect(response.headers.get("RateLimit-Policy")).toBe(
+        '"account";q=30;w=3600',
+      );
+      expect(response.headers.get("RateLimit")).toMatch(
+        /^"account";r=0;t=\d+$/,
+      );
+      expect(await response.json()).toEqual({
+        error,
+        reason,
+        resetAt,
+        quota: quota(30),
+      });
       expect(admitChat).toHaveBeenCalledExactlyOnceWith("owner");
       expect(releaseLease).toHaveBeenCalledOnce();
       expect(generateChatReply).not.toHaveBeenCalled();
@@ -107,10 +171,44 @@ describe("saved chat admission", () => {
     },
   );
 
+  it("rejects anonymous temporary chat without describing the shared bucket", async () => {
+    auth.mockResolvedValue({ userId: null });
+    admitChat.mockResolvedValue({
+      retryAfter: 1_204,
+      reason: "hourly",
+      resetAt,
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          temporary: true,
+          messages: [{ role: "user", content: "What does this mean?" }],
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("1204");
+    expect(response.headers.get("RateLimit")).toBeNull();
+    expect(response.headers.get("RateLimit-Policy")).toBeNull();
+    expect(await response.json()).toEqual({
+      error: "Chat is at its hourly request limit. Please try again later.",
+      reason: "hourly",
+      resetAt,
+    });
+    expect(admitChat).toHaveBeenCalledExactlyOnceWith(null);
+    expect(claimGenerationOperation).not.toHaveBeenCalled();
+    expect(getRecentChatMessagesForThreadForUser).not.toHaveBeenCalled();
+  });
+
   it("fails closed with 503 when admission cannot be checked", async () => {
     const releaseLease = vi.fn().mockResolvedValue(undefined);
     auth.mockResolvedValue({ userId: "owner" });
     claimGenerationOperation.mockResolvedValue(releaseLease);
+    getRecentChatMessagesForThreadForUser.mockResolvedValue([]);
     admitChat.mockRejectedValue(new Error("db down"));
 
     const response = await POST(savedRequest());
@@ -259,6 +357,36 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
       expect.objectContaining({ generatedTitle: null }),
     );
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  describe("usage reporting", () => {
+    it("reports the account quota in RateLimit headers and the completion", async () => {
+      admitChat.mockResolvedValue({
+        release: vi.fn().mockResolvedValue(undefined),
+        quota: quota(18),
+      });
+
+      const response = await POST(request());
+
+      expect(response.headers.get("RateLimit-Policy")).toBe(
+        '"account";q=30;w=3600',
+      );
+      expect(response.headers.get("RateLimit")).toMatch(
+        /^"account";r=12;t=\d+$/,
+      );
+      expect((await completion(response)).quota).toEqual(quota(18));
+    });
+
+    it("describes no quota for anonymous temporary chat", async () => {
+      auth.mockResolvedValue({ userId: null });
+
+      const response = await POST(request({ temporary: true }));
+
+      expect(admitChat).toHaveBeenCalledExactlyOnceWith(null);
+      expect(response.headers.get("RateLimit")).toBeNull();
+      expect(response.headers.get("RateLimit-Policy")).toBeNull();
+      expect(await completion(response)).not.toHaveProperty("quota");
+    });
   });
 
   it("does not generate a title for temporary chats", async () => {

@@ -3,7 +3,12 @@ import { requireUserId } from "@/lib/api-auth";
 import { isUuid } from "@/lib/utils";
 import { finalizeAnalysisResult } from "@/lib/analysis-sources";
 import { analyzeText } from "@/lib/analysis";
-import { admitAnalysis } from "@/lib/chat-admission";
+import { admissionRejectedResponse, admitAnalysis } from "@/lib/chat-admission";
+import {
+  rateLimitHeaders,
+  type AccountQuota,
+  type AdmissionReason,
+} from "@/lib/inference-policy";
 import {
   claimGenerationOperation,
   createAnalysisForContract,
@@ -20,6 +25,13 @@ import {
 
 // Reserve 30 seconds of the route budget for persistence and response completion.
 export const maxDuration = 300;
+
+const ADMISSION_REJECTIONS: Record<AdmissionReason, string> = {
+  busy: "Analysis is waiting for other requests to finish. Please try again shortly.",
+  hourly:
+    "Analysis and chat share an hourly usage limit. Please try again later.",
+  daily: "Analysis is at its daily request limit. Please try again later.",
+};
 
 export async function POST(
   req: Request,
@@ -72,6 +84,7 @@ export async function POST(
   ]);
   const startedAt = Date.now();
   let releaseAdmission: (() => Promise<void>) | undefined;
+  let quota: AccountQuota | undefined;
   try {
     const contract = await getContractWithLatestAnalysisForUser(userId, id);
 
@@ -102,12 +115,13 @@ export async function POST(
       try {
         const admission = await admitAnalysis(userId);
         if ("retryAfter" in admission) {
-          return NextResponse.json(
-            { error: "Analysis and chat share a usage limit. Please try again later." },
-            { status: 429, headers: { "Retry-After": String(admission.retryAfter) } },
+          return admissionRejectedResponse(
+            admission,
+            ADMISSION_REJECTIONS[admission.reason],
           );
         }
         releaseAdmission = admission.release;
+        quota = admission.quota;
       } catch {
         return NextResponse.json(
           { error: "Analysis is temporarily unavailable. Please try again shortly." },
@@ -160,11 +174,14 @@ export async function POST(
         processingTimeMs: Date.now() - startedAt,
       });
 
-      return NextResponse.json({
-        message: "Analysis complete",
-        jobId: "done",
-        analysisId: created.id,
-      });
+      return NextResponse.json(
+        {
+          message: "Analysis complete",
+          jobId: "done",
+          analysisId: created.id,
+        },
+        { headers: rateLimitHeaders(quota) },
+      );
     } catch (error: unknown) {
       if (error instanceof ContractRevisionChangedError) {
         return NextResponse.json(
