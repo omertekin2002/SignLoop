@@ -122,6 +122,54 @@ describe("analysis response completion", () => {
   );
 });
 
+describe("analysis notice-period normalization", () => {
+  function noticePayload(cancellation: Record<string, unknown>) {
+    return JSON.stringify({
+      ...JSON.parse(payload),
+      summary: {
+        renewal: { auto_renew: false },
+        cancellation: { how: "Email notice", ...cancellation },
+      },
+    });
+  }
+
+  it.each([
+    [{ notice_period: 30 }, 30, null],
+    [{ notice_period_days: 30, notice_period_text: "Not specified" }, 30, null],
+    [{ notice_period: "10 business days" }, null, "10 business days"],
+    [{ notice_period_days: 2, notice_period_text: "2 months" }, null, "2 months"],
+    [{ notice_period: null }, null, null],
+  ])("accepts %j in one provider call", async (cancellation, days, text) => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      providerResponse("completed", noticePayload(cancellation)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { analyzeText } = await import("./analysis");
+
+    const answer = await analyzeText("Monthly payment agreement");
+    expect(answer.result.summary.cancellation).toMatchObject({
+      notice_period_days: days,
+      notice_period_text: text,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("still rejects a fractional legacy day count without a fallback call", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        providerResponse("completed", noticePayload({ notice_period: 30.5 })),
+      )
+      .mockResolvedValueOnce(providerResponse("completed"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { analyzeText } = await import("./analysis");
+
+    await expect(analyzeText("Monthly payment agreement")).rejects.toThrow(
+      /omitted or unusable/,
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+});
+
 describe("analysis JSON format compatibility", () => {
   it.each([
     { message: "Unsupported parameter: text.format", param: "text.format" },

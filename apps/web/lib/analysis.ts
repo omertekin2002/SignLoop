@@ -391,6 +391,23 @@ function isBooleanLike(value: unknown): boolean {
   ].includes(value.trim().toLowerCase());
 }
 
+// The legacy `notice_period` key carried a day count; newer output may use it for wording.
+function normalizeCancellationNotice(cancellation: JsonRecord) {
+  const legacyIsDayCount =
+    typeof pickFirst(cancellation, ["notice_period"]) === "number";
+  return normalizeNoticePeriod(
+    pickFirst(cancellation, [
+      "notice_period_days",
+      "noticeDays",
+      ...(legacyIsDayCount ? ["notice_period"] : []),
+    ]),
+    pickFirst(cancellation, [
+      "notice_period_text",
+      ...(legacyIsDayCount ? [] : ["notice_period"]),
+    ]),
+  );
+}
+
 /**
  * The UI presents renewal and cancellation values as facts. Normalization may repair aliases and
  * stringified primitive values, but it must not fabricate false/zero defaults when the provider
@@ -407,10 +424,7 @@ function hasExplicitCriticalSummaryFields(parsed: unknown): boolean {
   if (!renewal || !cancellation) return false;
 
   const renewalValue = pickFirst(renewal, ["auto_renew", "autoRenew"]);
-  const notice = normalizeNoticePeriod(
-    pickFirst(cancellation, ["notice_period_days", "noticeDays"]),
-    pickFirst(cancellation, ["notice_period_text", "notice_period"]),
-  );
+  const notice = normalizeCancellationNotice(cancellation);
   return Boolean(
     (renewalValue === null || isBooleanLike(renewalValue)) &&
     toStringOrNull(pickFirst(cancellation, ["how", "method", "process"])) && notice,
@@ -683,10 +697,7 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
           toStringOrNull(
             pickFirst(cancellation, ["how", "method", "process"]),
           ) || "Not specified",
-        ...normalizeNoticePeriod(
-          pickFirst(cancellation, ["notice_period_days", "noticeDays"]),
-          pickFirst(cancellation, ["notice_period_text", "notice_period"]),
-        )!,
+        ...normalizeCancellationNotice(cancellation)!,
         penalties: toStringArray(
           pickFirst(cancellation, ["penalties", "fees", "charges"]),
         ),

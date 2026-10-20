@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
 import { simulateReadableStream } from "ai";
 import { compactAgentMessages } from "./chat-agent-history";
+import { validateContractReplay } from "./contract-evidence";
 
 const mocks = vi.hoisted(() => ({
   search: vi.fn(),
@@ -629,6 +630,36 @@ describe("agentic chat", () => {
     expect(JSON.stringify(model.doStreamCalls[1]?.prompt)).toContain(
       "Contract not found",
     );
+  });
+
+  it("records an explicit empty receipt list when contract tools read nothing", async () => {
+    mocks.listContracts.mockResolvedValue({ contracts: [], nextOffset: null });
+    mocks.getContractText.mockResolvedValue(null);
+    mocks.responses.mockReturnValue(
+      sequencedModel([
+        toolStep(0, "list_contracts", { query: "lease" }),
+        toolStep(1, "read_contract", {
+          contractId: "11111111-1111-4111-8111-111111111111",
+        }),
+      ]),
+    );
+    const reply = await generateChatReply(messages, {
+      contractsUserId: "user-1",
+    });
+    expect(
+      reply.toolActivity?.map((activity) => [activity.tool, activity.status]),
+    ).toEqual([
+      ["list_contracts", "complete"],
+      ["read_contract", "error"],
+    ]);
+    expect(reply.contractEvidence).toEqual([]);
+    // The metadata the saved-chat route stores for this reply stays replayable.
+    const saved = {
+      agentMessages: reply.agentMessages,
+      contractEvidence: reply.contractEvidence,
+      toolActivity: reply.toolActivity,
+    };
+    expect(validateContractReplay(saved, new Map())).toBe(saved);
   });
 
   it("streams a generated image into the reply without putting bytes in the transcript", async () => {

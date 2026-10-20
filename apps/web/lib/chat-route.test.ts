@@ -47,6 +47,7 @@ vi.mock("@/lib/telemetry", () => ({
 }));
 
 import { POST } from "@/app/api/chat/route";
+import { validateContractReplay } from "@/lib/contract-evidence";
 
 const resetAt = "2026-10-19T15:00:00.000Z";
 const quota = (used: number) => ({
@@ -409,6 +410,30 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
     expect(appendChatMessagesToThread).toHaveBeenCalledWith(
       expect.objectContaining({ generatedTitle: null }),
     );
+  });
+
+  it("never vouches for contract tools when the reply carries no receipt list", async () => {
+    const withoutReceipts = {
+      ...reply,
+      toolActivity: [
+        { id: "c1", tool: "list_contracts", query: "", status: "complete" },
+      ],
+    };
+    generateChatReply.mockResolvedValue(withoutReceipts);
+    generateChatReplyStream.mockImplementation(async function* () {
+      yield { type: "delta", text: reply.message };
+      yield { type: "done", reply: withoutReceipts };
+    });
+    await completion(await POST(request()));
+    const metadata = (
+      appendChatMessagesToThread.mock.calls[0]?.[0] as {
+        messages: Array<{ role: string; metadata?: Record<string, unknown> }>;
+      }
+    ).messages.find((message) => message.role === "assistant")!.metadata!;
+    expect(metadata.contractEvidence).toBeUndefined();
+    expect(
+      validateContractReplay(metadata, new Map()).contractEvidenceInvalid,
+    ).toBe(true);
   });
 
   it("never generates a title for another user's or missing thread", async () => {

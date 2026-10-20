@@ -44,7 +44,17 @@ export function boundCanonicalChatHistory(
       MAX_CHAT_MESSAGE_LENGTH,
     );
     if (!content) continue;
-    if (content.length > remainingCharacters) break;
+    // Receipts are server-owned dependencies of the prose (including tool-free followups that
+    // inherited them). Never keep the text without them, or replacing the source contract could
+    // no longer invalidate it.
+    const contractEvidence = message.contractEvidence?.length
+      ? message.contractEvidence
+      : undefined;
+    const evidenceSize = contractEvidence
+      ? JSON.stringify({ contractEvidence }).length
+      : 0;
+    const requiredSize = content.length + evidenceSize;
+    if (requiredSize > remainingCharacters) break;
 
     // Catalogs accumulate across turns. Only the newest retained copy is read by generation.
     const sourceSize =
@@ -52,7 +62,7 @@ export function boundCanonicalChatHistory(
         ? JSON.stringify({ webSources: message.webSources }).length
         : 0;
     const includeSources =
-      sourceSize > 0 && sourceSize + content.length <= remainingCharacters;
+      sourceSize > 0 && sourceSize + requiredSize <= remainingCharacters;
     const agentMessages =
       message.agentMessages?.length &&
       !isPlainAssistantReplay(message.agentMessages)
@@ -62,7 +72,7 @@ export function boundCanonicalChatHistory(
     const includeAgentState =
       message.role === "assistant" &&
       agentMessages?.length &&
-      agentStateSize + content.length + (includeSources ? sourceSize : 0) <=
+      agentStateSize + requiredSize + (includeSources ? sourceSize : 0) <=
         remainingCharacters;
     selected.push({
       role: message.role,
@@ -73,10 +83,11 @@ export function boundCanonicalChatHistory(
           }
         : {}),
       ...(includeSources ? { webSources: message.webSources } : {}),
+      ...(contractEvidence ? { contractEvidence } : {}),
     });
     if (includeSources) includedSources = true;
     remainingCharacters -=
-      content.length +
+      requiredSize +
       (includeAgentState ? agentStateSize : 0) +
       (includeSources ? sourceSize : 0);
   }

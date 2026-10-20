@@ -1,8 +1,10 @@
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import {
+  ExtractedTextContentError,
   extractTextFromPlainText,
   extractTextFromWord,
+  processFile,
   validateFileSignature,
   validateMimeType,
 } from "./text-extraction";
@@ -140,6 +142,60 @@ describe("validateFileSignature", () => {
       text: "Contract text",
     });
   });
+});
+
+describe("processFile with NUL characters in text", () => {
+  const utf16le = (text: string) =>
+    Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]);
+  const utf16be = (text: string) =>
+    Buffer.concat([
+      Buffer.from([0xfe, 0xff]),
+      Buffer.from(text, "utf16le").swap16(),
+    ]);
+
+  it("rejects a NUL that follows more than 8 KiB of clean UTF-8 text", async () => {
+    const buffer = Buffer.from(
+      `${"A".repeat(9_000)}\u0000Notice period: 30 days.`,
+      "utf8",
+    );
+    // The binary sniff samples only the first 8 KiB, so this file gets past it.
+    expect(() => validateFileSignature(buffer, "text/plain")).not.toThrow();
+
+    await expect(
+      processFile(buffer, "text/plain", "contract.txt"),
+    ).rejects.toThrow(ExtractedTextContentError);
+    await expect(
+      processFile(buffer, "text/plain", "contract.txt"),
+    ).rejects.toThrow(/null character \(U\+0000\)/);
+  });
+
+  it.each([
+    ["little-endian", utf16le],
+    ["big-endian", utf16be],
+  ])("rejects a NUL code unit in %s UTF-16 text", async (_, encode) => {
+    const buffer = encode("Notice period:\u000030 days.");
+    expect(() => validateFileSignature(buffer, "text/plain")).not.toThrow();
+
+    await expect(
+      processFile(buffer, "text/plain", "contract.txt"),
+    ).rejects.toThrow(ExtractedTextContentError);
+  });
+
+  it.each([
+    ["little-endian UTF-16", utf16le],
+    ["big-endian UTF-16", utf16be],
+    ["UTF-8", (text: string) => Buffer.from(text, "utf8")],
+  ])(
+    "keeps tabs, line breaks, other controls and Unicode in clean %s text",
+    async (_, encode) => {
+      const text =
+        "Kündigungsfrist:\t30 Tage\r\nİptal şartı — 30 gün\n\fSchedule \u0001A ✍️ 契約";
+
+      await expect(
+        processFile(encode(text), "text/plain", "contract.txt"),
+      ).resolves.toEqual({ text, method: "plain_text", confidence: 100 });
+    },
+  );
 });
 
 describe("extractTextFromWord with legacy .doc files", () => {

@@ -68,6 +68,27 @@ describe("parseClientChatMessages", () => {
   });
 });
 
+describe("client contract receipts", () => {
+  it("never accepts client-supplied receipts as dependency authority", () => {
+    const parsed = parseClientChatMessages({
+      messages: [
+        {
+          role: "assistant",
+          content: "The fee is $500.",
+          contractEvidence: [
+            { id: "11111111-1111-4111-8111-111111111111", revision: "v1" },
+          ],
+        },
+        { role: "user", content: "Explain that fee", contractEvidence: [] },
+      ],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    for (const message of parsed.messages)
+      expect(message).not.toHaveProperty("contractEvidence");
+  });
+});
+
 describe("saved chat policy", () => {
   it("removes inline image payloads before rebuilding text-model history", () => {
     const imageMessage = `![Generated image](data:image/png;base64,${"A".repeat(5_000)})`;
@@ -146,6 +167,43 @@ describe("saved chat policy", () => {
     ]);
     expect(bounded[0]).not.toHaveProperty("webSources");
     expect(bounded[1]?.webSources).toEqual(latestSources);
+  });
+
+  it("keeps server-owned contract receipts with the answers that depend on them", () => {
+    const receipts = [{ id: "11111111-1111-4111-8111-111111111111", revision: "v1" }];
+    const bounded = boundCanonicalChatHistory([
+      { role: "user", content: "Read my fee agreement" },
+      { role: "assistant", content: "The fee is $500.", contractEvidence: receipts },
+      { role: "assistant", content: "Unrelated", contractEvidence: [] },
+    ]);
+    expect(bounded[1]?.contractEvidence).toEqual(receipts);
+    expect(bounded[2]).not.toHaveProperty("contractEvidence");
+  });
+
+  it("never keeps contract-derived prose after dropping its receipts for budget", () => {
+    const receipts = Array.from({ length: 50 }, (_, index) => ({
+      id: `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`,
+      revision: "2026-10-20T00:00:00.000000",
+    }));
+    const receiptSize = JSON.stringify({ contractEvidence: receipts }).length;
+    const content = "The fee is $500.";
+    const history = [
+      { role: "assistant" as const, content, contractEvidence: receipts },
+      { role: "user" as const, content: "Explain that fee" },
+    ];
+    // The text alone fits, but not with its receipts: drop the whole turn instead.
+    const tight = 60_000 - ("Explain that fee".length + content.length + receiptSize - 1);
+    expect(boundCanonicalChatHistory(history, tight)).toEqual([
+      { role: "user", content: "Explain that fee" },
+    ]);
+    expect(boundCanonicalChatHistory(history, tight - 1)[0]).toEqual(history[0]);
+    // Receipts consume the budget of older turns as well.
+    expect(
+      boundCanonicalChatHistory(
+        [{ role: "user", content: "Older" }, ...history],
+        tight - 1,
+      ),
+    ).toEqual(history);
   });
 
   it("drops legacy plain replay without shortening canonical answer text", () => {

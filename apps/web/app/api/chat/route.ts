@@ -147,7 +147,8 @@ async function persistChatMessages(input: {
           model: input.assistantModel,
           provider: input.assistantProvider,
           agentMessages: input.agentMessages ?? [],
-          contractEvidence: input.contractEvidence ?? [],
+          // Never default: an explicit empty list vouches that no contract was read.
+          contractEvidence: input.contractEvidence,
           webSources: input.webSources ?? [],
           toolActivity: input.toolActivity ?? [],
         },

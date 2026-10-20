@@ -1278,10 +1278,12 @@ const Dashboard = ({
               activeTab === "chat" ? "flex" : "hidden",
             )}
           >
+            {/* Both panels stay mounted; switching saved/temporary stops the other one's reply.
+                Workspace tabs only hide the chat, so a reply keeps streaming while away. */}
             <div className={cn("h-full min-h-0", !isTemporaryChatSelected && "hidden")}>
               <ChatPanel
                 temporary
-                active={activeTab === "chat" && isTemporaryChatSelected}
+                active={isTemporaryChatSelected}
                 temporarySessionKey={temporaryChatKey}
                 onContentChange={setHasTemporaryContent}
                 landingHero={landingHero}
@@ -1291,7 +1293,7 @@ const Dashboard = ({
             {canUseSavedWorkspace && (
               <div className={cn("h-full min-h-0", isTemporaryChatSelected && "hidden")}>
                 <ChatPanel
-                  active={activeTab === "chat" && !isTemporaryChatSelected}
+                  active={!isTemporaryChatSelected}
                   selectedThreadId={selectedChatThreadId}
                   onThreadSelected={(threadId) => {
                     if (threadId) selectNewChatThread(threadId);

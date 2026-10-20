@@ -258,6 +258,40 @@ describe("POST /api/projects/[id]/context", () => {
     },
   );
 
+  it("rejects text with a late NUL character through the real pipeline before storage", async () => {
+    const { prepareUpload: realPrepareUpload } = await vi.importActual<
+      typeof import("@/lib/upload-pipeline")
+    >("@/lib/upload-pipeline");
+    prepareUpload.mockImplementation(realPrepareUpload);
+    auth.mockResolvedValue({ userId: "owner" });
+    isProjectOwnedByUser.mockResolvedValue(true);
+    const body = new FormData();
+    body.set(
+      "file",
+      new File(
+        [`${"A".repeat(9_000)}\u0000Notice period: 30 days.`],
+        "contract.txt",
+        { type: "text/plain" },
+      ),
+    );
+
+    const response = await POST(
+      new Request(`http://localhost/api/projects/${PROJECT_ID}/context`, {
+        method: "POST",
+        body,
+      }),
+      params(PROJECT_ID),
+    );
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error:
+        "The file's text contains a null character (U+0000), which cannot be stored. Remove it, or save the document in another format, and upload it again.",
+    });
+    expect(storeUploadedFile).not.toHaveBeenCalled();
+    expect(addContextDocumentToProject).not.toHaveBeenCalled();
+  });
+
   it("hands the original request to the upload pipeline", async () => {
     auth.mockResolvedValue({ userId: "owner" });
     isProjectOwnedByUser.mockResolvedValue(true);

@@ -1,6 +1,12 @@
 import { isRecord, isUuid } from "@/lib/utils";
 
 export type ContractEvidence = { id: string; revision: string };
+/**
+ * `content` is the SHA-256 text identity issued by the chat tools. `updatedAt` verifies receipts
+ * saved before that: the timestamp also moves on analysis and project-context changes, so an
+ * unchanged value proves the text is unchanged and anything else fails closed.
+ */
+export type CurrentContractRevision = { content: string; updatedAt: string };
 export const STALE_CONTRACT_REPLY =
   "A previous answer used contract evidence that changed, was deleted, or cannot be verified. Read the current contracts again; do not rely on that historical answer.";
 
@@ -49,18 +55,41 @@ function hasContractTools(metadata: Record<string, unknown>): boolean {
   );
 }
 
-/** Saved receipts are server-generated. Missing receipts on legacy tool turns fail closed. */
+function isCurrentReceipt(
+  ref: ContractEvidence,
+  current: ReadonlyMap<string, CurrentContractRevision>,
+): boolean {
+  const revision = current.get(ref.id);
+  if (!revision) return false;
+  return ref.revision.startsWith("sha256:")
+    ? ref.revision === revision.content
+    : ref.revision === revision.updatedAt;
+}
+
+/**
+ * Saved receipts are server-generated: only the chat route writes them, from the generator's own
+ * list. An explicit empty list on a contract-tool turn is a verified "nothing was read" (an empty
+ * listing or a missing contract). Tool turns without the key predate receipts and fail closed.
+ * Verified timestamp receipts are returned as content receipts, so followups do not inherit them.
+ */
 export function validateContractReplay(
   metadata: Record<string, unknown>,
-  current: ReadonlyMap<string, string>,
+  current: ReadonlyMap<string, CurrentContractRevision>,
 ): Record<string, unknown> {
   const evidence = parseContractEvidence(metadata.contractEvidence);
   const stale =
     metadata.contractEvidenceInvalid === true ||
     (metadata.contractEvidence !== undefined && evidence === null) ||
-    (hasContractTools(metadata) && !evidence?.length) ||
-    evidence?.some((ref) => current.get(ref.id) !== ref.revision);
-  if (!stale) return metadata;
+    (hasContractTools(metadata) && metadata.contractEvidence === undefined) ||
+    evidence?.some((ref) => !isCurrentReceipt(ref, current));
+  if (!stale) {
+    if (!evidence?.some((ref) => !ref.revision.startsWith("sha256:")))
+      return metadata;
+    const upgraded = new Map(
+      evidence.map((ref) => [ref.id, { id: ref.id, revision: current.get(ref.id)!.content }]),
+    );
+    return { ...metadata, contractEvidence: [...upgraded.values()] };
+  }
   // Preserve visible historical replies, but never send their prose or tools back to a model.
   const { agentMessages: _agent, webSources: _sources, ...rest } = metadata;
   return { ...rest, contractEvidenceInvalid: true };

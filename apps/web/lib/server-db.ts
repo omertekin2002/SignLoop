@@ -1,5 +1,5 @@
 import { CONTRACT_ANALYSIS_LIMIT, CONTRACT_HEAD_LENGTH, CONTRACT_TAIL_LENGTH, MAX_EVIDENCE_QUOTE, SOURCE_PAGE_SIZE, type SourceCitation } from "@/lib/source-citations";
-import { parseContractEvidence, validateContractReplay, STALE_CONTRACT_REPLY, type ContractEvidence } from "@/lib/contract-evidence";
+import { parseContractEvidence, validateContractReplay, STALE_CONTRACT_REPLY, type ContractEvidence, type CurrentContractRevision } from "@/lib/contract-evidence";
 import {
   compactAgentMessages,
   parseAgentMessages,
@@ -731,6 +731,12 @@ export async function getContractMetaForUser(
   return rows[0] ?? null;
 }
 
+// Identity of the stored text, matching contractSourceRevision. Chat receipts and the source viewer
+// use it; updated_at also moves on analysis and project-context changes, so it stays the analysis
+// concurrency revision only.
+const CONTRACT_CONTENT_REVISION = `'sha256:' || encode(digest(convert_to(coalesce(text_content, ''), 'UTF8'), 'sha256'), 'hex')`;
+const CONTRACT_UPDATED_REVISION = `to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')`;
+
 export type ChatContractSummaryRecord = {
   revision: string;
   id: string;
@@ -755,23 +761,24 @@ export async function listContractsForChat(
   const offset = Math.max(0, Math.trunc(options.offset ?? 0));
   const query = options.query?.trim() ?? "";
 
-  const { rows } = await sql<ChatContractSummaryRecord>`
-    select
+  const { rows } = await sql.query<ChatContractSummaryRecord>(
+    `select
       id,
       title,
       status,
-      to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') as revision,
+      ${CONTRACT_CONTENT_REVISION} as revision,
       project_id as "projectId",
       updated_at as "updatedAt",
       coalesce(char_length(text_content), 0)::integer as "characterCount",
       extraction_warning as "extractionWarning"
     from contracts
-    where user_id = ${userId}
-      and strpos(lower(title), lower(${query})) > 0
+    where user_id = $1
+      and strpos(lower(title), lower($2)) > 0
     order by updated_at desc, id desc
-    limit ${limit + 1}
-    offset ${offset}
-  `;
+    limit $3
+    offset $4`,
+    [userId, query, limit + 1, offset],
+  );
 
   return {
     contracts: rows.slice(0, limit),
@@ -795,19 +802,20 @@ export async function getContractTextForUser(
 ): Promise<ChatContractTextRecord | null> {
   await ensureSchema();
 
-  const { rows } = await sql<ChatContractTextRecord>`
-    select
+  const { rows } = await sql.query<ChatContractTextRecord>(
+    `select
       id,
       title,
       status,
-      to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') as revision,
+      ${CONTRACT_CONTENT_REVISION} as revision,
       text_content as "text",
       extraction_warning as "extractionWarning"
     from contracts
-    where id = ${contractId}
-      and user_id = ${userId}
-    limit 1
-  `;
+    where id = $1
+      and user_id = $2
+    limit 1`,
+    [contractId, userId],
+  );
 
   return rows[0] ?? null;
 }
@@ -820,16 +828,17 @@ export async function getContractWindowForUser(
 ) {
   await ensureSchema();
   const start = Math.max(0, Math.min(2_000_000, Math.trunc(offset)));
-  const { rows } = await sql<
+  const { rows } = await sql.query<
     ChatContractTextRecord & { characterCount: number }
-  >`
-    SELECT id, title, status,
-      to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS revision,
-      substring(text_content FROM ${start + 1} FOR 12000) AS text,
+  >(
+    `SELECT id, title, status,
+      ${CONTRACT_CONTENT_REVISION} AS revision,
+      substring(text_content FROM $3::integer FOR 12000) AS text,
       coalesce(char_length(text_content), 0)::integer AS "characterCount",
       extraction_warning AS "extractionWarning"
-    FROM contracts WHERE id = ${contractId} AND user_id = ${userId} LIMIT 1
-  `;
+    FROM contracts WHERE id = $1 AND user_id = $2 LIMIT 1`,
+    [contractId, userId, start + 1],
+  );
   return rows[0] ?? null;
 }
 
@@ -858,7 +867,7 @@ export async function getContractSourceForUser(input: {
   }>(`
     WITH source AS MATERIALIZED (
       SELECT text_content, extraction_warning,
-        'sha256:' || encode(digest(convert_to(coalesce(text_content, ''), 'UTF8'), 'sha256'), 'hex') AS revision,
+        ${CONTRACT_CONTENT_REVISION} AS revision,
         coalesce(char_length(text_content), 0)::integer AS total
       FROM contracts c WHERE c.id = $1 AND c.user_id = $2
         AND ($8::uuid IS NULL OR EXISTS (
@@ -1792,18 +1801,19 @@ async function currentContractRevisions(
   userId: string,
   metadata: Record<string, unknown>[],
   client?: VercelPoolClient,
-): Promise<Map<string, string>> {
+): Promise<Map<string, CurrentContractRevision>> {
   const ids = [...new Set(metadata.flatMap((item) =>
     (parseContractEvidence(item.contractEvidence) ?? []).map((ref) => ref.id),
   ))].sort();
   if (!ids.length) return new Map();
-  const { rows } = await (client ?? sql).query<{ id: string; revision: string }>(
-    `SELECT id, to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS revision
+  // Both values come from one row version, so a matching legacy timestamp vouches for the hash.
+  const { rows } = await (client ?? sql).query<{ id: string } & CurrentContractRevision>(
+    `SELECT id, ${CONTRACT_CONTENT_REVISION} AS content, ${CONTRACT_UPDATED_REVISION} AS "updatedAt"
      FROM contracts WHERE user_id = $1 AND id = ANY($2::uuid[])
      ORDER BY id ${client ? "FOR SHARE" : ""}`,
     [userId, ids],
   );
-  return new Map(rows.map((row) => [row.id, row.revision]));
+  return new Map(rows.map(({ id, ...revision }) => [id, revision]));
 }
 
 /**
