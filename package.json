@@ -30,8 +30,8 @@
     "@assistant-ui/store": "0.2.6",
     "@assistant-ui/tap": "0.5.6",
     "form-data": "4.0.6",
-    "postcss": "8.5.16",
-    "undici": "6.27.0",
+    "postcss": "8.5.31",
+    "undici": "6.29.1",
     "ws": "8.21.0"
   }
 }
