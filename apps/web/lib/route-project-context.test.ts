@@ -1,3 +1,9 @@
+function progressDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -579,5 +585,42 @@ describe("POST /api/projects/[id]/context", () => {
     const response = await POST(uploadRequest(), params(PROJECT_ID));
 
     expect(await response.json()).not.toHaveProperty("warning");
+  });
+});
+
+import { PROGRESS_MEDIA_TYPE, isContextUploadResult } from "./operation-progress";
+import { readOperationResponse } from "./operation-progress-client";
+const progressContextRequest = () => {
+  const request = uploadRequest(); request.headers.set("Accept", PROGRESS_MEDIA_TYPE); return request;
+};
+
+describe("context upload progress", () => {
+  it.each(["signed-out", "not-owned"])("retains %s preflight before body/storage", async (mode) => {
+    auth.mockResolvedValue({ userId: mode === "signed-out" ? null : "intruder" }); isProjectOwnedByUser.mockResolvedValue(false);
+    const response = await POST(progressContextRequest(), params(PROJECT_ID));
+    expect(response.status).toBe(mode === "signed-out" ? 401 : 404);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(prepareUpload).not.toHaveBeenCalled(); expect(storeUploadedFile).not.toHaveBeenCalled();
+  });
+  it("reports persisted 201 and real extraction warnings only after the owner insert", async () => {
+    auth.mockResolvedValue({ userId: "owner" }); isProjectOwnedByUser.mockResolvedValue(true);
+    prepareUpload.mockImplementation(async (_, report) => { report("extracting"); return preparedUpload({ extractionWarning: "Verify scanned page" }); });
+    storeUploadedFile.mockResolvedValue(storedFile());
+    const saving = progressDeferred<{ id: string }>(); addContextDocumentToProject.mockReturnValue(saving.promise);
+    const response = await POST(progressContextRequest(), params(PROJECT_ID));
+    const onStage = vi.fn(); const finished = vi.fn();
+    const reading = readOperationResponse(response, { onStage, validate: isContextUploadResult }).then(finished);
+    await vi.waitFor(() => expect(onStage.mock.calls.flat()).toEqual(["uploading", "extracting", "saving"]));
+    expect(finished).not.toHaveBeenCalled();
+    expect(addContextDocumentToProject).toHaveBeenCalledWith(expect.objectContaining({ userId: "owner", projectId: PROJECT_ID }));
+    saving.resolve({ id: "saved" }); await reading;
+    expect(finished).toHaveBeenCalledWith(expect.objectContaining({ documentId: "saved", extractionFailed: false, warning: "Verify scanned page" }));
+  });
+  it("rejects failed extraction before storage with its late 422", async () => {
+    auth.mockResolvedValue({ userId: "owner" }); isProjectOwnedByUser.mockResolvedValue(true);
+    prepareUpload.mockImplementation(async (_, report) => { report("extracting"); return preparedUpload({ extractionError: "private", text: "" }); });
+    const response = await POST(progressContextRequest(), params(PROJECT_ID));
+    await expect(readOperationResponse(response, { validate: isContextUploadResult })).rejects.toMatchObject({ response: { status: 422 } });
+    expect(storeUploadedFile).not.toHaveBeenCalled();
   });
 });

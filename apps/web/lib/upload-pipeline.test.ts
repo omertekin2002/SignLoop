@@ -275,3 +275,19 @@ describe("storeUploadedFile", () => {
     ).resolves.toBe("first");
   });
 });
+
+describe("upload extraction progress boundary", () => {
+  it("does not announce extraction before receiving and validating the file", async () => {
+    const onStage = vi.fn();
+    const form = new FormData(); form.set("file", new File(["Signed agreement"], "contract.txt", { type: "text/plain" }));
+    const result = await prepareUpload(new Request("http://localhost/upload", { method: "POST", body: form }), onStage);
+    expect(result.ok).toBe(true);
+    expect(onStage).toHaveBeenCalledExactlyOnceWith("extracting");
+  });
+  it("never announces extraction for a signature validation failure", async () => {
+    const onStage = vi.fn();
+    const form = new FormData(); form.set("file", new File(["invalid PDF"], "contract.pdf", { type: "application/pdf" }));
+    const result = await prepareUpload(new Request("http://localhost/upload", { method: "POST", body: form }), onStage);
+    expect(result.ok).toBe(false); expect(onStage).not.toHaveBeenCalled();
+  });
+});

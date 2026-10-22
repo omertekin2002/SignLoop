@@ -1,3 +1,9 @@
+function progressDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -1008,5 +1014,80 @@ describe("POST /api/contracts/[id]/analyze", () => {
         expect.any(Error),
       );
     });
+  });
+});
+
+import { PROGRESS_MEDIA_TYPE, isAnalysisOperationResult } from "./operation-progress";
+import { readOperationResponse } from "./operation-progress-client";
+const progressAnalysisRequest = (query = "", init: RequestInit = {}) => postRequest(query, { ...init, headers: { Accept: PROGRESS_MEDIA_TYPE } });
+
+describe("analysis progress", () => {
+  it.each(["auth", "owner", "lease", "quota"])("keeps %s preflight errors as JSON and releases claimed resources once", async (mode) => {
+    arrangeRunnableContract();
+    if (mode === "auth") auth.mockResolvedValue({ userId: null });
+    if (mode === "owner") getContractAnalysisGateForUser.mockResolvedValue(null);
+    if (mode === "lease") claimGenerationOperation.mockResolvedValue(null);
+    if (mode === "quota") admitAnalysis.mockResolvedValue({ retryAfter: 20, reason: "hourly", resetAt, quota: quota(30) });
+    const response = await POST(progressAnalysisRequest(), params(CONTRACT_ID));
+    expect(response.status).toBe({ auth: 401, owner: 404, lease: 409, quota: 429 }[mode]);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    if (mode === "quota") { expect(response.headers.get("retry-after")).toBe("20"); expect(release).toHaveBeenCalledOnce(); }
+    expect(analyzeText).not.toHaveBeenCalled();
+  });
+  it("shows preparation during settings, analysis during generation, and saving until persistence/release finish", async () => {
+    arrangeRunnableContract(); admitAnalysis.mockResolvedValue({ release: releaseAdmission, quota: quota(3) });
+    const settings = progressDeferred<null>(); const generation = progressDeferred<ReturnType<typeof analysisOutput>>();
+    const persistence = progressDeferred<{ id: string }>(); const releasing = progressDeferred<void>();
+    getUserSettingsByUserId.mockReturnValue(settings.promise); analyzeText.mockReturnValue(generation.promise);
+    createAnalysisForContract.mockReturnValue(persistence.promise); release.mockReturnValue(releasing.promise);
+    const response = await POST(progressAnalysisRequest(), params(CONTRACT_ID));
+    expect(response.headers.get("RateLimit-Policy")).toBe('"account";q=30;w=3600');
+    const onStage = vi.fn(); const finished = vi.fn();
+    const reading = readOperationResponse(response, { onStage, validate: isAnalysisOperationResult }).then(finished);
+    await vi.waitFor(() => expect(onStage.mock.calls.flat()).toEqual(["preparing"]));
+    expect(analyzeText).not.toHaveBeenCalled(); settings.resolve(null);
+    await vi.waitFor(() => expect(onStage).toHaveBeenLastCalledWith("analyzing"));
+    expect(createAnalysisForContract).not.toHaveBeenCalled(); generation.resolve(analysisOutput());
+    await vi.waitFor(() => expect(onStage).toHaveBeenLastCalledWith("saving"));
+    expect(finished).not.toHaveBeenCalled(); persistence.resolve({ id: NEW_ANALYSIS_ID });
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce()); expect(finished).not.toHaveBeenCalled();
+    releasing.resolve(); await reading;
+    expect(finished).toHaveBeenCalledWith(expect.objectContaining({ analysisId: NEW_ANALYSIS_ID }));
+    expect(release).toHaveBeenCalledOnce(); expect(releaseAdmission).toHaveBeenCalledOnce();
+  });
+  it("reconstructs revision conflict after saving with no completed analysis", async () => {
+    arrangeRunnableContract(); createAnalysisForContract.mockRejectedValue(new ContractRevisionChangedError());
+    const response = await POST(progressAnalysisRequest(), params(CONTRACT_ID));
+    await expect(readOperationResponse(response, { validate: isAnalysisOperationResult })).rejects.toMatchObject({ response: { status: 409, data: { error: expect.stringContaining("contract changed") } } });
+    expect(release).toHaveBeenCalledOnce(); expect(releaseAdmission).toHaveBeenCalledOnce();
+  });
+  it("cancels the provider, avoids saving and releases both gates once", async () => {
+    arrangeRunnableContract();
+    analyzeText.mockImplementation(async (_text, _jurisdiction, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }));
+    const response = await POST(progressAnalysisRequest(), params(CONTRACT_ID));
+    await vi.waitFor(() => expect(analyzeText).toHaveBeenCalledOnce());
+    await response.body!.cancel();
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+    expect(releaseAdmission).toHaveBeenCalledOnce(); expect(createAnalysisForContract).not.toHaveBeenCalled();
+  });
+  it("preserves success timing when the request aborts during release after a committed write", async () => {
+    arrangeRunnableContract(); const releasing = progressDeferred<void>(); release.mockReturnValue(releasing.promise);
+    const abort = new AbortController(); const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const response = await POST(progressAnalysisRequest("", { signal: abort.signal }), params(CONTRACT_ID));
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce()); abort.abort(); releasing.resolve();
+    await response.text();
+    expect(info).toHaveBeenCalledWith("Generation timings", expect.objectContaining({ route: "analysis", outcome: "success" }));
+    expect(release).toHaveBeenCalledOnce();
+  });
+  it.each(["gate", "after-lease"])("retains the %s reuse path without streaming or provider work", async (path) => {
+    arrangeRunnableContract();
+    if (path === "gate") getContractAnalysisGateForUser.mockResolvedValue({ status: "ANALYZED", hasText: true, latestAnalysisId: ANALYSIS_ID });
+    else getContractWithLatestAnalysisForUser.mockResolvedValue(contractRecord({ status: "ANALYZED", latestAnalysis: { id: ANALYSIS_ID } }));
+    const response = await POST(progressAnalysisRequest(), params(CONTRACT_ID));
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(await readOperationResponse(response, { validate: isAnalysisOperationResult })).toMatchObject({ analysisId: ANALYSIS_ID });
+    expect(analyzeText).not.toHaveBeenCalled();
   });
 });

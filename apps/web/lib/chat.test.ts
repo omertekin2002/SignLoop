@@ -850,3 +850,101 @@ describe("agentic chat", () => {
     });
   });
 });
+
+describe("provider startup timing hooks", () => {
+  it("excludes opening metadata and emits first-useful only once while preserving content", async () => {
+    let now = 10;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const events: { event: string; at: number }[] = [];
+    let source!: ReadableStreamDefaultController;
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: new ReadableStream({
+          start(controller) {
+            source = controller;
+          },
+        }),
+      }),
+    });
+    mocks.responses.mockReturnValue(model);
+    const routed = createRoutedModel("primary", undefined, (event) =>
+      events.push({ event, at: performance.now() }),
+    );
+    const opening = routed.model.doStream({ prompt: [] });
+    expect(events).toEqual([{ event: "provider_start", at: 10 }]);
+    now = 20;
+    source.enqueue({ type: "stream-start", warnings: [] });
+    source.enqueue({ type: "response-metadata", id: "synthetic" });
+    source.enqueue({ type: "text-start", id: "text" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(events).toHaveLength(1);
+    now = 40;
+    source.enqueue({
+      type: "text-delta",
+      id: "text",
+      delta: "Synthetic answer",
+    });
+    const { stream } = await opening;
+    source.enqueue({ type: "text-delta", id: "text", delta: " continued" });
+    source.close();
+    const parts = [];
+    const reader = stream.getReader();
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      parts.push(part.value);
+    }
+    expect(events).toEqual([
+      { event: "provider_start", at: 10 },
+      { event: "provider_first_useful", at: 40 },
+    ]);
+    expect(
+      parts
+        .filter((part) => part.type === "text-delta")
+        .map((part) => part.delta)
+        .join(""),
+    ).toBe("Synthetic answer continued");
+  });
+
+  it("keeps firsts across fallback and multiple tool steps", async () => {
+    const primary = new MockLanguageModelV4({
+      doStream: async () => {
+        throw new Error("synthetic failure");
+      },
+    });
+    const fallback = scriptedModel(["query"]);
+    mocks.responses.mockImplementation((name: string) =>
+      name === "primary" ? primary : fallback,
+    );
+    const onTiming = vi.fn();
+    const reply = await generateChatReply(messages, {
+      enableWebSearch: true,
+      onTiming,
+    });
+    expect(reply.provider).toBe("openrouter");
+    expect(fallback.doStreamCalls).toHaveLength(2);
+    expect(onTiming.mock.calls).toEqual([
+      ["provider_start"],
+      ["provider_first_useful"],
+    ]);
+  });
+
+  it("does not label an error-only stream as useful output", async () => {
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          initialDelayInMs: null,
+          chunkDelayInMs: null,
+          chunks: [{ type: "error", error: new Error("synthetic failure") }],
+        }),
+      }),
+    });
+    mocks.responses.mockReturnValue(model);
+    const onTiming = vi.fn();
+    await expect(generateChatReply(messages, { onTiming })).rejects.toThrow(
+      "synthetic failure",
+    );
+    expect(onTiming.mock.calls).toEqual([["provider_start"]]);
+  });
+});

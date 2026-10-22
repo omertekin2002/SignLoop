@@ -1,3 +1,4 @@
+import { type ReportProgress } from "@/lib/operation-progress";
 import { withAbort } from "@/lib/bounded-response";
 import { MAX_EXTRACTED_TEXT_LENGTH } from "@/lib/extraction-limits";
 import { randomUUID } from "node:crypto";
@@ -104,6 +105,7 @@ export function getExtractionWarning(input: {
 // caller decides its own empty-text policy before storing (e.g. contracts reject empty text).
 export async function prepareUpload(
   req: Request,
+  progress?: ReportProgress,
 ): Promise<PreparedUpload | UploadValidationError> {
   const signal = AbortSignal.any([req.signal, AbortSignal.timeout(150_000)]);
   const declaredContentLength = Number(req.headers.get("content-length"));
@@ -221,6 +223,8 @@ export async function prepareUpload(
   let extractionError: string | null = null;
   let extractionWarning: string | null = null;
   try {
+    signal.throwIfAborted();
+    progress?.("extracting");
     const extracted = await processValidatedFile(buffer, mimeType, { signal });
     signal.throwIfAborted();
     if (extracted.text.length > MAX_EXTRACTED_TEXT_LENGTH) {

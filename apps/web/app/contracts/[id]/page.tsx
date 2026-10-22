@@ -1,5 +1,10 @@
 "use client";
 
+import { useOperationProgress, isOperationCanceled } from "@/lib/use-operation-progress";
+import { OperationStatus } from "@/components/operation-status";
+import { postOperation } from "@/lib/operation-progress-client";
+import { isAnalysisOperationResult } from "@/lib/operation-progress";
+
 import { formatNoticePeriod } from "@/lib/notice-period";
 
 import { useEffect, useMemo, useState } from "react";
@@ -56,31 +61,17 @@ import { toast } from "sonner";
 import { ContractSourceProvider, FindingSource, OpenContractSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
 import type { AnalysisResult } from "@/lib/schemas";
-
-type AnalysisRecord = {
-  id: string;
-  riskBadge?: string | null;
-  resultJson?: Partial<AnalysisResult> | null;
-  llmProvider?: string | null;
-  llmModel?: string | null;
-  createdAt?: string | Date | null;
-};
-
-type ContractDetail = {
-  analysesHasMore?: boolean;
-  title?: string | null;
-  status?: string | null;
-  /** Quality warning for the current extracted text; absent when extraction was clean. */
-  extractionWarning?: string | null;
-  createdAt?: string | Date | null;
-  updatedAt?: string | Date | null;
-  analyses?: AnalysisRecord[] | null;
-};
+import {
+  contractDetailOptions,
+  type AnalysisRecord,
+  type ContractDetail,
+} from "@/lib/workspace-query-options";
 
 const ContractDetails = () => {
   const params = useParams();
   const id = params?.id as string;
   const queryClient = useQueryClient();
+  const analysisOperation = useOperationProgress(`analysis:${id}`);
   const router = useRouter();
   const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(
     null,
@@ -145,11 +136,7 @@ const ContractDetails = () => {
     isLoadingError: isError,
     error,
   } = useQuery({
-    queryKey: ["contract", id],
-    queryFn: async ({ signal }) => {
-      const response = await apiClient.get(`/contracts/${id}`, { signal });
-      return response.data as ContractDetail;
-    },
+    ...contractDetailOptions(id),
     enabled: !!id,
   });
 
@@ -184,12 +171,9 @@ const ContractDetails = () => {
   const analyzeMutation = useMutation({
     mutationFn: async (params?: { force?: boolean }) => {
       const force = params?.force ? "?force=true" : "";
-      const response = await apiClient.post(`/contracts/${id}/analyze${force}`);
-      return response.data as {
-        message?: string;
-        jobId?: string;
-        status?: string;
-      };
+      return analysisOperation.run("preparing", (options) =>
+        postOperation(`/contracts/${id}/analyze${force}`, { ...options, validate: isAnalysisOperationResult }),
+      );
     },
     onSuccess: (data) => {
       toast.success(data?.message || "Analysis complete");
@@ -200,6 +184,7 @@ const ContractDetails = () => {
       void syncUsage(queryClient);
     },
     onError: (error: ApiError) => {
+      if (isOperationCanceled(error)) return;
       const rejection =
         error.response?.status === 429
           ? parseAdmissionRejection(error.response.data)
@@ -459,6 +444,7 @@ const ContractDetails = () => {
     <ContractSourceProvider key={`${id}:${analysis?.id ?? "none"}:${contract.updatedAt ?? ""}`} contractId={id} analysisId={analysis?.id} result={resultJson}>
     <div className="app-page pb-12">
       <div className="app-header">
+        <OperationStatus stage={analysisOperation.stage} className="mx-auto max-w-7xl px-4 pt-4 sm:px-6 lg:px-8" />
         <div className="mx-auto max-w-7xl px-4 pb-6 pt-10 sm:px-6 lg:px-8">
           <Link
             href="/dashboard"
@@ -488,7 +474,7 @@ const ContractDetails = () => {
                   {analyzeMutation.isPending ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Analyzing...
+                      Working…
                     </>
                   ) : (
                     <>

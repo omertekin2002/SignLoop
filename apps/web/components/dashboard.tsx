@@ -2,7 +2,8 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import { refreshWorkspaceList, useWorkspaceList } from "@/lib/use-workspace-list";
+import { useWorkspaceList } from "@/lib/use-workspace-list";
+import { useNavigationPrefetch } from "@/lib/use-navigation-prefetch";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import {
@@ -104,7 +105,8 @@ type ModelSelectorProps = {
   fallbackModels: string[];
   disabled: boolean;
   refreshing: boolean;
-  onBeforeOpen: () => Promise<boolean>;
+  failed: boolean;
+  onOpen: () => Promise<boolean>;
   onSelect: (model: string) => void;
   showBrand?: boolean;
 };
@@ -154,21 +156,17 @@ function ModelSelector({
   fallbackModels,
   disabled,
   refreshing,
-  onBeforeOpen,
+  failed,
+  onOpen,
   onSelect,
   showBrand = false,
 }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
+  const hasModels = availableModels.length > 0 || fallbackModels.length > 0;
 
   const handleOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen) {
-      setOpen(false);
-      return;
-    }
-
-    void onBeforeOpen().then((refreshed) => {
-      if (refreshed) setOpen(true);
-    });
+    setOpen(nextOpen);
+    if (nextOpen) void onOpen();
   };
 
   const renderModelItem = (model: string) => (
@@ -209,7 +207,12 @@ function ModelSelector({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="mt-1 w-64">
-        {availableModels.length > 0 || fallbackModels.length > 0 ? (
+        {refreshing ? (
+          <p role="status" className="px-3 py-2 text-sm text-muted-foreground">
+            {hasModels ? "Refreshing models…" : "Loading models…"}
+          </p>
+        ) : null}
+        {hasModels ? (
           <>
             {availableModels.map(renderModelItem)}
             {fallbackModels.length > 0 ? (
@@ -222,11 +225,13 @@ function ModelSelector({
             ) : null}
             {fallbackModels.map(renderModelItem)}
           </>
-        ) : (
-          <DropdownMenuItem disabled className="px-3 py-2">
-            <span className="text-muted-foreground">OpenRouter</span>
-          </DropdownMenuItem>
-        )}
+        ) : !refreshing ? (
+          <p role="status" className="px-3 py-2 text-sm text-muted-foreground">
+            {failed
+              ? "Couldn’t load models. Reopen to retry."
+              : "No models available."}
+          </p>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -248,6 +253,7 @@ const Dashboard = ({
   const isSignedIn = !!user;
   const queryClient = useQueryClient();
   const canUseSavedWorkspace = isLoaded && isSignedIn;
+  const navigationIntent = useNavigationPrefetch();
   const [contractToDelete, setContractToDelete] = useState<Contract | null>(
     null,
   );
@@ -263,6 +269,8 @@ const Dashboard = ({
   const [selectedChatThreadId, setSelectedChatThreadId] = useState<
     string | null
   >(null);
+  const [isNewSavedChatSelected, setIsNewSavedChatSelected] = useState(false);
+  const [savedChatKey, setSavedChatKey] = useState(0);
   const [recentlyCreatedChatThreadId, setRecentlyCreatedChatThreadId] =
     useState<string | null>(null);
   const [recentlyDeletedChatThreadId, setRecentlyDeletedChatThreadId] =
@@ -327,7 +335,11 @@ const Dashboard = ({
       </Button>
     ) : null;
 
-  const { data: settingsData } = useQuery({
+  const {
+    data: settingsData,
+    isFetching: isFetchingSettings,
+    isError: settingsFailed,
+  } = useQuery({
     queryKey: ["settings"],
     queryFn: ({ signal }) => fetchSettings({ signal }),
     enabled: canUseSavedWorkspace,
@@ -367,11 +379,13 @@ const Dashboard = ({
 
   const selectSavedChatThread = (threadId: string) => {
     setIsTemporaryChatSelected(false);
+    setIsNewSavedChatSelected(false);
     setSelectedChatThreadId(threadId);
   };
 
   const selectNewChatThread = (threadId: string) => {
     setIsTemporaryChatSelected(false);
+    setIsNewSavedChatSelected(false);
     setRecentlyCreatedChatThreadId(threadId);
     setSelectedChatThreadId(threadId);
   };
@@ -382,6 +396,7 @@ const Dashboard = ({
     setRecentlyCreatedChatThreadId(null);
     setRecentlyDeletedChatThreadId(null);
     setSelectedChatThreadId(null);
+    setIsNewSavedChatSelected(false);
     setIsTemporaryChatSelected(true);
   };
 
@@ -466,7 +481,7 @@ const Dashboard = ({
   });
 
   useEffect(() => {
-    if (isTemporaryChatSelected) {
+    if (isTemporaryChatSelected || isNewSavedChatSelected) {
       return;
     }
 
@@ -500,43 +515,29 @@ const Dashboard = ({
     }
   }, [
     chatThreads,
+    isNewSavedChatSelected,
     isTemporaryChatSelected,
     recentlyCreatedChatThreadId,
     recentlyDeletedChatThreadId,
     selectedChatThreadId,
   ]);
 
-  const createChatMutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiClient.post<{ data?: ChatThreadSummary }>(
-        "/chat/threads",
-        {},
-      );
-      const thread = response.data.data;
-      if (!thread) {
-        throw new Error("Failed to create chat thread.");
-      }
-      return thread;
-    },
-    onSuccess: (thread) => {
-      setRecentlyDeletedChatThreadId(null);
-      selectNewChatThread(thread.id);
-      setActiveTab("chat");
-      setOpenSections((previous) => ({ ...previous, chat: true }));
-      void refreshWorkspaceList(queryClient, "chat-threads", "/chat/threads").catch(() => {});
-    },
-    onError: (error: unknown) => {
-      toast.error(getApiErrorMessage(error, "Failed to create chat"));
-    },
-  });
-
-  const startNewChat = async () => {
+  const startNewChat = () => {
     if (!canUseSavedWorkspace) {
       startNewTemporaryChat();
       return;
     }
 
-    createChatMutation.mutate();
+    // No server-side empty thread is needed until the first message is submitted.
+    // A new runtime also clears the previous composer's draft, even for repeated clicks.
+    setSavedChatKey((key) => key + 1);
+    setIsNewSavedChatSelected(true);
+    setIsTemporaryChatSelected(false);
+    setSelectedChatThreadId(null);
+    setRecentlyCreatedChatThreadId(null);
+    setRecentlyDeletedChatThreadId(null);
+    setActiveTab("chat");
+    setOpenSections((previous) => ({ ...previous, chat: true }));
   };
 
   const deleteChatMutation = useMutation({
@@ -636,6 +637,7 @@ const Dashboard = ({
                     <button
                       type="button"
                       onClick={() => setActiveTab("contracts")}
+                      {...navigationIntent({ kind: "list", list: "contracts" })}
                       aria-label="Contracts"
                       className={cn(
                         "flex w-full items-center rounded-full px-3 py-2 text-left text-nav-label font-semibold uppercase transition-colors hover:text-foreground",
@@ -681,6 +683,7 @@ const Dashboard = ({
                         <Link
                           key={contract.id}
                           href={`/contracts/${contract.id}`}
+                          {...navigationIntent({ kind: "contract", id: contract.id })}
                           className="block rounded-md px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
                           <p className="truncate font-medium">
@@ -704,6 +707,7 @@ const Dashboard = ({
                     <button
                       type="button"
                       onClick={() => setActiveTab("projects")}
+                      {...navigationIntent({ kind: "list", list: "projects" })}
                       aria-label="Projects"
                       className={cn(
                         "flex w-full items-center rounded-full px-3 py-2 text-left text-nav-label font-semibold uppercase transition-colors hover:text-foreground",
@@ -749,6 +753,7 @@ const Dashboard = ({
                         <Link
                           key={project.id}
                           href={`/projects/${project.id}`}
+                          {...navigationIntent({ kind: "project", id: project.id })}
                           className="block rounded-md px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
                           <p className="truncate font-medium">
@@ -774,6 +779,7 @@ const Dashboard = ({
                       <button
                         type="button"
                         onClick={() => setActiveTab("chat")}
+                        {...navigationIntent({ kind: "list", list: "chat" })}
                         aria-label="Chat"
                         className={cn(
                           "flex flex-1 items-center rounded-full px-3 py-2 text-left text-nav-label font-semibold uppercase transition-colors hover:text-foreground",
@@ -798,20 +804,11 @@ const Dashboard = ({
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-                      onClick={() => void startNewChat()}
-                      disabled={
-                        canUseSavedWorkspace &&
-                        (createChatMutation.isPending || isRefreshingModels)
-                      }
+                      onClick={startNewChat}
                       title="New chat"
                       aria-label="New chat"
                     >
-                      {canUseSavedWorkspace &&
-                      (createChatMutation.isPending || isRefreshingModels) ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Plus className="h-4 w-4" />
-                      )}
+                      <Plus className="h-4 w-4" />
                     </Button>
                     <Button
                       type="button"
@@ -875,6 +872,7 @@ const Dashboard = ({
                         >
                           <button
                             type="button"
+                            {...navigationIntent({ kind: "thread", id: thread.id })}
                             onClick={() => {
                               setActiveTab("chat");
                               selectSavedChatThread(thread.id);
@@ -992,20 +990,11 @@ const Dashboard = ({
                     variant="ghost"
                     size="icon"
                     className="h-10 w-10 text-muted-foreground hover:text-foreground"
-                    onClick={() => void startNewChat()}
-                    disabled={
-                      canUseSavedWorkspace &&
-                      (createChatMutation.isPending || isRefreshingModels)
-                    }
+                    onClick={startNewChat}
                     title="New chat"
                     aria-label="New chat"
                   >
-                    {canUseSavedWorkspace &&
-                    (createChatMutation.isPending || isRefreshingModels) ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                    ) : (
-                      <Plus className="h-5 w-5" />
-                    )}
+                    <Plus className="h-5 w-5" />
                   </Button>
                   <Button
                     type="button"
@@ -1044,11 +1033,11 @@ const Dashboard = ({
                 fallbackModels={fallbackModels}
                 disabled={
                   !canUseSavedWorkspace ||
-                  updateModelMutation.isPending ||
-                  isRefreshingModels
+                  updateModelMutation.isPending
                 }
-                refreshing={isRefreshingModels}
-                onBeforeOpen={refreshAvailableModels}
+                refreshing={isRefreshingModels || isFetchingSettings}
+                failed={settingsFailed}
+                onOpen={refreshAvailableModels}
                 onSelect={(model) => {
                   if (!canUseSavedWorkspace) return;
                   updateModelMutation.mutate(model);
@@ -1166,6 +1155,7 @@ const Dashboard = ({
                     </Button>
                     <Link
                       href={`/contracts/${contract.id}`}
+                      {...navigationIntent({ kind: "contract", id: contract.id })}
                       className="block h-full"
                     >
                       <CardHeader className="space-y-0 pb-4 pr-12">
@@ -1230,7 +1220,11 @@ const Dashboard = ({
             ) : (
               <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {projects.map((project) => (
-                  <Link key={project.id} href={`/projects/${project.id}`}>
+                  <Link
+                    key={project.id}
+                    href={`/projects/${project.id}`}
+                    {...navigationIntent({ kind: "project", id: project.id })}
+                  >
                     <Card className="group h-full cursor-pointer overflow-hidden transition-colors hover:border-input hover:bg-foreground/[0.03]">
                       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
                         <CardTitle className="line-clamp-2">
@@ -1293,6 +1287,7 @@ const Dashboard = ({
             {canUseSavedWorkspace && (
               <div className={cn("h-full min-h-0", isTemporaryChatSelected && "hidden")}>
                 <ChatPanel
+                  key={savedChatKey}
                   active={!isTemporaryChatSelected}
                   selectedThreadId={selectedChatThreadId}
                   onThreadSelected={(threadId) => {

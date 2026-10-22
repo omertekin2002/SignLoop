@@ -1,5 +1,10 @@
 "use client";
 
+import { useOperationProgress, isOperationCanceled } from "@/lib/use-operation-progress";
+import { OperationStatus } from "@/components/operation-status";
+import { postOperation } from "@/lib/operation-progress-client";
+import { isContextUploadResult } from "@/lib/operation-progress";
+
 import { uploadContract } from "@/lib/upload-contract";
 
 import { useState, useRef } from "react";
@@ -55,37 +60,17 @@ import {
   File,
 } from "lucide-react";
 import { toast } from "sonner";
+import { projectDetailOptions } from "@/lib/workspace-query-options";
+import { useNavigationPrefetch } from "@/lib/use-navigation-prefetch";
 
-interface Project {
-  contractsHasMore: boolean;
-  contextHasMore: boolean;
-  id: string;
-  title: string;
-  description?: string;
-  status: string;
-  createdAt: string;
-  contracts: Array<{
-    id: string;
-    title: string;
-    status: string;
-    createdAt: string;
-    analyses?: Array<{ id: string; riskBadge: string }>;
-  }>;
-  contextDocuments: Array<{
-    id: string;
-    title: string;
-    documentType: string;
-    originalFilename?: string;
-    fileSize?: number;
-    wordCount?: number;
-    createdAt: string;
-  }>;
-}
 const ProjectDetails = () => {
   const params = useParams<{ id: string }>();
   const id = params?.id as string;
   const router = useRouter();
   const queryClient = useQueryClient();
+  const contractOperation = useOperationProgress(`project-contract:${id}`);
+  const contextOperation = useOperationProgress(`project-context:${id}`);
+  const navigationIntent = useNavigationPrefetch();
   const contractFileRef = useRef<HTMLInputElement>(null);
   const contextFileRef = useRef<HTMLInputElement>(null);
 
@@ -110,14 +95,7 @@ const ProjectDetails = () => {
     error,
     refetch,
   } = useQuery({
-    queryKey: ["project", id, contractsOffset, contextOffset],
-    queryFn: async ({ signal }) => {
-      const response = await apiClient.get(
-        `/projects/${id}?contractsOffset=${contractsOffset}&contextOffset=${contextOffset}`,
-        { signal },
-      );
-      return response.data as Project;
-    },
+    ...projectDetailOptions(id, contractsOffset, contextOffset),
     enabled: !!id,
   });
 
@@ -137,6 +115,7 @@ const ProjectDetails = () => {
       router.push("/dashboard");
     },
     onError: (error: unknown) => {
+      if (isOperationCanceled(error)) return;
       toast.error(getApiErrorMessage(error, "Failed to delete project"));
     },
   });
@@ -154,6 +133,7 @@ const ProjectDetails = () => {
       setDocToDelete(null);
     },
     onError: (error: unknown) => {
+      if (isOperationCanceled(error)) return;
       toast.error(
         getApiErrorMessage(error, "Failed to delete context document"),
       );
@@ -176,11 +156,12 @@ const ProjectDetails = () => {
 
   const uploadContractMutation = useMutation({
     mutationFn: () =>
-      uploadContract({
+      contractOperation.run("creating", (options) => uploadContract({
         file: selectedContractFile,
         title: contractName,
         projectId: id,
-      }),
+        ...options,
+      })),
     onSuccess: (result) => {
       if (result.warning) {
         toast.warning(`Contract uploaded. ${result.warning}`);
@@ -194,25 +175,22 @@ const ProjectDetails = () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
     onError: (error: unknown) => {
+      if (isOperationCanceled(error)) return;
       toast.error(getApiErrorMessage(error, "Failed to upload contract"));
     },
   });
 
   const uploadContextMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: () => contextOperation.run("uploading", async (options) => {
       const formData = new FormData();
       formData.append("file", selectedContextFile as File);
       formData.append("title", contextTitle);
       formData.append("documentType", contextType);
 
-      const response = await apiClient.post<{
-        warning?: string;
-        extractionFailed?: boolean;
-      }>(`/projects/${id}/context`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+      return postOperation(`/projects/${id}/context`, {
+        body: formData, ...options, validate: isContextUploadResult,
       });
-      return response.data;
-    },
+    }),
     onSuccess: (result) => {
       if (result.extractionFailed || result.warning) {
         toast.warning(
@@ -232,12 +210,13 @@ const ProjectDetails = () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
     onError: (error: unknown) => {
+      if (isOperationCanceled(error)) return;
       toast.error(getApiErrorMessage(error, "Failed to upload context"));
     },
   });
 
   const handleUploadContract = () => {
-    if (!selectedContractFile || !contractName) return;
+    if (!selectedContractFile || !contractName || uploadContractMutation.isPending) return;
     if (selectedContractFile.size > MAX_UPLOAD_FILE_SIZE) {
       toast.error(
         `File too large. Maximum size is ${MAX_UPLOAD_FILE_SIZE_MB} MB.`,
@@ -248,7 +227,7 @@ const ProjectDetails = () => {
   };
 
   const handleUploadContext = () => {
-    if (!selectedContextFile || !contextTitle) return;
+    if (!selectedContextFile || !contextTitle || uploadContextMutation.isPending) return;
     if (selectedContextFile.size > MAX_UPLOAD_FILE_SIZE) {
       toast.error(
         `File too large. Maximum size is ${MAX_UPLOAD_FILE_SIZE_MB} MB.`,
@@ -390,6 +369,7 @@ const ProjectDetails = () => {
                       <Link
                         key={contract.id}
                         href={`/contracts/${contract.id}`}
+                        {...navigationIntent({ kind: "contract", id: contract.id })}
                         className="flex items-center justify-between rounded-card border px-4 py-3 transition-colors hover:border-input hover:bg-foreground/[0.03]"
                       >
                         <div className="flex items-center gap-3">
@@ -504,7 +484,8 @@ const ProjectDetails = () => {
                       className="hidden"
                       onChange={handleContractFileChange}
                     />
-                    <Button
+                    <OperationStatus stage={contractOperation.stage} />
+                  <Button
                       onClick={handleUploadContract}
                       disabled={
                         !selectedContractFile ||
@@ -516,7 +497,7 @@ const ProjectDetails = () => {
                       {uploadContractMutation.isPending ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Uploading...
+                          Working…
                         </>
                       ) : (
                         <>
@@ -677,7 +658,8 @@ const ProjectDetails = () => {
                       className="hidden"
                       onChange={handleContextFileChange}
                     />
-                    <Button
+                    <OperationStatus stage={contextOperation.stage} />
+                  <Button
                       onClick={handleUploadContext}
                       disabled={
                         !selectedContextFile ||
@@ -690,7 +672,7 @@ const ProjectDetails = () => {
                       {uploadContextMutation.isPending ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Uploading...
+                          Working…
                         </>
                       ) : (
                         <>
@@ -716,7 +698,10 @@ const ProjectDetails = () => {
                       </p>
                     </div>
                     <Button asChild>
-                      <Link href={`/contracts/${firstProjectContract.id}`}>
+                      <Link
+                        href={`/contracts/${firstProjectContract.id}`}
+                        {...navigationIntent({ kind: "contract", id: firstProjectContract.id })}
+                      >
                         <Play className="mr-2 h-4 w-4" />
                         View Contract
                       </Link>

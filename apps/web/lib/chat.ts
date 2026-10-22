@@ -37,6 +37,7 @@ import {
 } from "@/lib/chat-agent-history";
 import { createChatSourceCatalog } from "@/lib/chat-source-catalog";
 import { chatTelemetryOptions } from "@/lib/telemetry-policy";
+import type { GenerationMilestone } from "@/lib/generation-timings";
 
 // Search now returns leads rather than a brief, so a normal run is search -> several reads ->
 // answer. That needs more steps than a loop whose search already came back answer-shaped.
@@ -213,6 +214,8 @@ type ChatGenerationOptions = {
   firstChunkTimeoutMs?: number;
   /** Temporary chat disables AI tracing even when the deployment opts into content recording. */
   recordTelemetry?: boolean;
+  /** Content-free lifecycle hooks; no per-token telemetry. */
+  onTiming?: (event: GenerationMilestone) => void;
 };
 
 type RoutedCandidate = ReturnType<ReturnType<typeof createOpenAI>["responses"]>;
@@ -234,6 +237,7 @@ async function openStreamWithDeadline(
   candidate: RoutedCandidate,
   options: StreamOptions,
   timeoutMs: number,
+  onTiming?: ChatGenerationOptions["onTiming"],
 ): Promise<StreamResult> {
   const outer = options.abortSignal;
   const deadline = new AbortController();
@@ -258,7 +262,24 @@ async function openStreamWithDeadline(
     deadline.abort(new FirstChunkTimeoutError(timeoutMs));
   }, timeoutMs);
   let reader: ReadableStreamDefaultReader<StreamPart> | undefined;
+  let usefulReported = false;
+  const reportUseful = (part: StreamPart) => {
+    if (usefulReported) return;
+    if (
+      ((part.type === "text-delta" ||
+        part.type === "reasoning-delta" ||
+        part.type === "tool-input-delta") &&
+        part.delta.length > 0) ||
+      part.type === "tool-input-start" ||
+      part.type === "tool-call" ||
+      part.type === "file"
+    ) {
+      usefulReported = true;
+      onTiming?.("provider_first_useful");
+    }
+  };
   try {
+    onTiming?.("provider_start");
     const result = await Promise.race([
       candidate.doStream({ ...options, abortSignal: signal }),
       aborted,
@@ -273,6 +294,7 @@ async function openStreamWithDeadline(
         break;
       }
       buffered.push(value);
+      reportUseful(value);
       if (buffered.length > 256)
         throw new Error("Provider sent too many opening events");
       // Metadata/text-start can arrive long before useful output. Keep the opening deadline
@@ -297,7 +319,10 @@ async function openStreamWithDeadline(
       async pull(sink) {
         const { done, value } = await withAbort(source.read(), signal);
         if (done) sink.close();
-        else sink.enqueue(value);
+        else {
+          reportUseful(value);
+          sink.enqueue(value);
+        }
       },
       cancel: (reason) => source.cancel(reason),
     });
@@ -318,7 +343,15 @@ async function openStreamWithDeadline(
 export function createRoutedModel(
   primaryModel: string | null,
   firstChunkTimeoutMs = FIRST_CHUNK_TIMEOUT_MS,
+  onTiming?: ChatGenerationOptions["onTiming"],
 ) {
+  // Request-level firsts, even across failed candidates and later tool-loop steps.
+  const reported = new Set<GenerationMilestone>();
+  const reportTiming = (event: GenerationMilestone) => {
+    if (reported.has(event)) return;
+    reported.add(event);
+    onTiming?.(event);
+  };
   // A pinned OpenRouter model skips the primary endpoint and heads the OpenRouter chain.
   const pinnedFallback = isOpenRouterModel(primaryModel);
   const openRouterModels = orderOpenRouterModels(primaryModel);
@@ -379,7 +412,12 @@ export function createRoutedModel(
         ),
       doStream: (options: StreamOptions) =>
         attempt(options.abortSignal, (candidate) =>
-          openStreamWithDeadline(candidate, options, firstChunkTimeoutMs),
+          openStreamWithDeadline(
+            candidate,
+            options,
+            firstChunkTimeoutMs,
+            reportTiming,
+          ),
         ),
     },
   };
@@ -400,6 +438,7 @@ export async function* generateChatReplyStream(
   const routed = createRoutedModel(
     resolvePrimaryModel(options?.primaryModel),
     options?.firstChunkTimeoutMs,
+    options?.onTiming,
   );
   // Carry the source catalog with saved tool exchanges so follow-up citations retain their IDs.
   const { sources, readThisTurn, addSource } = createChatSourceCatalog(

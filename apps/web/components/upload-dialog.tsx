@@ -1,5 +1,8 @@
 "use client";
 
+import { useOperationProgress, isOperationCanceled } from "@/lib/use-operation-progress";
+import { OperationStatus } from "@/components/operation-status";
+
 import { uploadContract } from "@/lib/upload-contract";
 
 import { useState, useRef } from "react";
@@ -34,6 +37,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
   const [file, setFile] = useState<File | null>(null);
   const [contractName, setContractName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const operation = useOperationProgress("upload-dialog");
   const queryClient = useQueryClient();
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -46,7 +50,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
   };
 
   const uploadMutation = useMutation({
-    mutationFn: () => uploadContract({ file, title: contractName }),
+    mutationFn: () => operation.run("creating", (options) => uploadContract({ file, title: contractName, ...options })),
     onSuccess: (result) => {
       if (result.warning) {
         toast.warning(`Contract uploaded. ${result.warning}`);
@@ -60,12 +64,13 @@ export function UploadDialog({ children }: UploadDialogProps) {
       queryClient.invalidateQueries({ queryKey: ["contracts"] });
     },
     onError: (error: unknown) => {
+      if (isOperationCanceled(error)) return;
       toast.error(getApiErrorMessage(error, "Upload failed"));
     },
   });
 
   const handleUpload = () => {
-    if (!file || !contractName.trim()) return;
+    if (!file || !contractName.trim() || uploadMutation.isPending) return;
     // Fail fast on oversize files before the two-step network flow creates an orphan contract.
     if (file.size > MAX_UPLOAD_FILE_SIZE) {
       toast.error(
@@ -77,7 +82,10 @@ export function UploadDialog({ children }: UploadDialogProps) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(next) => {
+      if (!next) operation.cancel();
+      setOpen(next);
+    }}>
       <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
@@ -137,6 +145,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
             />
           </div>
         </div>
+        <OperationStatus stage={operation.stage} />
         <DialogFooter>
           <Button
             onClick={handleUpload}
@@ -145,7 +154,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
             {uploadMutation.isPending ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Uploading...
+                Working…
               </>
             ) : (
               "Upload Contract"
