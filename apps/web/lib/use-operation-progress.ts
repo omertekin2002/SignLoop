@@ -11,19 +11,28 @@ export function isOperationCanceled(error: unknown): boolean {
   );
 }
 
-/** One operation per UI entry point; closing, leaving or changing identity invalidates callbacks. */
-export function useOperationProgress(scope: string) {
+/** Cleanup invalidates UI callbacks; persisted analysis can keep its request running. */
+export function useOperationProgress(
+  scope: string,
+  { abortOnUnmount = true }: { abortOnUnmount?: boolean } = {},
+) {
   const queryClient = useQueryClient();
   const current = useRef<AbortController | null>(null);
   const [stage, setStage] = useState<OperationStage | null>(null);
+  const detach = useCallback(() => {
+    current.current = null;
+    setStage(null);
+  }, []);
   const cancel = useCallback(() => {
     current.current?.abort(
       new DOMException("Operation canceled", "AbortError"),
     );
-    current.current = null;
-    setStage(null);
-  }, []);
-  useEffect(() => cancel, [cancel, scope, queryClient]);
+    detach();
+  }, [detach]);
+  useEffect(
+    () => (abortOnUnmount ? cancel : detach),
+    [abortOnUnmount, cancel, detach, scope, queryClient],
+  );
   const run = async <T>(
     initial: OperationStage,
     work: (options: {
@@ -36,6 +45,11 @@ export function useOperationProgress(scope: string) {
     const controller = new AbortController();
     current.current = controller;
     setStage(initial);
+    const throwIfInactive = () => {
+      controller.signal.throwIfAborted();
+      if (current.current !== controller)
+        throw new DOMException("Operation view closed", "AbortError");
+    };
     try {
       const result = await work({
         signal: controller.signal,
@@ -44,10 +58,10 @@ export function useOperationProgress(scope: string) {
             setStage(next);
         },
       });
-      controller.signal.throwIfAborted();
+      throwIfInactive();
       return result;
     } catch (error) {
-      controller.signal.throwIfAborted();
+      throwIfInactive();
       throw error;
     } finally {
       if (current.current === controller) {

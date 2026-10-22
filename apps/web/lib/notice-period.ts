@@ -27,7 +27,10 @@ function isPlaceholder(value: unknown): boolean {
  * duration unknown. Returns null when no usable or explicitly unknown value was supplied.
  */
 export function normalizeNoticePeriod(days: unknown, wording: unknown) {
-  const text = substantiveWording(wording) ?? substantiveWording(days);
+  const numericDayString = typeof days === "string" && /^\d+$/.test(days.trim());
+  const text =
+    substantiveWording(wording) ??
+    (numericDayString ? null : substantiveWording(days));
   if (text) {
     return {
       notice_period_days: calendarNoticeDays(text),

@@ -71,7 +71,9 @@ const ContractDetails = () => {
   const params = useParams();
   const id = params?.id as string;
   const queryClient = useQueryClient();
-  const analysisOperation = useOperationProgress(`analysis:${id}`);
+  const analysisOperation = useOperationProgress(`analysis:${id}`, {
+    abortOnUnmount: false,
+  });
   const router = useRouter();
   const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(
     null,
@@ -171,16 +173,22 @@ const ContractDetails = () => {
   const analyzeMutation = useMutation({
     mutationFn: async (params?: { force?: boolean }) => {
       const force = params?.force ? "?force=true" : "";
-      return analysisOperation.run("preparing", (options) =>
-        postOperation(`/contracts/${id}/analyze${force}`, { ...options, validate: isAnalysisOperationResult }),
-      );
+      return analysisOperation.run("preparing", async (options) => {
+        const data = await postOperation(`/contracts/${id}/analyze${force}`, {
+          ...options,
+          validate: isAnalysisOperationResult,
+        });
+        // A request can outlive this page. Refresh only its captured identity's cache;
+        // the operation hook suppresses stale view callbacks after navigation.
+        void queryClient.invalidateQueries({ queryKey: ["contract", id] });
+        void queryClient.invalidateQueries({ queryKey: ["contracts"] });
+        void queryClient.invalidateQueries({ queryKey: ["projects"] });
+        void queryClient.invalidateQueries({ queryKey: ["project"] });
+        return data;
+      });
     },
     onSuccess: (data) => {
       toast.success(data?.message || "Analysis complete");
-      queryClient.invalidateQueries({ queryKey: ["contract", id] });
-      queryClient.invalidateQueries({ queryKey: ["contracts"] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["project"] });
       void syncUsage(queryClient);
     },
     onError: (error: ApiError) => {

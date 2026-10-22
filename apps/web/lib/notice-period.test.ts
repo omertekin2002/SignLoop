@@ -66,6 +66,28 @@ function parseCancellation(cancellation: Record<string, unknown>) {
 }
 
 describe("notice period conflicts and legacy aliases", () => {
+  it.each(["30", "0", " 0030 "])(
+    "treats the numeric day string %j as a count with units",
+    (value) => {
+      const days = Number(value);
+      expect(normalizeNoticePeriod(value, undefined)).toEqual({
+        notice_period_days: days,
+        notice_period_text: null,
+      });
+      const notice = parseCancellation({ notice_period_days: value });
+      expect(formatNoticePeriod(notice)).toBe(`${days} days`);
+    },
+  );
+
+  it.each(["10 business days", "30 calendar days", "2 months"])(
+    "preserves units in the day field's wording %j",
+    (wording) => {
+      const notice = parseCancellation({ notice_period_days: wording });
+      expect(notice.notice_period_text).toBe(wording);
+      expect(formatNoticePeriod(notice)).toBe(wording);
+    },
+  );
+
   it("normalizes placeholders as unknowns that never hide an explicit count", () => {
     expect(normalizeNoticePeriod(30, "Not specified")).toEqual({
       notice_period_days: 30,
