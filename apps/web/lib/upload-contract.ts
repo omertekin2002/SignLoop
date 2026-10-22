@@ -20,10 +20,11 @@ export async function uploadContract(input: {
     );
   input.signal?.throwIfAborted();
   input.onStage?.("creating");
+  // Wait for the ID even if the UI closes: creation may have committed already,
+  // and the cancellation check below needs that ID to remove the empty contract.
   const { data: contract } = await apiClient.post<{ id: string }>(
     "/contracts",
     { title: input.title.trim(), projectId: input.projectId },
-    { signal: input.signal },
   );
   try {
     input.signal?.throwIfAborted();

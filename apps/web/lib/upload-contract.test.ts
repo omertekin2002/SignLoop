@@ -17,9 +17,51 @@ vi.mock("./api-client", () => ({ apiClient: { post, delete: remove } }));
 vi.mock("./operation-progress-client", () => ({ postOperation }));
 import { uploadContract } from "./upload-contract";
 import { MAX_UPLOAD_FILE_SIZE } from "./upload-constants";
+import { withAbort } from "./bounded-response";
 afterEach(() => vi.resetAllMocks());
 const file = new File(["Agreement"], "agreement.txt", { type: "text/plain" });
 describe("uploadContract progress", () => {
+  it("waits for the creation response after cancellation so it can remove the committed contract", async () => {
+    const creation = progressDeferred<{ data: { id: string } }>();
+    post.mockImplementation(
+      (_path, _body, options?: { signal?: AbortSignal }) =>
+        withAbort(creation.promise, options?.signal),
+    );
+    remove.mockResolvedValue({});
+    const abort = new AbortController();
+    const onStage = vi.fn();
+    const outcome = uploadContract({
+      file,
+      title: "Agreement",
+      signal: abort.signal,
+      onStage,
+    }).catch((error: unknown) => error);
+
+    abort.abort(new DOMException("Upload dialog closed", "AbortError"));
+    // The server committed, but its response had not reached the browser before closing.
+    creation.resolve({ data: { id: "created-before-response" } });
+
+    expect(await outcome).toMatchObject({ name: "AbortError" });
+    expect(remove).toHaveBeenCalledExactlyOnceWith(
+      "/contracts/created-before-response",
+    );
+    expect(postOperation).not.toHaveBeenCalled();
+    expect(onStage.mock.calls.flat()).toEqual(["creating"]);
+  });
+
+  it("does not create a contract for an already canceled operation", async () => {
+    const abort = new AbortController();
+    abort.abort();
+    const onStage = vi.fn();
+    await expect(
+      uploadContract({ file, title: "Agreement", signal: abort.signal, onStage }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(post).not.toHaveBeenCalled();
+    expect(postOperation).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(onStage).not.toHaveBeenCalled();
+  });
+
   it("reports creation immediately, waits for creation then starts upload with cancellation", async () => {
     const creation = progressDeferred<{ data: { id: string } }>();
     post.mockReturnValue(creation.promise);
@@ -41,7 +83,6 @@ describe("uploadContract progress", () => {
     expect(post).toHaveBeenCalledWith(
       "/contracts",
       { title: "Agreement", projectId: "project" },
-      { signal },
     );
     expect(postOperation).toHaveBeenCalledWith(
       "/contracts/new/upload",
