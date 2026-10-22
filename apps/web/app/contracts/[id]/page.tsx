@@ -174,22 +174,32 @@ const ContractDetails = () => {
     mutationFn: async (params?: { force?: boolean }) => {
       const force = params?.force ? "?force=true" : "";
       return analysisOperation.run("preparing", async (options) => {
-        const data = await postOperation(`/contracts/${id}/analyze${force}`, {
-          ...options,
-          validate: isAnalysisOperationResult,
-        });
-        // A request can outlive this page. Refresh only its captured identity's cache;
-        // the operation hook suppresses stale view callbacks after navigation.
-        void queryClient.invalidateQueries({ queryKey: ["contract", id] });
-        void queryClient.invalidateQueries({ queryKey: ["contracts"] });
-        void queryClient.invalidateQueries({ queryKey: ["projects"] });
-        void queryClient.invalidateQueries({ queryKey: ["project"] });
-        return data;
+        let rejection: ReturnType<typeof parseAdmissionRejection> = null;
+        try {
+          const data = await postOperation(`/contracts/${id}/analyze${force}`, {
+            ...options,
+            validate: isAnalysisOperationResult,
+          });
+          // A request can outlive this page. Refresh only its captured identity's cache;
+          // the operation hook suppresses stale view callbacks after navigation.
+          void queryClient.invalidateQueries({ queryKey: ["contract", id] });
+          void queryClient.invalidateQueries({ queryKey: ["contracts"] });
+          void queryClient.invalidateQueries({ queryKey: ["projects"] });
+          void queryClient.invalidateQueries({ queryKey: ["project"] });
+          return data;
+        } catch (error) {
+          const apiError = error as ApiError;
+          if (apiError.response?.status === 429)
+            rejection = parseAdmissionRejection(apiError.response.data);
+          throw error;
+        } finally {
+          // Even failed generation can consume allowance after this view has detached.
+          void syncUsage(queryClient, rejection?.quota);
+        }
       });
     },
     onSuccess: (data) => {
       toast.success(data?.message || "Analysis complete");
-      void syncUsage(queryClient);
     },
     onError: (error: ApiError) => {
       if (isOperationCanceled(error)) return;
@@ -197,8 +207,6 @@ const ContractDetails = () => {
         error.response?.status === 429
           ? parseAdmissionRejection(error.response.data)
           : null;
-      // A 429 carries the current quota; other failures may have been admitted before failing.
-      void syncUsage(queryClient, rejection?.quota);
       toast.error(
         (rejection && admissionRejectionMessage(rejection)) ||
           getApiErrorMessage(error, "Analysis failed to start"),
