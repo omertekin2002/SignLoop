@@ -204,6 +204,19 @@ describe("GET /api/chat/threads/[id]", () => {
 });
 
 describe("DELETE /api/chat/threads/[id]", () => {
+  it("opts abandoned-draft cleanup into empty-only deletion", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    deleteChatThreadForUser.mockResolvedValue(true);
+    const response = await DELETE(
+      new Request(`http://localhost/api/chat/threads/${THREAD_ID}?onlyIfEmpty=1`, { method: "DELETE" }),
+      params(THREAD_ID),
+    );
+    expect(response.status).toBe(200);
+    expect(deleteChatThreadForUser).toHaveBeenCalledExactlyOnceWith({
+      userId: "owner", threadId: THREAD_ID, onlyIfEmpty: true,
+    });
+  });
+
   it("returns 401 without touching the database when signed out", async () => {
     auth.mockResolvedValue({ userId: null });
 

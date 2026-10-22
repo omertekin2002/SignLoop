@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type OperationStage } from "@/lib/operation-progress";
+import { withAbort } from "@/lib/bounded-response";
 
 export function isOperationCanceled(error: unknown): boolean {
   return (
@@ -51,13 +52,13 @@ export function useOperationProgress(
         throw new DOMException("Operation view closed", "AbortError");
     };
     try {
-      const result = await work({
+      const result = await withAbort(work({
         signal: controller.signal,
         onStage: (next) => {
           if (current.current === controller && !controller.signal.aborted)
             setStage(next);
         },
-      });
+      }), controller.signal);
       throwIfInactive();
       return result;
     } catch (error) {

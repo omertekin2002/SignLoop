@@ -47,7 +47,12 @@ export async function DELETE(
     if (!isUuid(id)) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
-    const deleted = await deleteChatThreadForUser({ userId, threadId: id });
+    const onlyIfEmpty = new URL(_req.url).searchParams.get("onlyIfEmpty") === "1";
+    const deleted = await deleteChatThreadForUser({
+      userId,
+      threadId: id,
+      ...(onlyIfEmpty ? { onlyIfEmpty: true } : {}),
+    });
     if (!deleted) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }

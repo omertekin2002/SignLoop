@@ -41,6 +41,7 @@ import {
   claimGenerationOperation,
   createAnalysisForContract,
   createChatThreadForUser,
+  deleteChatThreadForUser,
   createContractForUser,
   createProjectForUser,
   deleteAnalysisForContract,
@@ -97,6 +98,60 @@ describe.skipIf(!connectionString)("database integration", () => {
 
   const contract = () =>
     createContractForUser({ userId: "owner", title: "Test" });
+
+  it("removes only an owned, empty, idle thread during abandoned-draft cleanup", async () => {
+    const thread = await createChatThreadForUser({ userId: "owner" });
+    const discard = (userId: string) => deleteChatThreadForUser({
+      userId, threadId: thread.id, onlyIfEmpty: true,
+    });
+    expect(await discard("another-owner")).toBe(false);
+    const release = await claimGenerationOperation("owner", "chat", thread.id, 60);
+    expect(release).toBeTypeOf("function");
+    try {
+      expect(await deleteChatThreadForUser({
+        userId: "owner", threadId: thread.id.toUpperCase(), onlyIfEmpty: true,
+      })).toBe(false);
+      expect(await getChatThreadByIdForUser("owner", thread.id)).not.toBeNull();
+    } finally {
+      await release?.();
+    }
+    expect(await discard("owner")).toBe(true);
+    expect(await getChatThreadByIdForUser("owner", thread.id)).toBeNull();
+    expect(await discard("owner")).toBe(false);
+  });
+
+  it("preserves messages committed while empty-thread cleanup waits for the row lock", async () => {
+    const thread = await createChatThreadForUser({ userId: "owner" });
+    const writer = await pool.current!.connect();
+    let cleanup: Promise<boolean> | undefined;
+    try {
+      await writer.query("BEGIN");
+      await writer.query("SELECT id FROM chat_threads WHERE id = $1 FOR UPDATE", [thread.id]);
+      await writer.query(
+        "INSERT INTO chat_messages (thread_id, role, content, position) VALUES ($1, 'user', 'Keep this message', 1)",
+        [thread.id],
+      );
+      cleanup = deleteChatThreadForUser({ userId: "owner", threadId: thread.id, onlyIfEmpty: true });
+      await vi.waitFor(async () => {
+        const lease = await pool.current!.query(
+          "SELECT 1 FROM generation_operations WHERE entity_key = $1",
+          [`chat:owner:${thread.id}`],
+        );
+        expect(lease.rowCount).toBe(1);
+      });
+      await writer.query("COMMIT");
+      expect(await cleanup).toBe(false);
+      const saved = await getChatThreadByIdForUser("owner", thread.id);
+      expect(saved?.messages.map((message) => message.content)).toEqual(["Keep this message"]);
+    } finally {
+      await writer.query("ROLLBACK");
+      writer.release();
+      await cleanup;
+    }
+    const release = await claimGenerationOperation("owner", "chat", thread.id, 60);
+    expect(release).toBeTypeOf("function");
+    await release?.();
+  });
   const result = { risk_badge: "LOW", key_points: ["Example"] };
   async function analyse(id: string) {
     const snapshot = await getContractWithLatestAnalysisForUser("owner", id);

@@ -2145,8 +2145,43 @@ export async function getChatImageForUser(
 export async function deleteChatThreadForUser(input: {
   userId: string;
   threadId: string;
+  onlyIfEmpty?: boolean;
 }): Promise<boolean> {
   await ensureSchema();
+  if (input.onlyIfEmpty) {
+    // Serialize abandoned-draft cleanup with generation startup and message appends.
+    const release = await claimGenerationOperation(input.userId, "chat", input.threadId, 30);
+    if (!release) return false;
+    try {
+      const client = await sql.connect();
+      try {
+        await client.query("BEGIN");
+        const locked = await client.query(
+          "SELECT id FROM chat_threads WHERE id = $1 AND user_id = $2 FOR UPDATE",
+          [input.threadId, input.userId],
+        );
+        if (!locked.rowCount) {
+          await client.query("ROLLBACK");
+          return false;
+        }
+        // A fresh statement after the row lock sees messages committed by an earlier appender.
+        const deleted = await client.query(
+          `DELETE FROM chat_threads WHERE id = $1 AND user_id = $2
+           AND NOT EXISTS (SELECT 1 FROM chat_messages WHERE thread_id = $1)`,
+          [input.threadId, input.userId],
+        );
+        await client.query("COMMIT");
+        return Boolean(deleted.rowCount);
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
+    } finally {
+      await release();
+    }
+  }
   return Boolean(
     (
       await sql.query(

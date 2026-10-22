@@ -8,8 +8,8 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function newDraft() {
-  const session = createSavedChatSession();
+function newDraft(discard = vi.fn(async (_id: string) => {})) {
+  const session = createSavedChatSession(discard);
   session.select(null, true);
   return session;
 }
@@ -18,7 +18,8 @@ const signal = () => new AbortController().signal;
 
 describe("lazy saved-chat creation", () => {
   it("shares an in-flight creation and keeps the same session through saved-ID promotion", async () => {
-    const session = newDraft();
+    const discard = vi.fn(async (_id: string) => {});
+    const session = newDraft(discard);
     const response = deferred<string>();
     const create = vi.fn(() => response.promise);
     const run = session.beginRun(signal());
@@ -34,6 +35,9 @@ describe("lazy saved-chat creation", () => {
     // A failed generation can be retried against the already-created thread.
     expect(await session.beginRun(signal()).resolveThread(create)).toBe("created");
     expect(create).toHaveBeenCalledTimes(1);
+    session.invalidate();
+    await Promise.resolve();
+    expect(discard).not.toHaveBeenCalled();
   });
 
   it("retains a usable draft session after creation fails and permits a single retry", async () => {
@@ -51,7 +55,8 @@ describe("lazy saved-chat creation", () => {
   it.each(["existing", "temporary", "new chat", "account change"])(
     "rejects a late creation after switching to %s, even if the transport ignores cancellation",
     async (destination) => {
-      const session = newDraft();
+      const discard = vi.fn(async (_id: string) => {});
+      const session = newDraft(discard);
       const response = deferred<string>();
       const run = session.beginRun(signal());
       const selected = vi.fn();
@@ -68,6 +73,7 @@ describe("lazy saved-chat creation", () => {
       await rejection;
       expect(selected).not.toHaveBeenCalled();
       expect(send).not.toHaveBeenCalled();
+      expect(discard).toHaveBeenCalledExactlyOnceWith("late");
       if (destination === "existing") {
         const create = vi.fn();
         expect(await session.beginRun(signal()).resolveThread(create)).toBe("other");
@@ -106,6 +112,8 @@ describe("lazy saved-chat creation", () => {
     const request = run.resolveThread(() => response.promise);
     const rejection = expect(request).rejects.toMatchObject({ name: "AbortError" });
     controller.abort();
+    // Cancellation must settle before the response so the composer can accept a retry.
+    await rejection;
     const createAgain = vi.fn(async () => "unnecessary-duplicate");
     const retry = session.beginRun(signal()).resolveThread(createAgain);
     response.resolve("cancelled");
@@ -114,5 +122,40 @@ describe("lazy saved-chat creation", () => {
     expect(await retry).toBe("cancelled");
     expect(await session.beginRun(signal()).resolveThread(createAgain)).toBe("cancelled");
     expect(createAgain).not.toHaveBeenCalled();
+  });
+
+  it("discards a stopped draft's retained ID when that draft is later abandoned", async () => {
+    const discard = vi.fn(async (_id: string) => {});
+    const session = newDraft(discard);
+    const controller = new AbortController();
+    const response = deferred<string>();
+    const request = session.beginRun(controller.signal).resolveThread(() => response.promise);
+    const rejection = expect(request).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await rejection;
+    response.resolve("unclaimed");
+    // It remains reusable until the user abandons this draft.
+    expect(await session.beginRun(signal()).resolveThread(vi.fn())).toBe("unclaimed");
+    expect(discard).not.toHaveBeenCalled();
+    session.invalidate();
+    await vi.waitFor(() => expect(discard).toHaveBeenCalledExactlyOnceWith("unclaimed"));
+  });
+
+  it("cleans a shared abandoned creation once and preserves cancellation if cleanup fails", async () => {
+    const discard = vi.fn(async (_id: string) => { throw new Error("Cleanup unavailable"); });
+    const session = newDraft(discard);
+    const response = deferred<string>();
+    const run = session.beginRun(signal());
+    const create = vi.fn(() => response.promise);
+    const requests = [run.resolveThread(create), run.resolveThread(create)];
+    const results = Promise.allSettled(requests);
+    session.select("another", true);
+    response.resolve("abandoned");
+    for (const result of await results) {
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") expect(result.reason.name).toBe("AbortError");
+    }
+    expect(discard).toHaveBeenCalledExactlyOnceWith("abandoned");
+    expect(await session.beginRun(signal()).resolveThread(vi.fn())).toBe("another");
   });
 });

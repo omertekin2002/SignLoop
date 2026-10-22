@@ -562,7 +562,15 @@ export function ChatPanel({
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreGuard] = useState(createOperationGuard);
-  const [savedChatSession] = useState(createSavedChatSession);
+  const [savedChatSession] = useState(() => createSavedChatSession(async (id) => {
+    const response = await fetch(`/api/chat/threads/${encodeURIComponent(id)}?onlyIfEmpty=1`, {
+      method: "DELETE",
+    });
+    if (response.ok) {
+      queryClient.removeQueries({ queryKey: ["chat-thread", id] });
+      void queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+    }
+  }));
   const loadingOlderRef = useRef(false);
   const hydratedSignatureRef = useRef<string | null>(null);
   const initialPromptSignatureRef = useRef<string | null>(null);
@@ -653,7 +661,6 @@ export function ChatPanel({
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({}),
-                signal: abortSignal,
               });
               const createPayload = (await createThreadResponse
                 .json()
