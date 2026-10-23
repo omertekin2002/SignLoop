@@ -1,3 +1,5 @@
+import { operationProgressResponse } from "@/lib/operation-progress-response";
+import { type ReportProgress } from "@/lib/operation-progress";
 import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
 import {
@@ -15,6 +17,16 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  return operationProgressResponse(req, (request, report) =>
+    executePost(request, { params }, report),
+  );
+}
+
+async function executePost(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+  progress?: ReportProgress,
+) {
   const authed = await requireUserId();
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
@@ -28,7 +40,10 @@ export async function POST(
     return NextResponse.json({ error: "Contract not found" }, { status: 404 });
   }
 
-  const prepared = await prepareUpload(req);
+  progress?.("uploading");
+  const prepared = await (progress
+    ? prepareUpload(req, progress)
+    : prepareUpload(req));
   if (!prepared.ok) {
     return NextResponse.json(
       { error: prepared.error },
@@ -54,6 +69,8 @@ export async function POST(
     );
   }
 
+  prepared.signal.throwIfAborted();
+  progress?.("saving");
   let stored: Awaited<ReturnType<typeof storeUploadedFile>>;
   try {
     stored = await storeUploadedFile({
@@ -70,6 +87,7 @@ export async function POST(
   }
 
   try {
+    prepared.signal.throwIfAborted();
     const saved = await saveContractUploadForUser({
       userId,
       contractId: id,

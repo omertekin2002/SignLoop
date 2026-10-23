@@ -17,6 +17,7 @@ vi.mock("unpdf", () => ({
 }));
 
 import {
+  ExtractedTextContentError,
   ExtractionLimitError,
   ExtractionUnavailableError,
   extractTextFromImage,
@@ -137,10 +138,10 @@ describe("extraction resource guards", () => {
     const result = await extractTextFromPdf(Buffer.from("%PDF-1.7"));
 
     expect(result).toMatchObject({ method: "pdf_parse", confidence: 100 });
-    expect(result.pagesWithoutText).toBeUndefined();
+    expect(result.sparseTextPages).toBeUndefined();
   });
 
-  it("names image-only pages of an otherwise digital PDF without changing its text", async () => {
+  it("names sparse pages of an otherwise digital PDF without changing its text", async () => {
     // A 12-page agreement whose appended schedules (7-9) and signed final page (12) are scans:
     // empty, or carrying only a scanner stamp.
     const pageTexts = Array.from({ length: 12 }, (_, index) =>
@@ -159,13 +160,26 @@ describe("extraction resource guards", () => {
       text: pageTexts.join("\n").replace(/\s+/g, " ").trim(),
       method: "pdf_parse",
       confidence: 66,
-      pagesWithoutText: [7, 8, 9, 12],
+      sparseTextPages: [7, 8, 9, 12],
     });
+  });
+
+  it("rejects a NUL character that the PDF parser emits instead of returning it for storage", async () => {
+    const fixture = pdfPagesFixture([
+      CLAUSE.repeat(4),
+      `${CLAUSE}Notice period:\u000030 days.`,
+    ]);
+    mocks.getDocumentProxy.mockResolvedValue(fixture);
+
+    await expect(
+      processValidatedFile(Buffer.from("%PDF-1.7"), "application/pdf"),
+    ).rejects.toBeInstanceOf(ExtractedTextContentError);
+    expect(fixture.destroy).toHaveBeenCalledOnce();
   });
 
   it("counts non-whitespace characters per page against the 20-character threshold", async () => {
     const letters = "abcdefghijklmnopqrst";
-    // 19 characters padded with whitespace still count as no text layer; 20 do not.
+    // 19 characters padded with whitespace still count as sparse; 20 do not.
     const nineteen = letters.slice(0, 19).split("").join(" \n\t");
     const twenty = letters.split("").join(" ");
     mocks.getDocumentProxy.mockResolvedValue(
@@ -177,7 +191,7 @@ describe("extraction resource guards", () => {
     expect(result).toMatchObject({
       method: "pdf_parse",
       confidence: 66,
-      pagesWithoutText: [2],
+      sparseTextPages: [2],
     });
   });
 

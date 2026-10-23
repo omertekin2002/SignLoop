@@ -1,8 +1,10 @@
+import { type ReportProgress } from "@/lib/operation-progress";
 import { withAbort } from "@/lib/bounded-response";
 import { MAX_EXTRACTED_TEXT_LENGTH } from "@/lib/extraction-limits";
 import { randomUUID } from "node:crypto";
 import { createUploadCleanupIntent } from "@/lib/server-db";
 import {
+  ExtractedTextContentError,
   ExtractionLimitError,
   ExtractionUnavailableError,
   processValidatedFile,
@@ -49,8 +51,11 @@ export type PreparedUpload = {
   extractionWarning: string | null;
 };
 
-/** "Pages 7–9 and 12 …" for [7, 8, 9, 12]; a long list ends with a count of the other pages. */
-function describePagesWithoutText(pages: readonly number[]): string {
+/**
+ * "Pages 7–9 and 12 …" for [7, 8, 9, 12]; a long list ends with a count of the other pages. A
+ * sparse page's short text (a cover title, a stamp) is kept, so this must not call it unread.
+ */
+function describeSparseTextPages(pages: readonly number[]): string {
   const ranges: Array<[number, number]> = [];
   for (const page of pages) {
     const previous = ranges.at(-1);
@@ -68,21 +73,21 @@ function describePagesWithoutText(pages: readonly number[]): string {
   }
   const list = new Intl.ListFormat("en-US").format(listed);
   return pages.length === 1
-    ? `Page ${list} has little or no selectable text and was not read; it may be a scanned image. Verify that page in the original before relying on the analysis.`
-    : `Pages ${list} have little or no selectable text and were not read; they may be scanned images. Verify those pages in the original before relying on the analysis.`;
+    ? `Page ${list} has little or no selectable text. Any text on it is included, but if it is a scanned image, its content is missing from the analysis. Verify that page in the original before relying on the analysis.`
+    : `Pages ${list} have little or no selectable text. Any text on them is included, but if they are scanned images, their content is missing from the analysis. Verify those pages in the original before relying on the analysis.`;
 }
 
 export function getExtractionWarning(input: {
   method: ExtractionMethod | null;
   confidence: number | null;
-  pagesWithoutText?: readonly number[];
+  sparseTextPages?: readonly number[];
 }): string | null {
   if (input.method === "pdf_scanned") {
     return "This PDF appears to be scanned and may have an incomplete text layer. Verify the extracted text before relying on the analysis.";
   }
 
-  if (input.pagesWithoutText?.length) {
-    return describePagesWithoutText(input.pagesWithoutText);
+  if (input.sparseTextPages?.length) {
+    return describeSparseTextPages(input.sparseTextPages);
   }
 
   if (
@@ -100,6 +105,7 @@ export function getExtractionWarning(input: {
 // caller decides its own empty-text policy before storing (e.g. contracts reject empty text).
 export async function prepareUpload(
   req: Request,
+  progress?: ReportProgress,
 ): Promise<PreparedUpload | UploadValidationError> {
   const signal = AbortSignal.any([req.signal, AbortSignal.timeout(150_000)]);
   const declaredContentLength = Number(req.headers.get("content-length"));
@@ -217,6 +223,8 @@ export async function prepareUpload(
   let extractionError: string | null = null;
   let extractionWarning: string | null = null;
   try {
+    signal.throwIfAborted();
+    progress?.("extracting");
     const extracted = await processValidatedFile(buffer, mimeType, { signal });
     signal.throwIfAborted();
     if (extracted.text.length > MAX_EXTRACTED_TEXT_LENGTH) {
@@ -233,10 +241,13 @@ export async function prepareUpload(
     extractionWarning = getExtractionWarning({
       method,
       confidence,
-      pagesWithoutText: extracted.pagesWithoutText,
+      sparseTextPages: extracted.sparseTextPages,
     });
   } catch (error: unknown) {
-    if (error instanceof ExtractionLimitError) {
+    if (
+      error instanceof ExtractionLimitError ||
+      error instanceof ExtractedTextContentError
+    ) {
       return { ok: false, status: 422, error: error.message };
     }
     if (signal.aborted)

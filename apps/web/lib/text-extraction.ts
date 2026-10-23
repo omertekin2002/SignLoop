@@ -26,9 +26,10 @@ const MIN_TEXT_DENSITY = 50; // Minimum characters per page for non-scanned PDF
 // At or below this page count a sparse PDF may still be a legitimately short document, so the
 // absolute-length check applies. Above it, low density is decisive on its own.
 const SHORT_DOCUMENT_PAGE_COUNT = 2;
-// A page with fewer non-whitespace characters than this has no usable text layer of its own: it
-// is blank or, typically for appended schedules and signature pages, a scanned image that carries
-// at most a stamp or page number.
+// A page with fewer non-whitespace characters than this is flagged as sparse: it may be blank, a
+// short cover page ("EXHIBIT A"), or, typically for appended schedules and signature pages, a
+// scanned image carrying at most a stamp or page number. Text alone cannot tell these apart, so
+// the flag is a prompt to check the page, not a claim that its text was dropped.
 const MIN_PAGE_TEXT_CHARACTERS = 20;
 const MAX_PDF_PAGES = 500;
 const DOC_MIME_TYPE = "application/msword";
@@ -269,8 +270,11 @@ export interface ExtractionResult {
   method:
     "pdf_parse" | "pdf_scanned" | "tesseract_ocr" | "word_parse" | "plain_text";
   confidence?: number;
-  /** One-based numbers of PDF pages whose content was not read for lack of a text layer. */
-  pagesWithoutText?: number[];
+  /**
+   * One-based numbers of PDF pages with little or no selectable text. Any text those pages do have
+   * is retained in `text`.
+   */
+  sparseTextPages?: number[];
 }
 
 export type ExtractionMethod = ExtractionResult["method"];
@@ -282,6 +286,21 @@ export class ExtractionUnavailableError extends Error {
     this.name = "ExtractionUnavailableError";
   }
 }
+
+/**
+ * Extracted text that cannot be stored as-is. PostgreSQL text rejects U+0000, and the extracted
+ * text is legal content, so it is refused rather than silently altered. The message is shown to
+ * the uploader.
+ */
+export class ExtractedTextContentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExtractedTextContentError";
+  }
+}
+
+const NUL_CHARACTER_MESSAGE =
+  "The file's text contains a null character (U+0000), which cannot be stored. Remove it, or save the document in another format, and upload it again.";
 
 const ALLOWED_MIME_TYPES = [
   PDF_MIME_TYPE,
@@ -529,7 +548,8 @@ export function validateMimeType(mimeType: string, fileName?: string): string {
 /**
  * Extract text from a PDF buffer using unpdf.
  * If the PDF appears to be scanned (low text density), returns the extracted text with method
- * pdf_scanned. Otherwise individual pages without a text layer are listed in pagesWithoutText.
+ * pdf_scanned. Otherwise individual pages with little or no selectable text are listed in
+ * sparseTextPages; their text, if any, stays in the result.
  * Callers turn either into a warning.
  */
 export async function extractTextFromPdf(
@@ -552,7 +572,7 @@ export async function extractTextFromPdf(
     }
 
     const pages: string[] = [];
-    const pagesWithoutText: number[] = [];
+    const sparseTextPages: number[] = [];
     let characters = 0;
     // Read one page at a time: unpdf's convenience helper materializes every page in parallel.
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
@@ -576,7 +596,7 @@ export async function extractTextFromPdf(
         // Only this tally is kept; the stored text, and the offsets citations take into it, are
         // unchanged.
         if (pageText.replace(/\s+/g, "").length < MIN_PAGE_TEXT_CHARACTERS) {
-          pagesWithoutText.push(pageNumber);
+          sparseTextPages.push(pageNumber);
         }
       } finally {
         page.cleanup();
@@ -609,16 +629,17 @@ export async function extractTextFromPdf(
       };
     }
 
-    if (pagesWithoutText.length > 0) {
-      // A text PDF with some image-only pages (typically appended scans of schedules or signed
-      // pages). The document-wide average cannot see them, so report them by page; confidence
-      // is the share of pages that were actually read, kept below a full read.
-      const readPages = pageCount - pagesWithoutText.length;
+    if (sparseTextPages.length > 0) {
+      // A text PDF with some sparse pages: possibly image-only scans of schedules or signed
+      // pages, which the document-wide average cannot see, so report them by page. Confidence is
+      // the share of pages with substantial selectable text, kept below 100 because a sparse page
+      // may be a scan whose content is missing from the text.
+      const textPages = pageCount - sparseTextPages.length;
       return {
         text: extractedText,
         method: "pdf_parse",
-        confidence: Math.min(99, Math.floor((readPages / pageCount) * 100)),
-        pagesWithoutText,
+        confidence: Math.min(99, Math.floor((textPages / pageCount) * 100)),
+        sparseTextPages,
       };
     }
 
@@ -876,8 +897,27 @@ export async function processFile(
   return processValidatedFile(buffer, supportedMimeType, options);
 }
 
-/** Internal extraction path for callers that have already validated MIME and signature. */
+/**
+ * Internal extraction path for callers that have already validated MIME and signature.
+ * Every extractor's output passes through here before it can be persisted or hashed.
+ *
+ * @throws ExtractedTextContentError when the extracted text contains U+0000.
+ */
 export async function processValidatedFile(
+  buffer: Buffer,
+  supportedMimeType: string,
+  options?: { signal?: AbortSignal },
+): Promise<ExtractionResult> {
+  const result = await extractValidatedFile(buffer, supportedMimeType, options);
+  // The plain-text signature check samples only the first 8 KiB, a UTF-16 BOM legitimately
+  // brings NUL bytes into that sample, and parsers or OCR can emit U+0000 themselves.
+  if (result.text.includes("\u0000")) {
+    throw new ExtractedTextContentError(NUL_CHARACTER_MESSAGE);
+  }
+  return result;
+}
+
+async function extractValidatedFile(
   buffer: Buffer,
   supportedMimeType: string,
   options?: { signal?: AbortSignal },

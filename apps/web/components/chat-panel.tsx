@@ -6,15 +6,19 @@ import {
 } from "@/lib/chat-history-shared";
 
 import type { ModelMessage } from "ai";
-import type { ChatToolActivity, ChatToolName } from "@/lib/chat";
+import type { ChatToolActivity } from "@/lib/chat";
 
 import { toast } from "sonner";
 import { chatRequestFailure } from "@/lib/chat-request-error";
-import type { AccountQuota } from "@/lib/inference-policy";
+import {
+  readChatApiResponse,
+  parseToolActivity,
+  TOOL_ACTIVITY_LABELS,
+  type ChatApiStreamSnapshot,
+} from "@/lib/chat-api-response";
 import {
   composerUsageNote,
   formatResetTime,
-  parseAccountQuota,
   syncUsage,
   useUsage,
 } from "@/lib/usage-client";
@@ -66,10 +70,15 @@ import {
 import { LandingHero } from "@/components/landing-hero";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { cn, isRecord } from "@/lib/utils";
-import { ApiRequestError } from "@/lib/api-client";
+import { cn } from "@/lib/utils";
 import { createOperationGuard } from "@/lib/operation-guard";
+import { createSavedChatSession } from "@/lib/saved-chat-session";
 import { refreshWorkspaceList } from "@/lib/use-workspace-list";
+import {
+  chatThreadOptions,
+  type ChatThreadDetail,
+  type ChatThreadMessage,
+} from "@/lib/workspace-query-options";
 import {
   hasPrivacyConsent,
   PRIVACY_CONSENT_EVENT,
@@ -80,56 +89,6 @@ type ChatApiMessage = {
   content: string;
   agentMessages?: unknown[];
   webSources?: ReturnType<typeof parseWebSources>;
-};
-
-type ChatApiSuccess = {
-  toolActivity?: ChatToolActivity[];
-  /** Temporary chat keeps its tool exchanges here; saved threads reload them from the database. */
-  agentMessages?: unknown[];
-  webSources?: ReturnType<typeof parseWebSources>;
-  message: string;
-  provider?: string;
-  model?: string;
-  persisted?: boolean;
-  storedMessages?: ChatThreadMessage[];
-  /** The signed-in account's quota as of this request's admission. */
-  quota?: AccountQuota;
-};
-
-type ChatApiStreamEvent =
-  | { type: "tool"; activity: ChatToolActivity }
-  | {
-      type: "delta";
-      text: string;
-    }
-  | ({
-      type: "done";
-    } & ChatApiSuccess)
-  | {
-      type: "error";
-      error: string;
-    };
-
-type ChatApiStreamSnapshot = ChatApiSuccess & {
-  done: boolean;
-};
-
-type ChatThreadMessage = {
-  toolActivity?: ChatToolActivity[];
-  id: string;
-  position: number;
-  role: "system" | "user" | "assistant";
-  content: string;
-  createdAt: string;
-  model?: string | null;
-  provider?: string | null;
-};
-
-type ChatThreadDetail = {
-  id: string;
-  title: string;
-  messages: ChatThreadMessage[];
-  hasMore: boolean;
 };
 
 function extractMessageText(message: Pick<ThreadMessage, "content">): string {
@@ -216,46 +175,6 @@ function toApiMessages(messages: readonly ThreadMessage[]): ChatApiMessage[] {
   );
 }
 
-function parseError(payload: unknown, status: number): string {
-  return chatRequestFailure(payload, status, null).message;
-}
-
-function parseSuccess(payload: unknown): ChatApiSuccess {
-  if (!isRecord(payload) || typeof payload.message !== "string") {
-    throw new Error("Chat response did not include a message.");
-  }
-
-  const message = payload.message.trim();
-  if (!message) {
-    throw new Error("Chat response was empty.");
-  }
-
-  return {
-    message,
-    webSources: parseWebSources(payload.webSources),
-    toolActivity: parseToolActivity(payload.toolActivity),
-    agentMessages: Array.isArray(payload.agentMessages)
-      ? payload.agentMessages
-      : undefined,
-    storedMessages: Array.isArray(payload.storedMessages)
-      ? payload.storedMessages.filter(
-          (message): message is ChatThreadMessage =>
-            isRecord(message) &&
-            typeof message.id === "string" &&
-            typeof message.content === "string" &&
-            typeof message.position === "number" &&
-            (message.role === "user" || message.role === "assistant"),
-        )
-      : undefined,
-    provider:
-      typeof payload.provider === "string" ? payload.provider : undefined,
-    model: typeof payload.model === "string" ? payload.model : undefined,
-    persisted:
-      typeof payload.persisted === "boolean" ? payload.persisted : undefined,
-    quota: parseAccountQuota(payload.quota) ?? undefined,
-  };
-}
-
 function ChatMessageError() {
   const failure = useMessage((state) => state.metadata.custom?.requestError) as
     ReturnType<typeof chatRequestFailure> | undefined;
@@ -292,224 +211,11 @@ function ChatMessageError() {
   );
 }
 
-const TOOL_ACTIVITY_LABELS: Record<
-  ChatToolName,
-  { running: string; complete: string; error: string }
-> = {
-  search_web: {
-    running: "Searching",
-    complete: "Searched",
-    error: "Search unavailable",
-  },
-  generate_image: {
-    running: "Generating image",
-    complete: "Generated image",
-    error: "Image unavailable",
-  },
-  read_url: {
-    running: "Reading page",
-    complete: "Read page",
-    error: "Page unavailable",
-  },
-  http_get: { running: "Fetching", complete: "Fetched", error: "Fetch failed" },
-  read_contract: {
-    running: "Reading contract",
-    complete: "Read contract",
-    error: "Contract unavailable",
-  },
-  list_contracts: {
-    running: "Listing contracts",
-    complete: "Listed contracts",
-    error: "Contract list unavailable",
-  },
-};
-
-function parseToolActivity(value: unknown): ChatToolActivity[] {
-  return Array.isArray(value)
-    ? value.flatMap((item): ChatToolActivity[] =>
-        isRecord(item) &&
-        typeof item.id === "string" &&
-        typeof item.query === "string" &&
-        (item.status === "running" ||
-          item.status === "complete" ||
-          item.status === "error")
-          ? [
-              {
-                id: item.id,
-                query: item.query,
-                status: item.status,
-                ...(typeof item.tool === "string" &&
-                item.tool in TOOL_ACTIVITY_LABELS
-                  ? { tool: item.tool as ChatToolName }
-                  : {}),
-              },
-            ]
-          : [],
-      )
-    : [];
-}
-
 function describeToolActivity(activity: ChatToolActivity): string {
   // Rows saved before other tools existed carry no tool name and were always searches.
   const label =
     TOOL_ACTIVITY_LABELS[activity.tool ?? "search_web"][activity.status];
   return activity.query ? `${label}: ${activity.query}` : label;
-}
-
-function parseStreamEvent(payload: unknown): ChatApiStreamEvent {
-  if (!isRecord(payload) || typeof payload.type !== "string") {
-    throw new Error("Chat stream included an invalid event.");
-  }
-
-  if (payload.type === "tool") {
-    const activity = parseToolActivity([payload.activity])[0];
-    if (!activity) throw new Error("Invalid tool activity");
-    return { type: "tool", activity };
-  }
-
-  if (payload.type === "delta") {
-    return {
-      type: "delta",
-      text: typeof payload.text === "string" ? payload.text : "",
-    };
-  }
-
-  if (payload.type === "done") {
-    return {
-      type: "done",
-      ...parseSuccess(payload),
-    };
-  }
-
-  if (payload.type === "error") {
-    return {
-      type: "error",
-      error:
-        typeof payload.error === "string" && payload.error.trim()
-          ? payload.error
-          : "Chat request failed.",
-    };
-  }
-
-  throw new Error(`Unknown chat stream event: ${payload.type}`);
-}
-
-function parseJsonPayload(rawPayload: string): unknown {
-  if (!rawPayload) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(rawPayload);
-  } catch {
-    return null;
-  }
-}
-
-async function* readChatApiResponse(
-  response: Response,
-): AsyncGenerator<ChatApiStreamSnapshot> {
-  const contentType = response.headers.get("Content-Type") ?? "";
-  if (
-    !response.ok ||
-    !response.body ||
-    !contentType.includes("application/x-ndjson")
-  ) {
-    const parsedPayload = parseJsonPayload(await response.text());
-
-    if (!response.ok) {
-      throw new Error(parseError(parsedPayload, response.status));
-    }
-
-    yield {
-      ...parseSuccess(parsedPayload),
-      done: true,
-    };
-    return;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let accumulatedMessage = "";
-  const toolActivity = new Map<string, ChatToolActivity>();
-  // Rebuilt only when a tool event actually changes the map. Spreading it per delta allocated a
-  // fresh array per token and changed the metadata identity on every one, which made
-  // SearchActivity re-validate the whole list on each render of a streaming reply.
-  let toolActivitySnapshot: ChatToolActivity[] = [];
-
-  // The `finally` releases the reader on every exit path — normal completion, a thrown stream
-  // error, and (importantly) the implicit generator return when the consumer aborts mid-turn.
-  // Without it the ReadableStream stays locked with unread bytes until GC.
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (value) {
-        buffer += decoder.decode(value, { stream: !done });
-      }
-      if (done) {
-        buffer += decoder.decode();
-      }
-
-      const lines = buffer.split("\n");
-      buffer = done ? "" : (lines.pop() ?? "");
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-
-        // Use the safe parser: an intermediary (CDN/proxy) keep-alive or comment line that survives
-        // the split is non-JSON and would otherwise throw here and abort an already-streaming turn.
-        const parsed = parseJsonPayload(trimmed);
-        if (parsed === null) continue;
-
-        const event = parseStreamEvent(parsed);
-
-        if (event.type === "error") {
-          throw new Error(event.error);
-        }
-
-        if (event.type === "tool") {
-          toolActivity.set(event.activity.id, event.activity);
-          toolActivitySnapshot = [...toolActivity.values()];
-          yield {
-            message: accumulatedMessage,
-            done: false,
-            toolActivity: toolActivitySnapshot,
-          };
-          continue;
-        }
-
-        if (event.type === "delta") {
-          if (!event.text) continue;
-          accumulatedMessage += event.text;
-          yield {
-            message: accumulatedMessage,
-            toolActivity: toolActivitySnapshot,
-            done: false,
-          };
-          continue;
-        }
-
-        yield {
-          ...event,
-          message: event.message || accumulatedMessage,
-          done: true,
-        };
-        return;
-      }
-
-      if (done) {
-        break;
-      }
-    }
-
-    // Only reachable via the `break` above: the stream ended without a terminal event. The
-    // success path returns from inside the loop.
-    throw new Error("Chat stream ended before completion.");
-  } finally {
-    await reader.cancel().catch(() => {});
-  }
 }
 
 function toRuntimeMessages(messages: ChatThreadMessage[]): ThreadMessageLike[] {
@@ -856,11 +562,28 @@ export function ChatPanel({
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreGuard] = useState(createOperationGuard);
+  const [savedChatSession] = useState(() => createSavedChatSession(async (id) => {
+    const response = await fetch(`/api/chat/threads/${encodeURIComponent(id)}?onlyIfEmpty=1`, {
+      method: "DELETE",
+    });
+    if (response.ok) {
+      queryClient.removeQueries({ queryKey: ["chat-thread", id] });
+      void queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+    }
+  }));
   const loadingOlderRef = useRef(false);
   const hydratedSignatureRef = useRef<string | null>(null);
   const initialPromptSignatureRef = useRef<string | null>(null);
   const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
   const previousActiveThreadIdRef = useRef<string | null>(null);
+
+  useLayoutEffect(() => {
+    savedChatSession.select(selectedThreadId, active && !temporary);
+  }, [savedChatSession, selectedThreadId, active, temporary]);
+  useLayoutEffect(
+    () => () => savedChatSession.invalidate(),
+    [savedChatSession],
+  );
 
   useLayoutEffect(() => {
     restoreGuard.invalidate();
@@ -883,25 +606,11 @@ export function ChatPanel({
   }, [isLoaded, user?.id]);
 
   const activeThreadQuery = useQuery({
-    queryKey: ["chat-thread", activeThreadId],
-    refetchOnWindowFocus: false,
+    ...chatThreadOptions(activeThreadId),
     enabled: !temporary && Boolean(activeThreadId),
-    queryFn: async ({ signal }) => {
-      const response = await fetch(`/api/chat/threads/${activeThreadId}`, { signal });
-      const payload = (await response.json().catch(() => null)) as {
-        data?: ChatThreadDetail;
-        error?: string;
-      } | null;
-
-      if (!response.ok || !payload?.data) {
-        throw new ApiRequestError(payload?.error || "Failed to fetch chat thread.", response.status);
-      }
-
-      return payload.data;
-    },
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (temporary) {
       if (activeThreadId !== null) {
         setActiveThreadId(null);
@@ -935,34 +644,57 @@ export function ChatPanel({
         }
 
         let threadId = activeThreadId;
-        if (!temporary && !threadId) {
-          const createThreadResponse = await fetch("/api/chat/threads", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({}),
-            signal: abortSignal,
-          });
-          const createPayload = (await createThreadResponse
-            .json()
-            .catch(() => null)) as {
-            data?: { id?: string };
-            error?: string;
-          } | null;
+        const savedRun = temporary
+          ? null
+          : savedChatSession.beginRun(abortSignal);
+        const assertCurrent = () => {
+          abortSignal.throwIfAborted();
+          savedRun?.assertCurrent();
+        };
+        if (savedRun) {
+          let creationFailure: ReturnType<typeof chatRequestFailure> | null = null;
+          try {
+            threadId = await savedRun.resolveThread(async () => {
+              const createThreadResponse = await fetch("/api/chat/threads", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({}),
+              });
+              const createPayload = (await createThreadResponse
+                .json()
+                .catch(() => null)) as {
+                data?: { id?: string };
+                error?: string;
+              } | null;
 
-          if (!createThreadResponse.ok) {
-            const failure = chatRequestFailure(createPayload, createThreadResponse.status, createThreadResponse.headers.get("Retry-After"));
-            yield { metadata: { custom: { requestError: failure } } };
-            throw new Error(failure.message);
-          }
-          if (!createPayload?.data?.id) {
-            throw new Error(
-              createPayload?.error || "Failed to create chat thread.",
-            );
-          }
+              if (!createThreadResponse.ok) {
+                creationFailure = chatRequestFailure(
+                  createPayload,
+                  createThreadResponse.status,
+                  createThreadResponse.headers.get("Retry-After"),
+                );
+                throw new Error(creationFailure.message);
+              }
+              if (!createPayload?.data?.id) {
+                throw new Error(
+                  createPayload?.error || "Failed to create chat thread.",
+                );
+              }
 
-          threadId = createPayload.data.id;
+              return createPayload.data.id;
+            });
+          } catch (error) {
+            assertCurrent();
+            if (creationFailure) {
+              yield { metadata: { custom: { requestError: creationFailure } } };
+            }
+            throw error;
+          }
+          assertCurrent();
+        }
+        if (!temporary && threadId && threadId !== activeThreadId) {
           newlyCreatedThreadIdsRef.current.add(threadId);
           setActiveThreadId(threadId);
           onThreadSelected?.(threadId);
@@ -989,9 +721,11 @@ export function ChatPanel({
           }),
           signal: abortSignal,
         });
+        assertCurrent();
 
         if (!response.ok) {
           const failure = chatRequestFailure(await response.json().catch(() => null), response.status, response.headers.get("Retry-After"));
+          assertCurrent();
           // Any failure may follow admission (e.g. a provider error before streaming), so refresh
           // usage for all of them; 429s also carry the current quota.
           void syncUsage(queryClient, failure.quota);
@@ -1003,7 +737,8 @@ export function ChatPanel({
 
         // An admitted request counts against the hourly quota however it ends.
         try {
-          for await (const snapshot of readChatApiResponse(response)) {
+          for await (const snapshot of readChatApiResponse(response, abortSignal)) {
+            assertCurrent();
             completedSnapshot = snapshot.done ? snapshot : completedSnapshot;
             yield {
               content: [{ type: "text", text: snapshot.message }] as const,
@@ -1026,6 +761,7 @@ export function ChatPanel({
           void syncUsage(queryClient, completedSnapshot?.quota);
         }
 
+        assertCurrent();
         if (!completedSnapshot) {
           throw new Error("Chat stream ended before completion.");
         }
@@ -1068,6 +804,7 @@ export function ChatPanel({
       onThreadSelected,
       privacyAcknowledged,
       queryClient,
+      savedChatSession,
       temporary,
     ],
   );
@@ -1093,7 +830,10 @@ export function ChatPanel({
     activeThreadQuery.isLoading &&
     !newlyCreatedThreadIdsRef.current.has(activeThreadId);
   const isThreadUnavailable =
-    !temporary && activeThreadId !== null && activeThreadQuery.isLoadingError;
+    !temporary &&
+    activeThreadId !== null &&
+    activeThreadQuery.isLoadingError &&
+    !newlyCreatedThreadIdsRef.current.has(activeThreadId);
 
   useEffect(() => {
     setPersistenceWarning(false);
@@ -1173,7 +913,11 @@ export function ChatPanel({
     const isNewlyCreatedThread = newlyCreatedThreadIdsRef.current.has(
       thread.id,
     );
-    if (isNewlyCreatedThread && thread.messages.length === 0) {
+    if (
+      isNewlyCreatedThread &&
+      (thread.messages.length === 0 || runtime.thread.getState().isRunning)
+    ) {
+      // The local first turn (including its retry/error state) owns the runtime until it finishes.
       hydratedSignatureRef.current = `${thread.id}:pending`;
       return;
     }
@@ -1351,23 +1095,15 @@ export function ChatPanel({
                           <h2 className="text-heading-2xs">
                             How can I help you today?
                           </h2>
-                          {activeThreadId ? (
+                          {!temporary ? (
                             <p className="text-sm text-muted-foreground leading-relaxed">
                               Start a conversation about reviewing your
                               contracts, spotting clauses, or navigating
                               negotiation points.
                             </p>
-                          ) : temporary ? (
-                            <p className="text-sm text-muted-foreground leading-relaxed">
-                              Temporary chat is not saved to your history.
-                            </p>
                           ) : (
                             <p className="text-sm text-muted-foreground leading-relaxed">
-                              Select an existing chat from the sidebar or click{" "}
-                              <span className="font-medium text-foreground">
-                                The &quot;+&quot; Button
-                              </span>{" "}
-                              to start.
+                              Temporary chat is not saved to your history.
                             </p>
                           )}
                         </div>

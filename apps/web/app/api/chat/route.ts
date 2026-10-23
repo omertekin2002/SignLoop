@@ -46,6 +46,7 @@ import {
   type AdmissionReason,
 } from "@/lib/inference-policy";
 import { generateChatTitle } from "@/lib/chat-title";
+import { GenerationTimings } from "@/lib/generation-timings";
 
 const CHAT_SYSTEM_PROMPT = `
 You are SignLoop's legal contract assistant.
@@ -147,7 +148,8 @@ async function persistChatMessages(input: {
           model: input.assistantModel,
           provider: input.assistantProvider,
           agentMessages: input.agentMessages ?? [],
-          contractEvidence: input.contractEvidence ?? [],
+          // Never default: an explicit empty list vouches that no contract was read.
+          contractEvidence: input.contractEvidence,
           webSources: input.webSources ?? [],
           toolActivity: input.toolActivity ?? [],
         },
@@ -203,9 +205,11 @@ function toDoneStreamEvent(input: {
 }
 
 export async function POST(req: Request) {
+  const timings = new GenerationTimings("chat");
   let release: (() => Promise<void>) | null = null;
   let releaseAdmission: (() => Promise<void>) | null = null;
   let streaming = false;
+  let endGeneration = () => {};
   let storedMessages: ChatMessageRecord[] = [];
   const disconnect = new AbortController();
   const titleController = new AbortController();
@@ -241,7 +245,8 @@ export async function POST(req: Request) {
     }
     const body = parsedBody.value;
     const isTemporaryChat = isRecord(body) && body.temporary === true;
-    const { userId } = await auth();
+    timings.enabled = !isTemporaryChat;
+    const { userId } = await timings.measure("auth", () => auth());
     // Search, page reading, and direct HTTP fetches are server-side invariants for authenticated
     // chats, so clients cannot disable them. Anonymous temporary chats get none of them, to protect
     // the private search quotas and to keep unauthenticated traffic off outbound fetches.
@@ -288,11 +293,8 @@ export async function POST(req: Request) {
     let persistedMessages: ChatMessageRecord[] = [];
 
     if (userId && !isTemporaryChat) {
-      release = await claimGenerationOperation(
-        userId,
-        "chat",
-        threadId,
-        CHAT_LEASE_SECONDS,
+      release = await timings.measure("lease", () =>
+        claimGenerationOperation(userId, "chat", threadId, CHAT_LEASE_SECONDS),
       );
       if (!release)
         return NextResponse.json(
@@ -300,10 +302,12 @@ export async function POST(req: Request) {
           { status: 409 },
         );
       // Read the owner-scoped thread before admission, so a missing or foreign thread costs no quota.
-      const recentMessages = await getRecentChatMessagesForThreadForUser(
-        userId,
-        threadId,
-        MAX_CHAT_MESSAGES - 1,
+      const recentMessages = await timings.measure("history", () =>
+        getRecentChatMessagesForThreadForUser(
+          userId,
+          threadId,
+          MAX_CHAT_MESSAGES - 1,
+        ),
       );
       if (!recentMessages)
         return NextResponse.json(
@@ -315,7 +319,9 @@ export async function POST(req: Request) {
 
     let quota: AccountQuota | undefined;
     try {
-      const admission = await admitChat(userId);
+      const admission = await timings.measure("admission", () =>
+        admitChat(userId),
+      );
       if ("retryAfter" in admission)
         return admissionRejectedResponse(
           admission,
@@ -331,11 +337,20 @@ export async function POST(req: Request) {
     }
 
     const [settings, modelSnapshot] = await Promise.all([
-      userId ? getUserSettingsByUserId(userId) : Promise.resolve(null),
+      userId
+        ? timings.measure("settings", () => getUserSettingsByUserId(userId))
+        : Promise.resolve(null),
       // Anonymous chat uses the configured default model and gets no image tool, so it skips the
       // upstream /models round-trip rather than blocking on a 5s timeout for nothing.
       userId
-        ? getModelAvailabilitySnapshot()
+        ? timings.measure("model_discovery", () =>
+            getModelAvailabilitySnapshot({
+              deferRefresh: (refresh) => after(refresh),
+              onSource: (source) => {
+                timings.discoverySource = source;
+              },
+            }),
+          )
         : Promise.resolve({
             availablePrimaryModels: [],
             imageGenerationAvailable: false,
@@ -399,6 +414,8 @@ export async function POST(req: Request) {
           })
         : Promise.resolve(null);
 
+    timings.outcome = "error";
+    endGeneration = timings.start("generation");
     const wantsStream = isRecord(body) && body.stream === true;
     if (wantsStream) {
       streaming = true;
@@ -418,6 +435,7 @@ export async function POST(req: Request) {
               enableHttpFetch: enableWebSearch,
               contractsUserId: userId,
               recordTelemetry: !isTemporaryChat,
+              onTiming: isTemporaryChat ? undefined : timings.mark,
               enableImageGeneration: modelSnapshot.imageGenerationAvailable,
               userId,
             })) {
@@ -426,6 +444,7 @@ export async function POST(req: Request) {
               }
 
               if (chunk.type === "delta") {
+                if (chunk.text) timings.mark("first_output");
                 controller.enqueue(
                   streamEvent({ type: "delta", text: chunk.text }),
                 );
@@ -433,10 +452,13 @@ export async function POST(req: Request) {
               }
 
               if (chunk.type === "tool") {
+                timings.mark("first_output");
                 controller.enqueue(streamEvent(chunk));
                 continue;
               }
 
+              endGeneration();
+              timings.mark("generation_complete");
               const assistantMessage = appendWebSourcesToMessage(
                 chunk.reply.message,
                 chunk.reply.webSearch?.sources ?? [],
@@ -451,21 +473,29 @@ export async function POST(req: Request) {
               // Log it, mark the done event as unpersisted, and still finalize the turn.
               let persisted = true;
               try {
-                storedMessages = await persistChatMessages({
-                  userId,
-                  threadId,
-                  latestUserMessage,
-                  assistantMessage,
-                  agentMessages: chunk.reply.agentMessages,
-                  contractEvidence: chunk.reply.contractEvidence,
-                  webSources: chunk.reply.webSearch?.sources,
-                  toolActivity: chunk.reply.toolActivity,
-                  assistantModel: chunk.reply.model ?? null,
-                  assistantProvider: chunk.reply.provider ?? null,
-                  temporary: isTemporaryChat,
-                  generatedTitle: await generatedTitle,
-                  signal: operationSignal,
-                });
+                const title = await timings.measure(
+                  "title_wait",
+                  () => generatedTitle,
+                );
+                storedMessages = await timings.measure(
+                  "persistence",
+                  async () =>
+                    persistChatMessages({
+                      userId,
+                      threadId,
+                      latestUserMessage,
+                      assistantMessage,
+                      agentMessages: chunk.reply.agentMessages,
+                      contractEvidence: chunk.reply.contractEvidence,
+                      webSources: chunk.reply.webSearch?.sources,
+                      toolActivity: chunk.reply.toolActivity,
+                      assistantModel: chunk.reply.model ?? null,
+                      assistantProvider: chunk.reply.provider ?? null,
+                      temporary: isTemporaryChat,
+                      generatedTitle: title,
+                      signal: operationSignal,
+                    }),
+                );
               } catch (persistError) {
                 if (
                   req.signal.aborted ||
@@ -494,6 +524,7 @@ export async function POST(req: Request) {
                   }),
                 ),
               );
+              timings.outcome = persisted ? "success" : "unpersisted";
               sentDone = true;
             }
 
@@ -526,18 +557,24 @@ export async function POST(req: Request) {
               }),
             );
           } finally {
+            endGeneration();
             titleController.abort();
+            const endRelease = timings.start("release");
             await release?.().catch((error) =>
               console.error("Chat lease release failed", error),
             );
             await releaseAdmission?.().catch((error) =>
               console.error("Chat admission release failed", error),
             );
+            endRelease();
+            // The client cancels its reader after done, possibly while release is pending.
+            timings.finish(!sentDone && operationSignal.aborted);
             if (!disconnect.signal.aborted) controller.close();
           }
         },
       });
 
+      timings.mark("response_ready");
       return new Response(stream, {
         headers: {
           "Content-Type": "application/x-ndjson; charset=utf-8",
@@ -566,9 +603,12 @@ export async function POST(req: Request) {
       enableHttpFetch: enableWebSearch,
       contractsUserId: userId,
       recordTelemetry: !isTemporaryChat,
+      onTiming: isTemporaryChat ? undefined : timings.mark,
       enableImageGeneration: modelSnapshot.imageGenerationAvailable,
       userId,
     });
+    endGeneration();
+    timings.mark("generation_complete");
     const assistantMessage = appendWebSourcesToMessage(
       message,
       webSearch?.sources ?? [],
@@ -582,21 +622,24 @@ export async function POST(req: Request) {
       }
 
       try {
-        storedMessages = await persistChatMessages({
-          userId,
-          threadId,
-          latestUserMessage,
-          assistantMessage,
-          agentMessages,
-          contractEvidence,
-          webSources: webSearch?.sources,
-          toolActivity,
-          assistantModel: model ?? null,
-          assistantProvider: provider ?? null,
-          temporary: false,
-          generatedTitle: await generatedTitle,
-          signal: operationSignal,
-        });
+        const title = await timings.measure("title_wait", () => generatedTitle);
+        storedMessages = await timings.measure("persistence", async () =>
+          persistChatMessages({
+            userId,
+            threadId,
+            latestUserMessage,
+            assistantMessage,
+            agentMessages,
+            contractEvidence,
+            webSources: webSearch?.sources,
+            toolActivity,
+            assistantModel: model ?? null,
+            assistantProvider: provider ?? null,
+            temporary: false,
+            generatedTitle: title,
+            signal: operationSignal,
+          }),
+        );
       } catch (persistError) {
         // Match the streaming path: inference already succeeded, so keep the useful reply while
         // clearly telling the client not to treat the in-memory turn as canonical history.
@@ -605,6 +648,8 @@ export async function POST(req: Request) {
       }
     }
 
+    timings.outcome = persisted ? "success" : "unpersisted";
+    timings.mark("response_ready");
     return NextResponse.json(
       {
         message: assistantMessageForClient(
@@ -631,12 +676,15 @@ export async function POST(req: Request) {
       { headers: rateLimitHeaders(quota) },
     );
   } catch (error: unknown) {
+    timings.outcome = "error";
     console.error("Chat API error:", error);
     return NextResponse.json(
       { error: getPublicChatErrorMessage(error) },
       { status: 500 },
     );
   } finally {
+    if (!streaming) endGeneration();
+    const endRelease = timings.start("release");
     if (!streaming) titleController.abort();
     if (!streaming)
       await release?.().catch((error) =>
@@ -646,5 +694,9 @@ export async function POST(req: Request) {
       await releaseAdmission?.().catch((error) =>
         console.error("Chat admission release failed", error),
       );
+    if (!streaming) {
+      endRelease();
+      timings.finish(operationSignal.aborted);
+    }
   }
 }

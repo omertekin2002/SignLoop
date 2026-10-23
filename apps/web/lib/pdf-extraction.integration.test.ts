@@ -19,7 +19,7 @@ describe("real PDF extraction", () => {
     expect(source.length).toBeGreaterThan(0);
   });
 
-  it("reports an image-only page between text pages and keeps the text layer as read", async () => {
+  it("flags an image-only page between text pages and keeps the text layer", async () => {
     // Synthetic three-page PDF; page 2 is a raster with no text (fixtures/README.md).
     const source = await readFile(
       new URL("./fixtures/pdf-scanned-middle-page.pdf", import.meta.url),
@@ -36,7 +36,29 @@ describe("real PDF extraction", () => {
         "4. Termination. Either party may terminate on sixty days written notice.",
       method: "pdf_parse",
       confidence: 66,
-      pagesWithoutText: [2],
+      sparseTextPages: [2],
+    });
+  });
+
+  it("keeps a short cover page's selectable text while flagging the page as sparse", async () => {
+    // Synthetic three-page text PDF; page 1 carries only "EXHIBIT A" (fixtures/README.md).
+    const source = await readFile(
+      new URL("./fixtures/pdf-short-cover-page.pdf", import.meta.url),
+    );
+
+    const result = await extractTextFromPdf(source);
+
+    expect(result).toEqual({
+      text:
+        "EXHIBIT A " +
+        "SCHEDULE OF SERVICES " +
+        "1. Scope. The Supplier will host and maintain the Customer portal. " +
+        "2. Support. The Supplier will answer support requests within one business day. " +
+        "3. Fees. The Customer will pay a monthly fee of 2,000 USD in advance. " +
+        "4. Termination. Either party may end this Exhibit on thirty days written notice.",
+      method: "pdf_parse",
+      confidence: 66,
+      sparseTextPages: [1],
     });
   });
 });

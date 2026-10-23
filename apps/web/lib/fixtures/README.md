@@ -53,9 +53,23 @@ have a text layer in the standard Helvetica font with WinAnsiEncoding: an
 agreement title and clauses 1–2, then clauses 3–4. Page 2 stands in for a
 scanned signature page: it paints one 8×8 DeviceGray raster and has no text
 operators. `../pdf-extraction.integration.test.ts` and
-`../upload-pipeline.test.ts` expect page 2 to be reported as unread and the
-other pages' text to be kept exactly. `.gitattributes` marks both files binary,
-since line-ending conversion would break the PDF's cross-reference offsets.
+`../upload-pipeline.test.ts` expect page 2 to be flagged as having little or
+no selectable text and the other pages' text to be kept exactly.
+`.gitattributes` marks the PDF and PNG fixtures binary, since line-ending
+conversion would break the PDF's cross-reference offsets.
+
+## PDF with a short cover page
+
+`pdf-short-cover-page.pdf` is a generated three-page PDF 1.4 file in the same
+form (US Letter, Helvetica with WinAnsiEncoding, uncompressed streams, no
+metadata, document ID or images). Page 1 is an ordinary exhibit cover carrying
+only `EXHIBIT A`; page 2 holds `SCHEDULE OF SERVICES` and clauses 1–2, and page
+3 clauses 3–4, all as selectable text (12 pt; the cover line starts at (270, 400),
+the clause pages at (72, 720) with 16 pt leading). A short Python script wrote each
+object, the cross-reference table and the trailer directly; it is not kept.
+The tests expect page 1 to be flagged as sparse while `EXHIBIT A` stays in the
+extracted text, and the stored upload warning to say that text is included
+rather than that the page was not read.
 
 ```sh
 bun --no-env-file run test lib/image-extraction.integration.test.ts lib/pdf-extraction.integration.test.ts

@@ -41,6 +41,7 @@ import {
   claimGenerationOperation,
   createAnalysisForContract,
   createChatThreadForUser,
+  deleteChatThreadForUser,
   createContractForUser,
   createProjectForUser,
   deleteAnalysisForContract,
@@ -63,6 +64,7 @@ import {
 import { attachAnalysisSources, contractSourceRevision } from "./analysis-sources";
 import { citationForReport } from "./source-citations";
 import { buildAnalysisPrompt } from "./analysis";
+import { boundCanonicalChatHistory } from "./chat-history-bounds";
 import { admissionLimits, type AdmissionResult } from "./inference-policy";
 
 // db/test-integration.sh sets this and runs vitest directly, outside turbo's env filtering.
@@ -96,6 +98,60 @@ describe.skipIf(!connectionString)("database integration", () => {
 
   const contract = () =>
     createContractForUser({ userId: "owner", title: "Test" });
+
+  it("removes only an owned, empty, idle thread during abandoned-draft cleanup", async () => {
+    const thread = await createChatThreadForUser({ userId: "owner" });
+    const discard = (userId: string) => deleteChatThreadForUser({
+      userId, threadId: thread.id, onlyIfEmpty: true,
+    });
+    expect(await discard("another-owner")).toBe(false);
+    const release = await claimGenerationOperation("owner", "chat", thread.id, 60);
+    expect(release).toBeTypeOf("function");
+    try {
+      expect(await deleteChatThreadForUser({
+        userId: "owner", threadId: thread.id.toUpperCase(), onlyIfEmpty: true,
+      })).toBe(false);
+      expect(await getChatThreadByIdForUser("owner", thread.id)).not.toBeNull();
+    } finally {
+      await release?.();
+    }
+    expect(await discard("owner")).toBe(true);
+    expect(await getChatThreadByIdForUser("owner", thread.id)).toBeNull();
+    expect(await discard("owner")).toBe(false);
+  });
+
+  it("preserves messages committed while empty-thread cleanup waits for the row lock", async () => {
+    const thread = await createChatThreadForUser({ userId: "owner" });
+    const writer = await pool.current!.connect();
+    let cleanup: Promise<boolean> | undefined;
+    try {
+      await writer.query("BEGIN");
+      await writer.query("SELECT id FROM chat_threads WHERE id = $1 FOR UPDATE", [thread.id]);
+      await writer.query(
+        "INSERT INTO chat_messages (thread_id, role, content, position) VALUES ($1, 'user', 'Keep this message', 1)",
+        [thread.id],
+      );
+      cleanup = deleteChatThreadForUser({ userId: "owner", threadId: thread.id, onlyIfEmpty: true });
+      await vi.waitFor(async () => {
+        const lease = await pool.current!.query(
+          "SELECT 1 FROM generation_operations WHERE entity_key = $1",
+          [`chat:owner:${thread.id}`],
+        );
+        expect(lease.rowCount).toBe(1);
+      });
+      await writer.query("COMMIT");
+      expect(await cleanup).toBe(false);
+      const saved = await getChatThreadByIdForUser("owner", thread.id);
+      expect(saved?.messages.map((message) => message.content)).toEqual(["Keep this message"]);
+    } finally {
+      await writer.query("ROLLBACK");
+      writer.release();
+      await cleanup;
+    }
+    const release = await claimGenerationOperation("owner", "chat", thread.id, 60);
+    expect(release).toBeTypeOf("function");
+    await release?.();
+  });
   const result = { risk_badge: "LOW", key_points: ["Example"] };
   async function analyse(id: string) {
     const snapshot = await getContractWithLatestAnalysisForUser("owner", id);
@@ -699,7 +755,7 @@ describe.skipIf(!connectionString)("database integration", () => {
   async function saveTurn(userId: string, agentMessages: unknown[], receipts?: ContractEvidence[]) {
     const ids = JSON.stringify(agentMessages).match(/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/gi) ?? [];
     const contractEvidence = receipts ?? (await pool.current!.query<ContractEvidence>(
-      `SELECT id, to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS revision FROM contracts WHERE id = ANY($1::uuid[])`, [ids],
+      `SELECT id, 'sha256:' || encode(digest(convert_to(coalesce(text_content, ''), 'UTF8'), 'sha256'), 'hex') AS revision FROM contracts WHERE id = ANY($1::uuid[])`, [ids],
     )).rows;
     const thread = await createChatThreadForUser({ userId, title: "Replay" });
     await appendChatMessagesToThread({
@@ -789,7 +845,7 @@ describe.skipIf(!connectionString)("database integration", () => {
   it("does not resurrect deleted evidence when an in-flight reply saves afterwards", async () => {
     const userId = "late-reply-owner";
     const item = await createContractForUser({ userId, title: "Contract" });
-    const snapshot = await getContractWithLatestAnalysisForUser(userId, item.id);
+    const snapshot = await getContractTextForUser(userId, item.id);
     const receipts = [{ id: item.id, revision: snapshot!.revision }];
     const turn = readContractTurn(item.id, "in-flight");
     await deleteContractForUser({ userId, contractId: item.id });
@@ -804,7 +860,7 @@ describe.skipIf(!connectionString)("database integration", () => {
   it("invalidates saved evidence and dependent follow-ups after a reupload", async () => {
     const userId = "revision-chat-owner";
     const item = await createContractForUser({ userId, title: "Revision" });
-    const snapshot = await getContractWithLatestAnalysisForUser(userId, item.id);
+    const snapshot = await getContractTextForUser(userId, item.id);
     const refs = [{ id: item.id, revision: snapshot!.revision }];
     const first = await saveTurn(userId, readContractTurn(item.id, "read"), refs);
     const followup = await saveTurn(userId, [], refs);
@@ -814,6 +870,302 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect((await followup())?.content).toBe(STALE_CONTRACT_REPLY);
     const late = await saveTurn(userId, readContractTurn(item.id, "late"), refs);
     expect((await late())?.agentMessages).toBeUndefined();
+    // A reply that saw both texts cannot replay either, even though one is current.
+    const current = await getContractTextForUser(userId, item.id);
+    expect(current?.revision).toBe(contractSourceRevision("New cancellation terms"));
+    const mixed = await saveTurn(userId, readContractTurn(item.id, "mixed"), [
+      ...refs, { id: item.id, revision: current!.revision },
+    ]);
+    expect((await mixed())?.content).toBe(STALE_CONTRACT_REPLY);
+    const fresh = await saveTurn(userId, readContractTurn(item.id, "fresh"), [
+      { id: item.id, revision: current!.revision },
+    ]);
+    expect((await fresh())?.agentMessages).toBeDefined();
+  });
+
+  it("keeps unchanged contract chat evidence through analysis and project context changes", async () => {
+    const userId = "content-receipt-owner";
+    const project = await createProjectForUser({ userId, title: "Receipts" });
+    const item = await createContractForUser({ userId, title: "Fees", projectId: project.id });
+    await pool.current!.query("UPDATE contracts SET text_content = 'The fee is $500.' WHERE id = $1", [item.id]);
+    // Receipts come from the chat tools; analysis concurrency uses its own revision.
+    const [listed] = (await listContractsForChat(userId)).contracts;
+    const read = await getContractTextForUser(userId, item.id);
+    const window = await getContractWindowForUser(userId, item.id, 0);
+    expect(new Set([listed?.revision, read?.revision, window?.revision])).toEqual(
+      new Set([contractSourceRevision("The fee is $500.")]),
+    );
+    const refs = [{ id: item.id, revision: read!.revision }];
+    const first = await saveTurn(userId, readContractTurn(item.id, "read"), refs);
+    const followup = await saveTurn(userId, [], refs);
+    const live = async () => {
+      expect((await first())?.agentMessages).toEqual(readContractTurn(item.id, "read").slice(0, 2));
+      expect((await followup())?.content).toBe("It quotes the secret clause.");
+    };
+
+    const before = await getContractWithLatestAnalysisForUser(userId, item.id);
+    // An in-flight reply that started before the analysis still saves its replay state.
+    const saved = await createAnalysisForContract({
+      userId,
+      contractId: item.id,
+      expectedRevision: before!.revision,
+      riskBadge: "LOW",
+      resultJson: result,
+      llmProvider: "test",
+      llmModel: "test",
+    });
+    const inFlight = await saveTurn(userId, readContractTurn(item.id, "in-flight"), refs);
+    await live();
+    expect((await inFlight())?.agentMessages).toBeDefined();
+
+    const analysed = await getContractWithLatestAnalysisForUser(userId, item.id);
+    expect(analysed?.revision).not.toBe(before?.revision);
+    await expect(
+      createAnalysisForContract({
+        userId,
+        contractId: item.id,
+        expectedRevision: before!.revision,
+        riskBadge: "LOW",
+        resultJson: result,
+        llmProvider: "test",
+        llmModel: "test",
+      }),
+    ).rejects.toThrow(/changed/i);
+
+    await deleteAnalysisForContract({ userId, contractId: item.id, analysisId: saved.id });
+    expect((await getContractWithLatestAnalysisForUser(userId, item.id))?.revision).not.toBe(
+      analysed?.revision,
+    );
+    await live();
+
+    const contextBefore = await getContractWithLatestAnalysisForUser(userId, item.id);
+    await pool.current!.query(
+      "INSERT INTO context_documents(project_id, title, extracted_text) VALUES ($1, 'Context', 'New evidence')",
+      [project.id],
+    );
+    await pool.current!.query("DELETE FROM context_documents WHERE project_id = $1", [project.id]);
+    expect((await getContractWithLatestAnalysisForUser(userId, item.id))?.revision).not.toBe(
+      contextBefore?.revision,
+    );
+    await live();
+    expect((await getContractTextForUser(userId, item.id))?.revision).toBe(read!.revision);
+
+    await deleteContractForUser({ userId, contractId: item.id });
+    expect((await first())?.content).toBe(STALE_CONTRACT_REPLY);
+    expect((await followup())?.content).toBe(STALE_CONTRACT_REPLY);
+  });
+
+  it("verifies pre-hash timestamp receipts only while the contract is unchanged", async () => {
+    const userId = "legacy-receipt-owner";
+    const item = await createContractForUser({ userId, title: "Legacy" });
+    await pool.current!.query("UPDATE contracts SET text_content = 'Legacy fee clause.' WHERE id = $1", [item.id]);
+    const stamp = [{ id: item.id, revision: (await getContractWithLatestAnalysisForUser(userId, item.id))!.revision }];
+    const content = [{ id: item.id, revision: contractSourceRevision("Legacy fee clause.") }];
+    const storedReceipts = async (id: string) => (await pool.current!.query(
+      "SELECT metadata_json->'contractEvidence' AS receipts FROM chat_messages WHERE id = $1", [id],
+    )).rows[0].receipts;
+    // A row saved before content hashes.
+    const legacy = await saveTurn(userId, readContractTurn(item.id, "legacy"), content);
+    await pool.current!.query(
+      "UPDATE chat_messages SET metadata_json = jsonb_set(metadata_json, '{contractEvidence}', $2::jsonb) WHERE id = $1",
+      [(await legacy())!.id, JSON.stringify(stamp)],
+    );
+    // A matching timestamp vouches for the text read from the same row version.
+    expect((await legacy())?.contractEvidence).toEqual(content);
+    expect((await legacy())?.agentMessages).toBeDefined();
+    expect(await storedReceipts((await legacy())!.id)).toEqual(stamp);
+    // An inherited timestamp is verified under the row lock and stored as the hash.
+    const followup = await saveTurn(userId, [], stamp);
+    expect(await storedReceipts((await followup())!.id)).toEqual(content);
+
+    // The timestamp cannot tell an analysis from a re-upload, so the legacy turn fails closed.
+    await createAnalysisForContract({
+      userId,
+      contractId: item.id,
+      expectedRevision: stamp[0]!.revision,
+      riskBadge: "LOW",
+      resultJson: result,
+      llmProvider: "test",
+      llmModel: "test",
+    });
+    expect((await legacy())?.content).toBe(STALE_CONTRACT_REPLY);
+    expect((await followup())?.content).toBe("It quotes the secret clause.");
+    const late = await saveTurn(userId, readContractTurn(item.id, "late"), stamp);
+    expect((await late())?.agentMessages).toBeUndefined();
+  });
+
+  it("carries saved receipts through canonical bounding so a tool-free followup is invalidated", async () => {
+    const userId = "bounded-followup-owner";
+    const item = await createContractForUser({ userId, title: "Fee agreement" });
+    const snapshot = await getContractTextForUser(userId, item.id);
+    const thread = await createChatThreadForUser({ userId, title: "Fees" });
+    await appendChatMessagesToThread({
+      userId,
+      threadId: thread.id,
+      messages: [
+        { role: "user", content: "Read my fee agreement" },
+        {
+          role: "assistant",
+          content: "The fee is $500.",
+          metadata: { contractEvidence: [{ id: item.id, revision: snapshot!.revision }] },
+        },
+      ],
+    });
+    // The saved-chat route rebuilds model history from these rows through the canonical bounds.
+    const recent = await getRecentChatMessagesForThreadForUser(userId, thread.id, 29);
+    const inherited = boundCanonicalChatHistory(recent!).flatMap(
+      (message) => message.contractEvidence ?? [],
+    );
+    expect(inherited).toEqual([{ id: item.id, revision: snapshot!.revision }]);
+    await appendChatMessagesToThread({
+      userId,
+      threadId: thread.id,
+      messages: [
+        { role: "user", content: "Explain that fee" },
+        {
+          role: "assistant",
+          content: "This means you pay $500 on cancellation.",
+          metadata: { contractEvidence: inherited, agentMessages: [], toolActivity: [] },
+        },
+      ],
+    });
+    expect((await getRecentChatMessagesForThreadForUser(userId, thread.id, 29))?.at(-1)?.content).toBe(
+      "This means you pay $500 on cancellation.",
+    );
+
+    await deleteContractForUser({ userId, contractId: item.id });
+    const after = await getRecentChatMessagesForThreadForUser(userId, thread.id, 29);
+    expect(after?.map((message) => message.content)).toEqual([
+      "Read my fee agreement",
+      STALE_CONTRACT_REPLY,
+      "Explain that fee",
+      STALE_CONTRACT_REPLY,
+    ]);
+    expect(boundCanonicalChatHistory(after!).flatMap((message) => message.contractEvidence ?? [])).toEqual([]);
+  });
+
+  it("keeps empty contract lookups replayable while receipt-less tool turns fail closed", async () => {
+    const userId = "empty-lookup-owner";
+    const foreign = await createContractForUser({ userId: "empty-lookup-intruder", title: "Not yours" });
+    // What the chat tools see for this owner: an empty listing and a missing contract.
+    expect(await listContractsForChat(userId, {})).toEqual({ contracts: [], nextOffset: null });
+    expect(await getContractWindowForUser(userId, foreign.id, 0)).toBeNull();
+    const lookups = [
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "list", toolName: "list_contracts", input: {} },
+          { type: "tool-call", toolCallId: "read", toolName: "read_contract", input: { contractId: foreign.id } },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "list",
+            toolName: "list_contracts",
+            output: { type: "json", value: { nextOffset: null, hasMore: false, contracts: [] } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "read",
+            toolName: "read_contract",
+            output: { type: "json", value: { error: "Contract not found. Call list_contracts to see available ids." } },
+          },
+        ],
+      },
+    ];
+    const toolActivity = [
+      { id: "list", tool: "list_contracts", query: "", status: "complete" },
+      { id: "read", tool: "read_contract", query: foreign.id, status: "error" },
+    ];
+    const answer = "You have no uploaded contracts yet.";
+    const lookupTurn = async (contractEvidence?: unknown) => {
+      const thread = await createChatThreadForUser({ userId, title: "Lookup" });
+      await appendChatMessagesToThread({
+        userId,
+        threadId: thread.id,
+        messages: [
+          { role: "user", content: "Which contracts do I have?" },
+          {
+            role: "assistant",
+            content: answer,
+            metadata: { agentMessages: lookups, contractEvidence, toolActivity },
+          },
+        ],
+      });
+      return thread.id;
+    };
+    const recent = async (threadId: string) =>
+      (await getRecentChatMessagesForThreadForUser(userId, threadId, 29))!;
+    const stored = async (threadId: string) => (await pool.current!.query(
+      "SELECT metadata_json FROM chat_messages WHERE thread_id = $1 AND role = 'assistant' ORDER BY position",
+      [threadId],
+    )).rows.map((row) => row.metadata_json);
+
+    // The generator's explicit empty receipt list survives the save and the reload.
+    const threadId = await lookupTurn([]);
+    expect((await stored(threadId))[0]).toMatchObject({ contractEvidence: [] });
+    expect((await stored(threadId))[0]).not.toHaveProperty("contractEvidenceInvalid");
+    const saved = (await recent(threadId)).at(-1)!;
+    expect(saved.content).toBe(answer);
+    expect(saved.contractEvidence).toEqual([]);
+    expect(saved.agentMessages).toEqual(lookups);
+    // A followup inherits no dependencies and both turns stay live, even after a later upload.
+    const inherited = boundCanonicalChatHistory(await recent(threadId)).flatMap(
+      (message) => message.contractEvidence ?? [],
+    );
+    expect(inherited).toEqual([]);
+    await appendChatMessagesToThread({
+      userId,
+      threadId,
+      messages: [
+        { role: "user", content: "So what should I do?" },
+        {
+          role: "assistant",
+          content: "Upload a contract first.",
+          metadata: { agentMessages: [], contractEvidence: inherited, toolActivity: [] },
+        },
+      ],
+    });
+    await createContractForUser({ userId, title: "Uploaded later" });
+    const after = await recent(threadId);
+    expect(after.map((message) => message.content)).toEqual([
+      "Which contracts do I have?",
+      answer,
+      "So what should I do?",
+      "Upload a contract first.",
+    ]);
+    expect(after[1]?.agentMessages).toEqual(lookups);
+    expect((await stored(threadId)).map((metadata) => metadata.contractEvidenceInvalid)).toEqual([
+      undefined,
+      undefined,
+    ]);
+
+    // A tool turn saved without a receipt list cannot vouch for itself.
+    const unreceipted = await lookupTurn(undefined);
+    expect((await stored(unreceipted))[0]).toMatchObject({ contractEvidenceInvalid: true });
+    expect((await stored(unreceipted))[0]).not.toHaveProperty("agentMessages");
+    expect((await recent(unreceipted)).at(-1)?.content).toBe(STALE_CONTRACT_REPLY);
+    // Legacy rows from before receipts, malformed receipts, and prior verdicts fail closed on read.
+    for (const planted of [
+      "metadata_json - 'contractEvidence'",
+      `jsonb_set(metadata_json, '{contractEvidence}', 'null')`,
+      `jsonb_set(metadata_json, '{contractEvidence}', '{}')`,
+      `jsonb_set(metadata_json, '{contractEvidence}', '[{"id":"not-a-uuid","revision":"x"}]')`,
+      `metadata_json || '{"contractEvidenceInvalid":true}'`,
+    ]) {
+      const legacy = await lookupTurn([]);
+      await pool.current!.query(
+        `UPDATE chat_messages SET metadata_json = ${planted} WHERE thread_id = $1 AND role = 'assistant'`,
+        [legacy],
+      );
+      const reply = (await recent(legacy)).at(-1)!;
+      expect(reply.content, planted).toBe(STALE_CONTRACT_REPLY);
+      expect(reply.agentMessages, planted).toBeUndefined();
+      expect(reply.contractEvidence, planted).toBeUndefined();
+    }
   });
 
   it("drops saved replay state for contracts removed with their project", async () => {

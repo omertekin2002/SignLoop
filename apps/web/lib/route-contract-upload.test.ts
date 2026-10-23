@@ -1,3 +1,9 @@
+function progressDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -162,6 +168,40 @@ describe("POST /api/contracts/[id]/upload", () => {
       expect(saveContractUploadForUser).not.toHaveBeenCalled();
     },
   );
+
+  it("rejects text with a late NUL character through the real pipeline before storage", async () => {
+    const { prepareUpload: realPrepareUpload } = await vi.importActual<
+      typeof import("@/lib/upload-pipeline")
+    >("@/lib/upload-pipeline");
+    prepareUpload.mockImplementation(realPrepareUpload);
+    auth.mockResolvedValue({ userId: "owner" });
+    getContractMetaForUser.mockResolvedValue(contractMeta());
+    const body = new FormData();
+    body.set(
+      "file",
+      new File(
+        [`${"A".repeat(9_000)}\u0000Notice period: 30 days.`],
+        "contract.txt",
+        { type: "text/plain" },
+      ),
+    );
+
+    const response = await POST(
+      new Request(`http://localhost/api/contracts/${CONTRACT_ID}/upload`, {
+        method: "POST",
+        body,
+      }),
+      params(CONTRACT_ID),
+    );
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error:
+        "The file's text contains a null character (U+0000), which cannot be stored. Remove it, or save the document in another format, and upload it again.",
+    });
+    expect(storeUploadedFile).not.toHaveBeenCalled();
+    expect(saveContractUploadForUser).not.toHaveBeenCalled();
+  });
 
   it("hands the original request to the upload pipeline", async () => {
     auth.mockResolvedValue({ userId: "owner" });
@@ -390,4 +430,78 @@ describe("POST /api/contracts/[id]/upload", () => {
       expect.objectContaining({ projectId: null, userId: "owner" }),
     );
   });
+});
+
+import { PROGRESS_MEDIA_TYPE, isUploadResult } from "./operation-progress";
+import { readOperationResponse } from "./operation-progress-client";
+const progressUploadRequest = () => {
+  const request = uploadRequest(); request.headers.set("Accept", PROGRESS_MEDIA_TYPE); return request;
+};
+
+describe("contract upload progress", () => {
+  it.each(["signed-out", "not-owned"])("retains %s preflight JSON without reading the upload", async (mode) => {
+    auth.mockResolvedValue({ userId: mode === "signed-out" ? null : "intruder" });
+    getContractMetaForUser.mockResolvedValue(null);
+    const response = await POST(progressUploadRequest(), params(CONTRACT_ID));
+    expect(response.status).toBe(mode === "signed-out" ? 401 : 404);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(prepareUpload).not.toHaveBeenCalled();
+  });
+  it("streams extraction while pending, saving during storage, and success only after the owner write", async () => {
+    auth.mockResolvedValue({ userId: "owner" }); getContractMetaForUser.mockResolvedValue(contractMeta());
+    const extraction = progressDeferred<void>(); const storage = progressDeferred<void>(); const save = progressDeferred<boolean>();
+    prepareUpload.mockImplementation(async (_, progress) => { progress("extracting"); await extraction.promise; return preparedUpload({ extractionWarning: "Verify page 2" }); });
+    storeUploadedFile.mockImplementation(async () => { await storage.promise; return storedFile(); });
+    saveContractUploadForUser.mockReturnValue(save.promise);
+    const response = await POST(progressUploadRequest(), params(CONTRACT_ID));
+    const onStage = vi.fn(); const finished = vi.fn();
+    const reading = readOperationResponse(response, { onStage, validate: isUploadResult }).then(finished);
+    await vi.waitFor(() => expect(onStage.mock.calls.flat()).toEqual(["uploading", "extracting"]));
+    expect(storeUploadedFile).not.toHaveBeenCalled(); extraction.resolve();
+    await vi.waitFor(() => expect(onStage).toHaveBeenLastCalledWith("saving"));
+    expect(saveContractUploadForUser).not.toHaveBeenCalled(); storage.resolve();
+    await vi.waitFor(() => expect(saveContractUploadForUser).toHaveBeenCalledWith(expect.objectContaining({ userId: "owner", contractId: CONTRACT_ID })));
+    expect(finished).not.toHaveBeenCalled(); save.resolve(true); await reading;
+    expect(finished).toHaveBeenCalledWith(expect.objectContaining({ success: true, warning: "Verify page 2" }));
+  });
+  it.each(["extraction", "missing-owner", "storage"])("preserves late %s failure without a successful result", async (failure) => {
+    auth.mockResolvedValue({ userId: "owner" }); getContractMetaForUser.mockResolvedValue(contractMeta());
+    prepareUpload.mockImplementation(async (_, progress) => { progress("extracting"); return preparedUpload(failure === "extraction" ? { extractionError: "private", text: "" } : {}); });
+    storeUploadedFile.mockImplementation(async () => { if (failure === "storage") throw new Error("down"); return storedFile(); });
+    saveContractUploadForUser.mockResolvedValue(false);
+    const response = await POST(progressUploadRequest(), params(CONTRACT_ID));
+    await expect(readOperationResponse(response, { validate: isUploadResult })).rejects.toMatchObject({ response: { status: failure === "extraction" ? 422 : failure === "storage" ? 500 : 404 } });
+    if (failure === "extraction") expect(storeUploadedFile).not.toHaveBeenCalled();
+  });
+  it("aborts pending storage and never starts the owner write after cancellation", async () => {
+    auth.mockResolvedValue({ userId: "owner" }); getContractMetaForUser.mockResolvedValue(contractMeta());
+    const storage = progressDeferred<void>(); let signal!: AbortSignal;
+    prepareUpload.mockImplementation(async (request, progress) => { progress("extracting"); return preparedUpload({ signal: request.signal }); });
+    storeUploadedFile.mockImplementation(async (input) => { signal = input.signal; await storage.promise; return storedFile(); });
+    const response = await POST(progressUploadRequest(), params(CONTRACT_ID));
+    await vi.waitFor(() => expect(storeUploadedFile).toHaveBeenCalledOnce());
+    const canceling = response.body!.cancel(); expect(signal.aborted).toBe(true); storage.resolve();
+    await canceling;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(saveContractUploadForUser).not.toHaveBeenCalled();
+  });
+});
+
+
+it("does not start the upload metadata write if its processing deadline expires during storage", async () => {
+  auth.mockResolvedValue({ userId: "owner" });
+  getContractMetaForUser.mockResolvedValue(contractMeta());
+  const deadline = new AbortController();
+  prepareUpload.mockImplementation(async (_, progress) => {
+    progress("extracting");
+    return preparedUpload({ signal: deadline.signal });
+  });
+  const storage = progressDeferred<void>();
+  storeUploadedFile.mockImplementation(async () => { await storage.promise; return storedFile(); });
+  const response = await POST(progressUploadRequest(), params(CONTRACT_ID));
+  await vi.waitFor(() => expect(storeUploadedFile).toHaveBeenCalledOnce());
+  deadline.abort(new DOMException("Processing deadline", "TimeoutError"));
+  storage.resolve();
+  await expect(readOperationResponse(response, { validate: isUploadResult })).rejects.toMatchObject({ response: { status: 500 } });
+  expect(saveContractUploadForUser).not.toHaveBeenCalled();
 });

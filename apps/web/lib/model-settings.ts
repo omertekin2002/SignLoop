@@ -37,6 +37,9 @@ export const PRIMARY_LLM_BASE_URL =
 const PRIMARY_LLM_API_KEY = process.env.PRIMARY_LLM_API_KEY?.trim() ?? "";
 const MODELS_ENDPOINT_TIMEOUT_MS = 5000;
 const MODELS_CACHE_TTL_MS = 60_000;
+// Generation alone may use the last successful list for one extra minute while refreshing.
+// Failures never move this hard limit; settings and selection validation never use this grace.
+const MODELS_GENERATION_GRACE_MS = 60_000;
 // Negative cache: when the primary /models lookup fails, remember that briefly so an outage doesn't
 // make every settings request pay the full 5s timeout. Shorter than the success TTL so recovery is
 // picked up quickly.
@@ -44,7 +47,19 @@ const MODELS_NEGATIVE_CACHE_TTL_MS = 10_000;
 
 let modelsSnapshotCache: { value: PrimaryModel[]; expiresAt: number } | null =
   null;
+let lastSuccessfulSnapshot: {
+  value: PrimaryModel[];
+  staleUntil: number;
+} | null = null;
 let modelsSnapshotPromise: Promise<PrimaryModel[]> | null = null;
+
+export type ModelDiscoverySource =
+  | "cache"
+  | "negative-cache"
+  | "stale-cache"
+  | "refresh"
+  | "in-flight"
+  | "unconfigured";
 
 export type ModelAvailabilitySnapshot = {
   availablePrimaryModels: PrimaryModel[];
@@ -123,36 +138,19 @@ async function listRemoteModelIds(): Promise<string[]> {
   }
 }
 
-export async function getModelAvailabilitySnapshot(options?: {
-  forceRefresh?: boolean;
-}): Promise<ModelAvailabilitySnapshot> {
-  const now = Date.now();
-  if (
-    !options?.forceRefresh &&
-    modelsSnapshotCache &&
-    modelsSnapshotCache.expiresAt > now
-  ) {
-    return toModelAvailabilitySnapshot(modelsSnapshotCache.value);
-  }
-
-  // There is intentionally no hard-coded provider URL. API keys remain optional because some
-  // OpenAI-compatible endpoints are private-network or otherwise intentionally unauthenticated.
-  if (!PRIMARY_LLM_BASE_URL) {
-    return toModelAvailabilitySnapshot([]);
-  }
-
+async function refreshModelIds(): Promise<PrimaryModel[]> {
   try {
-    modelsSnapshotPromise ??= listRemoteModelIds().finally(() => {
-      modelsSnapshotPromise = null;
-    });
-    const remoteModelIds = await modelsSnapshotPromise;
-    // The model list changes rarely, so a short TTL spares every settings load a full round-trip to
-    // the remote, no-store /models endpoint. The shared promise also coalesces concurrent loads.
+    const remoteModelIds = await listRemoteModelIds();
+    const expiresAt = Date.now() + MODELS_CACHE_TTL_MS;
     modelsSnapshotCache = {
       value: remoteModelIds,
-      expiresAt: Date.now() + MODELS_CACHE_TTL_MS,
+      expiresAt,
     };
-    return toModelAvailabilitySnapshot(remoteModelIds);
+    lastSuccessfulSnapshot = {
+      value: remoteModelIds,
+      staleUntil: expiresAt + MODELS_GENERATION_GRACE_MS,
+    };
+    return remoteModelIds;
   } catch (error) {
     // The primary /models endpoint is unreachable — treat it as unavailable so the UI honestly
     // shows the OpenRouter fallback rather than advertising an unreachable model. Negative-cache the
@@ -165,8 +163,59 @@ export async function getModelAvailabilitySnapshot(options?: {
       value: [],
       expiresAt: Date.now() + MODELS_NEGATIVE_CACHE_TTL_MS,
     };
+    return [];
+  }
+}
+
+function refreshModels(): Promise<PrimaryModel[]> {
+  return (modelsSnapshotPromise ??= refreshModelIds().finally(() => {
+    modelsSnapshotPromise = null;
+  }));
+}
+
+export async function getModelAvailabilitySnapshot(options?: {
+  forceRefresh?: boolean;
+  /** Opt generation into bounded stale reuse. Must retain the promise in the request lifecycle
+   * (Next after/waitUntil), including when joining another request's in-flight refresh. */
+  deferRefresh?: (refresh: Promise<void>) => void;
+  onSource?: (source: ModelDiscoverySource) => void;
+}): Promise<ModelAvailabilitySnapshot> {
+  const now = Date.now();
+  const cacheFresh = modelsSnapshotCache && modelsSnapshotCache.expiresAt > now;
+  const successfulCache =
+    modelsSnapshotCache?.value === lastSuccessfulSnapshot?.value;
+  if (!options?.forceRefresh) {
+    if (cacheFresh && (!options?.deferRefresh || successfulCache)) {
+      options?.onSource?.(successfulCache ? "cache" : "negative-cache");
+      return toModelAvailabilitySnapshot(modelsSnapshotCache!.value);
+    }
+    if (
+      options?.deferRefresh &&
+      lastSuccessfulSnapshot &&
+      lastSuccessfulSnapshot.staleUntil > now
+    ) {
+      // Capture before starting refresh: a successful empty list is also authoritative.
+      const value = lastSuccessfulSnapshot.value;
+      // Respect the negative-cache retry delay, but retain any refresh already in progress.
+      if (modelsSnapshotPromise || !cacheFresh) {
+        options.deferRefresh(refreshModels().then(() => {}));
+      }
+      options.onSource?.("stale-cache");
+      return toModelAvailabilitySnapshot(value);
+    }
+    if (cacheFresh) {
+      options?.onSource?.("negative-cache");
+      return toModelAvailabilitySnapshot(modelsSnapshotCache!.value);
+    }
+  }
+
+  // No hard-coded provider URL; private endpoints may intentionally omit API credentials.
+  if (!PRIMARY_LLM_BASE_URL) {
+    options?.onSource?.("unconfigured");
     return toModelAvailabilitySnapshot([]);
   }
+  options?.onSource?.(modelsSnapshotPromise ? "in-flight" : "refresh");
+  return toModelAvailabilitySnapshot(await refreshModels());
 }
 
 export function resolveAvailablePrimaryModel(
