@@ -16,9 +16,10 @@ import {
 } from "./llm-client";
 
 export const FIRST_CHUNK_TIMEOUT_MS = DEFAULT_FIRST_CHUNK_TIMEOUT_MS;
-// Gemini streams nothing while it thinks, and high thinking can run well past the default opening
-// deadline. Its first-party API rarely accepts a request and then goes silent, so it waits longer.
-export const GEMINI_FIRST_CHUNK_TIMEOUT_MS = 90_000;
+// Gemini streams nothing while it thinks, so it gets longer than the default opening deadline.
+// A healthy high-thinking reply starts well within 30 seconds; when the API is queueing (observed
+// 60-170 seconds even with little thinking), waiting longer only delays the OpenRouter fallback.
+export const GEMINI_FIRST_CHUNK_TIMEOUT_MS = 30_000;
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 /** How long a provider may take to start answering a step before the next provider is tried. */
