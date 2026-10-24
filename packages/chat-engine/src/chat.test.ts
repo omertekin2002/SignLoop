@@ -14,7 +14,8 @@ vi.mock("@ai-sdk/openai", () => ({
 }));
 vi.mock("./web-search", () => ({ searchWeb: mocks.search }));
 vi.mock("./url-reader", () => ({ readUrl: mocks.readUrl }));
-vi.mock("./image-generation", () => ({
+vi.mock("./image-generation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./image-generation")>()),
   generateImageReply: mocks.generateImage,
 }));
 import * as engine from "./chat";
@@ -143,8 +144,59 @@ function toolStep(
     }),
   };
 }
+/** One step that uses the endpoint's hosted image tool, as @ai-sdk/openai streams it. */
+function hostedImageStep(
+  outputs: unknown[],
+  text = "",
+  then?: { toolName: string; input: Record<string, unknown> },
+) {
+  return {
+    stream: simulateReadableStream({
+      initialDelayInMs: null,
+      chunkDelayInMs: null,
+      chunks: [
+        ...outputs.flatMap((output, index) => [
+          {
+            type: "tool-call",
+            toolCallId: `ig-${index}`,
+            toolName: "image_generation",
+            input: "{}",
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: `ig-${index}`,
+            toolName: "image_generation",
+            result: output,
+          },
+        ]),
+        { type: "text-start", id: "text" },
+        ...(text ? [{ type: "text-delta", id: "text", delta: text }] : []),
+        { type: "text-end", id: "text" },
+        ...(then
+          ? [
+              {
+                type: "tool-call",
+                toolCallId: "call-then",
+                toolName: then.toolName,
+                input: JSON.stringify(then.input),
+              },
+            ]
+          : []),
+        {
+          type: "finish",
+          finishReason: {
+            unified: then ? "tool-calls" : "stop",
+            raw: "completed",
+          },
+          usage,
+        },
+      ],
+    }),
+  };
+}
 type StepResult = Awaited<ReturnType<MockLanguageModelV4["doStream"]>>;
-function sequencedModel(steps: Array<ReturnType<typeof toolStep>>) {
+function sequencedModel(steps: Array<{ stream: ReadableStream<unknown> }>) {
   const queue = [...steps];
   return new MockLanguageModelV4({
     doStream: async () => (queue.shift() ?? streamStep(99)) as StepResult,
@@ -643,6 +695,114 @@ describe("agentic chat", () => {
     expect(
       withoutImages.doStreamCalls[0]?.tools?.map((item) => item.name),
     ).toEqual(["search_web"]);
+  });
+
+  it("keeps an image made by the endpoint's hosted image tool", async () => {
+    const png = "iVBORw0KGgoAAAANSUhEUg==";
+    const model = sequencedModel([hostedImageStep([{ result: png }])]);
+    mocks.responses.mockReturnValue(model);
+    const chunks: ChatReplyStreamChunk[] = [];
+    for await (const chunk of generateChatReplyStream(messages, {
+      enableImageGeneration: true,
+    }))
+      chunks.push(chunk);
+    const markdown = `![Generated image](data:image/png;base64,${png})`;
+    expect(
+      chunks.filter((chunk) => chunk.type === "delta").map((chunk) => chunk.text),
+    ).toEqual([markdown]);
+    const done = chunks.at(-1);
+    if (done?.type !== "done") throw new Error("missing done");
+    expect(done.reply.message).toBe(markdown);
+    expect(done.reply.toolActivity).toEqual([
+      { id: "ig-0", tool: "generate_image", query: "", status: "complete" },
+    ]);
+    // The provider-executed exchange has no tool message to pair with, so it is never replayed.
+    expect(done.reply.agentMessages).toBeUndefined();
+    expect(mocks.generateImage).not.toHaveBeenCalled();
+  });
+
+  it("drops hosted images that are disabled, not PNG, or over budget", async () => {
+    const png = "iVBORw0KGgoAAAANSUhEUg==";
+    mocks.responses.mockReturnValue(
+      sequencedModel([hostedImageStep([{ result: png }])]),
+    );
+    await expect(generateChatReply(messages)).rejects.toThrow(
+      "AI stream ended before successful completion",
+    );
+
+    mocks.responses.mockReturnValue(
+      sequencedModel([
+        hostedImageStep(
+          [
+            { result: "/9j/4AAQSkZJRgABAQ==" },
+            { result: png },
+            { result: png },
+            { result: png },
+          ],
+          "Here it is.",
+        ),
+      ]),
+    );
+    const reply = await generateChatReply(messages, {
+      enableImageGeneration: true,
+    });
+    const markdown = `![Generated image](data:image/png;base64,${png})`;
+    expect(reply.message).toBe(`${markdown}\n\n${markdown}\n\nHere it is.`);
+    expect(reply.toolActivity?.map(({ id, status }) => [id, status])).toEqual([
+      ["ig-0", "error"],
+      ["ig-1", "complete"],
+      ["ig-2", "complete"],
+      ["ig-3", "error"],
+    ]);
+  });
+
+  it("shares one image budget between generate_image and hosted image calls", async () => {
+    const png = "iVBORw0KGgoAAAANSUhEUg==";
+    const hosted = `![Generated image](data:image/png;base64,${png})`;
+    const local = "![Generated image](data:image/png;base64,AAAA)";
+    mocks.generateImage.mockResolvedValue({
+      message: local,
+      model: "gpt-image-2.5-sunburst",
+      provider: "primary-openai-compatible",
+    });
+    mocks.responses.mockReturnValue(
+      sequencedModel([
+        toolStep(0, "generate_image", { prompt: "a contract" }),
+        hostedImageStep([{ result: png }, { result: png }], "Done."),
+      ]),
+    );
+    const localFirst = await generateChatReply(messages, {
+      enableImageGeneration: true,
+    });
+    expect(localFirst.message).toBe(`${local}\n\n${hosted}\n\nDone.`);
+    expect(
+      localFirst.toolActivity?.map(({ id, status }) => [id, status]),
+    ).toEqual([
+      ["call-0", "complete"],
+      ["ig-0", "complete"],
+      ["ig-1", "error"],
+    ]);
+
+    mocks.generateImage.mockClear();
+    const hostedFirst = sequencedModel([
+      hostedImageStep([{ result: png }, { result: png }], "", {
+        toolName: "generate_image",
+        input: { prompt: "one more" },
+      }),
+    ]);
+    mocks.responses.mockReturnValue(hostedFirst);
+    const reply = await generateChatReply(messages, {
+      enableImageGeneration: true,
+    });
+    expect(mocks.generateImage).not.toHaveBeenCalled();
+    expect(reply.message).toBe(`${hosted}\n\n${hosted}\n\nAnswer [1]`);
+    expect(reply.toolActivity?.at(-1)).toMatchObject({
+      id: "call-then",
+      status: "error",
+    });
+    expect(JSON.stringify(hostedFirst.doStreamCalls[1]?.prompt)).toContain(
+      "Image budget for this reply is exhausted",
+    );
   });
 
   it("returns image failures to the model as tool errors", async () => {

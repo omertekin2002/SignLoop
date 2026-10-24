@@ -82,3 +82,24 @@ describe("generateImageReply", () => {
     },
   );
 });
+
+describe("hostedImageMarkdown", () => {
+  it("renders a hosted image_generation result that is a base64 PNG", async () => {
+    const { hostedImageMarkdown } = await import("./image-generation");
+    expect(hostedImageMarkdown({ result: " iVBORw0KGgoAAAANSUhEUg== " })).toBe(
+      "![Generated image](data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==)",
+    );
+  });
+
+  it.each([
+    undefined,
+    "iVBORw0KGgoAAAANSUhEUg==",
+    { result: 42 },
+    { result: "/9j/4AAQSkZJRgABAQ==" },
+    { result: "iVBORw0KGgo!invalid!" },
+    { result: `iVBORw0KGgo${"A".repeat(8 * 1024 * 1024)}` },
+  ])("rejects outputs that are not a bounded base64 PNG", async (output) => {
+    const { hostedImageMarkdown } = await import("./image-generation");
+    expect(hostedImageMarkdown(output)).toBeNull();
+  });
+});
