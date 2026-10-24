@@ -34,6 +34,7 @@ import {
   type ChatProviderCandidate,
   type ProviderMilestone,
 } from "./routing";
+import { ResearchUnavailableError, type ResearchMode } from "./research-policy";
 
 // Search now returns leads rather than a brief, so a normal run is search -> several reads ->
 // answer. That needs more steps than a loop whose search already came back answer-shaped.
@@ -55,6 +56,9 @@ const TOOL_NOTES = {
   generate_image:
     "Use generate_image when the user asks for a picture, illustration, diagram, or other visual. Write a detailed prompt. The image is inserted into your reply automatically, so never embed or link it yourself; briefly describe what you generated.",
 };
+const RESEARCH_TOOL_NAMES = ["search_web", "read_url", "http_get"];
+const STRICT_RESEARCH_INSTRUCTIONS =
+  "\nFresh research is required. Fetch relevant source text with read_url or http_get during this turn before answering; search snippets and earlier sources are not sufficient.";
 const NO_TOOLS_INSTRUCTIONS =
   "No tools are available in this session. Do not claim to search, read pages, or open documents.";
 
@@ -151,7 +155,10 @@ export type ChatToolExtension = {
   privateResults?: boolean;
 };
 
-/** Each entry enables its tool; leave one out to disable it. */
+/**
+ * Each entry enables its tool; leave one out to disable it. The research tools (webSearch,
+ * urlReader, httpFetch) are further governed by ChatEngineOptions.researchMode.
+ */
 export type ChatToolsConfig = {
   webSearch?: WebSearchConfig;
   urlReader?: UrlReaderConfig;
@@ -191,6 +198,8 @@ export type ChatEngineOptions = {
   /** Opening deadline for candidates without their own; defaults to 20 seconds. */
   firstChunkTimeoutMs?: number;
   tools?: ChatToolsConfig;
+  /** Defaults to "auto"; see ResearchMode. */
+  researchMode?: ResearchMode;
   /** AI SDK telemetry settings, passed to the agent unchanged. */
   telemetry?: TelemetryOptions;
   /** Content-free lifecycle hooks; no per-token telemetry. */
@@ -290,6 +299,14 @@ export async function* generateChatReplyStream<TTool extends string = string>(
     for (const ref of message.contractEvidence ?? []) rememberContract(ref);
   }
   const config = options.tools ?? {};
+  const researchMode = options.researchMode ?? "auto";
+  const strictResearch = researchMode === "always";
+  const research = researchMode !== "never";
+  // Fresh page text or 2xx API bodies from this turn; only strict research consults it.
+  const researchEvidence: string[] = [];
+  const onResearchEvidence = (text: string) => {
+    researchEvidence.push(text);
+  };
   const extensions = config.extensions ?? [];
   const extensionFor = new Map<string, ChatToolExtension>();
   for (const extension of extensions)
@@ -310,7 +327,7 @@ export async function* generateChatReplyStream<TTool extends string = string>(
   const onEvidence = (text: string) => {
     evidence.push(text);
   };
-  if (config.webSearch) {
+  if (research && config.webSearch) {
     const searchConfig = config.webSearch;
     toolNotes.push(TOOL_NOTES.search_web);
     tools.search_web = tool({
@@ -360,7 +377,7 @@ export async function* generateChatReplyStream<TTool extends string = string>(
       },
     });
   }
-  if (config.urlReader) {
+  if (research && config.urlReader) {
     toolNotes.push(TOOL_NOTES.read_url);
     Object.assign(
       tools,
@@ -370,11 +387,12 @@ export async function* generateChatReplyStream<TTool extends string = string>(
         addSource,
         hasSourceRoom,
         onEvidence,
+        onResearchEvidence,
         egressGuard,
       }),
     );
   }
-  if (config.httpFetch) {
+  if (research && config.httpFetch) {
     toolNotes.push(TOOL_NOTES.http_get);
     Object.assign(
       tools,
@@ -384,6 +402,7 @@ export async function* generateChatReplyStream<TTool extends string = string>(
         addSource,
         hasSourceRoom,
         onEvidence,
+        onResearchEvidence,
         egressGuard,
       }),
     );
@@ -416,6 +435,10 @@ export async function* generateChatReplyStream<TTool extends string = string>(
       }),
     );
   }
+  const researchTools = RESEARCH_TOOL_NAMES.filter((name) => name in tools);
+  // Strict research cannot succeed without a tool that fetches source text.
+  if (strictResearch && !("read_url" in tools || "http_get" in tools))
+    throw new ResearchUnavailableError();
   const describe = (name: TTool, input: unknown) =>
     extensionFor.get(name)?.describeInput?.(name, input) ??
     ((CORE_TOOL_NAMES as readonly string[]).includes(name)
@@ -428,7 +451,7 @@ export async function* generateChatReplyStream<TTool extends string = string>(
       .map((message) => message.content)
       .join(
         "\n\n",
-      )}\n\n${buildAuthoritativeUtcTimeContext(options.now?.())}\n\n${buildToolInstructions(toolNotes)}`,
+      )}\n\n${buildAuthoritativeUtcTimeContext(options.now?.())}\n\n${buildToolInstructions(toolNotes)}${strictResearch ? STRICT_RESEARCH_INSTRUCTIONS : ""}`,
     tools,
     stopWhen: isStepCount(MAX_STEPS),
     maxOutputTokens:
@@ -446,8 +469,16 @@ export async function* generateChatReplyStream<TTool extends string = string>(
       },
     },
     telemetry: options.telemetry,
-    prepareStep: ({ stepNumber }) =>
-      stepNumber >= MAX_STEPS - 1 ? { toolChoice: "none" as const } : {},
+    prepareStep: ({ stepNumber }) => {
+      if (stepNumber >= MAX_STEPS - 1) return { toolChoice: "none" as const };
+      // Until fresh evidence arrives, strict research may only call the research tools.
+      if (strictResearch && !researchEvidence.length)
+        return {
+          toolChoice: "required" as const,
+          activeTools: researchTools,
+        };
+      return {};
+    },
     onStepEnd: ({ response }) => {
       agentMessages.push(...response.messages);
     },
@@ -471,13 +502,13 @@ export async function* generateChatReplyStream<TTool extends string = string>(
     for await (const part of result.fullStream) {
       if (part.type === "start-step" && answer && !answer.endsWith("\n\n")) {
         answer += "\n\n";
-        yield { type: "delta", text: "\n\n" };
+        if (!strictResearch) yield { type: "delta", text: "\n\n" };
       }
       if (part.type === "error") throw part.error;
       if (part.type === "abort") throw new Error("Chat generation aborted");
       if (part.type === "text-delta") {
         answer += part.text;
-        yield { type: "delta", text: part.text };
+        if (!strictResearch) yield { type: "delta", text: part.text };
       }
       if (part.type === "tool-call" && activityName(part.toolName)) {
         const activity: ChatToolActivity<TTool> = {
@@ -496,7 +527,7 @@ export async function* generateChatReplyStream<TTool extends string = string>(
           generatedImages.delete(part.toolCallId);
           const text = `${answer && !answer.endsWith("\n\n") ? "\n\n" : ""}${image}`;
           answer += text;
-          yield { type: "delta", text };
+          if (!strictResearch) yield { type: "delta", text };
         }
         const previous = activities.get(part.toolCallId);
         if (previous) {
@@ -522,6 +553,12 @@ export async function* generateChatReplyStream<TTool extends string = string>(
     signal.throwIfAborted();
     if (!finished || !answer.trim())
       throw new Error("AI stream ended before successful completion");
+    if (strictResearch) {
+      if (!readThisTurn.size || !researchEvidence.length)
+        throw new ResearchUnavailableError();
+      // Strict mode never exposes an unverified partial answer; tool progress still streams live.
+      yield { type: "delta", text: answer };
+    }
     const selected = routed.selected();
     yield {
       type: "done",

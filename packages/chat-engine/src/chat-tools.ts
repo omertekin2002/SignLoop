@@ -244,6 +244,8 @@ export function createUrlReaderTool(deps: {
   hasSourceRoom?: (url: string) => boolean;
   /** Raw fetched text, kept so the finished answer can be checked against what was actually read. */
   onEvidence?: (text: string) => void;
+  /** Page text read this turn, which satisfies strict research. */
+  onResearchEvidence?: (text: string) => void;
   egressGuard?: ContractEgressGuard;
 }): ToolSet {
   const cache = new Map<string, Promise<unknown>>();
@@ -275,6 +277,7 @@ export function createUrlReaderTool(deps: {
             });
             const number = deps.addSource({ title: page.title, url: page.url });
             deps.onEvidence?.(page.content);
+            if (page.content.trim()) deps.onResearchEvidence?.(page.content);
             return {
               number,
               title: page.title,
@@ -303,6 +306,8 @@ export function createHttpGetTool(deps: {
   addSource: (source: WebSearchSource) => number;
   hasSourceRoom?: (url: string) => boolean;
   onEvidence?: (text: string) => void;
+  /** Successful (2xx), non-empty response bodies, which satisfy strict research. */
+  onResearchEvidence?: (text: string) => void;
   egressGuard?: ContractEgressGuard;
 }): ToolSet {
   const cache = new Map<string, Promise<unknown>>();
@@ -341,6 +346,12 @@ export function createHttpGetTool(deps: {
               url: response.url,
             });
             deps.onEvidence?.(response.body);
+            if (
+              response.status >= 200 &&
+              response.status < 300 &&
+              response.body.trim()
+            )
+              deps.onResearchEvidence?.(response.body);
             return {
               number,
               url: response.url,

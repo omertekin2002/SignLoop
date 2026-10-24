@@ -95,5 +95,11 @@ export {
   safeProviderFailureMetadata,
   type SafeProviderFailure,
 } from "./provider-failure";
+export {
+  parseResearchMode,
+  RESEARCH_MODES,
+  ResearchUnavailableError,
+  type ResearchMode,
+} from "./research-policy";
 export { TEXT_REASONING_EFFORT } from "./reasoning-policy";
 export { buildAuthoritativeUtcTimeContext } from "./chat-time";
