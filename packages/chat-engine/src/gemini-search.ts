@@ -1,7 +1,7 @@
-import { readBoundedResponse } from "@/lib/bounded-response";
-import { getErrorMessage, isRecord } from "@/lib/utils";
-import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
-import { TEXT_REASONING_EFFORT } from "@/lib/reasoning-policy";
+import { readBoundedResponse } from "./bounded-response";
+import { getErrorMessage, isRecord } from "./utils";
+import { buildAuthoritativeUtcTimeContext } from "./chat-time";
+import { TEXT_REASONING_EFFORT } from "./reasoning-policy";
 
 const GEMINI_API_BASE_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
@@ -36,6 +36,12 @@ export type WebSearchMetadata = {
   sources: WebSearchSource[];
 };
 
+export type GeminiSearchConfig = {
+  apiKey?: string | null;
+  /** Defaults to gemini-2.5-flash; a `models/` prefix is accepted. */
+  model?: string | null;
+};
+
 export class GeminiWebSearchError extends Error {
   constructor(
     message: string,
@@ -52,12 +58,12 @@ export type GeminiGroundedResult = {
   metadata: WebSearchMetadata;
 };
 
-function getGeminiApiKey(): string | null {
-  return process.env.GEMINI_API_KEY?.trim() || null;
+function getGeminiApiKey(config?: GeminiSearchConfig): string | null {
+  return config?.apiKey?.trim() || null;
 }
 
-function getGeminiSearchModel(): string {
-  const configured = process.env.GEMINI_SEARCH_MODEL?.trim();
+function getGeminiSearchModel(config?: GeminiSearchConfig): string {
+  const configured = config?.model?.trim();
   if (!configured) {
     return DEFAULT_GEMINI_SEARCH_MODEL;
   }
@@ -315,15 +321,16 @@ async function runGeminiGroundedSearch(
   requestedQuery: string,
   signal?: AbortSignal,
   currentTime?: Date,
+  config?: GeminiSearchConfig,
 ): Promise<GeminiGroundedResult> {
-  const apiKey = getGeminiApiKey();
+  const apiKey = getGeminiApiKey(config);
   if (!apiKey) {
     throw new Error(
       "Gemini web search is not configured. Set GEMINI_API_KEY to enable it.",
     );
   }
 
-  const model = getGeminiSearchModel();
+  const model = getGeminiSearchModel(config);
   const controller = new AbortController();
   let timedOut = false;
   const onAbort = () => controller.abort(signal?.reason);
@@ -424,7 +431,11 @@ function getPublicWebSearchErrorMessage(message: string): string {
 
 export async function searchWeb(
   query: string,
-  options?: { signal?: AbortSignal; currentTime?: Date },
+  options?: {
+    signal?: AbortSignal;
+    currentTime?: Date;
+    config?: GeminiSearchConfig;
+  },
 ): Promise<GeminiGroundedResult> {
   options?.signal?.throwIfAborted();
   if (!query.trim() || query.length > 2000)
@@ -434,6 +445,7 @@ export async function searchWeb(
       query.trim(),
       options?.signal,
       options?.currentTime,
+      options?.config,
     );
   } catch (error) {
     if (

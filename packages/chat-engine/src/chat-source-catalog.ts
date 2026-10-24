@@ -1,9 +1,9 @@
-import type { WebSearchSource } from "@/lib/gemini-search";
+import type { WebSearchSource } from "./gemini-search";
 import {
   MAX_SOURCE_CATALOG_CHARACTERS,
   MAX_SOURCE_COUNT,
   sourceCitationNumber,
-} from "@/lib/chat-history-shared";
+} from "./chat-history-shared";
 
 export const SOURCE_CATALOG_FULL_MESSAGE =
   "This reply has reached its limit of numbered sources, so no new pages can be added. Answer from the sources already read and disclose any remaining uncertainty.";

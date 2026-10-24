@@ -6,7 +6,7 @@ import {
   parseWebSources,
   MAX_AGENT_STATE_CHARACTERS,
   MAX_SOURCE_CATALOG_CHARACTERS,
-} from "@/lib/chat-agent-history";
+} from "@repo/chat-engine/chat-agent-history";
 import { runMigrations } from "../db/migrations.js";
 import { sql, type VercelPoolClient } from "@vercel/postgres";
 import { randomInt, randomUUID } from "node:crypto";
@@ -399,7 +399,7 @@ export type ChatMessageRole = "system" | "user" | "assistant";
 export type ChatMessageRecord = {
   agentMessages?: import("ai").ModelMessage[];
   contractEvidence?: ContractEvidence[];
-  webSources?: import("@/lib/gemini-search").WebSearchSource[];
+  webSources?: import("@repo/chat-engine/gemini-search").WebSearchSource[];
   toolActivity?: unknown;
   id: string;
   threadId: string;

@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-vi.mock("@/lib/url-reader", () => ({ readUrl: vi.fn() }));
+vi.mock("@repo/chat-engine/url-reader", () => ({ readUrl: vi.fn() }));
 vi.mock("@/lib/server-db", () => ({ listContractsForChat: vi.fn(), getContractTextForUser: vi.fn() }));
 vi.mock("@/lib/image-generation", () => ({ generateImageReply: vi.fn() }));
-vi.mock("@/lib/http-fetch", () => ({ httpGet: vi.fn() }));
-import { httpGet } from "@/lib/http-fetch";
-import { readUrl } from "@/lib/url-reader";
+vi.mock("@repo/chat-engine/http-fetch", () => ({ httpGet: vi.fn() }));
+import { httpGet } from "@repo/chat-engine/http-fetch";
+import { readUrl } from "@repo/chat-engine/url-reader";
 import { getContractTextForUser, listContractsForChat } from "@/lib/server-db";
-import { MAX_SOURCE_TITLE_CHARACTERS, parseWebSources } from "./chat-agent-history";
+import { MAX_SOURCE_TITLE_CHARACTERS, parseWebSources } from "@repo/chat-engine/chat-agent-history";
 import {
   CONTRACT_EGRESS_ERROR,
   CONTRACT_WINDOW_CHARACTERS,
@@ -22,7 +22,7 @@ import {
 import {
   SOURCE_CATALOG_FULL_MESSAGE,
   SourceCatalogFullError,
-} from "./chat-source-catalog";
+} from "@repo/chat-engine/chat-source-catalog";
 
 describe("excerptContract", () => {
   const text = `${"a".repeat(CONTRACT_WINDOW_CHARACTERS)}Clause 9. Indemnification survives termination. ${"b".repeat(700)}Clause 12. Indemnification cap applies.`;

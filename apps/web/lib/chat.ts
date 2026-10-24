@@ -19,12 +19,12 @@ import {
   resolvePrimaryModel,
 } from "@/lib/llm-client";
 import { orderOpenRouterModels } from "@/lib/model-settings";
-import { TEXT_REASONING_EFFORT } from "@/lib/reasoning-policy";
-import { withAbort } from "@/lib/bounded-response";
-import { safeProviderFailureMetadata } from "@/lib/provider-failure";
-import type { WebSearchMetadata } from "@/lib/gemini-search";
-import { searchWeb } from "@/lib/web-search";
-import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
+import { TEXT_REASONING_EFFORT } from "@repo/chat-engine/reasoning-policy";
+import { withAbort } from "@repo/chat-engine/bounded-response";
+import { safeProviderFailureMetadata } from "@repo/chat-engine/provider-failure";
+import type { WebSearchMetadata } from "@repo/chat-engine/gemini-search";
+import { searchWeb } from "@repo/chat-engine/web-search";
+import { buildAuthoritativeUtcTimeContext } from "@repo/chat-engine/chat-time";
 import {
   createContractEgressGuard,
   createContractTools,
@@ -32,17 +32,18 @@ import {
   createImageTool,
   createUrlReaderTool,
 } from "@/lib/chat-tools";
-import { verifyFigures, type FigureVerification } from "@/lib/web-citations";
+import { verifyFigures, type FigureVerification } from "@repo/chat-engine/web-citations";
 import { isRecord } from "@/lib/utils";
 import {
   compactAgentMessages,
-} from "@/lib/chat-agent-history";
+} from "@repo/chat-engine/chat-agent-history";
 import {
   createChatSourceCatalog,
   SOURCE_CATALOG_FULL_MESSAGE,
-} from "@/lib/chat-source-catalog";
+} from "@repo/chat-engine/chat-source-catalog";
 import { chatTelemetryOptions } from "@/lib/telemetry-policy";
 import type { GenerationMilestone } from "@/lib/generation-timings";
+import { webSearchConfig } from "@/lib/chat-engine-config";
 
 // Search now returns leads rather than a brief, so a normal run is search -> several reads ->
 // answer. That needs more steps than a loop whose search already came back answer-shaped.
@@ -508,7 +509,10 @@ export async function* generateChatReplyStream(
         searches++;
         const pending = (async () => {
           try {
-            const result = await searchWeb(query, { signal });
+            const result = await searchWeb(query, {
+              signal,
+              config: webSearchConfig(),
+            });
             queries.push(result.query);
             successfulSearches += 1;
             // Results are not passed through addSource: a page becomes a numbered, citable source

@@ -1,8 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { MAX_PAGE_CHARACTERS, readUrl } from "./url-reader";
+import { MAX_PAGE_CHARACTERS, readUrl, type UrlReaderConfig } from "./url-reader";
+
+let config: UrlReaderConfig = {};
 
 afterEach(() => {
-  vi.unstubAllEnvs();
+  config = {};
   vi.unstubAllGlobals();
 });
 
@@ -27,7 +29,7 @@ it("rejects addresses that are not public http(s) pages without fetching", async
     "http://intranet/",
     "not a url",
   ]) {
-    await expect(readUrl(url)).rejects.toMatchObject({
+    await expect(readUrl(url, { config })).rejects.toMatchObject({
       name: "UrlReadError",
       publicMessage: expect.stringMatching(/http\(s\) web addresses/),
     });
@@ -36,8 +38,8 @@ it("rejects addresses that are not public http(s) pages without fetching", async
 });
 
 it("uses Jina Reader when Firecrawl is not configured and truncates long pages", async () => {
-  vi.stubEnv("FIRECRAWL_API_KEY", "");
-  vi.stubEnv("JINA_API_KEY", "");
+  config.firecrawlApiKey = "";
+  config.jinaApiKey = "";
   const fetchMock = vi.fn().mockResolvedValue(
     json({
       code: 200,
@@ -49,7 +51,7 @@ it("uses Jina Reader when Firecrawl is not configured and truncates long pages",
     }),
   );
   vi.stubGlobal("fetch", fetchMock);
-  const result = await readUrl("https://site.test/a");
+  const result = await readUrl("https://site.test/a", { config });
   expect(fetchMock.mock.calls[0]?.[0]).toBe("https://r.jina.ai/https://site.test/a");
   expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toHaveProperty("Authorization");
   expect(result).toMatchObject({ provider: "jina", title: "Long page", truncated: true });
@@ -57,7 +59,7 @@ it("uses Jina Reader when Firecrawl is not configured and truncates long pages",
 });
 
 it("prefers Firecrawl when configured and falls back to Jina when it fails", async () => {
-  vi.stubEnv("FIRECRAWL_API_KEY", "fc-test");
+  config.firecrawlApiKey = "fc-test";
   const fetchMock = vi
     .fn()
     .mockResolvedValueOnce(json({ success: false, error: "rate limited" }, 429))
@@ -66,7 +68,7 @@ it("prefers Firecrawl when configured and falls back to Jina when it fails", asy
     );
   vi.stubGlobal("fetch", fetchMock);
   vi.spyOn(console, "warn").mockImplementation(() => {});
-  const result = await readUrl("https://site.test/b");
+  const result = await readUrl("https://site.test/b", { config });
   expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.firecrawl.dev/v2/scrape");
   expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toMatchObject({
     url: "https://site.test/b",
@@ -77,7 +79,7 @@ it("prefers Firecrawl when configured and falls back to Jina when it fails", asy
 });
 
 it("returns Firecrawl markdown when the scrape succeeds", async () => {
-  vi.stubEnv("FIRECRAWL_API_KEY", "fc-test");
+  config.firecrawlApiKey = "fc-test";
   const fetchMock = vi.fn().mockResolvedValue(
     json({
       success: true,
@@ -85,7 +87,7 @@ it("returns Firecrawl markdown when the scrape succeeds", async () => {
     }),
   );
   vi.stubGlobal("fetch", fetchMock);
-  const result = await readUrl("https://law.test/s");
+  const result = await readUrl("https://law.test/s", { config });
   expect(fetchMock).toHaveBeenCalledOnce();
   expect(result).toEqual({
     provider: "firecrawl",
@@ -97,7 +99,7 @@ it("returns Firecrawl markdown when the scrape succeeds", async () => {
 });
 
 it("cites the validated requested URL rather than reader-supplied metadata", async () => {
-  vi.stubEnv("FIRECRAWL_API_KEY", "fc-test");
+  config.firecrawlApiKey = "fc-test";
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({
     success: true,
     data: {
@@ -106,14 +108,14 @@ it("cites the validated requested URL rather than reader-supplied metadata", asy
     },
   })));
 
-  const result = await readUrl("https://law.test/source");
+  const result = await readUrl("https://law.test/source", { config });
   expect(result.url).toBe("https://law.test/source");
 });
 
 it("wraps reader failures in a public-safe error", async () => {
-  vi.stubEnv("FIRECRAWL_API_KEY", "");
+  config.firecrawlApiKey = "";
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ code: 500 }, 500)));
-  await expect(readUrl("https://site.test/down")).rejects.toMatchObject({
+  await expect(readUrl("https://site.test/down", { config })).rejects.toMatchObject({
     name: "UrlReadError",
     publicMessage: expect.stringMatching(/could not be read/),
   });

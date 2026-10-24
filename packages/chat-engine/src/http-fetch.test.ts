@@ -64,6 +64,19 @@ it("returns the raw body, status, and content type verbatim", async () => {
   });
 });
 
+it("identifies itself with the configured user agent", async () => {
+  const fetchMock = vi.fn().mockImplementation(async () => new Response("ok"));
+  vi.stubGlobal("fetch", fetchMock);
+  await httpGet("https://api.test/a", {
+    config: { userAgent: "SignLoop/1.0 (+https://signloop.test)" },
+  });
+  await httpGet("https://api.test/b");
+  expect(fetchMock.mock.calls.map(([, init]) => init.headers["User-Agent"])).toEqual([
+    "SignLoop/1.0 (+https://signloop.test)",
+    "SignLoop/1.0",
+  ]);
+});
+
 it("returns non-2xx responses instead of throwing, so the model can adapt", async () => {
   vi.stubGlobal(
     "fetch",

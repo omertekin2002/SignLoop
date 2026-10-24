@@ -17,7 +17,7 @@ vi.mock("./api-client", () => ({ apiClient: { post, delete: remove } }));
 vi.mock("./operation-progress-client", () => ({ postOperation }));
 import { uploadContract } from "./upload-contract";
 import { MAX_UPLOAD_FILE_SIZE } from "./upload-constants";
-import { withAbort } from "./bounded-response";
+import { withAbort } from "@repo/chat-engine/bounded-response";
 afterEach(() => vi.resetAllMocks());
 const file = new File(["Agreement"], "agreement.txt", { type: "text/plain" });
 describe("uploadContract progress", () => {

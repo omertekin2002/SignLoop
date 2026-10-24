@@ -3,7 +3,7 @@
 import {
   MAX_AGENT_STATE_CHARACTERS,
   parseWebSources,
-} from "@/lib/chat-history-shared";
+} from "@repo/chat-engine/chat-history-shared";
 
 import type { ModelMessage } from "ai";
 import type { ChatToolActivity } from "@/lib/chat";

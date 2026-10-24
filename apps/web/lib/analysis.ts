@@ -15,7 +15,7 @@ import {
   type LlmProvider,
 } from "@/lib/llm-client";
 import { getErrorMessage, isRecord } from "@/lib/utils";
-import { TEXT_REASONING_EFFORT } from "@/lib/reasoning-policy";
+import { TEXT_REASONING_EFFORT } from "@repo/chat-engine/reasoning-policy";
 
 // Per-request ceiling for one analysis call, sized against the route's 270s operation deadline so
 // two candidates can be tried in full before it fires. The OpenAI client's own default is 60s,

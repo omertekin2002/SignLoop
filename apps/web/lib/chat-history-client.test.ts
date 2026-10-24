@@ -5,7 +5,7 @@ vi.mock("ai", () => {
 });
 
 it("loads the chat helpers the browser imports without the ai package", async () => {
-  const shared = await import("./chat-history-shared");
+  const shared = await import("@repo/chat-engine/chat-history-shared");
   const bounds = await import("./chat-history-bounds");
 
   expect(
@@ -17,5 +17,5 @@ it("loads the chat helpers the browser imports without the ai package", async ()
 });
 
 it("detects a runtime ai import", async () => {
-  await expect(import("./chat-agent-history")).rejects.toThrow();
+  await expect(import("@repo/chat-engine/chat-agent-history")).rejects.toThrow();
 });

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type OperationStage } from "@/lib/operation-progress";
-import { withAbort } from "@/lib/bounded-response";
+import { withAbort } from "@repo/chat-engine/bounded-response";
 
 export function isOperationCanceled(error: unknown): boolean {
   return (

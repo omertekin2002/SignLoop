@@ -1,8 +1,7 @@
-import type { LlmProvider } from "@/lib/llm-client";
-
 /** The only provider-failure details allowed into logs: no messages, bodies, URLs, or prompts. */
 export type SafeProviderFailure = Readonly<{
-  provider: LlmProvider;
+  /** Provider label of the routed candidate, such as "primary-openai-compatible" or "openrouter". */
+  provider: string;
   model: string;
   errorClass: string;
   statusCode?: number;
@@ -29,7 +28,7 @@ function safeStatusCode(value: unknown): number | undefined {
 
 /** Reduce any SDK/provider error to allowlisted machine-readable fields before logging it. */
 export function safeProviderFailureMetadata(
-  provider: LlmProvider,
+  provider: string,
   model: string,
   error: unknown,
 ): SafeProviderFailure {

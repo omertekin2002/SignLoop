@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
 import { simulateReadableStream } from "ai";
-import { compactAgentMessages } from "./chat-agent-history";
+import { compactAgentMessages } from "@repo/chat-engine/chat-agent-history";
 import { validateContractReplay } from "./contract-evidence";
 
 const mocks = vi.hoisted(() => ({
@@ -20,8 +20,8 @@ vi.mock("@/lib/model-settings", () => ({
   orderOpenRouterModels: (pinned: string) =>
     pinned === "openrouter/free" ? [pinned, "fallback"] : ["fallback"],
 }));
-vi.mock("@/lib/web-search", () => ({ searchWeb: mocks.search }));
-vi.mock("@/lib/url-reader", () => ({ readUrl: mocks.readUrl }));
+vi.mock("@repo/chat-engine/web-search", () => ({ searchWeb: mocks.search }));
+vi.mock("@repo/chat-engine/url-reader", () => ({ readUrl: mocks.readUrl }));
 vi.mock("@/lib/image-generation", () => ({
   generateImageReply: mocks.generateImage,
 }));

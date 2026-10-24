@@ -4,15 +4,15 @@ import { isRecord } from "@/lib/utils";
 import {
   parseAgentMessages,
   parseWebSources,
-} from "@/lib/chat-agent-history";
-import { withAbort } from "@/lib/bounded-response";
+} from "@repo/chat-engine/chat-agent-history";
+import { withAbort } from "@repo/chat-engine/bounded-response";
 import {
   MAX_CHAT_MESSAGE_LENGTH,
   MAX_CHAT_MESSAGES,
   MAX_CHAT_REQUEST_BODY_BYTES,
   MAX_CHAT_TOTAL_MESSAGE_LENGTH,
 } from "@/lib/chat-history-bounds";
-export { MAX_AGENT_STATE_CHARACTERS } from "@/lib/chat-agent-history";
+export { MAX_AGENT_STATE_CHARACTERS } from "@repo/chat-engine/chat-agent-history";
 export {
   boundCanonicalChatHistory,
   boundTemporaryChatHistory,

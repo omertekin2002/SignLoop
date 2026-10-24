@@ -1,20 +1,21 @@
 import type { ContractEvidence } from "@/lib/contract-evidence";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
-import type { WebSearchSource } from "@/lib/gemini-search";
-import { MAX_SOURCE_TITLE_CHARACTERS } from "@/lib/chat-agent-history";
-import { SOURCE_CATALOG_FULL_MESSAGE } from "@/lib/chat-source-catalog";
-import { readUrl } from "@/lib/url-reader";
-import { httpGet } from "@/lib/http-fetch";
+import type { WebSearchSource } from "@repo/chat-engine/gemini-search";
+import { MAX_SOURCE_TITLE_CHARACTERS } from "@repo/chat-engine/chat-agent-history";
+import { SOURCE_CATALOG_FULL_MESSAGE } from "@repo/chat-engine/chat-source-catalog";
+import { readUrl } from "@repo/chat-engine/url-reader";
+import { httpGet } from "@repo/chat-engine/http-fetch";
 import { generateImageReply } from "@/lib/image-generation";
 import { IMAGE_GENERATION_MODEL } from "@/lib/model-settings";
-import { safeProviderFailureMetadata } from "@/lib/provider-failure";
+import { safeProviderFailureMetadata } from "@repo/chat-engine/provider-failure";
 import {
   getContractTextForUser,
   getContractWindowForUser,
   listContractsForChat,
 } from "@/lib/server-db";
 import { isUuid } from "@/lib/utils";
+import { httpFetchConfig, urlReaderConfig } from "@/lib/chat-engine-config";
 
 // Reading is now the step that turns a search result into evidence, so the budget has to cover
 // several results from one search rather than the occasional link a user pasted.
@@ -274,7 +275,10 @@ export function createUrlReaderTool(deps: {
         reads++;
         const pending = (async () => {
           try {
-            const page = await readUrl(url, { signal: deps.signal });
+            const page = await readUrl(url, {
+              signal: deps.signal,
+              config: urlReaderConfig(),
+            });
             const number = deps.addSource({ title: page.title, url: page.url });
             deps.onEvidence?.(page.content);
             return {
@@ -330,7 +334,10 @@ export function createHttpGetTool(deps: {
         fetches++;
         const pending = (async () => {
           try {
-            const response = await httpGet(url, { signal: deps.signal });
+            const response = await httpGet(url, {
+              signal: deps.signal,
+              config: httpFetchConfig(),
+            });
             const target = new URL(response.url);
             const number = deps.addSource({
               title: `${target.hostname}${target.pathname === "/" ? "" : target.pathname}`.slice(

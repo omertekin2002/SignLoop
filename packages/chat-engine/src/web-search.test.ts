@@ -1,21 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-vi.mock("@/lib/gemini-search", () => ({ searchWeb: vi.fn() }));
-import { searchWeb as geminiGroundedSearch } from "@/lib/gemini-search";
+vi.mock("./gemini-search", () => ({ searchWeb: vi.fn() }));
+import { searchWeb as geminiGroundedSearch } from "./gemini-search";
 import {
   MAX_WEB_SEARCH_RESULTS,
   resolveWebSearchProvider,
   searchWeb,
+  type WebSearchConfig,
 } from "./web-search";
 
-const KEYS = [
-  "WEB_SEARCH_PROVIDER",
-  "BRAVE_SEARCH_API_KEY",
-  "FIRECRAWL_API_KEY",
-  "GEMINI_API_KEY",
-];
+let config: WebSearchConfig = {};
 
 function configure(values: Record<string, string>) {
-  for (const key of KEYS) vi.stubEnv(key, values[key] ?? "");
+  config = {
+    provider: values.WEB_SEARCH_PROVIDER,
+    braveApiKey: values.BRAVE_SEARCH_API_KEY,
+    firecrawlApiKey: values.FIRECRAWL_API_KEY,
+    geminiApiKey: values.GEMINI_API_KEY,
+  };
 }
 
 function json(body: unknown, status = 200) {
@@ -30,28 +31,29 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 
 describe("resolveWebSearchProvider", () => {
   it("prefers Brave over a Firecrawl key that may only exist for read_url", () => {
     configure({ BRAVE_SEARCH_API_KEY: "b", FIRECRAWL_API_KEY: "f", GEMINI_API_KEY: "g" });
-    expect(resolveWebSearchProvider()).toBe("brave");
+    expect(resolveWebSearchProvider(config)).toBe("brave");
   });
 
   it("falls back through Firecrawl to Gemini, then to nothing", () => {
     configure({ FIRECRAWL_API_KEY: "f", GEMINI_API_KEY: "g" });
-    expect(resolveWebSearchProvider()).toBe("firecrawl");
+    expect(resolveWebSearchProvider(config)).toBe("firecrawl");
     configure({ GEMINI_API_KEY: "g" });
-    expect(resolveWebSearchProvider()).toBe("gemini");
+    expect(resolveWebSearchProvider(config)).toBe("gemini");
     configure({});
-    expect(resolveWebSearchProvider()).toBeNull();
+    expect(resolveWebSearchProvider(config)).toBeNull();
   });
 
   it("honors an explicit override even when another key is present", () => {
     configure({ WEB_SEARCH_PROVIDER: "gemini", BRAVE_SEARCH_API_KEY: "b" });
-    expect(resolveWebSearchProvider()).toBe("gemini");
+    expect(resolveWebSearchProvider(config)).toBe("gemini");
+    configure({ WEB_SEARCH_PROVIDER: " Firecrawl ", BRAVE_SEARCH_API_KEY: "b" });
+    expect(resolveWebSearchProvider(config)).toBe("firecrawl");
   });
 });
 
@@ -69,7 +71,7 @@ describe("searchWeb", () => {
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const result = await searchWeb("ISCTR close");
+    const result = await searchWeb("ISCTR close", { config });
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(String(url)).toContain("api.search.brave.com/res/v1/web/search");
     expect(String(url)).toContain("q=ISCTR+close");
@@ -91,7 +93,7 @@ describe("searchWeb", () => {
       json({ success: true, data: { web: [{ title: "T", url: "https://c.test/", description: "D" }] } }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const result = await searchWeb("contract law");
+    const result = await searchWeb("contract law", { config });
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(String(url)).toBe("https://api.firecrawl.dev/v2/search");
     expect(init?.headers).toMatchObject({ Authorization: "Bearer fc-key" });
@@ -119,7 +121,7 @@ describe("searchWeb", () => {
       })),
     ];
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ web: { results } })));
-    const result = await searchWeb("q");
+    const result = await searchWeb("q", { config });
     expect(result.results).toHaveLength(MAX_WEB_SEARCH_RESULTS);
     expect(result.results.filter((entry) => entry.url === "https://a.test/x")).toHaveLength(1);
     expect(result.results.some((entry) => entry.url.startsWith("ftp:"))).toBe(false);
@@ -128,7 +130,7 @@ describe("searchWeb", () => {
   it("reports an empty result set rather than inventing one", async () => {
     configure({ BRAVE_SEARCH_API_KEY: "b" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ web: { results: [] } })));
-    await expect(searchWeb("nothing")).rejects.toMatchObject({
+    await expect(searchWeb("nothing", { config })).rejects.toMatchObject({
       name: "WebSearchError",
       publicMessage: expect.stringMatching(/returned no results/),
     });
@@ -137,7 +139,7 @@ describe("searchWeb", () => {
   it("wraps provider failures in a public-safe error", async () => {
     configure({ BRAVE_SEARCH_API_KEY: "b" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ error: "rate limited" }, 429)));
-    await expect(searchWeb("q")).rejects.toMatchObject({
+    await expect(searchWeb("q", { config })).rejects.toMatchObject({
       name: "WebSearchError",
       publicMessage: expect.stringMatching(/Web search failed/),
     });
@@ -147,7 +149,7 @@ describe("searchWeb", () => {
     configure({});
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    await expect(searchWeb("q")).rejects.toMatchObject({
+    await expect(searchWeb("q", { config })).rejects.toMatchObject({
       name: "WebSearchError",
       publicMessage: expect.stringMatching(/BRAVE_SEARCH_API_KEY/),
     });
@@ -165,12 +167,16 @@ describe("searchWeb", () => {
         sources: [{ title: "S", url: "https://e.test/", snippet: null }],
       },
     });
-    const result = await searchWeb("isctr");
+    const result = await searchWeb("isctr", { config });
     expect(result).toEqual({
       provider: "gemini",
       query: "isctr",
       brief: "A grounded brief.",
       results: [{ title: "S", url: "https://e.test/", snippet: null }],
+    });
+    expect(geminiGroundedSearch).toHaveBeenCalledWith("isctr", {
+      signal: undefined,
+      config: { apiKey: "g", model: undefined },
     });
   });
 });

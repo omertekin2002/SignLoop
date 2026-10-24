@@ -2,7 +2,7 @@ import {
   assistantMessageForClient,
   toPublicChatMessage,
 } from "@/lib/chat-public-message";
-import { appendWebSourcesToMessage } from "@/lib/web-citations";
+import { appendWebSourcesToMessage } from "@repo/chat-engine/web-citations";
 import { NextResponse, after } from "next/server";
 import { flushTelemetry, isTelemetryEnabled } from "@/lib/telemetry";
 import { auth } from "@/lib/auth";
@@ -12,8 +12,8 @@ import {
   type ChatMessage,
   type ChatReply,
 } from "@/lib/chat";
-import { GeminiWebSearchError } from "@/lib/gemini-search";
-import { WebSearchError } from "@/lib/web-search";
+import { GeminiWebSearchError } from "@repo/chat-engine/gemini-search";
+import { WebSearchError } from "@repo/chat-engine/web-search";
 import {
   boundCanonicalChatHistory,
   MAX_AGENT_STATE_CHARACTERS,
