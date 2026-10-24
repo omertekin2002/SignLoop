@@ -1318,6 +1318,7 @@ it("surfaces a deadline's TimeoutError so the handler can report request_timeout
 
 it("uses one explicit opening deadline for every provider when overridden", () => {
   expect(openingDeadlineMs("gemini")).toBe(GEMINI_FIRST_CHUNK_TIMEOUT_MS);
+  expect(GEMINI_FIRST_CHUNK_TIMEOUT_MS).toBe(30_000);
   expect(openingDeadlineMs("openrouter")).toBe(FIRST_CHUNK_TIMEOUT_MS);
   expect(openingDeadlineMs("primary-openai-compatible")).toBe(
     FIRST_CHUNK_TIMEOUT_MS,
