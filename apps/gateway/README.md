@@ -79,6 +79,8 @@ An explicit search provider selects one integration; it is not a retry chain bet
 
 Image generation is disabled unless explicitly enabled and discovery confirms the configured image model. Enabling it requires `PRIMARY_LLM_BASE_URL` and `PRIMARY_LLM_API_KEY`. An unavailable discovery endpoint does not expose the image tool. Images use the primary endpoint even when text generation has fallen back to OpenRouter.
 
+Some OpenAI-compatible proxies add the Responses API's hosted `image_generation` tool to every request, and the model may use it instead of `generate_image`. CLIProxyAPI does this by default. When image generation is enabled, the service keeps such an image if it is a base64 PNG within the payload limit, at most two per turn, and reports it as `generate_image` activity without a prompt. Otherwise the image is discarded, and a reply with no text then fails with `generation_unavailable`. The hosted tool picks its own image model and size, not `IMAGE_GENERATION_MODEL`. To keep images on the configured model, turn the injection off in the proxy: for CLIProxyAPI, set `multimedia.disable-image-generation: "passthrough"`.
+
 ## Public API
 
 - `GET /healthz` → `{"ok":true,"service":"signloop-chat-service"}`

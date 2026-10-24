@@ -13,13 +13,17 @@ import type { WebSearchMetadata, WebSearchSource } from "./gemini-search";
 import { searchWeb, type WebSearchConfig } from "./web-search";
 import type { UrlReaderConfig } from "./url-reader";
 import type { HttpFetchConfig } from "./http-fetch";
-import type { ImageGenerationConfig } from "./image-generation";
+import {
+  hostedImageMarkdown,
+  type ImageGenerationConfig,
+} from "./image-generation";
 import { buildAuthoritativeUtcTimeContext } from "./chat-time";
 import {
   createContractEgressGuard,
   createHttpGetTool,
   createImageTool,
   createUrlReaderTool,
+  MAX_IMAGE_GENERATIONS,
   type ContractEgressGuard,
 } from "./chat-tools";
 import { verifyFigures, type FigureVerification } from "./web-citations";
@@ -58,6 +62,9 @@ const TOOL_NOTES = {
     "Use generate_image when the user asks for a picture, illustration, diagram, or other visual. Write a detailed prompt. The image is inserted into your reply automatically, so never embed or link it yourself; briefly describe what you generated.",
 };
 const RESEARCH_TOOL_NAMES = ["search_web", "read_url", "http_get"];
+// The Responses API's hosted image tool. Some OpenAI-compatible endpoints (CLIProxyAPI by default)
+// add it to every request, and the model may then use it instead of generate_image.
+const HOSTED_IMAGE_TOOL = "image_generation";
 const STRICT_RESEARCH_INSTRUCTIONS =
   "\nFresh research is required. Fetch relevant source text with read_url or http_get during this turn before answering; search snippets and earlier sources are not sufficient.";
 const NO_TOOLS_INSTRUCTIONS =
@@ -446,6 +453,15 @@ export async function* generateChatReplyStream<TTool extends string = string>(
     );
   }
   const generatedImages = new Map<string, string>();
+  // Images from the endpoint's own image tool are kept only when this turn enables generation.
+  const isHostedImage = (part: {
+    toolName: string;
+    providerExecuted?: boolean;
+  }) =>
+    Boolean(config.imageGeneration) &&
+    part.providerExecuted === true &&
+    part.toolName === HOSTED_IMAGE_TOOL;
+  let hostedImages = 0;
   if (config.imageGeneration) {
     const { userId, ...imageConfig } = config.imageGeneration;
     toolNotes.push(TOOL_NOTES.generate_image);
@@ -522,6 +538,8 @@ export async function* generateChatReplyStream<TTool extends string = string>(
     },
   });
   let answer = "";
+  // Where the last spliced image ends, so text that directly follows it is set apart.
+  let imageEnd = -1;
   let finished = false;
   try {
     const onStreamError = options.onStreamError;
@@ -555,31 +573,56 @@ export async function* generateChatReplyStream<TTool extends string = string>(
         throw new Error("Chat generation aborted");
       }
       if (part.type === "text-delta") {
-        answer += part.text;
-        if (!strictResearch) yield { type: "delta", text: part.text };
+        // Text after an image in the same step (from a hosted image call) starts a new paragraph.
+        const text =
+          part.text && answer.length === imageEnd
+            ? `\n\n${part.text}`
+            : part.text;
+        answer += text;
+        if (!strictResearch) yield { type: "delta", text };
       }
-      if (part.type === "tool-call" && activityName(part.toolName)) {
-        const activity: ChatToolActivity<TTool> = {
-          id: part.toolCallId,
-          tool: part.toolName,
-          query: describe(part.toolName, part.input),
-          status: "running",
-        };
-        activities.set(activity.id, activity);
-        yield { type: "tool", activity };
+      if (part.type === "tool-call") {
+        // A hosted image call is reported as generate_image; it carries no prompt.
+        const toolName = isHostedImage(part)
+          ? ("generate_image" as TTool)
+          : part.toolName;
+        if (activityName(toolName)) {
+          const activity: ChatToolActivity<TTool> = {
+            id: part.toolCallId,
+            tool: toolName,
+            query: describe(toolName, part.input),
+            status: "running",
+          };
+          activities.set(activity.id, activity);
+          yield { type: "tool", activity };
+        }
       }
       if (part.type === "tool-result" || part.type === "tool-error") {
+        // A hosted image call returns the image itself rather than handing it to onImage.
+        let rejected = false;
+        if (part.type === "tool-result" && isHostedImage(part)) {
+          const markdown =
+            hostedImages < MAX_IMAGE_GENERATIONS
+              ? hostedImageMarkdown(part.output)
+              : null;
+          if (markdown) {
+            hostedImages++;
+            generatedImages.set(part.toolCallId, markdown);
+          } else rejected = true;
+        }
         // Splice a finished image into the reply as it lands; the next step's text follows it.
         const image = generatedImages.get(part.toolCallId);
         if (image) {
           generatedImages.delete(part.toolCallId);
           const text = `${answer && !answer.endsWith("\n\n") ? "\n\n" : ""}${image}`;
           answer += text;
+          imageEnd = answer.length;
           if (!strictResearch) yield { type: "delta", text };
         }
         const previous = activities.get(part.toolCallId);
         if (previous) {
           const failed =
+            rejected ||
             part.type === "tool-error" ||
             (typeof part.output === "object" &&
               part.output !== null &&
