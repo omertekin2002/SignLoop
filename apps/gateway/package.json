@@ -3,13 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": {
-    "bun": "1.4.4"
-  },
   "scripts": {
-    "dev": "bun --watch src/server.ts",
-    "start": "bun src/server.ts",
+    "dev": "bun --watch src/dev-server.ts",
     "build:vercel": "tsc --noEmit && bun scripts/build-vercel.ts",
+    "serve:vercel": "node --experimental-strip-types scripts/serve-vercel-output.ts",
     "lint": "eslint --max-warnings 0",
     "check-types": "tsc --noEmit",
     "test": "vitest run"

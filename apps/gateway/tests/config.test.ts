@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { OPENROUTER_FALLBACK_MODELS, loadServiceConfig } from "../src/config";
+import {
+  OPENROUTER_FALLBACK_MODELS,
+  loadLocalPort,
+  loadServiceConfig,
+} from "../src/config";
 
 const minimumEnvironment = {
   GEMINI_API_KEY: "gemini-secret",
@@ -10,7 +14,6 @@ describe("loadServiceConfig", () => {
   it("applies standalone service defaults", () => {
     const config = loadServiceConfig(minimumEnvironment);
 
-    expect(config.port).toBe(10_000);
     expect(config.maxConcurrentRequests).toBe(4);
     expect(config.requestTimeoutMs).toBe(275_000);
     expect(config.webTools.geminiModel).toBe("gemini-2.5-flash");
@@ -18,32 +21,35 @@ describe("loadServiceConfig", () => {
     expect(config.publicServiceUrl).toBe("http://localhost:10000");
   });
 
-  it("uses PUBLIC_SERVICE_URL before the Render fallback", () => {
+  it("uses PUBLIC_SERVICE_URL before Vercel's production domain", () => {
     const config = loadServiceConfig({
       ...minimumEnvironment,
       PUBLIC_SERVICE_URL: "https://public.example.test/",
-      RENDER_EXTERNAL_URL: "https://render.example.test",
+      VERCEL_PROJECT_PRODUCTION_URL: "signloop-gateway.vercel.app",
     });
 
     expect(config.publicServiceUrl).toBe("https://public.example.test");
   });
 
-  it("falls back to Vercel's production domain after the Render URL", () => {
-    const vercelHost = "signloop-gateway.vercel.app";
-
+  it("falls back to Vercel's production domain", () => {
     expect(
       loadServiceConfig({
         ...minimumEnvironment,
-        VERCEL_PROJECT_PRODUCTION_URL: vercelHost,
+        VERCEL_PROJECT_PRODUCTION_URL: "signloop-gateway.vercel.app",
       }).publicServiceUrl,
     ).toBe("https://signloop-gateway.vercel.app");
+  });
+
+  it("reads the local server port from PORT", () => {
+    expect(loadLocalPort({})).toBe(10_000);
+    expect(loadLocalPort({ PORT: "8787" })).toBe(8787);
     expect(
-      loadServiceConfig({
-        ...minimumEnvironment,
-        RENDER_EXTERNAL_URL: "https://render.example.test",
-        VERCEL_PROJECT_PRODUCTION_URL: vercelHost,
-      }).publicServiceUrl,
-    ).toBe("https://render.example.test");
+      loadServiceConfig({ ...minimumEnvironment, PORT: "8787" })
+        .publicServiceUrl,
+    ).toBe("http://localhost:8787");
+    expect(() => loadLocalPort({ PORT: "70000" })).toThrow(
+      "PORT must be a positive integer no greater than 65535",
+    );
   });
 
   it("supports a primary-only generation path", () => {

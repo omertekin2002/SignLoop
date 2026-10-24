@@ -2,7 +2,7 @@ import type { ServiceConfig } from "./config";
 import { toProviderConfig } from "./handler";
 import { listProviderCandidates } from "./pipeline/agent-provider";
 
-/** Log the configured provider order once per process (Bun server or Vercel instance). */
+/** Log the configured provider order once per process (Vercel instance or local dev server). */
 export function logServiceStartup(config: ServiceConfig): void {
   // Provider names and model IDs only: credentials and endpoint URLs never reach the logs.
   console.log(

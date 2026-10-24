@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 
 import { InferenceSemaphore } from "./concurrency";
-import { getServiceConfig, type ServiceConfig } from "./config";
+import type { ServiceConfig } from "./config";
 import {
   generateChatReply,
   generateChatReplyStream,
@@ -807,12 +807,4 @@ export function createRequestHandler(
       }
     }
   };
-}
-
-let defaultHandler: ((request: Request) => Promise<Response>) | undefined;
-
-/** Production entry point. `server.ts` validates and caches configuration before binding. */
-export async function handleRequest(request: Request): Promise<Response> {
-  defaultHandler ??= createRequestHandler({ config: getServiceConfig() });
-  return defaultHandler(request);
 }

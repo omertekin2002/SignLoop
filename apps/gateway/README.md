@@ -1,6 +1,6 @@
 # SignLoop Chat Service
 
-A stateless, public HTTP service running SignLoop's agentic chat engine. It runs on Bun on Render today and can also be deployed to Vercel as a Node.js function (see [Deployment](#deployment)). The answering model can search, read web pages and PDFs, fetch public API data, and optionally generate images across multiple model steps. Callers retain their own conversation history.
+A stateless, public HTTP service running SignLoop's agentic chat engine. It is deployed as a Node.js Vercel Function (see [Deployment](#deployment)). The answering model can search, read web pages and PDFs, fetch public API data, and optionally generate images across multiple model steps. Callers retain their own conversation history.
 
 This is `apps/gateway` in the SignLoop monorepo. It was the standalone SLgateway repository, imported here with its history. The agent loop, tools, provider routing, replay, source catalogs, and citations come from [`@repo/chat-engine`](../../packages/chat-engine), the same engine `apps/web` uses; this app adds only the HTTP boundary, configuration, model discovery, the provider chain, the concurrency limit, and logging. See [SOURCE_PROVENANCE.md](./SOURCE_PROVENANCE.md).
 
@@ -8,8 +8,8 @@ This is `apps/gateway` in the SignLoop monorepo. It was the standalone SLgateway
 
 ```text
 client sends text + optional tool history/source catalog
-  -> HTTP boundary: Bun.serve (Render) or a Node.js Vercel Function
-  -> per-process (per-instance on Vercel) concurrency gate + bounded request validation
+  -> HTTP boundary: Node.js Vercel Function (Bun dev server locally)
+  -> per-instance concurrency gate + bounded request validation
   -> authoritative UTC time + server-controlled provider order (optional primary, Gemini, OpenRouter)
   -> @repo/chat-engine ToolLoopAgent (at most 10 model steps)
        -> search_web: Brave / Firecrawl / Gemini search leads
@@ -26,7 +26,7 @@ There is no database, WorkOS/Clerk authentication, saved-thread API, contract da
 
 ## Local setup
 
-Bun is pinned to **1.4.4** by the root `package.json` (`packageManager`), this package's `engines`, and `BUN_VERSION` in the root [render.yaml](../../render.yaml). Install from the repository root; there is one lockfile, the root `bun.lock`.
+Bun is pinned to **1.4.4** by the root `package.json` (`packageManager`). Install from the repository root; there is one lockfile, the root `bun.lock`.
 
 ```sh
 bun --version
@@ -39,15 +39,15 @@ bun run test
 bun run dev
 ```
 
-The root `bun run test`, `bun run lint`, and `bun run check-types` include this app through Turbo. It has no `build` script: Bun runs the TypeScript (including the engine's) directly, so the root `bun run build` skips it. `bun run build:vercel` is separate and only used by the Vercel deployment (see [Vercel](#vercel-nodejs-function)). The root `bun run dev` starts only the web app.
+The root `bun run test`, `bun run lint`, and `bun run check-types` include this app through Turbo. It has no `build` script, so the root `bun run build` skips it; `bun run build:vercel` builds the deployment (see [Vercel](#vercel-nodejs-function)). The root `bun run dev` starts only the web app.
 
 Configure a complete primary provider URL/key pair, `GEMINI_API_KEY`, an OpenRouter key, or any combination. Each model step tries them in that order. Gemini is called through its native API. OpenAI-compatible endpoints (primary and OpenRouter) must support **streaming Responses API function calls and tool-result continuation**. This is also required for non-streaming HTTP clients: the service collects the same internal streaming agent loop into a JSON reply.
 
-Use `bun run start` in production on Render. The listener binds to `0.0.0.0:10000` by default. `/healthz` checks process liveness without calling providers.
+`bun run dev` starts the local development server, [src/dev-server.ts](./src/dev-server.ts): Bun in watch mode, listening on `127.0.0.1:10000` only (set `PORT` to change the port). It serves the same handler as the Vercel Function, built by the same `createVercelHandler`, from the TypeScript sources, so edits reload without a build. To run the deployment build itself under Node, see [Vercel](#vercel-nodejs-function). `/healthz` checks liveness without calling providers.
 
 ## Configuration
 
-Configuration is validated once at startup (on Vercel, once per function instance when the module loads). Provider URLs, credentials, models, and image availability are controlled by the server; callers cannot override them.
+Configuration is validated once per Vercel function instance, when the module loads (and once when the dev server starts). Provider URLs, credentials, models, and image availability are controlled by the server; callers cannot override them.
 
 | Variable                     | Default                                               | Purpose                                                                                                                                                                         |
 | ---------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -66,22 +66,18 @@ Configuration is validated once at startup (on Vercel, once per function instanc
 | `JINA_API_KEY`               | unset                                                 | Optional credential for Jina Reader. The reader is also used without a key.                                                                                                     |
 | `ENABLE_IMAGE_GENERATION`    | `false`                                               | Opt-in image tool. Requires primary configuration and positive model discovery.                                                                                                 |
 | `IMAGE_GENERATION_MODEL`     | `gpt-image-2.5-sunburst`                              | Primary image model; must be advertised by `/models`.                                                                                                                           |
-| `PUBLIC_SERVICE_URL`         | `RENDER_EXTERNAL_URL`, then `https://<VERCEL_PROJECT_PRODUCTION_URL>`, then `http://localhost:<PORT>` | Public service identity in provider headers.                                                                                                                                    |
+| `PUBLIC_SERVICE_URL`         | `https://<VERCEL_PROJECT_PRODUCTION_URL>`, then `http://localhost:<PORT>` | Public service identity in provider headers.                                                                                                                                    |
 | `APP_NAME`                   | `SignLoop Chat Service`                               | Provider `X-Title` identity.                                                                                                                                                    |
-| `PORT`                       | `10000`                                               | Listening port, 1–65535. Render supplies this. Unused on Vercel.                                                                                                                |
-| `MAX_CONCURRENT_REQUESTS`    | `4`                                                   | Active requests per process (per function instance on Vercel, not a global limit). Excess requests receive `429`.                                                               |
+| `PORT`                       | `10000`                                               | Local dev server port, 1–65535. Unused on Vercel.                                                                                                                               |
+| `MAX_CONCURRENT_REQUESTS`    | `4`                                                   | Active requests per function instance (per process locally), not a global limit. Excess requests receive `429`.                                                                 |
 | `REQUEST_TIMEOUT_MS`         | `275000`                                              | Whole-request deadline, including body reading and provider discovery; maximum 3600000. Agent generation has its own 260-second ceiling. On Vercel keep it below the function's 300-second maximum duration; the instance logs `request_timeout_exceeds_max_duration` otherwise. |
 | `CORS_ALLOWED_ORIGINS`       | empty                                                 | Explicit comma-separated HTTP(S) browser origins. Wildcards are rejected.                                                                                                       |
-| `BUN_VERSION`                | `1.4.4` in Blueprint                                 | Render runtime pin.                                                                                                                                                             |
-| `NODE_ENV`                   | `production` in Blueprint                             | Render environment.                                                                                                                                                             |
 
 All answering providers request high reasoning effort through a shared policy. OpenAI-compatible primary and OpenRouter requests explicitly apply it to model aliases without requesting reasoning summaries. Native Gemini chat uses high thinking. Gemini search uses the maximum supported thinking budget for Gemini 2.5 (24,576 tokens for Flash variants, 32,768 for Pro), with another 2,048 output tokens available for its grounded brief; Gemini 3+ uses high thinking with a 32,768-token output budget. Provider deadlines still apply.
 
 An explicit search provider selects one integration; it is not a retry chain between search providers. Search failure becomes a tool error so the model can refine its query or explain the limitation. Page reading prefers Firecrawl and can fall back to Jina within a shared deadline. `http_get` needs no search key.
 
-Image generation is disabled unless explicitly enabled and discovery confirms the configured image model. The Render Blueprint enables it and requires `PRIMARY_LLM_BASE_URL` and `PRIMARY_LLM_API_KEY`. An unavailable discovery endpoint does not expose the image tool. Images use the primary endpoint even when text generation has fallen back to OpenRouter.
-
-Before syncing this Blueprint to an existing service, manually provision both primary credentials in Render. Render prompts for `sync: false` values only when creating a Blueprint and ignores newly added `sync: false` entries on later updates; see [Render's secret-value instructions](https://render.com/docs/blueprint-spec#prompting-for-secret-values). Keep `ENABLE_IMAGE_GENERATION=false` on services without the credentials until they are provisioned.
+Image generation is disabled unless explicitly enabled and discovery confirms the configured image model. Enabling it requires `PRIMARY_LLM_BASE_URL` and `PRIMARY_LLM_API_KEY`. An unavailable discovery endpoint does not expose the image tool. Images use the primary endpoint even when text generation has fallen back to OpenRouter.
 
 ## Public API
 
@@ -239,40 +235,55 @@ Public HTTP fetching validates each redirect and resolved socket address, blocks
 | Status                | Stable code              | Meaning                                                |
 | --------------------- | ------------------------ | ------------------------------------------------------ |
 | 400 / 404 / 413 / 415 | `invalid_request`        | Invalid input, route, size, or content type.           |
-| 429                   | `service_busy`           | Per-process (per-instance) capacity exhausted; inspect `Retry-After`. |
+| 429                   | `service_busy`           | Per-instance capacity exhausted; inspect `Retry-After`. |
 | 502                   | `research_unavailable`   | Strict research did not obtain fresh evidence.         |
 | 502                   | `generation_unavailable` | Provider exhaustion or incomplete/failed generation.   |
 | 504                   | `request_timeout`        | Request or generation deadline expired.                |
 | 500                   | `generation_unavailable` | Unexpected boundary failure.                           |
-| 503                   | `service_unavailable`    | Vercel only: the configuration is invalid (every route, including `/healthz`). |
+| 503                   | `service_unavailable`    | The configuration is invalid (every route, including `/healthz`). |
 
 Responses carry `X-Request-ID`; safe incoming IDs are propagated. Structured logs retain request timing, counts, and allowlisted provider failure metadata. They omit prompts, research bodies, credentials, provider URLs, raw upstream error messages, and stack traces. SDK default error/warning logging is suppressed.
 
-The concurrency gate applies per process. On Vercel each function instance has its own gate, and Fluid compute may run several requests in one instance or scale out to more instances, so `MAX_CONCURRENT_REQUESTS` is neither a global limit nor a guarantee that a busy instance's `429` means the whole service is busy. CORS is browser interoperability, not access control. For shared quotas or access restrictions, use an external gateway/rate limiter. Every caller can initiate provider work, including image generation if enabled.
+The concurrency gate applies per process: each Vercel function instance has its own gate, and Fluid compute may run several requests in one instance or scale out to more instances, so `MAX_CONCURRENT_REQUESTS` is neither a global limit nor a guarantee that a busy instance's `429` means the whole service is busy. CORS is browser interoperability, not access control. For shared quotas or access restrictions, use an external gateway/rate limiter. Every caller can initiate provider work, including image generation if enabled.
 
 ## Deployment
 
-The gateway has two deployment targets that serve the same handler and API:
+The gateway deploys only to Vercel; the production URL is `https://signloop-chat-api.vercel.app`. It ran on Render (Bun) until October 2026; that setup remains in git history.
 
-- **Render** (live): the Bun server in `src/server.ts`, defined by the root [render.yaml](../../render.yaml).
-- **Vercel** (planned replacement): a Node.js Vercel Function built from `src/vercel.ts`, configured by [vercel.json](./vercel.json) in this directory.
+### Vercel (Node.js function)
 
-Both can run at the same time; the planned [cutover](#cutover-from-render-to-vercel) moves callers to Vercel and retires Render later.
+The gateway is its own Vercel project, `signloop-chat-api` (separate from the web app's project, whose configuration is the root `vercel.json`), with **Root Directory** `apps/gateway`. [vercel.json](./vercel.json) sets everything else:
 
-### Render (Bun)
+- **Install:** `bun install --frozen-lockfile --linker hoisted --filter gateway`. Bun finds the workspace root from `apps/gateway`, so this installs only the gateway's closure from the root `bun.lock`, including `@repo/chat-engine`. Keep the project's "Include files outside of the Root Directory in the Build Step" setting enabled (the default).
+- **Build:** `bun run build:vercel`: type checks, then [scripts/build-vercel.ts](./scripts/build-vercel.ts) bundles `src/vercel.ts` with Bun for Node and writes the [Build Output API](https://vercel.com/docs/build-output-api) to `.vercel/output`: one function, `index`, that every path is routed to. The handler itself answers `/healthz`, `/v1/chat`, CORS preflight, and 404s.
+- **Ignored build step:** builds only when `apps/gateway`, `packages/chat-engine`, `packages/typescript-config`, `bun.lock`, or the root `package.json` changed in the commit.
+- **Fluid compute** is enabled (`"fluid": true`).
 
-The root [render.yaml](../../render.yaml) defines the Render web service `signloop-chat-api` (Render reads Blueprints from the repository root):
+The generated function configuration pins:
 
-- **Build:** `bun install --frozen-lockfile --linker hoisted --filter gateway` from the repository root, which installs only this app's workspace closure (no Next.js or OCR packages), then `bun run check-types` and `bun run test` in `apps/gateway`.
-- **Start:** `cd apps/gateway && bun run start`, with health check `/healthz`.
-- **Build filter:** deploys only for changes to `apps/gateway/**`, `packages/chat-engine/**`, `packages/typescript-config/**`, `bun.lock`, or the root `package.json`. Web-only commits do not redeploy the gateway.
-- **No root directory:** Render makes files outside a service's root directory unavailable at build and run time, and the gateway needs `packages/chat-engine` and the root lockfile. The service therefore runs from the repository root and changes into `apps/gateway`.
+| Setting                | Value        | Why                                                                                                                           |
+| ---------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Runtime                | `nodejs24.x` | Node.js, not Bun. The function runtime comes from the build output, not the project's Node.js setting.                      |
+| `maxDuration`          | 300 seconds  | The Hobby maximum with Fluid compute. `REQUEST_TIMEOUT_MS` (275 seconds by default) ends turns before the platform does. |
+| `supportsCancellation` | `true`       | A client disconnect fires `request.signal`, which aborts the turn and its provider calls.                                |
+| Response streaming     | on           | NDJSON events reach the client as they are produced.                                                                          |
 
-The environment variables are unchanged from the standalone repository. No database or persistent disk is needed. Add integration credentials through Render environment settings. `GEMINI_API_KEY` alone is a complete generation path. If you configure the optional primary, set `PRIMARY_LLM_MODEL` to a compatible model supported by your endpoint. Existing deployments explicitly configured with `REQUEST_TIMEOUT_MS=180000` retain that shorter deadline until updated.
+Why a custom build: Vercel's zero-config Node.js builder compiles each TypeScript file separately. Node then rejects the extensionless relative imports this code uses, and `@repo/chat-engine`'s package exports point at `.ts` sources. The Bun bundle is one ES module that Node runs directly. It also carries a copy of `undici`, which the AI SDK loads with a runtime `require()` for URL downloads.
+
+Platform behavior:
+
+- **Configuration errors:** an instance cannot refuse to start, so it logs `config_invalid` once (the message names the variable, never its value) and answers every request, `/healthz` included, with `503` and code `service_unavailable`.
+- **Concurrency:** `MAX_CONCURRENT_REQUESTS` limits each function instance; see [Errors and request IDs](#errors-and-request-ids).
+- **Cancellation:** after a disconnect Vercel may end the invocation, so the access-log line of a cancelled stream can be lost.
+- **`PUBLIC_SERVICE_URL`:** falls back to the project's production domain (`VERCEL_PROJECT_PRODUCTION_URL`) when unset.
+
+To check the deployment build locally, run `bun run build:vercel` in `apps/gateway`, which writes `.vercel/output` (ignored by git), then `bun run serve:vercel [port]`: [scripts/serve-vercel-output.ts](./scripts/serve-vercel-output.ts) serves the built function with Node on `127.0.0.1` (default port 10000), passing client disconnects on as aborts. CI builds the bundle and probes `/healthz` and a 404 this way. [tests/vercel.test.ts](./tests/vercel.test.ts) calls the function's fetch handler directly: health, JSON and incremental NDJSON chat, CORS preflight, 404s, client and body-cancel aborts, and the misconfigured `503`.
+
+Environment variables are those in [Configuration](#configuration), set in the project's settings; `PORT` does not apply. Set `PUBLIC_SERVICE_URL` to a custom domain if there is one, or rely on the production-domain fallback above. No database or persistent disk is needed. `GEMINI_API_KEY` alone is a complete generation path. If you configure the optional primary, set `PRIMARY_LLM_MODEL` to a compatible model supported by your endpoint.
 
 ### Checks and data handling
 
-Against a local Bun server (use the deployment's URL to check Render or Vercel):
+Against the local dev server (use `https://signloop-chat-api.vercel.app` to check production):
 
 ```sh
 curl --fail http://localhost:10000/healthz
@@ -297,53 +308,6 @@ Local tests do not establish deployed provider compatibility. Before rollout, ch
 
 Conversation content goes to the selected generation providers. Search queries go to the selected search integration; URLs and page content are processed through readers or public HTTP targets. Optional image prompts go to the primary image provider. The gateway itself retains no conversations after requests; provider retention is separate. The updated otekin client retains chat state in memory and writes requested generated images to temporary local PNG files.
 
-### Vercel (Node.js function)
-
-The Vercel deployment is its own Vercel project (separate from the web app's project, whose configuration is the root `vercel.json`) with **Root Directory** `apps/gateway`. [vercel.json](./vercel.json) sets everything else:
-
-- **Install:** `bun install --frozen-lockfile --linker hoisted --filter gateway`. Bun finds the workspace root from `apps/gateway`, so this installs only the gateway's closure from the root `bun.lock`, including `@repo/chat-engine`. Keep the project's "Include files outside of the Root Directory in the Build Step" setting enabled (the default).
-- **Build:** `bun run build:vercel`: type checks, then [scripts/build-vercel.ts](./scripts/build-vercel.ts) bundles `src/vercel.ts` with Bun for Node and writes the [Build Output API](https://vercel.com/docs/build-output-api) to `.vercel/output`: one function, `index`, that every path is routed to. The handler itself answers `/healthz`, `/v1/chat`, CORS preflight, and 404s.
-- **Ignored build step:** builds only when `apps/gateway`, `packages/chat-engine`, `packages/typescript-config`, `bun.lock`, or the root `package.json` changed in the commit, like Render's build filter.
-- **Fluid compute** is enabled (`"fluid": true`).
-
-The generated function configuration pins:
-
-| Setting                | Value        | Why                                                                                                                           |
-| ---------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| Runtime                | `nodejs24.x` | Node.js, not Bun. The function runtime comes from the build output, not the project's Node.js setting.                      |
-| `maxDuration`          | 300 seconds  | The Hobby maximum with Fluid compute. `REQUEST_TIMEOUT_MS` (275 seconds by default) ends turns before the platform does. |
-| `supportsCancellation` | `true`       | A client disconnect fires `request.signal`, which aborts the turn and its provider calls, as on the Bun server.          |
-| Response streaming     | on           | NDJSON events reach the client as they are produced.                                                                          |
-
-Why a custom build: Vercel's zero-config Node.js builder compiles each TypeScript file separately. Node then rejects the extensionless relative imports this code uses, and `@repo/chat-engine`'s package exports point at `.ts` sources. The Bun bundle is one ES module that Node runs directly. It also carries a copy of `undici`, which the AI SDK loads with a runtime `require()` for URL downloads. Without `engines.node`, Vercel's zero-config builder would also pick its Bun runtime because of `engines.bun`; the custom build avoids that too.
-
-Behavior that differs from the Bun server:
-
-- **Configuration errors:** the Bun server exits at startup. A Vercel instance cannot refuse to start, so it logs `config_invalid` once (the message names the variable, never its value) and answers every request, `/healthz` included, with `503` and code `service_unavailable`.
-- **Concurrency:** `MAX_CONCURRENT_REQUESTS` limits each function instance; see [Errors and request IDs](#errors-and-request-ids).
-- **Cancellation:** after a disconnect Vercel may end the invocation, so the access-log line of a cancelled stream can be lost.
-- **`PUBLIC_SERVICE_URL`:** falls back to the project's production domain (`VERCEL_PROJECT_PRODUCTION_URL`) when unset.
-
-To check the deployment build locally, run `bun run build:vercel` in `apps/gateway` and inspect `.vercel/output` (ignored by git). [tests/vercel.test.ts](./tests/vercel.test.ts) calls the function's fetch handler directly: health, JSON and incremental NDJSON chat, CORS preflight, 404s, client and body-cancel aborts, and the misconfigured `503`.
-
-Environment variables are those in [Configuration](#configuration); copy them from the Render service. `PORT`, `BUN_VERSION`, and `RENDER_EXTERNAL_URL` do not apply. Set `PUBLIC_SERVICE_URL` to the Vercel production URL (or a custom domain), or rely on the fallback above.
-
-### Cutover from Render to Vercel
-
-1. **Vercel project.** Import the SignLoop repository as a new Vercel project with Root Directory `apps/gateway` and framework preset "Other"; `vercel.json` supplies the install, build, and ignore commands. Add the environment variables from `signloop-chat-api` (secrets included) for Production and, if wanted, Preview. Deploy and check `/healthz`.
-2. **Verify.** Point otekin at the Vercel URL and run the checks from [Moving `signloop-chat-api` to this repository](#moving-signloop-chat-api-to-this-repository) step 2: plain and streamed replies, a search/read/answer cycle, a follow-up with replay, `research: "always"`, cancellation, and an image request. Compare with Render.
-3. **Switch otekin.** Change otekin's gateway URL to the Vercel production URL and distribute that client. Render keeps serving older clients meanwhile.
-4. **Retire Render.** After a soak period with no Render traffic, suspend and then delete `signloop-chat-api`, and remove `render.yaml`, the Render notes in this README and `AGENTS.md`, and `src/server.ts` if the Bun server is no longer needed. To roll back before then, point otekin back at the Render URL.
-
-### Moving `signloop-chat-api` to this repository
-
-The live service still deploys from the standalone SLgateway repository. Move it without downtime:
-
-1. **Temporary service.** In Render, create a new web service (for example `signloop-chat-api-next`) from the SignLoop repository and branch, with no root directory and the build command, start command, health check path, and build filter from [render.yaml](../../render.yaml). Copy every environment variable from `signloop-chat-api`, including the secrets (`PRIMARY_LLM_BASE_URL`, `PRIMARY_LLM_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`) and any optional integration keys. Create it by hand rather than syncing the Blueprint, so the live service is untouched.
-2. **Verify.** Check `/healthz`, then point otekin at the temporary URL and run a plain reply, a streamed reply, a search/read/answer cycle, a follow-up that replays `agentMessages` and `webSources`, `research: "always"`, and an image request. Compare with the live service; status codes, headers, and response fields should match.
-3. **Switch.** In the settings of `signloop-chat-api`, change the repository to SignLoop (`main`), clear the root directory, and set the build command, start command, and build filter from `render.yaml`. Environment variables stay on the service. Render keeps the current instance serving until the new build passes `/healthz`, so the URL and callers are unaffected. If the service is managed by a Blueprint linked to SLgateway, detach it from that Blueprint (or move it to a Blueprint from this repository) first, and provision the `sync: false` secrets before any Blueprint sync.
-4. **Retire.** Delete the temporary service. After a soak period, archive the SLgateway repository with a pointer to `apps/gateway`. To roll back before then, point `signloop-chat-api` back at SLgateway `main` (`0987fe2`).
-
 ### Companion client
 
-The companion `otekin` client uses non-streaming `/v1/chat`, forwards `agentMessages` and `webSources` as received, and resolves citations by each source's explicit `number` ([otekin PR #4](https://github.com/omertekin2002/otekin/pull/4)). Installations based on `12b4de8` (version `0.1.8`) still look sources up by position, which can pair a citation with another entry's title and URL after eviction, so distribute the updated client before relying on numbered catalogs.
+The companion `otekin` client (0.1.11 and later default to `https://signloop-chat-api.vercel.app/v1/chat`) uses non-streaming `/v1/chat`, forwards `agentMessages` and `webSources` as received, and resolves citations by each source's explicit `number` ([otekin PR #4](https://github.com/omertekin2002/otekin/pull/4)). Installations based on `12b4de8` (version `0.1.8`) still look sources up by position, which can pair a citation with another entry's title and URL after eviction, so distribute the updated client before relying on numbered catalogs.

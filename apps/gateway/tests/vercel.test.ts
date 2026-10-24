@@ -1,6 +1,7 @@
-// The Vercel Function entry (src/vercel.ts, built by scripts/build-vercel.ts) drives the same
-// handler as the Bun server. These tests call its exported fetch handler directly, with the real
-// configuration and engine; only the network is stubbed, as in contract.test.ts.
+// The Vercel Function entry (src/vercel.ts, built by scripts/build-vercel.ts) is the deployed
+// service; the local dev server (src/dev-server.ts) serves the same handler. These tests call its
+// exported fetch handler directly, with the real configuration and engine; only the network is
+// stubbed, as in contract.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearPrimaryModelAvailabilityCache } from "../src/pipeline/provider-models";

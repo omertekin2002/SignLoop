@@ -40,7 +40,6 @@ export type ServiceConfig = Readonly<{
   openRouter: OpenRouterConfig | null;
   publicServiceUrl: string;
   appName: string;
-  port: number;
   maxConcurrentRequests: number;
   requestTimeoutMs: number;
   corsAllowedOrigins: ReadonlySet<string>;
@@ -248,7 +247,6 @@ export function loadServiceConfig(
     );
   }
 
-  const port = parsePositiveInteger(environment, "PORT", 10_000, 65_535);
   const searchProvider = optionalValue(
     environment,
     "WEB_SEARCH_PROVIDER",
@@ -283,9 +281,8 @@ export function loadServiceConfig(
   const publicServiceUrl = parseHttpUrl(
     "PUBLIC_SERVICE_URL",
     optionalValue(environment, "PUBLIC_SERVICE_URL") ??
-      optionalValue(environment, "RENDER_EXTERNAL_URL") ??
       (vercelProductionHost ? `https://${vercelProductionHost}` : null) ??
-      `http://localhost:${port}`,
+      `http://localhost:${loadLocalPort(environment)}`,
   );
 
   return Object.freeze({
@@ -311,7 +308,6 @@ export function loadServiceConfig(
       "APP_NAME",
       optionalValue(environment, "APP_NAME") ?? "SignLoop Chat Service",
     ),
-    port,
     maxConcurrentRequests: parsePositiveInteger(
       environment,
       "MAX_CONCURRENT_REQUESTS",
@@ -330,10 +326,7 @@ export function loadServiceConfig(
   });
 }
 
-let cachedConfig: ServiceConfig | undefined;
-
-/** Read the environment at most once in the production process. */
-export function getServiceConfig(): ServiceConfig {
-  cachedConfig ??= loadServiceConfig();
-  return cachedConfig;
+/** Listening port of the local dev server: `PORT`, 1–65535, default 10000. Vercel ignores it. */
+export function loadLocalPort(environment: Environment = process.env): number {
+  return parsePositiveInteger(environment, "PORT", 10_000, 65_535);
 }
