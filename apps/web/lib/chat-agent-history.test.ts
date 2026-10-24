@@ -117,3 +117,56 @@ it("preserves source IDs independently when replay is too large for the history 
     ])[0],
   ).toEqual({ role: "assistant", content: "Answer", webSources: sources });
 });
+
+it("drops reasoning-only assistant steps while keeping reasoning signed with tool calls", () => {
+  const signature = { google: { thoughtSignature: "sig-1" } };
+  const exchange = [
+    {
+      role: "assistant",
+      content: [
+        { type: "reasoning", text: "Need a source.", providerOptions: signature },
+        {
+          type: "tool-call",
+          toolCallId: "c1",
+          toolName: "read_url",
+          input: { url: "https://source.test/" },
+          providerOptions: signature,
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "c1",
+          toolName: "read_url",
+          output: { type: "json", value: { content: "Evidence" } },
+        },
+      ],
+    },
+  ];
+  // A thinking model's final step is reasoning plus the answer; the answer is replayed separately.
+  const finalStep = {
+    role: "assistant",
+    content: [
+      { type: "reasoning", text: "Summarize.", providerOptions: signature },
+      { type: "text", text: "Final answer" },
+    ],
+  };
+  expect(compactAgentMessages([...exchange, finalStep])).toEqual(exchange);
+  expect(compactAgentMessages([finalStep])).toBeUndefined();
+  expect(
+    compactAgentMessages([
+      { role: "assistant", content: [{ type: "reasoning", text: "Thinking only." }] },
+    ]),
+  ).toBeUndefined();
+  // Reasoning between a call and its result must not adopt the result into its own group.
+  expect(
+    compactAgentMessages([
+      exchange[0],
+      { role: "assistant", content: [{ type: "reasoning", text: "Hmm." }] },
+      exchange[1],
+    ]),
+  ).toBeUndefined();
+});

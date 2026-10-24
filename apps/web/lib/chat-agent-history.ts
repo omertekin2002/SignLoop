@@ -54,9 +54,13 @@ export function compactAgentMessages(
   const groups: ModelMessage[][] = [];
   for (const message of parsed.data) {
     if (message.role === "assistant") {
-      const content = Array.isArray(message.content)
-        ? message.content.filter((part) => part.type !== "text")
-        : [];
+      // Reasoning and signatures belong with the tool calls they precede; without a call
+      // (e.g. a thinking model's final step) they would replay as an unpaired assistant turn.
+      const content =
+        Array.isArray(message.content) &&
+        message.content.some((part) => part.type === "tool-call")
+          ? message.content.filter((part) => part.type !== "text")
+          : [];
       groups.push(
         content.length
           ? [
