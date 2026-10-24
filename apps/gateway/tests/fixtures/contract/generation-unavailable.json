@@ -1,0 +1,72 @@
+{
+  "json": {
+    "status": 502,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-1"
+    },
+    "body": {
+      "error": "Chat request failed. Please try again.",
+      "code": "generation_unavailable"
+    },
+    "logs": [
+      {
+        "level": "warn",
+        "event": "provider_failure",
+        "requestId": "generated-request-1",
+        "provider": "primary-openai-compatible",
+        "model": "gpt-6.1-sol",
+        "errorClass": "AI_APICallError",
+        "statusCode": 500
+      },
+      {
+        "requestId": "generated-request-1",
+        "route": "/v1/chat",
+        "status": 502,
+        "durationMs": "<duration>",
+        "streaming": false,
+        "messageCount": 1,
+        "totalMessageCharacters": 22,
+        "errorClass": "GenerationUnavailableError"
+      }
+    ]
+  },
+  "ndjson": {
+    "status": 200,
+    "headers": {
+      "cache-control": "no-cache, no-transform",
+      "content-type": "application/x-ndjson; charset=utf-8",
+      "x-accel-buffering": "no",
+      "x-request-id": "generated-request-1"
+    },
+    "events": [
+      {
+        "type": "error",
+        "error": "Chat request failed. Please try again.",
+        "code": "generation_unavailable"
+      }
+    ],
+    "logs": [
+      {
+        "level": "warn",
+        "event": "provider_failure",
+        "requestId": "generated-request-1",
+        "provider": "primary-openai-compatible",
+        "model": "gpt-6.1-sol",
+        "errorClass": "AI_APICallError",
+        "statusCode": 500
+      },
+      {
+        "requestId": "generated-request-1",
+        "route": "/v1/chat",
+        "status": 200,
+        "durationMs": "<duration>",
+        "streaming": true,
+        "messageCount": 1,
+        "totalMessageCharacters": 22,
+        "errorClass": "GenerationUnavailableError"
+      }
+    ]
+  }
+}

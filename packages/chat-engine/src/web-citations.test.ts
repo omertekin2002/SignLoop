@@ -93,6 +93,23 @@ describe("sources listed from what was fetched", () => {
     expect(result).not.toContain("Source 1");
   });
 
+  it("resolves stable numbers after older sources were retired", () => {
+    // Positions no longer match numbers: [1] and [2] were retired from this catalog.
+    const retained = [
+      { number: 3, title: "Three", url: "https://three.test/" },
+      { number: 1234, title: "Recent", url: "https://recent.test/" },
+    ];
+    const result = appendWebSourcesToMessage(
+      "Old [1], kept [3], recent 【1234†L2-L4】.",
+      retained,
+      { readThisTurn: [1234, 2] },
+    );
+    expect(result).toContain("recent [1234].");
+    expect(result).toContain("- [3] [Three](<https://three.test/>)");
+    expect(result).toContain("- [1234] [Recent](<https://recent.test/>)");
+    expect(result).not.toMatch(/^- \[[12]\] /m);
+  });
+
   it("ignores out-of-range read numbers", () => {
     expect(appendWebSourcesToMessage("No figures here.", sources, { readThisTurn: [0, 99] })).toBe(
       "No figures here.",

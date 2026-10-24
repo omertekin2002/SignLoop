@@ -1,0 +1,7 @@
+{
+  "extends": "@repo/typescript-config/source-package.json",
+  "compilerOptions": {
+    "types": ["bun-types", "node"]
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+}

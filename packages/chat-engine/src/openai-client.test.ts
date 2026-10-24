@@ -20,6 +20,17 @@ describe("createOpenAiCompatibleClient", () => {
     ).toThrow(/must use HTTP or HTTPS/i);
   });
 
+  it("does not read provider settings from process.env", () => {
+    vi.stubEnv("PRIMARY_LLM_BASE_URL", "file:///must-not-be-used");
+    try {
+      expect(() =>
+        createOpenAiCompatibleClient("https://explicit.example/v1"),
+      ).not.toThrow();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("disables ambient SDK logging and unrelated OpenAI credentials", () => {
     vi.stubEnv("OPENAI_LOG", "debug");
     vi.stubEnv("OPENAI_ORG_ID", "ambient-organization");

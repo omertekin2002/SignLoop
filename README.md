@@ -2,7 +2,7 @@
 
 SignLoop is a personal AI-assisted contract workspace built with Next.js 16, React, WorkOS AuthKit, PostgreSQL, and OpenAI-compatible model providers. Users can upload contracts, request structured analysis, organize supporting documents in projects, and use temporary or saved chat. Every account has its own workspace; organizations and team membership are not used.
 
-The Bun/Turborepo repository contains one application, `apps/web`, the shared chat engine in `packages/chat-engine`, and shared ESLint and TypeScript configuration packages. There is no separate API server or background inference worker: API Route Handlers perform extraction, analysis, and chat orchestration. See [Repository layout](#repository-layout).
+The Bun/Turborepo repository contains two applications built on one chat engine: `apps/web`, the SignLoop web app on Vercel, and `apps/gateway`, the public, stateless chat API on Render (formerly the separate SLgateway repository). The shared chat engine lives in `packages/chat-engine`, alongside shared ESLint and TypeScript configuration packages. The web app has no separate API server or background inference worker: its API Route Handlers perform extraction, analysis, and chat orchestration. See [Repository layout](#repository-layout).
 
 ## Local setup
 
@@ -35,16 +35,16 @@ This changes the configured database. The migration entry point invokes Node and
 
 | From repository root  | Purpose                                                 |
 | --------------------- | ------------------------------------------------------- |
-| `bun run dev`         | Web development server on port 3000.                    |
-| `bun run build`       | Production web build through Turbo.                     |
+| `bun run dev`         | Web development server on port 3000 (web only).         |
+| `bun run build`       | Production web build through Turbo; no gateway build.   |
 | `bun run lint`        | Workspace linting, rejecting warnings.                  |
 | `bun run check-types` | TypeScript checking; web also generates route types.    |
-| `bun run test`        | Workspace tests (web and chat engine) through Turbo.    |
+| `bun run test`        | Workspace tests (web, gateway, engine) through Turbo.   |
 | `bun run db:migrate`  | Apply pending migrations using the configured database. |
 
 Turbo may return cached results. Use `bun run build --force` for a fresh build. Run build and type checking sequentially because both generate `.next` files.
 
-From `apps/web` or `packages/chat-engine`, `bun run test` invokes that workspace's Vitest suite directly; a path narrows the run, for example `bun run test lib/contract-tools.test.ts` in `apps/web` or `bun run test src/chat.test.ts` in the package. The package also has its own `lint` and `check-types` scripts, which the root commands include.
+From `apps/web`, `apps/gateway`, or `packages/chat-engine`, `bun run test` invokes that workspace's Vitest suite directly; a path narrows the run, for example `bun run test lib/contract-tools.test.ts` in `apps/web`, `bun run test tests/contract.test.ts` in `apps/gateway`, or `bun run test src/chat.test.ts` in the package. The gateway and the package also have their own `lint` and `check-types` scripts, which the root commands include. Run the gateway itself with `bun run dev` from `apps/gateway`; see its [README](apps/gateway/README.md).
 
 Tests include the [contract analysis evaluations](apps/web/evals/README.md), which replay hand-written model outputs through the production analysis path. They make no provider calls.
 
@@ -57,20 +57,23 @@ bun run test:integration
 
 It initializes local PostgreSQL, applies migrations, runs database ownership/concurrency tests, and removes the temporary database. It never uses `POSTGRES_URL`. The default binary directory is `/opt/homebrew/opt/postgresql@16/bin`; set `POSTGRES_BIN` for another installation. If `SIGNLOOP_TEST_DATABASE_URL` is already set, the script skips the temporary cluster and runs the same suites against that database instead; it must be an empty, disposable `signloop_test` database on `localhost`, such as a `postgres:16` container. This is separate from testing against production credentials or live model services.
 
-GitHub Actions ([ci.yml](.github/workflows/ci.yml)) runs on pull requests and pushes to `main`. One job installs dependencies with Vercel's hoisted linker, then runs lint, type checking, tests, and the build, and checks the OCR build traces; none of them needs secrets or environment files. A second job runs `bun run test:integration` against an empty `postgres:16` service container.
+GitHub Actions ([ci.yml](.github/workflows/ci.yml)) runs on pull requests and pushes to `main`. One job installs dependencies with Vercel's hoisted linker, then runs lint, type checking, tests, and the build, boots the gateway under Bun and probes `/healthz`, and checks the OCR build traces; none of them needs secrets or environment files. A second job runs `bun run test:integration` against an empty `postgres:16` service container.
 
 ## Repository layout
 
 | Path                         | Contents                                                                                                                                                                                                    |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/gateway`               | The public chat API (`POST /v1/chat`, `/healthz`) on Bun and Render: HTTP boundary, validation, concurrency limit, model discovery, provider chain, and allowlisted logs around the chat engine. |
 | `apps/web`                   | The Next.js application: pages, API routes, auth, database, quotas, uploads/extraction, contract analysis, saved chats and titles, and SignLoop's binding of the chat engine.                               |
-| `packages/chat-engine`       | `@repo/chat-engine`, the agent loop shared with the SLgateway service: provider routing, the generic tools, replay, source catalogs, and citations. TypeScript source only; it never reads the environment. |
+| `packages/chat-engine`       | `@repo/chat-engine`, the agent loop shared by `apps/web` and `apps/gateway`: provider routing, the generic tools, replay, source catalogs, and citations. TypeScript source only; it never reads the environment. |
 | `packages/eslint-config`     | Shared ESLint presets (`base`, `next-js`).                                                                                                                                                                  |
 | `packages/typescript-config` | Shared TypeScript presets (`base`, `nextjs`, `source-package`).                                                                                                                                             |
 
 The chat engine package contains `generateChatReplyStream`/`generateChatReply` with the tool loop, first-chunk provider fallback and research modes ([chat.ts](packages/chat-engine/src/chat.ts), [routing.ts](packages/chat-engine/src/routing.ts)); `search_web`, `read_url`, `http_get`, `generate_image`, the contract egress guard and untrusted-content fences ([chat-tools.ts](packages/chat-engine/src/chat-tools.ts)) with their search, reader, fetch, DNS-guard and image modules; replay compaction, source catalogs, citations, the time context, reasoning policy, safe provider-failure metadata, bounded reads, and the hardened OpenAI-compatible client. [index.ts](packages/chat-engine/src/index.ts) is the public entry point. Single modules can be imported as `@repo/chat-engine/<module>`, which browser code uses for `chat-history-shared` and `bounded-response`.
 
 `apps/web` binds the engine in [chat.ts](apps/web/lib/chat.ts), which keeps the API the routes use. [chat-engine-config.ts](apps/web/lib/chat-engine-config.ts) builds the provider chain (selected primary model, then the OpenRouter chain from [model-settings.ts](apps/web/lib/model-settings.ts), with pinning) and the tool settings from the environment, and [contract-tools.ts](apps/web/lib/contract-tools.ts) adds `list_contracts`/`read_contract` as an engine tool extension. Everything that touches the database, authentication, quotas, persistence, or Next.js stays in `apps/web`. Next.js compiles the package through `transpilePackages`.
+
+`apps/gateway` binds the engine in [chat.ts](apps/gateway/src/pipeline/chat.ts): advisory `/models` discovery, its provider chain (primary, native Gemini, then OpenRouter, built in [agent-provider.ts](apps/gateway/src/pipeline/agent-provider.ts)), and tool settings from its validated startup [configuration](apps/gateway/src/config.ts). Bun runs the package's TypeScript directly. The gateway's public API is pinned by golden [contract tests](apps/gateway/tests/contract.test.ts), so an engine change that alters it fails CI.
 
 ## Configuration
 
@@ -242,6 +245,8 @@ Cleanup atomically claims due rows with expiring leases and processes four objec
 
 ## Deployment
 
+`apps/web` deploys to Vercel and `apps/gateway` to Render.
+
 Root [vercel.json](vercel.json) configures:
 
 - Install: `bun install --frozen-lockfile --linker hoisted`.
@@ -251,7 +256,11 @@ Root [vercel.json](vercel.json) configures:
 
 Keep the hoisted linker so repository-root framework discovery can resolve Next.js. The build command does not apply migrations. Run migrations against the intended environment before setting `SKIP_SCHEMA_BOOTSTRAP=1`. API output traces include SQL migration files through [next.config.js](apps/web/next.config.js). The OCR upload routes leave tesseract.js unbundled and trace its worker modules, WebAssembly core builds, and English model; `bun run check:ocr-trace` in `apps/web` verifies those traces after a build.
 
-The configured ignore command considers changes under `apps/web`, `packages`, and the listed root build/dependency configuration files; a root README/AGENTS-only commit is eligible to skip deployment. The repository configuration does not establish the current state of a live deployment.
+The configured ignore command considers changes under `apps/web`, `packages`, and the listed root build/dependency configuration files; a root README/AGENTS-only commit is eligible to skip deployment, and so is a commit that touches only `apps/gateway`. The Vercel build never builds the gateway.
+
+Root [render.yaml](render.yaml) is the Render Blueprint for the gateway service `signloop-chat-api`. It installs the gateway's workspace closure from the repository root with the frozen lockfile, type-checks and tests the gateway, starts it with Bun 1.3.11, and checks `/healthz`. The service sets no root directory because Render hides files outside it, and its build filter limits deploys to the gateway, the engine, the TypeScript preset, `bun.lock`, and the root `package.json`. The [gateway README](apps/gateway/README.md#deployment) describes its configuration and the zero-downtime cutover from the standalone repository.
+
+The repository configuration does not establish the current state of a live deployment.
 
 ## Known limitations and remaining work
 

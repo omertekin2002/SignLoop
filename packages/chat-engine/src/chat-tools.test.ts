@@ -245,6 +245,31 @@ describe("createHttpGetTool", () => {
     expect(result.body).toBe(fenceUntrusted('{"close":13.38}'));
   });
 
+  it("does not count an HTTP error page as successful strict-research evidence", async () => {
+    vi.mocked(httpGet).mockResolvedValue({
+      url: "https://api.test/",
+      status: 403,
+      body: "Forbidden",
+      contentType: "text/plain",
+      truncated: false,
+    });
+    const onEvidence = vi.fn();
+    const onResearchEvidence = vi.fn();
+    const tools = createHttpGetTool({
+      signal: new AbortController().signal,
+      addSource: () => 1,
+      onEvidence,
+      onResearchEvidence,
+    });
+    await tools.http_get!.execute!(
+      { url: "https://api.test/" },
+      { toolCallId: "get", messages: [], context: undefined },
+    );
+    // The body was read, so its figures still count; it cannot satisfy strict research.
+    expect(onEvidence).toHaveBeenCalledWith("Forbidden");
+    expect(onResearchEvidence).not.toHaveBeenCalled();
+  });
+
   it("serves a repeated address from cache without refetching", async () => {
     vi.mocked(httpGet).mockResolvedValue({
       url: "https://api.test/a",

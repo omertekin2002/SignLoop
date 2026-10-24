@@ -1,0 +1,84 @@
+{
+  "status": 200,
+  "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "x-request-id": "generated-request-1"
+  },
+  "body": {
+    "message": "![Generated image](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB)\n\nHere is a chart of the base rate.",
+    "provider": "primary-openai-compatible",
+    "model": "gpt-6.1-sol",
+    "webSearch": null,
+    "webSearchQuery": null,
+    "webSearchAttempts": [],
+    "webSearchSuccessfulCount": 0,
+    "webSources": [],
+    "agentMessages": [
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool-call",
+            "toolCallId": "r1-call",
+            "toolName": "generate_image",
+            "input": {
+              "prompt": "A chart of base rates"
+            },
+            "providerOptions": {
+              "openai": {
+                "itemId": "r1-fc"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": [
+          {
+            "type": "tool-result",
+            "toolCallId": "r1-call",
+            "toolName": "generate_image",
+            "output": {
+              "type": "json",
+              "value": {
+                "status": "attached",
+                "prompt": "A chart of base rates",
+                "model": "gpt-image-2.5-sunburst"
+              }
+            },
+            "providerOptions": {
+              "openai": {
+                "itemId": "r1-fc"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "toolActivity": [
+      {
+        "id": "r1-call",
+        "tool": "generate_image",
+        "query": "A chart of base rates",
+        "status": "complete"
+      }
+    ],
+    "readSources": [],
+    "figures": "ok"
+  },
+  "logs": [
+    {
+      "requestId": "generated-request-1",
+      "route": "/v1/chat",
+      "status": 200,
+      "durationMs": "<duration>",
+      "streaming": false,
+      "messageCount": 1,
+      "totalMessageCharacters": 26,
+      "provider": "primary-openai-compatible",
+      "model": "gpt-6.1-sol"
+    }
+  ]
+}

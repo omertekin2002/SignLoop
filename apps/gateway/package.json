@@ -1,0 +1,31 @@
+{
+  "name": "gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bun": "1.3.11"
+  },
+  "scripts": {
+    "dev": "bun --watch src/server.ts",
+    "start": "bun src/server.ts",
+    "lint": "eslint --max-warnings 0",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "4.0.65",
+    "@ai-sdk/openai": "4.0.62",
+    "@repo/chat-engine": "*",
+    "ai": "7.0.93"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "*",
+    "@repo/typescript-config": "*",
+    "@types/node": "^22.20.1",
+    "bun-types": "1.3.11",
+    "eslint": "^9.39.5",
+    "typescript": "5.9.2",
+    "vitest": "^4.1.10"
+  }
+}
