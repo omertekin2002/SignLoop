@@ -76,9 +76,9 @@ function createUnconfiguredHandler(
 }
 
 /**
- * Build the Vercel Function handler once per instance. Configuration is validated here, at module
- * load, with the same rules as the Bun server's startup; the per-instance concurrency limit lives
- * in the handler this creates.
+ * Build the Vercel Function handler once per instance (the local dev server builds one too).
+ * Configuration is validated here, at module load; the per-instance concurrency limit lives in the
+ * handler this creates.
  */
 export function createVercelHandler(
   environment: Environment = process.env,

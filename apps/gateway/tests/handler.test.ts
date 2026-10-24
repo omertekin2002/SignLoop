@@ -36,7 +36,6 @@ function makeConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
     imageGenerationModel: "gpt-image-2",
     publicServiceUrl: TEST_URL,
     appName: "SignLoop test service",
-    port: 10_000,
     maxConcurrentRequests: 2,
     requestTimeoutMs: 5_000,
     corsAllowedOrigins: new Set<string>(),
