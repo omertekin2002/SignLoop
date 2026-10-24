@@ -51,28 +51,29 @@ jobs:
       - name: Test
         run: bun run test
 
-      # apps/gateway has no build step: Bun runs its TypeScript directly, so Turbo skips it.
+      # apps/gateway has no build task; its Vercel bundle is built by the next step.
       - name: Build
         run: bun run build
 
-      # Render runs the gateway with Bun, while its tests run under Vitest on Node. Boot it with a
-      # placeholder key (no request reaches a provider) and probe the health check.
-      - name: Gateway Bun boot check
+      # The gateway deploys as a Node.js Vercel Function bundled by build:vercel, while its tests
+      # run its TypeScript sources. Build the bundle, serve it with Node and a placeholder key (no
+      # request reaches a provider), and probe the health check and a 404.
+      - name: Gateway Vercel build check
         working-directory: apps/gateway
         env:
           GEMINI_API_KEY: ci-placeholder
-          PORT: "10000"
         run: |
-          bun src/server.ts &
+          bun run build:vercel
+          bun run serve:vercel 10000 &
           server=$!
-          for attempt in $(seq 1 30); do
+          trap 'kill "$server" || true' EXIT
+          for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:10000/healthz; then
-              kill "$server"
+              test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:10000/missing)" = 404
               exit 0
             fi
             sleep 1
           done
-          kill "$server"
           exit 1
 
       # Vercel deploys each route with only its traced files; OCR loads its worker, WebAssembly

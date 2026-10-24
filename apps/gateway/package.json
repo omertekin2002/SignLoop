@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bun --watch src/dev-server.ts",
     "build:vercel": "tsc --noEmit && bun scripts/build-vercel.ts",
+    "serve:vercel": "node --experimental-strip-types scripts/serve-vercel-output.ts",
     "lint": "eslint --max-warnings 0",
     "check-types": "tsc --noEmit",
     "test": "vitest run"
