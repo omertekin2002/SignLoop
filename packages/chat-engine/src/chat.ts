@@ -21,9 +21,9 @@ import { buildAuthoritativeUtcTimeContext } from "./chat-time";
 import {
   createContractEgressGuard,
   createHttpGetTool,
+  createImageBudget,
   createImageTool,
   createUrlReaderTool,
-  MAX_IMAGE_GENERATIONS,
   type ContractEgressGuard,
 } from "./chat-tools";
 import { verifyFigures, type FigureVerification } from "./web-citations";
@@ -461,7 +461,8 @@ export async function* generateChatReplyStream<TTool extends string = string>(
     Boolean(config.imageGeneration) &&
     part.providerExecuted === true &&
     part.toolName === HOSTED_IMAGE_TOOL;
-  let hostedImages = 0;
+  // generate_image and hosted image calls draw on one allowance per reply.
+  const imageBudget = createImageBudget();
   if (config.imageGeneration) {
     const { userId, ...imageConfig } = config.imageGeneration;
     toolNotes.push(TOOL_NOTES.generate_image);
@@ -473,6 +474,7 @@ export async function* generateChatReplyStream<TTool extends string = string>(
         userId,
         onImage: (toolCallId, markdown) =>
           generatedImages.set(toolCallId, markdown),
+        budget: imageBudget,
       }),
     );
   }
@@ -601,14 +603,10 @@ export async function* generateChatReplyStream<TTool extends string = string>(
         // A hosted image call returns the image itself rather than handing it to onImage.
         let rejected = false;
         if (part.type === "tool-result" && isHostedImage(part)) {
-          const markdown =
-            hostedImages < MAX_IMAGE_GENERATIONS
-              ? hostedImageMarkdown(part.output)
-              : null;
-          if (markdown) {
-            hostedImages++;
+          const markdown = hostedImageMarkdown(part.output);
+          if (markdown && imageBudget.take())
             generatedImages.set(part.toolCallId, markdown);
-          } else rejected = true;
+          else rejected = true;
         }
         // Splice a finished image into the reply as it lands; the next step's text follows it.
         const image = generatedImages.get(part.toolCallId);

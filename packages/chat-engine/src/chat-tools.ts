@@ -375,6 +375,20 @@ export function createHttpGetTool(deps: {
   };
 }
 
+/** One reply's image allowance; take() spends a slot and reports whether one was left. */
+export type ImageBudget = { take: () => boolean };
+
+export function createImageBudget(): ImageBudget {
+  let used = 0;
+  return {
+    take: () => {
+      if (used >= MAX_IMAGE_GENERATIONS) return false;
+      used++;
+      return true;
+    },
+  };
+}
+
 /**
  * Image bytes never enter the model transcript: the tool hands the rendered markdown to `onImage`
  * keyed by tool call, and the chat loop splices it into the streamed reply when the result arrives.
@@ -385,20 +399,21 @@ export function createImageTool(deps: {
   /** Passed through to the image endpoint's `user` field for abuse attribution. */
   userId?: string | null;
   onImage: (toolCallId: string, markdown: string) => void;
+  /** Shared with other image sources in the same reply; defaults to a budget of its own. */
+  budget?: ImageBudget;
 }): ToolSet {
-  let generations = 0;
+  const budget = deps.budget ?? createImageBudget();
   return {
     generate_image: tool({
       description:
         "Generate one image from a detailed text prompt when the user asks for a picture, illustration, diagram, or other visual. The finished image is inserted into your reply automatically; do not embed or link it yourself. Describe the prompt you used briefly.",
       inputSchema: z.object({ prompt: z.string().trim().min(1).max(4000) }),
       execute: async ({ prompt }, { toolCallId }) => {
-        if (generations >= MAX_IMAGE_GENERATIONS)
+        if (!budget.take())
           return {
             error:
               "Image budget for this reply is exhausted. Describe what you would generate instead.",
           };
-        generations++;
         try {
           const image = await generateImageReply(prompt, {
             config: deps.config,
