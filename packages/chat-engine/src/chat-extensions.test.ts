@@ -186,4 +186,31 @@ describe("tool extensions", () => {
     // Without the extension the call fails as an unknown tool and is not reported.
     expect(reply.toolActivity).toEqual([]);
   });
+
+  it("ends the turn at its deadline even when a tool ignores the signal", async () => {
+    const model = scripted([call("c1", "hang", {})]);
+    const controller = new AbortController();
+    const hanging: ChatToolExtension = {
+      toolNames: ["hang"],
+      createTools: () => ({
+        hang: tool({
+          description: "Never finishes.",
+          inputSchema: z.object({}),
+          execute: (): Promise<string> => new Promise(() => {}),
+        }),
+      }),
+    };
+    setTimeout(() => controller.abort(new Error("turn deadline")), 50);
+    const started = performance.now();
+    await expect(
+      generateChatReply([{ role: "user", content: "Hi" }], {
+        providers: [{ kind: "language-model", provider: "test", model: "mock", languageModel: model }],
+        tools: { extensions: [hanging] },
+        signal: controller.signal,
+        rethrowAbortReason: true,
+      }),
+    ).rejects.toThrow("turn deadline");
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
 });
+
