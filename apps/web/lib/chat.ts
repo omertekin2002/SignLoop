@@ -46,6 +46,9 @@ const MAX_STEPS = 10;
 const MAX_SEARCHES = 3;
 // Budget chain: route maxDuration 300s > route abort 275s > this deadline > per-step first-chunk guard.
 const GENERATION_TIMEOUT_MS = 260_000;
+// High reasoning counts against each step's output budget, so the cap leaves room for it
+// alongside a long answer.
+export const CHAT_MAX_OUTPUT_TOKENS = 16_384;
 // A provider that accepts the request but sends nothing back is treated as down and skipped.
 const FIRST_CHUNK_TIMEOUT_MS = 20_000;
 const TOOL_NOTES = {
@@ -572,7 +575,7 @@ export async function* generateChatReplyStream(
       )}\n\n${buildAuthoritativeUtcTimeContext()}\n\n${buildToolInstructions(toolNotes)}`,
     tools,
     stopWhen: isStepCount(MAX_STEPS),
-    maxOutputTokens: options?.maxOutputTokens ?? 4096,
+    maxOutputTokens: options?.maxOutputTokens ?? CHAT_MAX_OUTPUT_TOKENS,
     maxRetries: 0,
     providerOptions: {
       openai: {
