@@ -43,6 +43,23 @@ afterEach(() => {
 });
 
 describe("analysis response completion", () => {
+  it.each(["gpt-6.1-sol", "gemini-3-flash", "openrouter/free", null])(
+    "requests high effort for analysis with model selection %s",
+    async (primaryModel) => {
+      const fetchMock = vi.fn().mockResolvedValue(providerResponse("completed"));
+      vi.stubGlobal("fetch", fetchMock);
+      const { analyzeText } = await import("./analysis");
+
+      await analyzeText("Monthly payment agreement", undefined, { primaryModel });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const request = JSON.parse(
+        String((fetchMock.mock.calls[0]![1] as RequestInit).body),
+      );
+      expect(request.reasoning).toEqual({ effort: "high" });
+    },
+  );
+
   it("merges provider and input-coverage notices without losing or repeating either", async () => {
     const { analyzeText, buildAnalysisPrompt } = await import("./analysis");
     const contract = "Contract clause. ".repeat(2000);
@@ -190,6 +207,7 @@ describe("analysis JSON format compatibility", () => {
     );
     expect(bodies[0].text).toEqual({ format: { type: "json_object" } });
     expect(bodies[1]).not.toHaveProperty("text");
+    for (const body of bodies) expect(body.reasoning).toEqual({ effort: "high" });
   });
 
   it.each([
@@ -210,5 +228,10 @@ describe("analysis JSON format compatibility", () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain("openrouter.ai");
     expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)).text)
       .toEqual({ format: { type: "json_object" } });
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(JSON.parse(String((init as RequestInit).body)).reasoning).toEqual({
+        effort: "high",
+      });
+    }
   });
 });

@@ -59,10 +59,17 @@ function canonicalJson(value: unknown): string {
 
 /** Identifies what a recorded response answered: model, prompt, and generation options. */
 export function requestFingerprint(body: Record<string, unknown>): string {
-  const { model, instructions, input, max_output_tokens, text } = body;
+  const { model, instructions, input, max_output_tokens, text, reasoning } = body;
   const digest = createHash("sha256")
     .update(
-      canonicalJson({ model, instructions, input, max_output_tokens, text }),
+      canonicalJson({
+        model,
+        instructions,
+        input,
+        max_output_tokens,
+        text,
+        reasoning,
+      }),
     )
     .digest("hex");
   return `sha256:${digest}`;

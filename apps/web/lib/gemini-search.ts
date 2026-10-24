@@ -1,6 +1,7 @@
 import { readBoundedResponse } from "@/lib/bounded-response";
 import { getErrorMessage, isRecord } from "@/lib/utils";
 import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
+import { TEXT_REASONING_EFFORT } from "@/lib/reasoning-policy";
 
 const GEMINI_API_BASE_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
@@ -293,14 +294,20 @@ function extractGroundedResult(
 }
 
 function buildGenerationConfig(model: string): Record<string, unknown> {
+  // generateContent uses token budgets for Gemini 2.5 and named levels for Gemini 3+.
+  // Use the largest supported 2.5 thinking budget, leaving room for the search brief.
+  const thinkingBudget = /^gemini-2\.5(?:-|$)/i.test(model)
+    ? /^gemini-2\.5-pro(?:-|$)/i.test(model)
+      ? 32_768
+      : 24_576
+    : null;
   return {
     temperature: 0.1,
-    maxOutputTokens: 2_048,
-    // Gemini 2.5 Flash thinks dynamically by default. Search synthesis does not need a separate
-    // reasoning budget, and disabling it keeps this preprocessing step fast and inexpensive.
-    ...(/^gemini-2\.5-flash(?:$|-)/i.test(model)
-      ? { thinkingConfig: { thinkingBudget: 0 } }
-      : {}),
+    maxOutputTokens: thinkingBudget === null ? 32_768 : thinkingBudget + 2_048,
+    thinkingConfig:
+      thinkingBudget === null
+        ? { thinkingLevel: TEXT_REASONING_EFFORT.toUpperCase() }
+        : { thinkingBudget },
   };
 }
 

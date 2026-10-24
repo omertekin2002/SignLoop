@@ -19,7 +19,7 @@ describe("generateImageReply", () => {
     });
   });
 
-  it("forwards the prompt to gpt-image-2 and returns renderable markdown", async () => {
+  it("forwards the prompt to gpt-image-2.5-sunburst and returns renderable markdown", async () => {
     mocks.generate.mockResolvedValue({
       data: [{ b64_json: "aW1hZ2U=" }],
     });
@@ -33,7 +33,7 @@ describe("generateImageReply", () => {
       }),
     ).resolves.toEqual({
       message: "![Generated image](data:image/png;base64,aW1hZ2U=)",
-      model: "gpt-image-2",
+      model: "gpt-image-2.5-sunburst",
       provider: "primary-openai-compatible",
     });
     expect(mocks.createClient).toHaveBeenCalledWith(
@@ -43,7 +43,7 @@ describe("generateImageReply", () => {
     );
     expect(mocks.generate).toHaveBeenCalledWith(
       {
-        model: "gpt-image-2",
+        model: "gpt-image-2.5-sunburst",
         prompt: "A signed contract on a desk",
         n: 1,
         output_format: "png",

@@ -46,6 +46,33 @@ function groundedResponse(input?: {
 }
 
 describe("searchWeb", () => {
+  it.each([
+    ["gemini-2.5-flash", { thinkingBudget: 24_576 }, 26_624],
+    ["gemini-2.5-flash-preview-05-20", { thinkingBudget: 24_576 }, 26_624],
+    ["gemini-2.5-flash-lite", { thinkingBudget: 24_576 }, 26_624],
+    ["gemini-2.5-pro", { thinkingBudget: 32_768 }, 34_816],
+    ["gemini-3-flash-preview", { thinkingLevel: "HIGH" }, 32_768],
+    ["gemini-4-argon", { thinkingLevel: "HIGH" }, 32_768],
+  ] as const)(
+    "requests high thinking for %s with room for the brief",
+    async (model, thinkingConfig, maxOutputTokens) => {
+      vi.stubEnv("GEMINI_API_KEY", "test-key");
+      vi.stubEnv("GEMINI_SEARCH_MODEL", model);
+      const fetchMock = vi.fn().mockResolvedValue(groundedResponse());
+      vi.stubGlobal("fetch", fetchMock);
+
+      await searchWeb("current regulations");
+
+      const request = JSON.parse(fetchMock.mock.calls[0]![1].body);
+      expect(request.generationConfig).toEqual({
+        temperature: 0.1,
+        thinkingConfig,
+        maxOutputTokens,
+      });
+      expect(request.tools).toEqual([{ google_search: {} }]);
+    },
+  );
+
   it("executes the model's query and returns structured grounded evidence", async () => {
     vi.stubEnv("GEMINI_API_KEY", "test-key");
     const fetchMock = vi.fn().mockResolvedValue(groundedResponse());

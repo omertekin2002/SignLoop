@@ -666,7 +666,7 @@ describe("agentic chat", () => {
     const markdown = "![Generated image](data:image/png;base64,AAAA)";
     mocks.generateImage.mockResolvedValue({
       message: markdown,
-      model: "gpt-image-2",
+      model: "gpt-image-2.5-sunburst",
       provider: "primary-openai-compatible",
     });
     const model = sequencedModel([

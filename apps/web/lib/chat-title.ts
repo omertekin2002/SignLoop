@@ -3,7 +3,10 @@ import { withAbort } from "@/lib/bounded-response";
 
 const MAX_TITLE_CHARACTERS = 80;
 const MAX_TITLE_INPUT_CHARACTERS = 4000;
-export const CHAT_TITLE_TIMEOUT_MS = 8_000;
+// High reasoning runs before the title and counts against the output budget, so both limits
+// leave room for it; the title itself stays bounded by MAX_TITLE_CHARACTERS.
+export const CHAT_TITLE_TIMEOUT_MS = 20_000;
+export const CHAT_TITLE_MAX_OUTPUT_TOKENS = 2048;
 
 /** Use the regular chat pipeline, including model routing and stream-opening fallbacks. */
 export async function generateChatTitle(
@@ -40,7 +43,7 @@ Never use generic titles such as "New chat" or "Untitled".`,
         {
           primaryModel: options.primaryModel,
           signal,
-          maxOutputTokens: 512,
+          maxOutputTokens: CHAT_TITLE_MAX_OUTPUT_TOKENS,
           // No research, contract, or image tools are enabled for naming a conversation.
         },
       ),

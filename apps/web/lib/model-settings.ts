@@ -3,7 +3,7 @@ import { getErrorMessage, isRecord } from "@/lib/utils";
 
 export type PrimaryModel = string;
 
-export const IMAGE_GENERATION_MODEL = "gpt-image-2";
+export const IMAGE_GENERATION_MODEL = "gpt-image-2.5-sunburst";
 
 // OpenRouter chain, tried in order when the primary endpoint fails or when the user pins one.
 export const OPENROUTER_FREE_MODEL = "openrouter/free";
