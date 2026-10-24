@@ -34,7 +34,8 @@ From `packages/chat-engine`, `bun run test`, `bun run lint`, and `bun run check-
 From `apps/gateway`:
 
 - `bun run dev` / `bun run start` run the public chat API with Bun (watch mode / production) on port 10000. Configuration comes from the environment; Bun loads `apps/gateway/.env` (start from `.env.example`).
-- `bun run test`, `bun run lint`, and `bun run check-types` run its Vitest suite (`tests/**/*.test.ts`), ESLint, and `tsc --noEmit`. It has no build step: Bun runs its TypeScript directly.
+- `bun run test`, `bun run lint`, and `bun run check-types` run its Vitest suite (`tests/**/*.test.ts`), ESLint, and `tsc --noEmit`. It has no `build` script: Bun runs its TypeScript directly.
+- `bun run build:vercel` type-checks and bundles `src/vercel.ts` for Node into the Vercel Build Output API (`apps/gateway/.vercel/output`, git-ignored). Only the gateway's Vercel project runs it; Turbo's `build` does not.
 - `tests/contract.test.ts` compares the public HTTP API (status codes, headers, JSON bodies, NDJSON events, log entries) with golden fixtures in `tests/fixtures/contract/`. External callers such as the otekin CLI depend on that shape. A failure means a change, often in the engine, altered the API; fix the change, or for an intentional API change review the fixture diff and rerun with `bun run test -u`.
 - `RUN_LIVE_TESTS=1 bun run test tests/live.test.ts` runs the opt-in live smoke test against real providers configured in the environment.
 
@@ -50,7 +51,7 @@ This is a Turborepo with workspaces in `apps/*` and `packages/*`:
 - `apps/web/components`: dashboard, chat, upload, privacy, and shared UI components.
 - `apps/web/lib`: analysis, SignLoop's chat-engine binding (`chat.ts`, `chat-engine-config.ts`, `contract-tools.ts`), saved-chat policy and titles, extraction, provider clients, SQL operations, and shared helpers.
 - `apps/web/db`: migration runner, ordered SQL migrations, cleanup command, and integration-test setup.
-- `apps/gateway`: the public, stateless chat API (`POST /v1/chat`, `/healthz`) on Bun and Render, formerly the SLgateway repository. `src/handler.ts` (HTTP boundary, errors, CORS, request IDs, allowlisted logs), `src/config.ts`, `src/concurrency.ts`, and in `src/pipeline/` the chat policy, model discovery (`provider-models.ts`), provider chain (`agent-provider.ts`, `llm-client.ts`), and the engine binding (`chat.ts`).
+- `apps/gateway`: the public, stateless chat API (`POST /v1/chat`, `/healthz`), formerly the SLgateway repository. It runs on Bun on Render (`src/server.ts`) and as a Node.js Vercel Function (`src/vercel.ts` and `src/vercel-handler.ts`, bundled by `scripts/build-vercel.ts`). `src/handler.ts` (HTTP boundary, errors, CORS, request IDs, allowlisted logs), `src/config.ts`, `src/concurrency.ts`, and in `src/pipeline/` the chat policy, model discovery (`provider-models.ts`), provider chain (`agent-provider.ts`, `llm-client.ts`), and the engine binding (`chat.ts`).
 - `packages/chat-engine`: `@repo/chat-engine`, the agent loop, provider routing, generic tools, replay, source catalogs, and citations, shared by `apps/web` and `apps/gateway`.
 - `packages/eslint-config`: shared ESLint presets.
 - `packages/typescript-config`: shared TypeScript configurations.
@@ -86,7 +87,7 @@ The shared Next.js config and the `source-package` preset used by `packages/chat
 
 ## Deployment
 
-`apps/web` deploys to Vercel and `apps/gateway` to Render. The repository is configured for Vercel in root `vercel.json`:
+`apps/web` deploys to Vercel. `apps/gateway` deploys to Render and is moving to its own Vercel project. The web app's Vercel project is configured in root `vercel.json`:
 
 - Install: `bun install --frozen-lockfile --linker hoisted`.
 - Build: `bunx turbo build --filter=web`.
@@ -100,4 +101,12 @@ The gateway is configured for Render in root `render.yaml` (service `signloop-ch
 - Start: `cd apps/gateway && bun run start`; health check `/healthz`. `BUN_VERSION` pins Bun 1.4.4.
 - `buildFilter` deploys only for changes to `apps/gateway`, `packages/chat-engine`, `packages/typescript-config`, `bun.lock`, or the root `package.json`.
 
-Do not set a `rootDir` for the gateway: Render makes files outside a service's root directory unavailable at build and run time, and the gateway needs `packages/chat-engine` and the root lockfile. Vercel's build (`--filter=web`) never builds the gateway, but its ignore command treats `packages/` and `bun.lock` changes as web changes. When adding gateway environment variables, update `apps/gateway/.env.example`, `render.yaml`, and `apps/gateway/README.md`. The cutover from the standalone SLgateway repository is described in `apps/gateway/README.md`.
+Do not set a `rootDir` for the gateway on Render: Render makes files outside a service's root directory unavailable at build and run time, and the gateway needs `packages/chat-engine` and the root lockfile. The web project's build (`--filter=web`) never builds the gateway, but its ignore command treats `packages/` and `bun.lock` changes as web changes.
+
+The gateway's Vercel project is separate from the web project. Its Root Directory is `apps/gateway`, and `apps/gateway/vercel.json` configures it:
+
+- Install: `bun install --frozen-lockfile --linker hoisted --filter gateway` (Bun resolves the workspace root from `apps/gateway`).
+- Build: `bun run build:vercel`, which writes the Build Output API directly: one Node.js (`nodejs24.x`) function that every path is routed to, with `maxDuration` 300 (the Hobby maximum with Fluid compute), `supportsCancellation`, and response streaming. Vercel's zero-config Node.js builder cannot run the gateway, because it leaves extensionless ESM imports and the chat engine's `.ts` package exports unresolvable under Node.
+- Ignore command: builds only for changes to `apps/gateway`, `packages/chat-engine`, `packages/typescript-config`, `bun.lock`, or the root `package.json`.
+
+On Vercel, `MAX_CONCURRENT_REQUESTS` limits each function instance, not the service, and an invalid configuration answers every route, `/healthz` included, with `503 service_unavailable` instead of failing at startup. `tests/vercel.test.ts` covers the Vercel entry. When adding gateway environment variables, update `apps/gateway/.env.example`, `render.yaml`, `apps/gateway/README.md`, and the gateway's Vercel project settings. The cutover from Render to Vercel (Vercel project, then otekin's URL switch, then retiring Render) and the earlier move from the standalone SLgateway repository are described in `apps/gateway/README.md`.

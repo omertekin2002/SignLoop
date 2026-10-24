@@ -28,6 +28,24 @@ describe("loadServiceConfig", () => {
     expect(config.publicServiceUrl).toBe("https://public.example.test");
   });
 
+  it("falls back to Vercel's production domain after the Render URL", () => {
+    const vercelHost = "signloop-gateway.vercel.app";
+
+    expect(
+      loadServiceConfig({
+        ...minimumEnvironment,
+        VERCEL_PROJECT_PRODUCTION_URL: vercelHost,
+      }).publicServiceUrl,
+    ).toBe("https://signloop-gateway.vercel.app");
+    expect(
+      loadServiceConfig({
+        ...minimumEnvironment,
+        RENDER_EXTERNAL_URL: "https://render.example.test",
+        VERCEL_PROJECT_PRODUCTION_URL: vercelHost,
+      }).publicServiceUrl,
+    ).toBe("https://render.example.test");
+  });
+
   it("supports a primary-only generation path", () => {
     const config = loadServiceConfig({
       GEMINI_API_KEY: "gemini-secret",

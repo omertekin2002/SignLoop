@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "bun --watch src/server.ts",
     "start": "bun src/server.ts",
+    "build:vercel": "tsc --noEmit && bun scripts/build-vercel.ts",
     "lint": "eslint --max-warnings 0",
     "check-types": "tsc --noEmit",
     "test": "vitest run"

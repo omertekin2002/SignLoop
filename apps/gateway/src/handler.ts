@@ -93,12 +93,12 @@ function safeErrorClass(error: unknown): string {
   return /^[A-Za-z0-9_.-]{1,100}$/.test(candidate) ? candidate : "Error";
 }
 
-function normalizeRequestId(value: string | null): string | null {
+export function normalizeRequestId(value: string | null): string | null {
   const trimmed = value?.trim() ?? "";
   return /^[A-Za-z0-9._:-]{1,128}$/.test(trimmed) ? trimmed : null;
 }
 
-function requestPath(request: Request): string {
+export function requestPath(request: Request): string {
   try {
     return new URL(request.url).pathname;
   } catch {

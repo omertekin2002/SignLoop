@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "bun install --frozen-lockfile --linker hoisted --filter gateway",
+  "buildCommand": "bun run build:vercel",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ../../packages/chat-engine ../../packages/typescript-config ../../bun.lock ../../package.json",
+  "fluid": true
+}
