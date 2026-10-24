@@ -1,0 +1,74 @@
+name: Vercel preview cleanup
+
+# Each Vercel preview creates a Neon database branch (Vercel's Neon integration), and the Neon
+# Free plan allows about 10 branches. Deleting a preview deployment frees its Neon branch, so this
+# deletes a branch's previews once its pull request closes. Run it manually to sweep previews of
+# every branch without an open pull request.
+#
+# pull_request_target runs with the repository's secrets for fork pull requests too. That is safe
+# here because the job never checks out or runs pull request code; it only calls two APIs.
+on:
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || 'sweep' }}
+
+jobs:
+  delete-previews:
+    name: Delete closed branches' preview deployments
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_PREVIEW_CLEANUP_TOKEN }}
+      VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      # Passed through the environment, never interpolated into the script.
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Delete preview deployments
+        run: |
+          set -euo pipefail
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_TEAM_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::error::Set the VERCEL_PREVIEW_CLEANUP_TOKEN secret and the VERCEL_TEAM_ID and VERCEL_PROJECT_ID variables."
+            exit 1
+          fi
+          api="https://api.vercel.com"
+          auth=(-H "Authorization: Bearer $VERCEL_TOKEN")
+
+          # Every preview deployment of the project as "uid<TAB>git branch", following pagination.
+          base="$api/v6/deployments?teamId=$VERCEL_TEAM_ID&projectId=$VERCEL_PROJECT_ID&target=preview&limit=100"
+          url="$base"
+          : > previews.tsv
+          for _ in $(seq 1 50); do
+            curl -fsS "${auth[@]}" "$url" -o page.json
+            jq -r '.deployments[] | [.uid, (.meta.githubCommitRef // "")] | @tsv' page.json >> previews.tsv
+            next=$(jq -r '.pagination.next // empty' page.json)
+            [ -n "$next" ] || break
+            url="$base&until=$next"
+          done
+
+          if [ -n "$HEAD_REF" ]; then
+            # A pull request closed: only its own branch.
+            printf '%s\n' "$HEAD_REF" > remove.txt
+          else
+            # Manual sweep: every previewed branch that has no open pull request.
+            gh pr list --state open --limit 500 --json headRefName --jq '.[].headRefName' | sort -u > open.txt
+            # grep exits 1 when it selects nothing (no previews), which is not an error here.
+            cut -f2 previews.tsv | { grep -v '^$' || true; } | sort -u | comm -23 - open.txt > remove.txt
+          fi
+
+          deleted=0
+          while IFS=$'\t' read -r uid ref; do
+            if [ -z "$ref" ] || ! grep -qxF -- "$ref" remove.txt; then continue; fi
+            curl -fsS -X DELETE "${auth[@]}" "$api/v13/deployments/$uid?teamId=$VERCEL_TEAM_ID" > /dev/null
+            echo "Deleted $uid ($ref)"
+            deleted=$((deleted + 1))
+          done < previews.tsv
+          echo "Deleted $deleted preview deployment(s)." | tee -a "$GITHUB_STEP_SUMMARY"
