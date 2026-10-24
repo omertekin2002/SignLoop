@@ -544,6 +544,24 @@ describe("agentic chat", () => {
     expect(reply.webSearch?.sources).toHaveLength(64);
   });
 
+  it("refuses searches and reads before paying for them once no source can be numbered", async () => {
+    const model = sequencedModel([
+      toolStep(0, "search_web", { query: "anything" }),
+      toolStep(1, "read_url", { url: "https://new.test" }),
+    ]);
+    mocks.responses.mockReturnValue(model);
+    const sources = [{ number: Number.MAX_SAFE_INTEGER, title: "Last", url: "https://last.test" }];
+    const reply = await generateChatReply([
+      { role: "assistant", content: "Old answer", webSources: sources },
+      { role: "user", content: "Look this up" },
+    ], { enableWebSearch: true, enableUrlReader: true });
+    expect(mocks.search).not.toHaveBeenCalled();
+    expect(mocks.readUrl).not.toHaveBeenCalled();
+    expect(reply.toolActivity?.map((activity) => activity.status)).toEqual(["error", "error"]);
+    expect(JSON.stringify(model.doStreamCalls[2]?.prompt)).toContain("limit of numbered sources");
+    expect(reply.webSearch?.sources).toEqual(sources);
+  });
+
   it("reads the user's contracts only when a user is attached", async () => {
     const contractId = "11111111-1111-4111-8111-111111111111";
     mocks.listContracts.mockResolvedValue({

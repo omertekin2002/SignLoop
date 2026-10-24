@@ -36,7 +36,10 @@ import { isRecord } from "@/lib/utils";
 import {
   compactAgentMessages,
 } from "@/lib/chat-agent-history";
-import { createChatSourceCatalog } from "@/lib/chat-source-catalog";
+import {
+  createChatSourceCatalog,
+  SOURCE_CATALOG_FULL_MESSAGE,
+} from "@/lib/chat-source-catalog";
 import { chatTelemetryOptions } from "@/lib/telemetry-policy";
 import type { GenerationMilestone } from "@/lib/generation-timings";
 
@@ -445,7 +448,14 @@ export async function* generateChatReplyStream(
     options?.onTiming,
   );
   // Carry the source catalog with saved tool exchanges so follow-up citations retain their IDs.
-  const { sources, readThisTurn, addSource } = createChatSourceCatalog(
+  // Inherited sources are retired to make room, so only this turn's own reads can fill it; once
+  // they do, hasSourceRoom stops searches and reads whose results would be discarded.
+  const {
+    sources,
+    readThisTurn,
+    addSource,
+    hasRoom: hasSourceRoom,
+  } = createChatSourceCatalog(
     [...messages].reverse().find((message) => message.webSources?.length)
       ?.webSources ?? [],
   );
@@ -482,6 +492,7 @@ export async function* generateChatReplyStream(
         const key = query.toLowerCase().replace(/\s+/g, " ").trim();
         const existing = cache.get(key);
         if (existing) return existing;
+        if (!hasSourceRoom()) return { error: SOURCE_CATALOG_FULL_MESSAGE };
         if (searches >= MAX_SEARCHES)
           return {
             error:
@@ -522,6 +533,7 @@ export async function* generateChatReplyStream(
       createUrlReaderTool({
         signal,
         addSource,
+        hasSourceRoom,
         onEvidence: (text) => evidence.push(text),
         egressGuard,
       }),
@@ -534,6 +546,7 @@ export async function* generateChatReplyStream(
       createHttpGetTool({
         signal,
         addSource,
+        hasSourceRoom,
         onEvidence: (text) => evidence.push(text),
         egressGuard,
       }),
