@@ -7,6 +7,7 @@ import {
 import { IMAGE_GENERATION_MODEL } from "@/lib/model-settings";
 
 const IMAGE_GENERATION_TIMEOUT_MS = 150_000;
+export const MAX_IMAGE_BASE64_CHARACTERS = 8 * 1024 * 1024;
 
 export type GeneratedImageReply = {
   message: string;
@@ -39,6 +40,16 @@ export async function generateImageReply(
 
   if (!base64) {
     throw new Error("The image endpoint returned no image data.");
+  }
+
+  // The payload is embedded in markdown and persisted as an attachment, so it must be plain base64.
+  if (
+    base64.length > MAX_IMAGE_BASE64_CHARACTERS ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)
+  ) {
+    throw new Error(
+      "The image endpoint returned invalid or oversized image data.",
+    );
   }
 
   return {
