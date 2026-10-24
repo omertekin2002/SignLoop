@@ -42,12 +42,12 @@ describe("getModelAvailabilitySnapshot", () => {
     );
   });
 
-  it("advertises gpt-image-2 without offering image-only models for text", async () => {
+  it("advertises gpt-image-2.5-sunburst without offering image-only models for text", async () => {
     vi.stubEnv("PRIMARY_LLM_BASE_URL", "https://provider.example/v1");
     const fetchMock = vi
       .fn()
       .mockResolvedValue(
-        modelResponse(["model-a", "gpt-image-2", "gpt-image-1"]),
+        modelResponse(["model-a", "gpt-image-2.5-sunburst", "gpt-image-1"]),
       );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -129,7 +129,7 @@ describe("resolveAvailablePrimaryModel", () => {
 });
 
 describe("generation discovery grace", () => {
-  async function setup(ids: string[] = ["model-a", "gpt-image-2"]) {
+  async function setup(ids: string[] = ["model-a", "gpt-image-2.5-sunburst"]) {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     vi.stubEnv("PRIMARY_LLM_BASE_URL", "https://provider.example/v1");
