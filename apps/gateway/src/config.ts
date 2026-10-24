@@ -275,10 +275,16 @@ export function loadServiceConfig(
     "GEMINI_SEARCH_MODEL",
     optionalValue(environment, "GEMINI_SEARCH_MODEL") ?? "gemini-2.5-flash",
   );
+  // Vercel supplies the production domain as a bare hostname, in production and preview builds.
+  const vercelProductionHost = optionalValue(
+    environment,
+    "VERCEL_PROJECT_PRODUCTION_URL",
+  );
   const publicServiceUrl = parseHttpUrl(
     "PUBLIC_SERVICE_URL",
     optionalValue(environment, "PUBLIC_SERVICE_URL") ??
       optionalValue(environment, "RENDER_EXTERNAL_URL") ??
+      (vercelProductionHost ? `https://${vercelProductionHost}` : null) ??
       `http://localhost:${port}`,
   );
 
