@@ -1,0 +1,96 @@
+name: Vercel preview cleanup
+
+# Each Vercel preview creates a Neon database branch (Vercel's Neon integration), and the Neon
+# Free plan allows about 10 branches. Deleting a preview deployment frees its Neon branch, so this
+# deletes a branch's previews once its pull request closes. Run it manually to sweep previews of
+# every branch without an open pull request.
+#
+# pull_request_target runs with the repository's secrets for fork pull requests too. That is safe
+# here because the job never checks out or runs pull request code; it only calls two APIs.
+on:
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || 'sweep' }}
+
+jobs:
+  delete-previews:
+    name: Delete closed branches' preview deployments
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_PREVIEW_CLEANUP_TOKEN }}
+      VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      # Passed through the environment, never interpolated into the script. A pull request's
+      # previews are matched by its source repository's ID and branch, so a fork's branch can never
+      # match a same-named branch here. A deleted fork has no head repository, so nothing matches.
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      HEAD_REPO_ID: ${{ github.event.pull_request.head.repo.id }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Delete preview deployments
+        run: |
+          set -euo pipefail
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_TEAM_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::error::Set the VERCEL_PREVIEW_CLEANUP_TOKEN secret and the VERCEL_TEAM_ID and VERCEL_PROJECT_ID variables."
+            exit 1
+          fi
+          api="https://api.vercel.com"
+          auth=(-H "Authorization: Bearer $VERCEL_TOKEN")
+
+          # Every preview deployment of the project as "uid, source repository ID, owner/repo:branch",
+          # following pagination. Fields are joined with the unit separator (not a tab, which read
+          # treats as whitespace and would collapse an empty field).
+          base="$api/v6/deployments?teamId=$VERCEL_TEAM_ID&projectId=$VERCEL_PROJECT_ID&target=preview&limit=100"
+          url="$base"
+          : > previews.txt
+          for _ in $(seq 1 50); do
+            curl -fsS "${auth[@]}" "$url" -o page.json
+            jq -r '.deployments[] | .meta as $m
+              | [.uid, ($m.githubCommitRepoId // ""),
+                 (if ($m.githubCommitRef // "") == "" then ""
+                  else "\($m.githubCommitOrg)/\($m.githubCommitRepo):\($m.githubCommitRef)" end)]
+              | join("\u001f")' page.json >> previews.txt
+            next=$(jq -r '.pagination.next // empty' page.json)
+            [ -n "$next" ] || break
+            url="$base&until=$next"
+          done
+
+          deleted=0
+          delete() {
+            curl -fsS -X DELETE "${auth[@]}" "$api/v13/deployments/$1?teamId=$VERCEL_TEAM_ID" > /dev/null
+            echo "Deleted $1 ($2)"
+            deleted=$((deleted + 1))
+          }
+
+          if [ "$GITHUB_EVENT_NAME" = "pull_request_target" ]; then
+            # A pull request closed: only previews built from its own repository and branch.
+            if [ -z "$HEAD_REPO_ID" ] || [ -z "$HEAD_REF" ]; then
+              echo "The pull request's head repository is gone; nothing to match."
+            else
+              while IFS=$'\x1f' read -r uid repo_id key; do
+                if [ "$repo_id" = "$HEAD_REPO_ID" ] && [ "${key#*:}" = "$HEAD_REF" ]; then
+                  delete "$uid" "$key"
+                fi
+              done < previews.txt
+            fi
+          else
+            # Manual sweep: previews whose owner/repo:branch has no open pull request.
+            gh pr list --state open --limit 500 \
+              --json headRepositoryOwner,headRepository,headRefName \
+              --jq '.[] | "\(.headRepositoryOwner.login)/\(.headRepository.name):\(.headRefName)"' \
+              | sort -u > open.txt
+            while IFS=$'\x1f' read -r uid _ key; do
+              if [ -n "$key" ] && ! grep -qixF -- "$key" open.txt; then
+                delete "$uid" "$key"
+              fi
+            done < previews.txt
+          fi
+          echo "Deleted $deleted preview deployment(s)." | tee -a "$GITHUB_STEP_SUMMARY"
