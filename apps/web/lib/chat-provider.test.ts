@@ -125,7 +125,7 @@ it.each(["gpt-6.1-sol", "gemini-3-flash", "claude-fable-5.1", "custom-text-model
     vi.stubEnv("OPENROUTER_API_KEY", "");
     const fetchMock = vi.fn().mockResolvedValue(response(textEvents));
     vi.stubGlobal("fetch", fetchMock);
-    const { generateChatReply } = await import("./chat");
+    const { CHAT_MAX_OUTPUT_TOKENS, generateChatReply } = await import("./chat");
 
     await generateChatReply([{ role: "user", content: "Hello" }], {
       primaryModel: model,
@@ -135,6 +135,8 @@ it.each(["gpt-6.1-sol", "gemini-3-flash", "claude-fable-5.1", "custom-text-model
     const request = JSON.parse(fetchMock.mock.calls[0]![1].body);
     expect(request.model).toBe(model);
     expect(request.reasoning).toEqual({ effort: "high" });
+    expect(request.max_output_tokens).toBe(CHAT_MAX_OUTPUT_TOKENS);
+    expect(CHAT_MAX_OUTPUT_TOKENS).toBe(16_384);
     expect(request.store).toBe(false);
   },
 );
