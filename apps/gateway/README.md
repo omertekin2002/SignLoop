@@ -1,8 +1,8 @@
 # SignLoop Chat Service
 
-A standalone, stateless HTTP service running SignLoop's agentic chat engine on Bun and Render. The answering model can search, read web pages and PDFs, fetch public API data, and optionally generate images across multiple model steps. Callers retain their own conversation history.
+A stateless, public HTTP service running SignLoop's agentic chat engine on Bun and Render. The answering model can search, read web pages and PDFs, fetch public API data, and optionally generate images across multiple model steps. Callers retain their own conversation history.
 
-The engine is synced with SignLoop commit `61c90b508a789cee988acdded52b2d1a8c82ee69` ([PR #10](https://github.com/omertekin2002/SignLoop/pull/10)). See [SOURCE_PROVENANCE.md](./SOURCE_PROVENANCE.md) for the copied modules and standalone adaptations.
+This is `apps/gateway` in the SignLoop monorepo. It was the standalone SLgateway repository, imported here with its history. The agent loop, tools, provider routing, replay, source catalogs, and citations come from [`@repo/chat-engine`](../../packages/chat-engine), the same engine `apps/web` uses; this app adds only the HTTP boundary, configuration, model discovery, the provider chain, the concurrency limit, and logging. See [SOURCE_PROVENANCE.md](./SOURCE_PROVENANCE.md).
 
 ## Architecture
 
@@ -11,7 +11,7 @@ client sends text + optional tool history/source catalog
   -> Bun.serve HTTP boundary
   -> per-process concurrency gate + bounded request validation
   -> authoritative UTC time + server-controlled provider order (optional primary, Gemini, OpenRouter)
-  -> SignLoop ToolLoopAgent (at most 10 model steps)
+  -> @repo/chat-engine ToolLoopAgent (at most 10 model steps)
        -> search_web: Brave / Firecrawl / Gemini search leads
        -> read_url: Firecrawl / Jina page or PDF text
        -> http_get: direct public HTTP(S) API data
@@ -22,20 +22,24 @@ client sends text + optional tool history/source catalog
   -> JSON or NDJSON response
 ```
 
-There is no database, WorkOS/Clerk authentication, saved-thread API, contract datastore, upload handling, or persistent disk requirement. Private contract tools and their egress guard, chat naming, usage quotas, and SignLoop's UI remain in SignLoop. Optional generated images are returned inline; the service does not store them. Langfuse tracing is not enabled in this service.
+There is no database, WorkOS/Clerk authentication, saved-thread API, contract datastore, upload handling, or persistent disk requirement. Private contract tools, chat naming, usage quotas, and SignLoop's UI remain in `apps/web`; the engine's contract egress guard has nothing to guard here. Optional generated images are returned inline; the service does not store them. Langfuse tracing is not enabled in this service.
 
 ## Local setup
 
-Bun is pinned to **1.3.11** in `package.json` and `render.yaml`.
+Bun is pinned to **1.3.11** by the root `package.json` (`packageManager`), this package's `engines`, and `BUN_VERSION` in the root [render.yaml](../../render.yaml). Install from the repository root; there is one lockfile, the root `bun.lock`.
 
 ```sh
 bun --version
-bun install --frozen-lockfile
-cp .env.example .env
+bun install --frozen-lockfile --linker hoisted   # from the repository root
+cd apps/gateway
+cp .env.example .env                             # Bun loads .env from this directory
 bun run check-types
+bun run lint
 bun run test
 bun run dev
 ```
+
+The root `bun run test`, `bun run lint`, and `bun run check-types` include this app through Turbo. It has no build step: Bun runs the TypeScript (including the engine's) directly, so `bun run build` skips it. The root `bun run dev` starts only the web app.
 
 Configure a complete primary provider URL/key pair, `GEMINI_API_KEY`, an OpenRouter key, or any combination. Each model step tries them in that order. Gemini is called through its native API. OpenAI-compatible endpoints (primary and OpenRouter) must support **streaming Responses API function calls and tool-result continuation**. This is also required for non-streaming HTTP clients: the service collects the same internal streaming agent loop into a JSON reply.
 
@@ -173,7 +177,7 @@ The service replays each assistant turn as its compacted tool exchanges followed
 
 Catalogs from older releases have no `number` fields. They are still accepted and read positionally (entry `i` is `[i + 1]`), so existing citations keep their meaning; the reply returns the catalog with explicit numbers, and new sources continue after the highest one. A catalog may mix both forms only if every resulting number is unique. If adding numbers requires pruning during migration, the highest-numbered entry is retained so even a turn with no new reads preserves the allocation watermark, including an exhausted number range. If JSON escaping makes that single numbered entry exceed the cap, its optional snippet is omitted while its title, exact URL, and citation number are preserved.
 
-Clients that render their own source list must resolve citations by each entry's `number`, falling back to position only for numberless entries. The companion fix is in [otekin PR #4](https://github.com/omertekin2002/otekin/pull/4), including terminal hyperlinks and legacy catalogs; see [companion client compatibility](./SOURCE_PROVENANCE.md#companion-client). Installations based on `12b4de8` (version `0.1.8`) still use positions for that display, so distribute the updated client before deploying this gateway release. Its history forwarding already preserves the new fields.
+Clients that render their own source list must resolve citations by each entry's `number`, falling back to position only for numberless entries. The companion fix is in [otekin PR #4](https://github.com/omertekin2002/otekin/pull/4), including terminal hyperlinks and legacy catalogs; see [companion client](#companion-client). Installations based on `12b4de8` (version `0.1.8`) still use positions for that display, so distribute the updated client before deploying this gateway release. Its history forwarding already preserves the new fields.
 
 Malformed or oversized replay/catalog fields are dropped, including catalogs with duplicate or invalid numbers (positive safe integers only). Replay accepts only SDK assistant/tool text and tool exchanges, never system/user instruction roles, media, or approval parts. This prevents SDK media downloads outside the public HTTP tool's guards. Client-supplied replay is conversation context, not trusted proof of research. Legacy text-only clients continue to work but cannot retain full tool evidence between turns.
 
@@ -245,9 +249,16 @@ Responses carry `X-Request-ID`; safe incoming IDs are propagated. Structured log
 
 The concurrency gate applies per process. CORS is browser interoperability, not access control. For shared quotas or access restrictions, use an external gateway/rate limiter. Every caller can initiate provider work, including image generation if enabled.
 
-## Deployment and validation
+## Deployment
 
-[render.yaml](./render.yaml) installs the locked dependencies, type-checks, runs tests, starts Bun, and checks `/healthz`. No database or persistent disk is needed. Add integration credentials through Render environment settings. `GEMINI_API_KEY` alone is a complete generation path. If you configure the optional primary, set `PRIMARY_LLM_MODEL` to a compatible model supported by your endpoint. Existing deployments explicitly configured with `REQUEST_TIMEOUT_MS=180000` retain that shorter deadline until updated.
+The root [render.yaml](../../render.yaml) defines the Render web service `signloop-chat-api` (Render reads Blueprints from the repository root):
+
+- **Build:** `bun install --frozen-lockfile --linker hoisted --filter gateway` from the repository root, which installs only this app's workspace closure (no Next.js or OCR packages), then `bun run check-types` and `bun run test` in `apps/gateway`.
+- **Start:** `cd apps/gateway && bun run start`, with health check `/healthz`.
+- **Build filter:** deploys only for changes to `apps/gateway/**`, `packages/chat-engine/**`, `packages/typescript-config/**`, `bun.lock`, or the root `package.json`. Web-only commits do not redeploy the gateway.
+- **No root directory:** Render makes files outside a service's root directory unavailable at build and run time, and the gateway needs `packages/chat-engine` and the root lockfile. The service therefore runs from the repository root and changes into `apps/gateway`.
+
+The environment variables are unchanged from the standalone repository. No database or persistent disk is needed. Add integration credentials through Render environment settings. `GEMINI_API_KEY` alone is a complete generation path. If you configure the optional primary, set `PRIMARY_LLM_MODEL` to a compatible model supported by your endpoint. Existing deployments explicitly configured with `REQUEST_TIMEOUT_MS=180000` retain that shorter deadline until updated.
 
 ```sh
 curl --fail http://localhost:10000/healthz
@@ -260,12 +271,27 @@ curl --no-buffer http://localhost:10000/v1/chat \
   -d '{"messages":[{"role":"user","content":"Read https://example.com and summarize it"}],"research":"always"}'
 ```
 
-The normal suite uses mocked providers, including real SDK Responses serialization and HTTP-boundary tests. A live provider smoke test is opt-in and incurs provider usage:
+The normal suite uses mocked providers, including real SDK Responses serialization and HTTP-boundary tests. [tests/contract.test.ts](./tests/contract.test.ts) pins the public API: it drives the real handler, configuration, and engine with only the network stubbed, and compares status codes, headers, JSON bodies, NDJSON events, and log entries with the golden fixtures in [tests/fixtures/contract](./tests/fixtures/contract). The fixtures were recorded from the standalone service before it moved onto the shared engine. A change that alters the API, including one made in `packages/chat-engine`, fails CI. For an intentional API change, review the fixture diff and rerun with `bun run test -u`, and update callers such as otekin first.
+
+A live provider smoke test is opt-in and incurs provider usage:
 
 ```sh
-RUN_LIVE_TESTS=1 bun run test -- tests/live.test.ts
+RUN_LIVE_TESTS=1 bun run test tests/live.test.ts
 ```
 
 Local tests do not establish deployed provider compatibility. Before rollout, check a simple reply, a search/read/answer cycle, a follow-up with replay, strict research failure, cancellation, and an optional image request against the configured deployment.
 
 Conversation content goes to the selected generation providers. Search queries go to the selected search integration; URLs and page content are processed through readers or public HTTP targets. Optional image prompts go to the primary image provider. The gateway itself retains no conversations after requests; provider retention is separate. The updated otekin client retains chat state in memory and writes requested generated images to temporary local PNG files.
+
+### Moving `signloop-chat-api` to this repository
+
+The live service still deploys from the standalone SLgateway repository. Move it without downtime:
+
+1. **Temporary service.** In Render, create a new web service (for example `signloop-chat-api-next`) from the SignLoop repository and branch, with no root directory and the build command, start command, health check path, and build filter from [render.yaml](../../render.yaml). Copy every environment variable from `signloop-chat-api`, including the secrets (`PRIMARY_LLM_BASE_URL`, `PRIMARY_LLM_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`) and any optional integration keys. Create it by hand rather than syncing the Blueprint, so the live service is untouched.
+2. **Verify.** Check `/healthz`, then point otekin at the temporary URL and run a plain reply, a streamed reply, a search/read/answer cycle, a follow-up that replays `agentMessages` and `webSources`, `research: "always"`, and an image request. Compare with the live service; status codes, headers, and response fields should match.
+3. **Switch.** In the settings of `signloop-chat-api`, change the repository to SignLoop (`main`), clear the root directory, and set the build command, start command, and build filter from `render.yaml`. Environment variables stay on the service. Render keeps the current instance serving until the new build passes `/healthz`, so the URL and callers are unaffected. If the service is managed by a Blueprint linked to SLgateway, detach it from that Blueprint (or move it to a Blueprint from this repository) first, and provision the `sync: false` secrets before any Blueprint sync.
+4. **Retire.** Delete the temporary service. After a soak period, archive the SLgateway repository with a pointer to `apps/gateway`. To roll back before then, point `signloop-chat-api` back at SLgateway `main` (`0987fe2`).
+
+### Companion client
+
+The companion `otekin` client uses non-streaming `/v1/chat`, forwards `agentMessages` and `webSources` as received, and resolves citations by each source's explicit `number` ([otekin PR #4](https://github.com/omertekin2002/otekin/pull/4)). Installations based on `12b4de8` (version `0.1.8`) still look sources up by position, which can pair a citation with another entry's title and URL after eviction, so distribute the updated client before relying on numbered catalogs.
