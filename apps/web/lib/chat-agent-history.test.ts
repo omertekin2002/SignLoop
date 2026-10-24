@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { compactAgentMessages, parseAgentMessages } from "./chat-agent-history";
 import {
   boundCanonicalChatHistory,
+  parseClientAgentMessages,
   parseClientChatMessages,
 } from "./chat-policy";
 import type { ChatMessage } from "./chat";
@@ -13,6 +14,73 @@ it("rejects instruction roles and malformed replay metadata", () => {
   expect(
     parseAgentMessages([{ role: "tool", content: "invalid tool output" }]),
   ).toBeUndefined();
+});
+
+it.each([
+  {
+    type: "file",
+    mediaType: "text/plain",
+    data: { type: "reference", reference: { openai: "private-file-id" } },
+  },
+  { type: "file-url", url: "http://127.0.0.1/private" },
+  { type: "image-url", url: "http://127.0.0.1/private.png" },
+  { type: "file-reference", providerReference: { openai: "private-file-id" } },
+])("rejects SDK media in client-supplied replay ($type)", (media) => {
+  const replay = [
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "c1",
+          toolName: "read_url",
+          output: { type: "content", value: [media] },
+        },
+      ],
+    },
+  ];
+  // Valid SDK messages, but the server never emits them and the SDK may download their URLs.
+  expect(parseAgentMessages(replay)).toBeDefined();
+  expect(parseClientAgentMessages(replay)).toBeUndefined();
+});
+
+it("rejects assistant media and approval parts while accepting textual tool results", () => {
+  const replay = [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "file",
+          mediaType: "text/plain",
+          data: { type: "url", url: "https://example.com/file" },
+        },
+      ],
+    },
+  ];
+  expect(parseAgentMessages(replay)).toBeDefined();
+  expect(parseClientAgentMessages(replay)).toBeUndefined();
+  expect(
+    parseClientAgentMessages([
+      {
+        role: "assistant",
+        content: [{ type: "tool-approval-request", approvalId: "a1", toolCallId: "c1" }],
+      },
+    ]),
+  ).toBeUndefined();
+  const textual = [
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "c1",
+          toolName: "read_url",
+          output: { type: "content", value: [{ type: "text", text: "Prior evidence" }] },
+        },
+      ],
+    },
+  ];
+  expect(parseClientAgentMessages(textual)).toEqual(textual);
 });
 
 it("keeps tool exchanges whole or drops their replay state when history is too large", () => {
@@ -155,6 +223,7 @@ it("drops reasoning-only assistant steps while keeping reasoning signed with too
     ],
   };
   expect(compactAgentMessages([...exchange, finalStep])).toEqual(exchange);
+  expect(parseClientAgentMessages(exchange)).toEqual(exchange);
   expect(compactAgentMessages([finalStep])).toBeUndefined();
   expect(
     compactAgentMessages([

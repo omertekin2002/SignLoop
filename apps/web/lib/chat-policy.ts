@@ -28,11 +28,33 @@ export {
  * browser, including for signed-in users with private contract tools. It must be structurally sound so a
  * malformed shape cannot fault the SDK or the provider call. Anything unexpected drops the whole
  * transcript rather than replaying part of it, which degrades to a text-only turn.
+ * Only text and tool exchanges are accepted: the server never emits media or approvals into model
+ * transcripts, and SDK file parts can trigger automatic downloads outside the HTTP tools' guards.
  */
 export function parseClientAgentMessages(
   value: unknown,
 ): ModelMessage[] | undefined {
-  return parseAgentMessages(value);
+  const messages = parseAgentMessages(value);
+  if (!messages) return undefined;
+  for (const message of messages) {
+    if (typeof message.content === "string") continue;
+    for (const part of message.content) {
+      if (part.type === "tool-result") {
+        if (
+          part.output.type === "content" &&
+          part.output.value.some((item) => item.type !== "text")
+        )
+          return undefined;
+      } else if (
+        part.type !== "text" &&
+        part.type !== "reasoning" &&
+        part.type !== "tool-call"
+      ) {
+        return undefined;
+      }
+    }
+  }
+  return messages;
 }
 
 type RequestPayload = {
