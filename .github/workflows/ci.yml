@@ -47,11 +47,33 @@ jobs:
       - name: Type-check
         run: bun run check-types
 
+      # Turbo runs these tasks in every workspace that defines them, including apps/gateway.
       - name: Test
         run: bun run test
 
+      # apps/gateway has no build step: Bun runs its TypeScript directly, so Turbo skips it.
       - name: Build
         run: bun run build
+
+      # Render runs the gateway with Bun, while its tests run under Vitest on Node. Boot it with a
+      # placeholder key (no request reaches a provider) and probe the health check.
+      - name: Gateway Bun boot check
+        working-directory: apps/gateway
+        env:
+          GEMINI_API_KEY: ci-placeholder
+          PORT: "10000"
+        run: |
+          bun src/server.ts &
+          server=$!
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:10000/healthz; then
+              kill "$server"
+              exit 0
+            fi
+            sleep 1
+          done
+          kill "$server"
+          exit 1
 
       # Vercel deploys each route with only its traced files; OCR loads its worker, WebAssembly
       # core and language model at runtime, so a missing file would surface only on upload.

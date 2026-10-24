@@ -61,6 +61,8 @@ function credentialValue(name: string, value: string): string {
 }
 
 function headerValue(name: string, value: string): string {
+  // APP_NAME is sent as the X-Title header, so control characters are exactly what to reject.
+  // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f]/u.test(value)) {
     throw new Error(`${name} must not contain control characters`);
   }

@@ -3,7 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { InferenceSemaphore, type ReleaseSlot } from "./concurrency";
+import { InferenceSemaphore } from "./concurrency";
 import { getServiceConfig, type ServiceConfig } from "./config";
 import {
   generateChatReply,

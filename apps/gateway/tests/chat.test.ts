@@ -1133,7 +1133,7 @@ it("uses the primary without calling Gemini or OpenRouter when it answers", asyn
 it("waits longer for Gemini to start answering than for other providers", async () => {
   vi.useFakeTimers();
   try {
-    const slowStart = (name: string) =>
+    const slowStart = (_name: string) =>
       new MockLanguageModelV4({
         doStream: async () => {
           await new Promise((resolve) => setTimeout(resolve, 30_000));
