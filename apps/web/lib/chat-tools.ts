@@ -7,6 +7,8 @@ import { SOURCE_CATALOG_FULL_MESSAGE } from "@/lib/chat-source-catalog";
 import { readUrl } from "@/lib/url-reader";
 import { httpGet } from "@/lib/http-fetch";
 import { generateImageReply } from "@/lib/image-generation";
+import { IMAGE_GENERATION_MODEL } from "@/lib/model-settings";
+import { safeProviderFailureMetadata } from "@/lib/provider-failure";
 import {
   getContractTextForUser,
   getContractWindowForUser,
@@ -555,7 +557,14 @@ export function createImageTool(deps: {
           return { status: "attached", prompt, model: image.model };
         } catch (error) {
           deps.signal.throwIfAborted();
-          console.error("Image generation tool failed:", error);
+          console.error(
+            "Image generation tool failed",
+            safeProviderFailureMetadata(
+              "primary-openai-compatible",
+              IMAGE_GENERATION_MODEL,
+              error,
+            ),
+          );
           return {
             error:
               "Image generation failed. Tell the user the image could not be produced and continue without it.",

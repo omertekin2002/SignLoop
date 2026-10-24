@@ -16,6 +16,7 @@ vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: () => ({ responses: mocks.responses }),
 }));
 vi.mock("@/lib/model-settings", () => ({
+  IMAGE_GENERATION_MODEL: "image-model",
   orderOpenRouterModels: (pinned: string) =>
     pinned === "openrouter/free" ? [pinned, "fallback"] : ["fallback"],
 }));
@@ -302,8 +303,14 @@ describe("agentic chat", () => {
     mocks.responses.mockImplementation((model: string) =>
       model === "primary" ? primary : fallback,
     );
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
     const reply = await generateChatReply(messages, { enableWebSearch: true });
     expect(reply.provider).toBe("openrouter");
+    expect(warned).toHaveBeenCalledExactlyOnceWith("Chat provider step failed", {
+      provider: "primary-openai-compatible",
+      model: "primary",
+      errorClass: "Error",
+    });
     expect(mocks.search).toHaveBeenCalledOnce();
     expect(JSON.stringify(fallback.doStreamCalls[0]?.prompt)).toContain(
       "Evidence for query",
@@ -731,9 +738,11 @@ describe("agentic chat", () => {
 
   it("returns image failures to the model as tool errors", async () => {
     mocks.generateImage.mockRejectedValue(
-      new Error("upstream 500 with secret details"),
+      Object.assign(new Error("upstream 500 with secret details"), {
+        status: 500,
+      }),
     );
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const model = sequencedModel([
       toolStep(0, "generate_image", { prompt: "anything" }),
     ]);
@@ -746,6 +755,13 @@ describe("agentic chat", () => {
     const continuation = JSON.stringify(model.doStreamCalls[1]?.prompt);
     expect(continuation).toContain("Image generation failed");
     expect(continuation).not.toContain("secret details");
+    expect(logged).toHaveBeenCalledWith("Image generation tool failed", {
+      provider: "primary-openai-compatible",
+      model: "image-model",
+      errorClass: "Error",
+      statusCode: 500,
+    });
+    expect(JSON.stringify(logged.mock.calls)).not.toContain("secret details");
   });
 
   describe("contract egress guard", () => {

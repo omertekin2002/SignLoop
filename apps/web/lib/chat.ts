@@ -21,6 +21,7 @@ import {
 import { orderOpenRouterModels } from "@/lib/model-settings";
 import { TEXT_REASONING_EFFORT } from "@/lib/reasoning-policy";
 import { withAbort } from "@/lib/bounded-response";
+import { safeProviderFailureMetadata } from "@/lib/provider-failure";
 import type { WebSearchMetadata } from "@/lib/gemini-search";
 import { searchWeb } from "@/lib/web-search";
 import { buildAuthoritativeUtcTimeContext } from "@/lib/chat-time";
@@ -401,7 +402,13 @@ export function createRoutedModel(
       try {
         return await run(models[index]!);
       } catch (error) {
-        if (signal?.aborted || index === models.length - 1) throw error;
+        if (signal?.aborted) throw error;
+        const { provider, model } = candidates[index]!;
+        console.warn(
+          "Chat provider step failed",
+          safeProviderFailureMetadata(provider, model, error),
+        );
+        if (index === models.length - 1) throw error;
         index++;
       }
     }
