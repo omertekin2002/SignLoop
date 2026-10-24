@@ -16,6 +16,7 @@ vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: () => ({ responses: mocks.responses }),
 }));
 vi.mock("@/lib/model-settings", () => ({
+  IMAGE_GENERATION_MODEL: "image-model",
   orderOpenRouterModels: (pinned: string) =>
     pinned === "openrouter/free" ? [pinned, "fallback"] : ["fallback"],
 }));
@@ -302,8 +303,14 @@ describe("agentic chat", () => {
     mocks.responses.mockImplementation((model: string) =>
       model === "primary" ? primary : fallback,
     );
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
     const reply = await generateChatReply(messages, { enableWebSearch: true });
     expect(reply.provider).toBe("openrouter");
+    expect(warned).toHaveBeenCalledExactlyOnceWith("Chat provider step failed", {
+      provider: "primary-openai-compatible",
+      model: "primary",
+      errorClass: "Error",
+    });
     expect(mocks.search).toHaveBeenCalledOnce();
     expect(JSON.stringify(fallback.doStreamCalls[0]?.prompt)).toContain(
       "Evidence for query",
@@ -544,6 +551,24 @@ describe("agentic chat", () => {
     expect(reply.webSearch?.sources).toHaveLength(64);
   });
 
+  it("refuses searches and reads before paying for them once no source can be numbered", async () => {
+    const model = sequencedModel([
+      toolStep(0, "search_web", { query: "anything" }),
+      toolStep(1, "read_url", { url: "https://new.test" }),
+    ]);
+    mocks.responses.mockReturnValue(model);
+    const sources = [{ number: Number.MAX_SAFE_INTEGER, title: "Last", url: "https://last.test" }];
+    const reply = await generateChatReply([
+      { role: "assistant", content: "Old answer", webSources: sources },
+      { role: "user", content: "Look this up" },
+    ], { enableWebSearch: true, enableUrlReader: true });
+    expect(mocks.search).not.toHaveBeenCalled();
+    expect(mocks.readUrl).not.toHaveBeenCalled();
+    expect(reply.toolActivity?.map((activity) => activity.status)).toEqual(["error", "error"]);
+    expect(JSON.stringify(model.doStreamCalls[2]?.prompt)).toContain("limit of numbered sources");
+    expect(reply.webSearch?.sources).toEqual(sources);
+  });
+
   it("reads the user's contracts only when a user is attached", async () => {
     const contractId = "11111111-1111-4111-8111-111111111111";
     mocks.listContracts.mockResolvedValue({
@@ -713,9 +738,11 @@ describe("agentic chat", () => {
 
   it("returns image failures to the model as tool errors", async () => {
     mocks.generateImage.mockRejectedValue(
-      new Error("upstream 500 with secret details"),
+      Object.assign(new Error("upstream 500 with secret details"), {
+        status: 500,
+      }),
     );
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const model = sequencedModel([
       toolStep(0, "generate_image", { prompt: "anything" }),
     ]);
@@ -728,6 +755,13 @@ describe("agentic chat", () => {
     const continuation = JSON.stringify(model.doStreamCalls[1]?.prompt);
     expect(continuation).toContain("Image generation failed");
     expect(continuation).not.toContain("secret details");
+    expect(logged).toHaveBeenCalledWith("Image generation tool failed", {
+      provider: "primary-openai-compatible",
+      model: "image-model",
+      errorClass: "Error",
+      statusCode: 500,
+    });
+    expect(JSON.stringify(logged.mock.calls)).not.toContain("secret details");
   });
 
   describe("contract egress guard", () => {

@@ -17,7 +17,12 @@ import {
   excerptContract,
   fenceUntrusted,
   MAX_HTTP_FETCHES,
+  MAX_URL_READS,
 } from "./chat-tools";
+import {
+  SOURCE_CATALOG_FULL_MESSAGE,
+  SourceCatalogFullError,
+} from "./chat-source-catalog";
 
 describe("excerptContract", () => {
   const text = `${"a".repeat(CONTRACT_WINDOW_CHARACTERS)}Clause 9. Indemnification survives termination. ${"b".repeat(700)}Clause 12. Indemnification cap applies.`;
@@ -350,5 +355,44 @@ describe("createHttpGetTool", () => {
     expect(await execute({ url: "http://169.254.169.254/" })).toEqual({
       error: "Only public http(s) web addresses can be read.",
     });
+  });
+});
+
+describe.each(["http_get", "read_url"] as const)("%s source catalog", (name) => {
+  beforeEach(() => {
+    vi.mocked(httpGet).mockReset();
+    vi.mocked(readUrl).mockReset();
+    vi.mocked(httpGet).mockImplementation(async (url) => ({ url, body: "body", status: 200, contentType: null, truncated: false }));
+    vi.mocked(readUrl).mockImplementation(async (url) => ({ url, content: "content", title: "Title", provider: "jina", truncated: false }));
+  });
+
+  const fetcher = () => (name === "http_get" ? httpGet : readUrl);
+  function build(deps: { addSource: () => number; hasSourceRoom?: (url: string) => boolean }) {
+    const options = { signal: new AbortController().signal, ...deps };
+    const tools = name === "http_get" ? createHttpGetTool(options) : createUrlReaderTool(options);
+    return (url: string) => tools[name]!.execute!({ url }, { toolCallId: url, messages: [], context: undefined });
+  }
+
+  it("does not fetch or spend budget when a new page cannot be numbered", async () => {
+    const hasSourceRoom = vi.fn((url: string) => url !== "https://site.test/full");
+    const execute = build({ addSource: () => 1, hasSourceRoom });
+
+    expect(await execute("https://site.test/full")).toEqual({ error: SOURCE_CATALOG_FULL_MESSAGE });
+    expect(hasSourceRoom).toHaveBeenCalledWith("https://site.test/full");
+    expect(fetcher()).not.toHaveBeenCalled();
+
+    const budget = name === "http_get" ? MAX_HTTP_FETCHES : MAX_URL_READS;
+    for (let index = 0; index < budget; index++)
+      expect(await execute(`https://site.test/${index}`)).toMatchObject({ number: 1 });
+    expect(fetcher()).toHaveBeenCalledTimes(budget);
+  });
+
+  it("explains a full catalog when a fetched page cannot be numbered", async () => {
+    const execute = build({
+      addSource: () => {
+        throw new SourceCatalogFullError();
+      },
+    });
+    expect(await execute("https://site.test/page")).toEqual({ error: SOURCE_CATALOG_FULL_MESSAGE });
   });
 });

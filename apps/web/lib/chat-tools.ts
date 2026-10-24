@@ -3,9 +3,12 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import type { WebSearchSource } from "@/lib/gemini-search";
 import { MAX_SOURCE_TITLE_CHARACTERS } from "@/lib/chat-agent-history";
+import { SOURCE_CATALOG_FULL_MESSAGE } from "@/lib/chat-source-catalog";
 import { readUrl } from "@/lib/url-reader";
 import { httpGet } from "@/lib/http-fetch";
 import { generateImageReply } from "@/lib/image-generation";
+import { IMAGE_GENERATION_MODEL } from "@/lib/model-settings";
+import { safeProviderFailureMetadata } from "@/lib/provider-failure";
 import {
   getContractTextForUser,
   getContractWindowForUser,
@@ -241,6 +244,8 @@ function urlCacheKey(input: string): string {
 export function createUrlReaderTool(deps: {
   signal: AbortSignal;
   addSource: (source: WebSearchSource) => number;
+  /** False when a page at this address could not be numbered; checked before paying for the read. */
+  hasSourceRoom?: (url: string) => boolean;
   /** Raw fetched text, kept so the finished answer can be checked against what was actually read. */
   onEvidence?: (text: string) => void;
   onContractEvidence?: (reference: ContractEvidence) => void;
@@ -259,6 +264,8 @@ export function createUrlReaderTool(deps: {
         const key = urlCacheKey(url);
         const existing = cache.get(key);
         if (existing) return existing;
+        if (deps.hasSourceRoom?.(key) === false)
+          return { error: SOURCE_CATALOG_FULL_MESSAGE };
         if (reads >= MAX_URL_READS)
           return {
             error:
@@ -295,6 +302,7 @@ export function createUrlReaderTool(deps: {
 export function createHttpGetTool(deps: {
   signal: AbortSignal;
   addSource: (source: WebSearchSource) => number;
+  hasSourceRoom?: (url: string) => boolean;
   onEvidence?: (text: string) => void;
   onContractEvidence?: (reference: ContractEvidence) => void;
   egressGuard?: ContractEgressGuard;
@@ -312,6 +320,8 @@ export function createHttpGetTool(deps: {
         const key = urlCacheKey(url);
         const existing = cache.get(key);
         if (existing) return existing;
+        if (deps.hasSourceRoom?.(key) === false)
+          return { error: SOURCE_CATALOG_FULL_MESSAGE };
         if (fetches >= MAX_HTTP_FETCHES)
           return {
             error:
@@ -547,7 +557,14 @@ export function createImageTool(deps: {
           return { status: "attached", prompt, model: image.model };
         } catch (error) {
           deps.signal.throwIfAborted();
-          console.error("Image generation tool failed:", error);
+          console.error(
+            "Image generation tool failed",
+            safeProviderFailureMetadata(
+              "primary-openai-compatible",
+              IMAGE_GENERATION_MODEL,
+              error,
+            ),
+          );
           return {
             error:
               "Image generation failed. Tell the user the image could not be produced and continue without it.",

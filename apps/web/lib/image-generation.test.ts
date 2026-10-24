@@ -63,4 +63,15 @@ describe("generateImageReply", () => {
       /no image data/i,
     );
   });
+
+  it.each(["!invalid!", "aW1h\nZ2U=", "A".repeat(8 * 1024 * 1024 + 1)])(
+    "rejects invalid or oversized image payloads",
+    async (base64) => {
+      mocks.generate.mockResolvedValue({ data: [{ b64_json: base64 }] });
+      const { generateImageReply } = await import("./image-generation");
+      await expect(generateImageReply("test")).rejects.toThrow(
+        /invalid or oversized/,
+      );
+    },
+  );
 });
