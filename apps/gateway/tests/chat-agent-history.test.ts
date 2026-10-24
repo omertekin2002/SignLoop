@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import {
   compactAgentMessages,
   parseAgentMessages,
-} from "../src/pipeline/chat-agent-history";
+} from "@repo/chat-engine/chat-agent-history";
 import {
   boundCanonicalChatHistory,
   parseClientAgentMessages,

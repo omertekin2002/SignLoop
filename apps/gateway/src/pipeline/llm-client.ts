@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { SafeProviderFailure } from "@repo/chat-engine/provider-failure";
 
 // Adapted from SignLoop apps/web/lib/llm-client.ts.
 // Source commit: 5d06ed2630386c4a9af78373ce998d31dbc1f776
@@ -51,14 +52,7 @@ export type OpenAiCompatibleClientOptions = {
 
 export type LlmFallbackLogger = Pick<Console, "warn">;
 
-export type SafeProviderFailure = Readonly<{
-  provider: LlmProvider;
-  model: string;
-  errorClass: string;
-  statusCode?: number;
-  providerCode?: string;
-  upstreamRequestId?: string;
-}>;
+export type { SafeProviderFailure } from "@repo/chat-engine/provider-failure";
 
 const SILENT_OPENAI_SDK_LOGGER = Object.freeze({
   error: () => {},

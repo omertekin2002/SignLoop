@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { parseResearchMode } from "../src/pipeline/research-policy";
+import { parseResearchMode } from "@repo/chat-engine/research-policy";
 it("preserves the public research modes and default", () => {
   expect(parseResearchMode(undefined)).toBe("auto");
   for (const mode of ["auto", "always", "never"])

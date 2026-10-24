@@ -25,8 +25,8 @@ import {
   parseResearchMode,
   ResearchUnavailableError,
   type ResearchMode,
-} from "./pipeline/research-policy";
-import { appendWebSourcesToMessage } from "./pipeline/web-citations";
+} from "@repo/chat-engine/research-policy";
+import { appendWebSourcesToMessage } from "@repo/chat-engine/web-citations";
 import { DEFAULT_CHAT_ERROR_MESSAGE } from "./prompts";
 import { isRecord } from "./utils";
 

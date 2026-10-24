@@ -1,7 +1,7 @@
 // Real @ai-sdk/google serialization against a stubbed Gemini API.
 import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ search: vi.fn() }));
-vi.mock("../src/pipeline/web-search", () => ({ searchWeb: mocks.search }));
+vi.mock("@repo/chat-engine/web-search", () => ({ searchWeb: mocks.search }));
 import { generateChatReply } from "../src/pipeline/chat";
 import { parseClientAgentMessages } from "../src/pipeline/chat-policy";
 import type { FetchImplementation } from "../src/pipeline/llm-client";

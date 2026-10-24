@@ -2,10 +2,13 @@
 import type { ModelMessage } from "ai";
 import type { ChatMessage, ChatRole } from "./chat";
 import { isRecord } from "../utils";
-import { parseAgentMessages } from "./chat-agent-history";
-import { isPlainAssistantReplay, parseWebSources } from "./chat-history-shared";
-import { withAbort } from "./bounded-response";
-export { MAX_AGENT_STATE_CHARACTERS } from "./chat-history-shared";
+import { parseAgentMessages } from "@repo/chat-engine/chat-agent-history";
+import {
+  isPlainAssistantReplay,
+  parseWebSources,
+} from "@repo/chat-engine/chat-history-shared";
+import { withAbort } from "@repo/chat-engine/bounded-response";
+export { MAX_AGENT_STATE_CHARACTERS } from "@repo/chat-engine/chat-history-shared";
 
 // SignLoop moved these transport bounds and the history-bounding helpers below into
 // chat-history-bounds.ts so its browser client avoids runtime "ai" imports. The gateway has no

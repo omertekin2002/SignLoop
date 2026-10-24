@@ -1,5 +1,5 @@
 import { isRecord } from "../utils";
-import { readBoundedJson } from "./bounded-response";
+import { readBoundedJson } from "@repo/chat-engine/bounded-response";
 
 export const PRIMARY_MODEL_DISCOVERY_TIMEOUT_MS = 7_500;
 export const PRIMARY_MODEL_DISCOVERY_CACHE_TTL_MS = 5 * 60_000;

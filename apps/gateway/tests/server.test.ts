@@ -10,7 +10,7 @@ import {
 import type { ChatReply } from "../src/pipeline/chat";
 import { MAX_CHAT_REQUEST_BODY_BYTES } from "../src/pipeline/chat-policy";
 import { GenerationUnavailableError } from "../src/pipeline/llm-client";
-import { ResearchUnavailableError } from "../src/pipeline/research-policy";
+import { ResearchUnavailableError } from "@repo/chat-engine/research-policy";
 import { DEFAULT_CHAT_ERROR_MESSAGE } from "../src/prompts";
 
 const TEST_URL = "http://service.test";

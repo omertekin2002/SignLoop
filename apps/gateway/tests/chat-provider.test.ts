@@ -1,7 +1,7 @@
 // Ported from SignLoop at 61c90b508a789cee988acdded52b2d1a8c82ee69.
 import { afterEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ search: vi.fn() }));
-vi.mock("../src/pipeline/web-search", () => ({ searchWeb: mocks.search }));
+vi.mock("@repo/chat-engine/web-search", () => ({ searchWeb: mocks.search }));
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -181,6 +181,31 @@ it("preserves high reasoning when falling back from primary to openrouter/free",
     expect(request.store).toBe(false);
   }
   expect(JSON.parse(fetchMock.mock.calls[1]![1].body).model).toBe("openrouter/free");
+});
+
+it("rebuilds provider request headers from explicit configuration", async () => {
+  vi.stubEnv(
+    "OPENAI_CUSTOM_HEADERS",
+    "Authorization: Bearer ambient-secret\nX-Ambient: private-value",
+  );
+  const fetchMock = vi.fn().mockResolvedValue(response(textEvents));
+  vi.stubGlobal("fetch", fetchMock);
+  const { generateChatReply } = await import("../src/pipeline/chat");
+
+  await generateChatReply([{ role: "user", content: "Hello" }], {
+    ...options,
+    researchMode: "never",
+  });
+
+  expect(
+    Object.fromEntries(new Headers(fetchMock.mock.calls[0]![1].headers)),
+  ).toEqual({
+    accept: "application/json",
+    authorization: "Bearer test",
+    "content-type": "application/json",
+    "http-referer": "https://service.test",
+    "x-title": "Test",
+  });
 });
 
 it("rejects Responses EOF before the provider completion event", async () => {

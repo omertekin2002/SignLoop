@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAuthoritativeUtcTimeContext } from "../src/pipeline/chat-time";
+import { buildAuthoritativeUtcTimeContext } from "@repo/chat-engine/chat-time";
 
 describe("buildAuthoritativeUtcTimeContext", () => {
   it("injects an authoritative UTC timestamp and calendar-date comparison rules", () => {

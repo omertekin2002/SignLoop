@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
 import {
+  buildProviderCandidates,
   FIRST_CHUNK_TIMEOUT_MS,
   GEMINI_FIRST_CHUNK_TIMEOUT_MS,
   openingDeadlineMs,
@@ -22,14 +23,14 @@ vi.mock("@ai-sdk/openai", () => ({
 vi.mock("@ai-sdk/google", () => ({
   createGoogleGenerativeAI: () => ({ languageModel: mocks.gemini }),
 }));
-vi.mock("../src/pipeline/web-search", () => ({ searchWeb: mocks.search }));
-vi.mock("../src/pipeline/url-reader", () => ({ readUrl: mocks.readUrl }));
-vi.mock("../src/pipeline/http-fetch", () => ({ httpGet: mocks.httpGet }));
-vi.mock("../src/pipeline/image-generation", () => ({
+vi.mock("@repo/chat-engine/web-search", () => ({ searchWeb: mocks.search }));
+vi.mock("@repo/chat-engine/url-reader", () => ({ readUrl: mocks.readUrl }));
+vi.mock("@repo/chat-engine/http-fetch", () => ({ httpGet: mocks.httpGet }));
+vi.mock("@repo/chat-engine/image-generation", () => ({
   generateImageReply: mocks.generateImage,
 }));
+import { createRoutedModel } from "@repo/chat-engine/routing";
 import {
-  createRoutedModel,
   generateChatReply as generateReply,
   generateChatReplyStream as generateReplyStream,
   type ChatReplyStreamChunk,
@@ -40,7 +41,7 @@ import {
   compactAgentMessages,
   MAX_SOURCE_CATALOG_CHARACTERS,
   MAX_SOURCE_COUNT,
-} from "../src/pipeline/chat-agent-history";
+} from "@repo/chat-engine/chat-agent-history";
 
 const usage = {
   inputTokens: {
@@ -529,7 +530,9 @@ describe("agentic chat", () => {
     mocks.responses.mockImplementation((name: string) =>
       name === "primary" ? primary : fallback,
     );
-    const routed = createRoutedModel(baseOptions.providerConfig);
+    const routed = createRoutedModel(
+      buildProviderCandidates(baseOptions.providerConfig),
+    );
     const result = await routed.model.doGenerate({ prompt: [] });
     expect(result.content).toEqual([{ type: "text", text: "from fallback" }]);
     expect(routed.selected().provider).toBe("openrouter");
@@ -591,8 +594,14 @@ describe("agentic chat", () => {
     expect(mocks.generateImage).toHaveBeenCalledWith(
       "a signed contract on a desk",
       expect.objectContaining({
-        model: "gpt-image-2.5-sunburst",
-        providerConfig: baseOptions.providerConfig,
+        // Images use the primary endpoint and credentials with the configured image model.
+        config: {
+          baseURL: "https://primary.test/v1",
+          apiKey: "test",
+          model: "gpt-image-2.5-sunburst",
+          referer: "https://service.test",
+          appName: "Test gateway",
+        },
       }),
     );
     const deltas = chunks
@@ -1279,6 +1288,32 @@ it("does not log raw SDK stream errors", async () => {
     /private upstream/,
   );
   expect(errorLog).not.toHaveBeenCalled();
+});
+
+it("surfaces a deadline's TimeoutError so the handler can report request_timeout", async () => {
+  mocks.responses.mockReturnValue(
+    new MockLanguageModelV4({
+      doStream: async ({ abortSignal }) => ({
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue({ type: "text-start", id: "text" });
+            controller.enqueue({ type: "text-delta", id: "text", delta: "Partial" });
+            abortSignal?.addEventListener("abort", () =>
+              controller.error(abortSignal.reason),
+            );
+          },
+        }),
+      }),
+    }),
+  );
+  const controller = new AbortController();
+  const deadline = new DOMException("Generation timed out", "TimeoutError");
+  const reply = generateReply(messages, {
+    ...baseOptions,
+    signal: controller.signal,
+  });
+  setTimeout(() => controller.abort(deadline), 10);
+  await expect(reply).rejects.toBe(deadline);
 });
 
 it("uses one explicit opening deadline for every provider when overridden", () => {
