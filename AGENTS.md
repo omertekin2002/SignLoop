@@ -3,7 +3,7 @@
 ## Toolchain and Package Manager
 
 - Use **Bun** for dependency operations and scripts; do not use npm, yarn, pnpm, or npx.
-- Root `package.json` pins `bun@1.3.11` and requires **Node.js 22.11+**. Some scripts invoke Node directly.
+- Root `package.json` pins `bun@1.4.4` and requires **Node.js 22.11+**. Some scripts invoke Node directly.
 - Install dependencies from the repository root: `bun install`.
 - Add app dependencies from `apps/web`: `bun add <package>` (or `bun add -d <package>`). Add gateway dependencies from `apps/gateway` and chat engine dependencies from `packages/chat-engine` the same way. There is one lockfile, the root `bun.lock`.
 - Run scripts with `bun run <script>` and package binaries with `bunx <command>`.
@@ -97,7 +97,7 @@ Keep the hoisted linker for repository-root deployment so Vercel can resolve Nex
 The gateway is configured for Render in root `render.yaml` (service `signloop-chat-api`; Render reads Blueprints from the repository root):
 
 - Install: `bun install --frozen-lockfile --linker hoisted --filter gateway` from the repository root, then `check-types` and `test` in `apps/gateway`.
-- Start: `cd apps/gateway && bun run start`; health check `/healthz`. `BUN_VERSION` pins Bun 1.3.11.
+- Start: `cd apps/gateway && bun run start`; health check `/healthz`. `BUN_VERSION` pins Bun 1.4.4.
 - `buildFilter` deploys only for changes to `apps/gateway`, `packages/chat-engine`, `packages/typescript-config`, `bun.lock`, or the root `package.json`.
 
 Do not set a `rootDir` for the gateway: Render makes files outside a service's root directory unavailable at build and run time, and the gateway needs `packages/chat-engine` and the root lockfile. Vercel's build (`--filter=web`) never builds the gateway, but its ignore command treats `packages/` and `bun.lock` changes as web changes. When adding gateway environment variables, update `apps/gateway/.env.example`, `render.yaml`, and `apps/gateway/README.md`. The cutover from the standalone SLgateway repository is described in `apps/gateway/README.md`.

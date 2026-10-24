@@ -26,7 +26,7 @@ There is no database, WorkOS/Clerk authentication, saved-thread API, contract da
 
 ## Local setup
 
-Bun is pinned to **1.3.11** by the root `package.json` (`packageManager`), this package's `engines`, and `BUN_VERSION` in the root [render.yaml](../../render.yaml). Install from the repository root; there is one lockfile, the root `bun.lock`.
+Bun is pinned to **1.4.4** by the root `package.json` (`packageManager`), this package's `engines`, and `BUN_VERSION` in the root [render.yaml](../../render.yaml). Install from the repository root; there is one lockfile, the root `bun.lock`.
 
 ```sh
 bun --version
@@ -72,7 +72,7 @@ Configuration is validated once at startup. Provider URLs, credentials, models, 
 | `MAX_CONCURRENT_REQUESTS`    | `4`                                                   | Active requests per process. Excess requests receive `429`.                                                                                                                     |
 | `REQUEST_TIMEOUT_MS`         | `275000`                                              | Whole-request deadline, including body reading and provider discovery; maximum 3600000. Agent generation has its own 260-second ceiling.                                        |
 | `CORS_ALLOWED_ORIGINS`       | empty                                                 | Explicit comma-separated HTTP(S) browser origins. Wildcards are rejected.                                                                                                       |
-| `BUN_VERSION`                | `1.3.11` in Blueprint                                 | Render runtime pin.                                                                                                                                                             |
+| `BUN_VERSION`                | `1.4.4` in Blueprint                                 | Render runtime pin.                                                                                                                                                             |
 | `NODE_ENV`                   | `production` in Blueprint                             | Render environment.                                                                                                                                                             |
 
 All answering providers request high reasoning effort through a shared policy. OpenAI-compatible primary and OpenRouter requests explicitly apply it to model aliases without requesting reasoning summaries. Native Gemini chat uses high thinking. Gemini search uses the maximum supported thinking budget for Gemini 2.5 (24,576 tokens for Flash variants, 32,768 for Pro), with another 2,048 output tokens available for its grounded brief; Gemini 3+ uses high thinking with a 32,768-token output budget. Provider deadlines still apply.

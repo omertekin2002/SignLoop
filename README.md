@@ -6,7 +6,7 @@ The Bun/Turborepo repository contains two applications built on one chat engine:
 
 ## Local setup
 
-Requirements: **Node.js 22.11+** (required by AuthKit) and **Bun 1.3.11**, the version pinned in [package.json](package.json).
+Requirements: **Node.js 22.11+** (required by AuthKit) and **Bun 1.4.4**, the version pinned in [package.json](package.json).
 
 From the repository root:
 
@@ -258,7 +258,7 @@ Keep the hoisted linker so repository-root framework discovery can resolve Next.
 
 The configured ignore command considers changes under `apps/web`, `packages`, and the listed root build/dependency configuration files; a root README/AGENTS-only commit is eligible to skip deployment, and so is a commit that touches only `apps/gateway`. The Vercel build never builds the gateway.
 
-Root [render.yaml](render.yaml) is the Render Blueprint for the gateway service `signloop-chat-api`. It installs the gateway's workspace closure from the repository root with the frozen lockfile, type-checks and tests the gateway, starts it with Bun 1.3.11, and checks `/healthz`. The service sets no root directory because Render hides files outside it, and its build filter limits deploys to the gateway, the engine, the TypeScript preset, `bun.lock`, and the root `package.json`. The [gateway README](apps/gateway/README.md#deployment) describes its configuration and the zero-downtime cutover from the standalone repository.
+Root [render.yaml](render.yaml) is the Render Blueprint for the gateway service `signloop-chat-api`. It installs the gateway's workspace closure from the repository root with the frozen lockfile, type-checks and tests the gateway, starts it with Bun 1.4.4, and checks `/healthz`. The service sets no root directory because Render hides files outside it, and its build filter limits deploys to the gateway, the engine, the TypeScript preset, `bun.lock`, and the root `package.json`. The [gateway README](apps/gateway/README.md#deployment) describes its configuration and the zero-downtime cutover from the standalone repository.
 
 The repository configuration does not establish the current state of a live deployment.
 
