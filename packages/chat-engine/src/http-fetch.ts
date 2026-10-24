@@ -3,7 +3,7 @@ import { validatePublicHttpUrl } from "./url-reader";
 import { fetch, type Response } from "undici/index.js";
 import { createPublicHttpDispatcher } from "./public-http-dispatcher";
 
-// Raw HTTP GET for the chat agent. Unlike lib/url-reader.ts, which proxies through a hosted
+// Raw HTTP GET for the chat agent. Unlike url-reader.ts, which proxies through a hosted
 // reader and returns readability-extracted prose, this contacts the target host directly and
 // returns the response body verbatim — the shape APIs answer in, and the shape a model can quote
 // a single field out of instead of paraphrasing a summary.

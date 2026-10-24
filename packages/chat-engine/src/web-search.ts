@@ -6,7 +6,7 @@ import {
 } from "./gemini-search";
 
 // Traditional web search: a ranked list of pages the model can choose to read, rather than a
-// synthesized answer. Gemini grounding (lib/gemini-search.ts) returns a brief written by another
+// synthesized answer. Gemini grounding (gemini-search.ts) returns a brief written by another
 // model, which reads as finished evidence and discourages follow-up research; it is kept here only
 // as the fallback for deployments that have no dedicated search key.
 //
