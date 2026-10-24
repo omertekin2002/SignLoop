@@ -6,9 +6,10 @@ vi.mock("node:dns", () => ({ lookup: dnsLookup }));
 import { httpGet, MAX_FETCH_RESPONSE_CHARACTERS } from "./http-fetch";
 // Keep response/redirect tests deterministic; the connect-time DNS guard is exercised by the
 // redirect-hop test below and by public-http-dispatcher.test.ts.
-vi.mock("undici/index.js", async (importOriginal) => ({
-  ...await importOriginal<typeof import("undici/index.js")>(),
-  fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args),
+type RequestInit = Parameters<typeof import("./public-http-request").requestPublicHttp>[1];
+vi.mock("./public-http-request", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./public-http-request")>(),
+  requestPublicHttp: (url: URL, init: RequestInit) => globalThis.fetch(url, init as globalThis.RequestInit),
 }));
 
 afterEach(() => {
@@ -54,7 +55,7 @@ it("returns the raw body, status, and content type verbatim", async () => {
   );
   vi.stubGlobal("fetch", fetchMock);
   const result = await httpGet("https://api.test/quote?symbol=ISCTR");
-  expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "GET", redirect: "manual" });
+  expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ dispatcher: expect.anything(), signal: expect.any(AbortSignal) });
   expect(result).toEqual({
     url: "https://api.test/quote?symbol=ISCTR",
     status: 200,
@@ -110,7 +111,7 @@ it.each(["http://169.254.169.254/latest/meta-data", "http://localhost.:3000/"])(
 });
 
 it("revalidates DNS at connect time on a redirect hop after the first", async () => {
-  const { fetch: realFetch } = await vi.importActual<typeof import("undici/index.js")>("undici/index.js");
+  const { requestPublicHttp: realRequest } = await vi.importActual<typeof import("./public-http-request")>("./public-http-request");
   let requests = 0;
   const server = createServer((_request, response) => { requests++; response.end("private"); });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -120,7 +121,7 @@ it("revalidates DNS at connect time on a redirect hop after the first", async ()
     // Hop 1 is a stub that never opens a socket; hop 2 runs real undici with the dispatcher httpGet passes.
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(redirect(`http://alias.test:${port}/probe`))
-      .mockImplementation((...args: Parameters<typeof realFetch>) => realFetch(...args)));
+      .mockImplementation((url: URL, init: RequestInit) => realRequest(url, init)));
     await expect(httpGet("https://api.test/start", { signal: AbortSignal.timeout(3000) })).rejects.toMatchObject({
       name: "HttpFetchError",
       publicMessage: expect.stringMatching(/could not be fetched/),
@@ -204,5 +205,27 @@ it("wraps transport failures in a public-safe error", async () => {
   await expect(httpGet("https://api.test/down")).rejects.toMatchObject({
     name: "HttpFetchError",
     publicMessage: expect.stringMatching(/could not be fetched/),
+  });
+});
+
+it("gives up on a body that stops arriving once the signal aborts", async () => {
+  // The read used to wait on the stream alone, so a stalled body held the tool call (and the whole
+  // chat turn) open past every deadline.
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+    new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("partial")); } }),
+  )));
+  const started = Date.now();
+  await expect(httpGet("https://api.test/stall", { signal: AbortSignal.timeout(50) })).rejects.toMatchObject({
+    name: "TimeoutError",
+  });
+  expect(Date.now() - started).toBeLessThan(2000);
+});
+
+it("reports an unreadable content encoding as a public-safe error", async () => {
+  const { UnsupportedContentEncodingError } = await import("./public-http-request");
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new UnsupportedContentEncodingError("zstd")));
+  await expect(httpGet("https://api.test/zstd")).rejects.toMatchObject({
+    name: "HttpFetchError",
+    publicMessage: expect.stringMatching(/encoding that cannot be read/),
   });
 });

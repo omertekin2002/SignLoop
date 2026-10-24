@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
 import { simulateReadableStream } from "ai";
-import { createRoutedModel, type ChatProviderCandidate } from "./routing";
+import { createRoutedModel, StreamStallTimeoutError, type ChatProviderCandidate } from "./routing";
 
 const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
@@ -24,6 +24,29 @@ const answering = () =>
         }),
       }) as StepResult,
   });
+// Starts answering, then goes quiet without ever finishing; records the abort it receives.
+const stalling = () => {
+  const aborts: unknown[] = [];
+  const model = new MockLanguageModelV4({
+    doStream: async ({ abortSignal }) => {
+      abortSignal?.addEventListener("abort", () => aborts.push(abortSignal.reason), { once: true });
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue({ type: "text-start", id: "text" });
+            controller.enqueue({ type: "text-delta", id: "text", delta: "Partial" });
+          },
+        }),
+      } as StepResult;
+    },
+  });
+  return { model, aborts };
+};
+async function drain(stream: ReadableStream<unknown>): Promise<unknown[]> {
+  const parts: unknown[] = [];
+  for await (const part of stream as unknown as AsyncIterable<unknown>) parts.push(part);
+  return parts;
+}
 const failing = (error: unknown) =>
   new MockLanguageModelV4({
     doStream: async () => {
@@ -126,5 +149,63 @@ describe("createRoutedModel", () => {
       "Chat provider step failed",
     ]);
     warned.mockRestore();
+  });
+
+  it("fails a stream that stalls after it starts answering instead of waiting for the deadline", async () => {
+    const { model, aborts } = stalling();
+    const failures: unknown[] = [];
+    const routed = createRoutedModel([candidate("primary", model)], {
+      streamIdleTimeoutMs: 40,
+      onProviderFailure: (failure) => failures.push(failure),
+    });
+    const { stream } = await routed.model.doStream({ prompt: [] });
+    const started = performance.now();
+    await expect(drain(stream)).rejects.toBeInstanceOf(StreamStallTimeoutError);
+    expect(performance.now() - started).toBeLessThan(1000);
+    // The provider request itself is cancelled too.
+    expect(aborts).toEqual([expect.any(StreamStallTimeoutError)]);
+    expect(failures).toEqual([
+      { provider: "primary", model: "primary-model", errorClass: "StreamStallTimeoutError" },
+    ]);
+  });
+
+  it("lets a candidate override or disable the stall limit", async () => {
+    const { model } = stalling();
+    const routed = createRoutedModel(
+      [candidate("primary", model, { streamIdleTimeoutMs: null })],
+      { streamIdleTimeoutMs: 20, onProviderFailure: () => {} },
+    );
+    const { stream } = await routed.model.doStream({ prompt: [] });
+    const reader = stream.getReader();
+    await reader.read();
+    await reader.read();
+    const next = reader.read();
+    const outcome = await Promise.race([
+      next.then(() => "settled", () => "failed"),
+      new Promise((resolve) => setTimeout(() => resolve("still waiting"), 100)),
+    ]);
+    expect(outcome).toBe("still waiting");
+    await reader.cancel();
+  });
+
+  it("does not time out a stream that keeps producing parts", async () => {
+    const steady = new MockLanguageModelV4({
+      doStream: async () =>
+        ({
+          stream: simulateReadableStream({
+            initialDelayInMs: null,
+            chunkDelayInMs: 15,
+            chunks: [
+              { type: "text-start", id: "text" },
+              ...Array.from({ length: 8 }, () => ({ type: "text-delta" as const, id: "text", delta: "x" })),
+              { type: "text-end", id: "text" },
+              { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
+            ],
+          }),
+        }) as StepResult,
+    });
+    const routed = createRoutedModel([candidate("primary", steady)], { streamIdleTimeoutMs: 40 });
+    const { stream } = await routed.model.doStream({ prompt: [] });
+    expect(await drain(stream)).toHaveLength(11);
   });
 });

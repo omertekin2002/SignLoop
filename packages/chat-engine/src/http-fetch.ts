@@ -1,7 +1,11 @@
 import { getErrorMessage } from "./utils";
 import { validatePublicHttpUrl } from "./url-reader";
-import { fetch, type Response } from "undici/index.js";
+import { withAbort } from "./bounded-response";
 import { createPublicHttpDispatcher } from "./public-http-dispatcher";
+import {
+  requestPublicHttp,
+  UnsupportedContentEncodingError,
+} from "./public-http-request";
 
 // Raw HTTP GET for the chat agent. Unlike url-reader.ts, which proxies through a hosted
 // reader and returns readability-extracted prose, this contacts the target host directly and
@@ -58,6 +62,7 @@ function resolveDecoder(contentType: string | null): TextDecoder {
 /** Decode only the useful prefix plus one lookahead character, with a separate byte ceiling. */
 async function readBoundedBody(
   response: Response,
+  signal: AbortSignal,
 ): Promise<{ text: string; truncated: boolean }> {
   const decoder = resolveDecoder(response.headers.get("content-type"));
   if (!response.body) return { text: "", truncated: false };
@@ -67,7 +72,8 @@ async function readBoundedBody(
   let truncated = false;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      // Race the signal too: a body that stops arriving must not outlive the fetch deadline.
+      const { done, value } = await withAbort(reader.read(), signal);
       if (done) break;
       if (!value?.byteLength) continue;
       let offset = 0;
@@ -125,16 +131,17 @@ export async function httpGet(
 
   try {
     for (let hop = 0; ; hop++) {
-      const response = await fetch(target, {
-        dispatcher,
-        method: "GET",
-        redirect: "manual",
-        headers: {
-          Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
-          "User-Agent": options?.config?.userAgent || DEFAULT_HTTP_USER_AGENT,
-        },
+      const response = await withAbort(
+        requestPublicHttp(target, {
+          dispatcher,
+          headers: {
+            Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
+            "User-Agent": options?.config?.userAgent || DEFAULT_HTTP_USER_AGENT,
+          },
+          signal,
+        }),
         signal,
-      });
+      );
 
       const location = response.headers.get("location");
       if (REDIRECT_STATUSES.has(response.status) && location) {
@@ -150,7 +157,7 @@ export async function httpGet(
         continue;
       }
 
-      const { text, truncated } = await readBoundedBody(response);
+      const { text, truncated } = await readBoundedBody(response, signal);
       return {
         url: target.href,
         status: response.status,
@@ -161,6 +168,12 @@ export async function httpGet(
     }
   } catch (error) {
     if (error instanceof HttpFetchError) throw error;
+    if (error instanceof UnsupportedContentEncodingError)
+      throw new HttpFetchError(
+        `Fetching ${target.href} failed: ${error.message}`,
+        "That address answered in an encoding that cannot be read. Try a different source.",
+        { cause: error },
+      );
     // A blocked host or malformed redirect target arrives as UrlReadError, which already carries a
     // publicMessage; let it through untouched.
     if (error instanceof Error && "publicMessage" in error) throw error;
@@ -174,7 +187,8 @@ export async function httpGet(
       { cause: error },
     );
   } finally {
-    // Also close sockets for cancelled, redirected, oversized, or failed responses.
-    await dispatcher.destroy();
+    // Also close sockets for cancelled, redirected, oversized, or failed responses. Not awaited:
+    // a socket that is slow to close must not hold the tool call open.
+    dispatcher.destroy().catch(() => {});
   }
 }

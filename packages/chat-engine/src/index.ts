@@ -26,7 +26,9 @@ export {
 export {
   createRoutedModel,
   DEFAULT_FIRST_CHUNK_TIMEOUT_MS,
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   FirstChunkTimeoutError,
+  StreamStallTimeoutError,
   type ChatLanguageModel,
   type ChatProviderCandidate,
   type ChatProviderOptions,

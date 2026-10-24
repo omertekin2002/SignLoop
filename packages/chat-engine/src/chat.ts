@@ -24,6 +24,7 @@ import {
 } from "./chat-tools";
 import { verifyFigures, type FigureVerification } from "./web-citations";
 import { isRecord } from "./utils";
+import { withAbort } from "./bounded-response";
 import { compactAgentMessages } from "./chat-agent-history";
 import {
   createChatSourceCatalog,
@@ -197,6 +198,11 @@ export type ChatEngineOptions = {
   maxOutputTokens?: number | null;
   /** Opening deadline for candidates without their own; defaults to 20 seconds. */
   firstChunkTimeoutMs?: number;
+  /**
+   * Longest silence between stream parts once a step is answering, for candidates without their
+   * own; defaults to DEFAULT_STREAM_IDLE_TIMEOUT_MS (90 seconds). null disables it.
+   */
+  streamIdleTimeoutMs?: number | null;
   tools?: ChatToolsConfig;
   /** Defaults to "auto"; see ResearchMode. */
   researchMode?: ResearchMode;
@@ -224,6 +230,14 @@ export type ChatEngineOptions = {
    */
   rethrowAbortReason?: boolean;
 };
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
 
 function collectStrings(value: unknown, into: string[]): string[] {
   if (typeof value === "string") into.push(value);
@@ -276,6 +290,7 @@ export async function* generateChatReplyStream<TTool extends string = string>(
   signal.throwIfAborted();
   const routed = createRoutedModel(options.providers, {
     firstChunkTimeoutMs: options.firstChunkTimeoutMs,
+    streamIdleTimeoutMs: options.streamIdleTimeoutMs,
     onTiming: options.onTiming,
     onProviderFailure: options.onProviderFailure,
     createExhaustedError: options.createExhaustedError,
@@ -444,6 +459,19 @@ export async function* generateChatReplyStream<TTool extends string = string>(
           generatedImages.set(toolCallId, markdown),
       }),
     );
+  }
+  // The agent loop awaits a tool call without watching the turn's signal, so a call that ignores
+  // it would hold the turn open past its own deadline. Settle every call when the turn ends.
+  for (const [name, definition] of Object.entries(tools)) {
+    const execute = definition.execute;
+    if (!execute) continue;
+    tools[name] = {
+      ...definition,
+      execute: (input, executeOptions) => {
+        const result = execute(input, executeOptions);
+        return isPromiseLike(result) ? withAbort(result, signal) : result;
+      },
+    } as typeof definition;
   }
   const researchTools = RESEARCH_TOOL_NAMES.filter((name) => name in tools);
   // Strict research cannot succeed without a tool that fetches source text.

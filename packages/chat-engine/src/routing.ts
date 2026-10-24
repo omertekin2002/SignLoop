@@ -23,6 +23,10 @@ export type ProviderMilestone = "provider_start" | "provider_first_useful";
 
 // A provider that accepts the request but sends nothing back is treated as down and skipped.
 export const DEFAULT_FIRST_CHUNK_TIMEOUT_MS = 20_000;
+// Once a step is streaming, the longest silence between two stream parts. A reasoning model can
+// think quietly for a while, so this only catches a stream that has stopped for good, which would
+// otherwise hold the turn until its overall deadline.
+export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 90_000;
 
 /**
  * One entry in the ordered provider chain. Every model step starts at the candidate that served the
@@ -35,6 +39,8 @@ export type ChatProviderCandidate = {
   model: string;
   /** Opening deadline for this candidate; defaults to the request-level deadline. */
   firstChunkTimeoutMs?: number;
+  /** Stall limit for this candidate once it is streaming; defaults to the request-level limit. */
+  streamIdleTimeoutMs?: number | null;
   /**
    * Provider options merged over the engine's defaults (by provider key) for steps this candidate
    * serves, e.g. `{ google: { thinkingConfig: { thinkingLevel: "high" } } }`.
@@ -60,6 +66,13 @@ export type ChatProviderCandidate = {
 
 export type ChatRoutingOptions = {
   firstChunkTimeoutMs?: number;
+  /**
+   * Longest silence between stream parts after a step starts answering; defaults to
+   * DEFAULT_STREAM_IDLE_TIMEOUT_MS, and null disables it. A stalled step fails with
+   * StreamStallTimeoutError instead of waiting for the turn's deadline. It is not replayed on
+   * another provider, since part of its answer may already have been delivered.
+   */
+  streamIdleTimeoutMs?: number | null;
   onTiming?: (event: ProviderMilestone) => void;
   /** Receives allowlisted metadata for each failed step; defaults to a console warning. */
   onProviderFailure?: (failure: SafeProviderFailure) => void;
@@ -77,13 +90,22 @@ export class FirstChunkTimeoutError extends Error {
   }
 }
 
+export class StreamStallTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Provider stream stalled for ${timeoutMs}ms`);
+    this.name = "StreamStallTimeoutError";
+  }
+}
+
 // Opens a provider stream and waits for its first content part, so an endpoint that accepts the
 // request but never answers fails like a refused connection instead of consuming the whole budget.
 async function openStreamWithDeadline(
   candidate: ChatLanguageModel,
   options: StreamOptions,
   timeoutMs: number,
+  idleTimeoutMs: number | null,
   onTiming?: (event: ProviderMilestone) => void,
+  onStall?: (error: StreamStallTimeoutError) => void,
 ): Promise<StreamResult> {
   const outer = options.abortSignal;
   const deadline = new AbortController();
@@ -163,11 +185,24 @@ async function openStreamWithDeadline(
         if (closed) sink.close();
       },
       async pull(sink) {
-        const { done, value } = await withAbort(source.read(), signal);
-        if (done) sink.close();
-        else {
-          reportUseful(value);
-          sink.enqueue(value);
+        // Aborting the shared deadline also cancels the provider request itself.
+        const stall =
+          idleTimeoutMs && idleTimeoutMs > 0
+            ? setTimeout(() => {
+                const error = new StreamStallTimeoutError(idleTimeoutMs);
+                onStall?.(error);
+                deadline.abort(error);
+              }, idleTimeoutMs)
+            : undefined;
+        try {
+          const { done, value } = await withAbort(source.read(), signal);
+          if (done) sink.close();
+          else {
+            reportUseful(value);
+            sink.enqueue(value);
+          }
+        } finally {
+          clearTimeout(stall);
         }
       },
       cancel: (reason) => source.cancel(reason),
@@ -219,6 +254,10 @@ export function createRoutedModel(
 ) {
   const firstChunkTimeoutMs =
     options.firstChunkTimeoutMs ?? DEFAULT_FIRST_CHUNK_TIMEOUT_MS;
+  const streamIdleTimeoutMs =
+    options.streamIdleTimeoutMs === undefined
+      ? DEFAULT_STREAM_IDLE_TIMEOUT_MS
+      : options.streamIdleTimeoutMs;
   // Request-level firsts, even across failed candidates and later tool-loop steps.
   const reported = new Set<ProviderMilestone>();
   const reportTiming = (event: ProviderMilestone) => {
@@ -287,7 +326,19 @@ export function createRoutedModel(
             model,
             withCandidateOptions(callOptions, candidate),
             candidate.firstChunkTimeoutMs ?? firstChunkTimeoutMs,
+            candidate.streamIdleTimeoutMs === undefined
+              ? streamIdleTimeoutMs
+              : candidate.streamIdleTimeoutMs,
             reportTiming,
+            // Reported like an opening failure, though the step is not retried elsewhere.
+            (error) =>
+              onProviderFailure(
+                safeProviderFailureMetadata(
+                  candidate.provider,
+                  candidate.model,
+                  error,
+                ),
+              ),
           ),
         ),
     },
