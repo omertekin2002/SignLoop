@@ -103,6 +103,9 @@ it("uses real Responses serialization for tools and continuation", async () => {
     ]),
   );
   expect(first.store).toBe(false);
+  for (const request of [first, second]) {
+    expect(request.reasoning).toEqual({ effort: "high" });
+  }
   expect(second.input).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -113,6 +116,28 @@ it("uses real Responses serialization for tools and continuation", async () => {
     ]),
   );
 });
+
+it.each(["gpt-6.1-sol", "gemini-3-flash", "claude-fable-5.1", "custom-text-model"])(
+  "sends high reasoning effort for the gateway model %s",
+  async (model) => {
+    vi.resetModules();
+    vi.stubEnv("PRIMARY_LLM_BASE_URL", "https://primary.test/v1");
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    const fetchMock = vi.fn().mockResolvedValue(response(textEvents));
+    vi.stubGlobal("fetch", fetchMock);
+    const { generateChatReply } = await import("./chat");
+
+    await generateChatReply([{ role: "user", content: "Hello" }], {
+      primaryModel: model,
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const request = JSON.parse(fetchMock.mock.calls[0]![1].body);
+    expect(request.model).toBe(model);
+    expect(request.reasoning).toEqual({ effort: "high" });
+    expect(request.store).toBe(false);
+  },
+);
 it("rejects Responses EOF before the provider completion event", async () => {
   vi.resetModules();
   vi.stubEnv("PRIMARY_LLM_BASE_URL", "https://primary.test/v1");
@@ -191,6 +216,7 @@ it.each([
     for (const request of requests) {
       expect(request.stream).toBe(true);
       expect(request.store).toBe(false);
+      expect(request.reasoning).toEqual({ effort: "high" });
       expect(request.tools ?? []).toEqual([]);
     }
     expect(String(fetchMock.mock.calls[0]![0])).toBe(

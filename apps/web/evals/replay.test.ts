@@ -60,34 +60,38 @@ describe("replay transport", () => {
     ]);
   });
 
-  it("rejects a recording once its request fingerprint no longer matches", async () => {
-    const recorded = {
-      model: "recorded-model",
-      instructions: "Return only valid JSON with the exact required keys.",
-      input: "prompt v1",
-      max_output_tokens: 8192,
-      text: { format: { type: "json_object" } },
-    };
-    const interaction = {
-      expect: { fingerprint: requestFingerprint(recorded) },
-      response: { output: { risk_badge: "LOW" } },
-    };
-    const stale = createReplayTransport([interaction]);
-    await expect(
-      stale.fetch(RESPONSES_URL, {
-        method: "POST",
-        body: JSON.stringify({ ...recorded, input: "prompt v2" }),
-      }),
-    ).rejects.toThrow(/no longer matches its recording/);
+  it.each([{ input: "prompt v2" }, { reasoning: { effort: "medium" } }])(
+    "rejects a recording once its request changes: %j",
+    async (change) => {
+      const recorded = {
+        model: "recorded-model",
+        instructions: "Return only valid JSON with the exact required keys.",
+        input: "prompt v1",
+        max_output_tokens: 8192,
+        text: { format: { type: "json_object" } },
+        reasoning: { effort: "high" },
+      };
+      const interaction = {
+        expect: { fingerprint: requestFingerprint(recorded) },
+        response: { output: { risk_badge: "LOW" } },
+      };
+      const stale = createReplayTransport([interaction]);
+      await expect(
+        stale.fetch(RESPONSES_URL, {
+          method: "POST",
+          body: JSON.stringify({ ...recorded, ...change }),
+        }),
+      ).rejects.toThrow(/no longer matches its recording/);
 
-    const current = createReplayTransport([interaction]);
-    const response = await current.fetch(RESPONSES_URL, {
-      method: "POST",
-      body: JSON.stringify(recorded),
-    });
-    const body = await response.json();
-    expect(body.output[0].content[0].text).toBe('{"risk_badge":"LOW"}');
-  });
+      const current = createReplayTransport([interaction]);
+      const response = await current.fetch(RESPONSES_URL, {
+        method: "POST",
+        body: JSON.stringify(recorded),
+      });
+      const body = await response.json();
+      expect(body.output[0].content[0].text).toBe('{"risk_badge":"LOW"}');
+    },
+  );
 });
 
 describe("replay harness isolation", () => {

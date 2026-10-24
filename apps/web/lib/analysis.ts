@@ -15,6 +15,7 @@ import {
   type LlmProvider,
 } from "@/lib/llm-client";
 import { getErrorMessage, isRecord } from "@/lib/utils";
+import { TEXT_REASONING_EFFORT } from "@/lib/reasoning-policy";
 
 // Per-request ceiling for one analysis call, sized against the route's 270s operation deadline so
 // two candidates can be tried in full before it fires. The OpenAI client's own default is 60s,
@@ -868,6 +869,7 @@ async function createResponsesPreferringJson(
         instructions,
         input,
         max_output_tokens: MAX_ANALYSIS_OUTPUT_TOKENS,
+        reasoning: { effort: TEXT_REASONING_EFFORT },
         text: { format: { type: "json_object" } },
       },
       sdkOptions,
@@ -881,6 +883,7 @@ async function createResponsesPreferringJson(
         instructions,
         input,
         max_output_tokens: MAX_ANALYSIS_OUTPUT_TOKENS,
+        reasoning: { effort: TEXT_REASONING_EFFORT },
       },
       sdkOptions,
     );

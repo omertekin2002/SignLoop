@@ -19,6 +19,7 @@ import {
   resolvePrimaryModel,
 } from "@/lib/llm-client";
 import { orderOpenRouterModels } from "@/lib/model-settings";
+import { TEXT_REASONING_EFFORT } from "@/lib/reasoning-policy";
 import { withAbort } from "@/lib/bounded-response";
 import type { WebSearchMetadata } from "@/lib/gemini-search";
 import { searchWeb } from "@/lib/web-search";
@@ -573,7 +574,15 @@ export async function* generateChatReplyStream(
     stopWhen: isStepCount(MAX_STEPS),
     maxOutputTokens: options?.maxOutputTokens ?? 4096,
     maxRetries: 0,
-    providerOptions: { openai: { store: false } },
+    providerOptions: {
+      openai: {
+        store: false,
+        reasoningEffort: TEXT_REASONING_EFFORT,
+        // Compatible gateways and OpenRouter use aliases the SDK cannot classify itself.
+        forceReasoning: true,
+        reasoningSummary: null,
+      },
+    },
     telemetry: chatTelemetryOptions(options?.recordTelemetry !== false),
     prepareStep: ({ stepNumber }) =>
       stepNumber >= MAX_STEPS - 1 ? { toolChoice: "none" as const } : {},

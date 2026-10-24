@@ -98,6 +98,8 @@ If no primary model is available to an authenticated request, it uses the config
 
 Chat endpoints must support Responses API function tools and tool-result continuation. Analysis uses Responses JSON output, with a compatibility retry when JSON mode is unsupported. Provider compatibility tests use mocks; passing them does not establish that deployed credentials or live providers work.
 
+All text generation requests high reasoning effort, including chat, conversation titles, analysis, and OpenRouter fallbacks. The Gemini search helper requests `HIGH` thinking on Gemini 3+; Gemini 2.5 uses its maximum supported thinking-token budget with additional output headroom for the search brief. Providers must support the requested reasoning controls; non-reasoning models cannot acquire reasoning support from this setting. Image generation keeps its separate image settings.
+
 ### Search and page reading
 
 Search is model-selected during a chat turn; there is no mandatory pre-search on every request.
