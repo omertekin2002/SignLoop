@@ -772,3 +772,86 @@ describe("provider startup timing hooks", () => {
     expect(onTiming.mock.calls).toEqual([["provider_start"]]);
   });
 });
+
+describe("caller-controlled error reporting", () => {
+  function errorStreamModel(error: Error) {
+    return new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          initialDelayInMs: null,
+          chunkDelayInMs: null,
+          chunks: [{ type: "error", error }],
+        }),
+      }),
+    });
+  }
+  /** Opens with content, then waits until the run is aborted. */
+  function stalledModel() {
+    return new MockLanguageModelV4({
+      doStream: async ({ abortSignal }) => ({
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue({ type: "text-start", id: "text" });
+            controller.enqueue({
+              type: "text-delta",
+              id: "text",
+              delta: "Partial",
+            });
+            abortSignal?.addEventListener("abort", () =>
+              controller.error(abortSignal.reason),
+            );
+          },
+        }),
+      }),
+    });
+  }
+  const deadline = () =>
+    new DOMException("Service request timed out", "TimeoutError");
+
+  it("keeps the AI SDK's default stream-error logging unless asked", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.responses.mockReturnValue(
+      errorStreamModel(new Error("raw upstream detail")),
+    );
+    await expect(generateChatReply(messages)).rejects.toThrow(
+      "raw upstream detail",
+    );
+    expect(errorLog).toHaveBeenCalled();
+  });
+
+  it("routes stream errors to onStreamError instead of the console", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failure = new Error("raw upstream detail");
+    mocks.responses.mockReturnValue(errorStreamModel(failure));
+    const onStreamError = vi.fn();
+    await expect(
+      engine.generateChatReply(messages, { ...options(), onStreamError }),
+    ).rejects.toThrow("raw upstream detail");
+    expect(onStreamError).toHaveBeenCalledWith(failure);
+    expect(errorLog).not.toHaveBeenCalled();
+  });
+
+  it("reports an abort generically by default", async () => {
+    mocks.responses.mockReturnValue(stalledModel());
+    const controller = new AbortController();
+    const reply = engine.generateChatReply(messages, {
+      ...options(),
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(deadline()), 10);
+    await expect(reply).rejects.toThrow("Chat generation aborted");
+  });
+
+  it("rethrows the abort reason when asked", async () => {
+    mocks.responses.mockReturnValue(stalledModel());
+    const controller = new AbortController();
+    const reason = deadline();
+    const reply = engine.generateChatReply(messages, {
+      ...options(),
+      signal: controller.signal,
+      rethrowAbortReason: true,
+    });
+    setTimeout(() => controller.abort(reason), 10);
+    await expect(reply).rejects.toBe(reason);
+  });
+});

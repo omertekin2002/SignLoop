@@ -213,6 +213,16 @@ export type ChatEngineOptions = {
   ) => unknown;
   /** Clock for the authoritative time context. */
   now?: () => Date;
+  /**
+   * Receives errors the AI SDK reports while streaming, in place of its default console.error,
+   * which can print raw upstream details. The error still ends the turn. Unset keeps the default.
+   */
+  onStreamError?: (error: unknown) => void;
+  /**
+   * On abort, throw the signal's reason (such as a deadline's TimeoutError) instead of a generic
+   * "Chat generation aborted" error, so callers can tell a timeout from a cancellation.
+   */
+  rethrowAbortReason?: boolean;
 };
 
 function collectStrings(value: unknown, into: string[]): string[] {
@@ -486,7 +496,13 @@ export async function* generateChatReplyStream<TTool extends string = string>(
   let answer = "";
   let finished = false;
   try {
-    const result = await agent.stream({
+    const onStreamError = options.onStreamError;
+    // AI SDK 7 forwards stream options it does not declare, such as onError, from ToolLoopAgent
+    // to streamText. Only set onError when asked, so streamText keeps its default otherwise.
+    const streamOptions = {
+      ...(onStreamError
+        ? { onError: ({ error }: { error: unknown }) => onStreamError(error) }
+        : {}),
       messages: messages
         .filter((message) => message.role !== "system")
         .flatMap((message): ModelMessage[] => [
@@ -498,14 +514,18 @@ export async function* generateChatReplyStream<TTool extends string = string>(
           { role: message.role, content: message.content },
         ]),
       abortSignal: signal,
-    });
+    };
+    const result = await agent.stream(streamOptions);
     for await (const part of result.fullStream) {
       if (part.type === "start-step" && answer && !answer.endsWith("\n\n")) {
         answer += "\n\n";
         if (!strictResearch) yield { type: "delta", text: "\n\n" };
       }
       if (part.type === "error") throw part.error;
-      if (part.type === "abort") throw new Error("Chat generation aborted");
+      if (part.type === "abort") {
+        if (options.rethrowAbortReason) signal.throwIfAborted();
+        throw new Error("Chat generation aborted");
+      }
       if (part.type === "text-delta") {
         answer += part.text;
         if (!strictResearch) yield { type: "delta", text: part.text };
