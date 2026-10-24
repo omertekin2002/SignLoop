@@ -342,7 +342,7 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
     generateChatTitle.mockImplementation(titles.generateChatTitle);
     let titleSignal: AbortSignal | undefined;
     generateChatReply.mockImplementation((_messages, options) => {
-      if (options?.maxOutputTokens === 512) {
+      if (options?.maxOutputTokens === titles.CHAT_TITLE_MAX_OUTPUT_TOKENS) {
         titleSignal = options.signal;
         return new Promise(() => {});
       }

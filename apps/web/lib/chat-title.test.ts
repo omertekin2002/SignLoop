@@ -4,7 +4,11 @@ const { generateChatReply } = vi.hoisted(() => ({
   generateChatReply: vi.fn(),
 }));
 vi.mock("@/lib/chat", () => ({ generateChatReply }));
-import { CHAT_TITLE_TIMEOUT_MS, generateChatTitle } from "./chat-title";
+import {
+  CHAT_TITLE_MAX_OUTPUT_TOKENS,
+  CHAT_TITLE_TIMEOUT_MS,
+  generateChatTitle,
+} from "./chat-title";
 
 beforeEach(() => vi.resetAllMocks());
 afterEach(() => vi.useRealTimers());
@@ -27,7 +31,7 @@ describe("chat titles", () => {
         expect.objectContaining({ role: "system" }),
         { role: "user", content: '"Explain my lease renewal."' },
       ],
-      { primaryModel: "selected-model", signal: expect.any(AbortSignal), maxOutputTokens: 512 },
+      { primaryModel: "selected-model", signal: expect.any(AbortSignal), maxOutputTokens: CHAT_TITLE_MAX_OUTPUT_TOKENS },
     );
   });
 
