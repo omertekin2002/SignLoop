@@ -1133,10 +1133,13 @@ it("uses the primary without calling Gemini or OpenRouter when it answers", asyn
 it("waits longer for Gemini to start answering than for other providers", async () => {
   vi.useFakeTimers();
   try {
+    // Slower than the default opening deadline, but within Gemini's own.
+    const startMs = GEMINI_FIRST_CHUNK_TIMEOUT_MS - 5_000;
+    expect(startMs).toBeGreaterThan(FIRST_CHUNK_TIMEOUT_MS);
     const slowStart = (_name: string) =>
       new MockLanguageModelV4({
         doStream: async () => {
-          await new Promise((resolve) => setTimeout(resolve, 30_000));
+          await new Promise((resolve) => setTimeout(resolve, startMs));
           return streamStep(0) as StepResult;
         },
       });
@@ -1154,7 +1157,7 @@ it("waits longer for Gemini to start answering than for other providers", async 
         gemini: { apiKey: "gemini-key", model: "gemini-3.8-flash" },
       },
     });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(startMs);
 
     await expect(run).resolves.toMatchObject({ provider: "gemini" });
     expect(fallback.doStreamCalls).toHaveLength(0);
