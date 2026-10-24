@@ -28,6 +28,7 @@
     "@radix-ui/react-label": "^2.1.11",
     "@radix-ui/react-select": "^2.3.3",
     "@radix-ui/react-slot": "^1.3.0",
+    "@repo/chat-engine": "*",
     "@tanstack/react-query": "^5.101.2",
     "@tesseract.js-data/eng": "1.0.0",
     "@vercel/blob": "^2.6.1",

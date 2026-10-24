@@ -1,0 +1,33 @@
+{
+  "name": "@repo/chat-engine",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "lint": "eslint --max-warnings 0",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.62",
+    "ai": "7.0.93",
+    "ipaddr.js": "^2.5.0",
+    "marked": "^18.0.6",
+    "openai": "^6.46.0",
+    "undici": "^6.29.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "*",
+    "@repo/typescript-config": "*",
+    "@types/node": "^22.20.1",
+    "eslint": "^9.39.5",
+    "typescript": "5.9.2",
+    "vitest": "^4.1.10"
+  }
+}

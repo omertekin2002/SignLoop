@@ -52,6 +52,8 @@ const ocrRouteKeys = OCR_ROUTES.map(
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Workspace packages ship TypeScript source; Next compiles them with the app.
+  transpilePackages: ["@repo/chat-engine"],
   // Loaded with Node's require at runtime, so the paths these packages derive from __dirname are
   // the deployed ones. Bundling them baked build-machine paths into the OCR worker location.
   serverExternalPackages: [
