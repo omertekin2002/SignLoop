@@ -1,0 +1,41 @@
+{
+  "health": {
+    "status": 200,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-1"
+    },
+    "body": {
+      "ok": true,
+      "service": "signloop-chat-service"
+    },
+    "logs": []
+  },
+  "unknownRoute": {
+    "status": 404,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-2"
+    },
+    "body": {
+      "error": "Not found",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "wrongMethod": {
+    "status": 404,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-3"
+    },
+    "body": {
+      "error": "Not found",
+      "code": "invalid_request"
+    },
+    "logs": []
+  }
+}

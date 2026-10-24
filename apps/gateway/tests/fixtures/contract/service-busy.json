@@ -1,0 +1,22 @@
+{
+  "status": 429,
+  "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "retry-after": "1",
+    "x-request-id": "busy-1"
+  },
+  "body": {
+    "error": "Too many concurrent chat requests. Please retry shortly.",
+    "code": "service_busy"
+  },
+  "logs": [
+    {
+      "requestId": "busy-1",
+      "route": "/v1/chat",
+      "status": 429,
+      "durationMs": "<duration>",
+      "errorClass": "ConcurrencyLimitError"
+    }
+  ]
+}

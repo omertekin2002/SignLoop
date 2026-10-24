@@ -1,0 +1,236 @@
+{
+  "wrongContentType": {
+    "status": 415,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-1"
+    },
+    "body": {
+      "error": "Content-Type must be application/json.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "declaredBodyTooLarge": {
+    "status": 413,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-2"
+    },
+    "body": {
+      "error": "Chat request body is too large.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "actualBodyTooLarge": {
+    "status": 413,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-3"
+    },
+    "body": {
+      "error": "Chat request body is too large.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "invalidJson": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-4"
+    },
+    "body": {
+      "error": "Invalid JSON body",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "bodyNotObject": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-5"
+    },
+    "body": {
+      "error": "messages must be an array.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "messagesNotArray": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-6"
+    },
+    "body": {
+      "error": "messages must be an array.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "tooManyMessages": {
+    "status": 413,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-7"
+    },
+    "body": {
+      "error": "Chat supports at most 30 messages per request.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "invalidRole": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-8"
+    },
+    "body": {
+      "error": "Each message must have a user or assistant role and string content.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "messageTooLong": {
+    "status": 413,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-9"
+    },
+    "body": {
+      "error": "Each message must be at most 4000 characters.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "emptyMessage": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-10"
+    },
+    "body": {
+      "error": "Messages cannot be empty.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "historyTooLarge": {
+    "status": 413,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-11"
+    },
+    "body": {
+      "error": "Chat history is too large. Start a new chat or shorten the request.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "noMessages": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-12"
+    },
+    "body": {
+      "error": "Chat requires at least one message.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "finalAssistant": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-13"
+    },
+    "body": {
+      "error": "The final chat message must be from the user.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "modelSelection": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-14"
+    },
+    "body": {
+      "error": "The model and provider are controlled by the service.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "providerSelection": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-15"
+    },
+    "body": {
+      "error": "The model and provider are controlled by the service.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "baseUrlSelection": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-16"
+    },
+    "body": {
+      "error": "The model and provider are controlled by the service.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "streamNotBoolean": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-17"
+    },
+    "body": {
+      "error": "stream must be a boolean.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  },
+  "researchInvalid": {
+    "status": 400,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-18"
+    },
+    "body": {
+      "error": "research must be one of: auto, always, never.",
+      "code": "invalid_request"
+    },
+    "logs": []
+  }
+}

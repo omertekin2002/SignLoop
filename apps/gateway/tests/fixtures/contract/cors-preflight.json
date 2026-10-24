@@ -1,0 +1,30 @@
+{
+  "allowed": {
+    "status": 204,
+    "headers": {
+      "access-control-allow-headers": "Content-Type, X-Request-ID",
+      "access-control-allow-methods": "POST, OPTIONS",
+      "access-control-allow-origin": "https://app.test",
+      "access-control-max-age": "600",
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "vary": "Origin",
+      "x-request-id": "preflight-1"
+    },
+    "body": null,
+    "logs": []
+  },
+  "rejected": {
+    "status": 404,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "preflight-1"
+    },
+    "body": {
+      "error": "Not found",
+      "code": "invalid_request"
+    },
+    "logs": []
+  }
+}

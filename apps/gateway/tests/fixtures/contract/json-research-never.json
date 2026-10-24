@@ -1,0 +1,34 @@
+{
+  "status": 200,
+  "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "x-request-id": "generated-request-1"
+  },
+  "body": {
+    "message": "From memory: 4.25%.\n\n_The figures above were not checked against source text retrieved during this turn._",
+    "provider": "primary-openai-compatible",
+    "model": "gpt-6.1-sol",
+    "webSearch": null,
+    "webSearchQuery": null,
+    "webSearchAttempts": [],
+    "webSearchSuccessfulCount": 0,
+    "webSources": [],
+    "toolActivity": [],
+    "readSources": [],
+    "figures": "no-evidence"
+  },
+  "logs": [
+    {
+      "requestId": "generated-request-1",
+      "route": "/v1/chat",
+      "status": 200,
+      "durationMs": "<duration>",
+      "streaming": false,
+      "messageCount": 1,
+      "totalMessageCharacters": 22,
+      "provider": "primary-openai-compatible",
+      "model": "gpt-6.1-sol"
+    }
+  ]
+}

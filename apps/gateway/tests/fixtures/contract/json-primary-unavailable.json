@@ -1,0 +1,42 @@
+{
+  "status": 200,
+  "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "x-request-id": "generated-request-1"
+  },
+  "body": {
+    "message": "OpenRouter answer.",
+    "provider": "openrouter",
+    "model": "openrouter/free",
+    "webSearch": null,
+    "webSearchQuery": null,
+    "webSearchAttempts": [],
+    "webSearchSuccessfulCount": 0,
+    "webSources": [],
+    "toolActivity": [],
+    "readSources": [],
+    "figures": "ok"
+  },
+  "logs": [
+    {
+      "level": "warn",
+      "event": "provider_model_unavailable",
+      "requestId": "generated-request-1",
+      "provider": "primary-openai-compatible",
+      "model": "gpt-6.1-sol",
+      "errorClass": "ModelUnavailableError"
+    },
+    {
+      "requestId": "generated-request-1",
+      "route": "/v1/chat",
+      "status": 200,
+      "durationMs": "<duration>",
+      "streaming": false,
+      "messageCount": 1,
+      "totalMessageCharacters": 22,
+      "provider": "openrouter",
+      "model": "openrouter/free"
+    }
+  ]
+}

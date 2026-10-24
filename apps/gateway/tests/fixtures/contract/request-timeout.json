@@ -1,0 +1,54 @@
+{
+  "json": {
+    "status": 504,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json; charset=utf-8",
+      "x-request-id": "generated-request-1"
+    },
+    "body": {
+      "error": "Chat request timed out. Please try again.",
+      "code": "request_timeout"
+    },
+    "logs": [
+      {
+        "requestId": "generated-request-1",
+        "route": "/v1/chat",
+        "status": 504,
+        "durationMs": "<duration>",
+        "streaming": false,
+        "messageCount": 1,
+        "totalMessageCharacters": 22,
+        "errorClass": "TimeoutError"
+      }
+    ]
+  },
+  "ndjson": {
+    "status": 200,
+    "headers": {
+      "cache-control": "no-cache, no-transform",
+      "content-type": "application/x-ndjson; charset=utf-8",
+      "x-accel-buffering": "no",
+      "x-request-id": "generated-request-1"
+    },
+    "events": [
+      {
+        "type": "error",
+        "error": "Chat request timed out. Please try again.",
+        "code": "request_timeout"
+      }
+    ],
+    "logs": [
+      {
+        "requestId": "generated-request-1",
+        "route": "/v1/chat",
+        "status": 200,
+        "durationMs": "<duration>",
+        "streaming": true,
+        "messageCount": 1,
+        "totalMessageCharacters": 22,
+        "errorClass": "TimeoutError"
+      }
+    ]
+  }
+}
