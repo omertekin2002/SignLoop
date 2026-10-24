@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
+import { brotliCompressSync, deflateRawSync, deflateSync, gzipSync } from "node:zlib";
 import { Agent } from "undici/index.js";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
@@ -18,6 +18,17 @@ const routes: Record<string, (request: IncomingMessage, response: ServerResponse
   "/deflate": (_request, response) => {
     response.writeHead(200, { "content-encoding": "deflate" });
     response.end(deflateSync(TEXT));
+  },
+  "/deflate-raw": (_request, response) => {
+    response.writeHead(200, { "content-encoding": "deflate" });
+    response.end(deflateRawSync(TEXT));
+  },
+  // One byte per write, so the decoder must choose its format from a single-byte first chunk.
+  "/deflate-raw-trickle": (_request, response) => {
+    response.writeHead(200, { "content-encoding": "deflate" });
+    const body = deflateRawSync(TEXT);
+    response.write(body.subarray(0, 1));
+    setTimeout(() => response.end(body.subarray(1)), 20);
   },
   "/br": (_request, response) => {
     response.writeHead(200, { "content-encoding": "br" });
@@ -69,7 +80,16 @@ afterAll(async () => {
 const get = (path: string, signal?: AbortSignal) =>
   requestPublicHttp(new URL(path, origin), { dispatcher, headers: { "user-agent": "test" }, signal });
 
-it.each(["/gzip", "/deflate", "/br", "/gzip-then-br", "/chunked-gzip", "/plain"])(
+it.each([
+  "/gzip",
+  "/deflate",
+  "/deflate-raw",
+  "/deflate-raw-trickle",
+  "/br",
+  "/gzip-then-br",
+  "/chunked-gzip",
+  "/plain",
+])(
   "decodes %s into the original text",
   async (path) => {
     const response = await get(path);

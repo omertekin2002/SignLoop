@@ -1,12 +1,14 @@
-import { pipeline, type Readable } from "node:stream";
+import { pipeline, Transform, type Readable, type TransformCallback } from "node:stream";
 import {
   constants as zlibConstants,
   createBrotliDecompress,
   createGunzip,
   createInflate,
+  createInflateRaw,
   type BrotliDecompress,
   type Gunzip,
   type Inflate,
+  type InflateRaw,
 } from "node:zlib";
 // Explicit package entry avoids Bun's built-in shim, which lacks custom dispatchers.
 import { request, type Dispatcher } from "undici/index.js";
@@ -30,7 +32,36 @@ export class UnsupportedContentEncodingError extends Error {
   }
 }
 
-type Decoder = Gunzip | Inflate | BrotliDecompress;
+/**
+ * Servers label both zlib-wrapped and raw DEFLATE as `deflate`. Like undici's fetch, pick the
+ * decoder from the first byte: a zlib header's low nibble is the deflate method (8).
+ */
+class DeflateDecoder extends Transform {
+  private inner: Inflate | InflateRaw | null = null;
+
+  override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback) {
+    if (!this.inner) {
+      const inner = (chunk[0]! & 0x0f) === 0x08 ? createInflate(LENIENT) : createInflateRaw(LENIENT);
+      inner.on("data", (data: Buffer) => this.push(data));
+      inner.on("error", (error) => this.destroy(error));
+      this.inner = inner;
+    }
+    this.inner.write(chunk, () => callback());
+  }
+
+  override _flush(callback: TransformCallback) {
+    if (!this.inner) return callback();
+    this.inner.once("end", () => callback());
+    this.inner.end();
+  }
+
+  override _destroy(error: Error | null, callback: (error?: Error | null) => void) {
+    this.inner?.destroy();
+    callback(error);
+  }
+}
+
+type Decoder = Gunzip | DeflateDecoder | BrotliDecompress;
 
 function createDecoder(coding: string): Decoder {
   switch (coding) {
@@ -38,7 +69,7 @@ function createDecoder(coding: string): Decoder {
     case "x-gzip":
       return createGunzip(LENIENT);
     case "deflate":
-      return createInflate(LENIENT);
+      return new DeflateDecoder();
     case "br":
       return createBrotliDecompress({
         flush: zlibConstants.BROTLI_OPERATION_FLUSH,
