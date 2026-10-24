@@ -1,5 +1,5 @@
 import { generateChatReply } from "@/lib/chat";
-import { withAbort } from "@/lib/bounded-response";
+import { withAbort } from "@repo/chat-engine/bounded-response";
 
 const MAX_TITLE_CHARACTERS = 80;
 const MAX_TITLE_INPUT_CHARACTERS = 4000;

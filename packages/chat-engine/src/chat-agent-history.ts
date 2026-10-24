@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   isPlainAssistantReplay,
   MAX_AGENT_STATE_CHARACTERS,
-} from "@/lib/chat-history-shared";
+} from "./chat-history-shared";
 
 export {
   isPlainAssistantReplay,
@@ -12,7 +12,7 @@ export {
   MAX_SOURCE_COUNT,
   MAX_SOURCE_TITLE_CHARACTERS,
   parseWebSources,
-} from "@/lib/chat-history-shared";
+} from "./chat-history-shared";
 
 const historySchema = z.array(modelMessageSchema).max(36);
 

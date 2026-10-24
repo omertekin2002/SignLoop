@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { searchWeb } from "@/lib/gemini-search";
+import { searchWeb, type GeminiSearchConfig } from "./gemini-search";
+
+let config: GeminiSearchConfig = {};
 
 afterEach(() => {
   vi.useRealTimers();
-  vi.unstubAllEnvs();
+  config = {};
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -56,12 +58,12 @@ describe("searchWeb", () => {
   ] as const)(
     "requests high thinking for %s with room for the brief",
     async (model, thinkingConfig, maxOutputTokens) => {
-      vi.stubEnv("GEMINI_API_KEY", "test-key");
-      vi.stubEnv("GEMINI_SEARCH_MODEL", model);
+      config.apiKey = "test-key";
+      config.model = model;
       const fetchMock = vi.fn().mockResolvedValue(groundedResponse());
       vi.stubGlobal("fetch", fetchMock);
 
-      await searchWeb("current regulations");
+      await searchWeb("current regulations", { config });
 
       const request = JSON.parse(fetchMock.mock.calls[0]![1].body);
       expect(request.generationConfig).toEqual({
@@ -74,10 +76,10 @@ describe("searchWeb", () => {
   );
 
   it("executes the model's query and returns structured grounded evidence", async () => {
-    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    config.apiKey = "test-key";
     const fetchMock = vi.fn().mockResolvedValue(groundedResponse());
     vi.stubGlobal("fetch", fetchMock);
-    const result = await searchWeb("current regulations");
+    const result = await searchWeb("current regulations", { config });
     expect(result.brief).toBe("Fresh research brief");
     expect(result.metadata.sources).toEqual([
       {
@@ -92,11 +94,11 @@ describe("searchWeb", () => {
   });
 
   it("fails before fetch when Gemini search is not configured", async () => {
-    vi.stubEnv("GEMINI_API_KEY", "");
+    config.apiKey = "";
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(searchWeb("Search this")).rejects.toMatchObject({
+    await expect(searchWeb("Search this", { config })).rejects.toMatchObject({
       name: "GeminiWebSearchError",
       message: expect.stringMatching(/GEMINI_API_KEY/),
       publicMessage: expect.stringMatching(/not configured correctly/i),
@@ -105,7 +107,7 @@ describe("searchWeb", () => {
   });
 
   it("fails closed when Gemini returns ungrounded text", async () => {
-    vi.stubEnv("GEMINI_API_KEY", "gemini-secret");
+    config.apiKey = "gemini-secret";
     vi.stubGlobal(
       "fetch",
       vi.fn<typeof fetch>(async () =>
@@ -117,13 +119,13 @@ describe("searchWeb", () => {
       ),
     );
 
-    await expect(searchWeb("Search this")).rejects.toThrow(
+    await expect(searchWeb("Search this", { config })).rejects.toThrow(
       /without Google Search grounding/,
     );
   });
 
   it("does not treat a truncated no-search response as a completed decision", async () => {
-    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    config.apiKey = "test-key";
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -137,13 +139,13 @@ describe("searchWeb", () => {
         }),
       ),
     );
-    await expect(searchWeb("Research current regulations")).rejects.toThrow(
+    await expect(searchWeb("Research current regulations", { config })).rejects.toThrow(
       /without Google Search grounding/,
     );
   });
 
   it("reports sanitized Gemini API errors without putting the key in the URL", async () => {
-    vi.stubEnv("GEMINI_API_KEY", "never-leak-this-key");
+    config.apiKey = "never-leak-this-key";
     const fetchMock = vi.fn<typeof fetch>(async () =>
       Response.json(
         {
@@ -156,7 +158,7 @@ describe("searchWeb", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const promise = searchWeb("Search this");
+    const promise = searchWeb("Search this", { config });
 
     const error = await promise.catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(Error);
@@ -171,7 +173,7 @@ describe("searchWeb", () => {
   });
 
   it("propagates caller cancellation", async () => {
-    vi.stubEnv("GEMINI_API_KEY", "gemini-secret");
+    config.apiKey = "gemini-secret";
     const controller = new AbortController();
     controller.abort();
     vi.stubGlobal(
@@ -185,12 +187,12 @@ describe("searchWeb", () => {
     );
 
     await expect(
-      searchWeb("Search this", { signal: controller.signal }),
+      searchWeb("Search this", { signal: controller.signal, config }),
     ).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("aborts an in-flight Gemini request when the caller cancels", async () => {
-    vi.stubEnv("GEMINI_API_KEY", "gemini-secret");
+    config.apiKey = "gemini-secret";
     const controller = new AbortController();
     let started!: () => void;
     const requestStarted = new Promise<void>((resolve) => {
@@ -216,7 +218,7 @@ describe("searchWeb", () => {
       ),
     );
 
-    const promise = searchWeb("Search this", { signal: controller.signal });
+    const promise = searchWeb("Search this", { signal: controller.signal, config });
     const rejection = expect(promise).rejects.toMatchObject({
       name: "AbortError",
     });
@@ -229,7 +231,7 @@ describe("searchWeb", () => {
 
   it("times out a stalled Gemini response with a safe public error", async () => {
     vi.useFakeTimers();
-    vi.stubEnv("GEMINI_API_KEY", "gemini-secret");
+    config.apiKey = "gemini-secret";
     vi.stubGlobal(
       "fetch",
       vi.fn<typeof fetch>(
@@ -247,7 +249,7 @@ describe("searchWeb", () => {
       ),
     );
 
-    const promise = searchWeb("Search this");
+    const promise = searchWeb("Search this", { config });
     const rejection = expect(promise).rejects.toMatchObject({
       name: "GeminiWebSearchError",
       message: expect.stringMatching(/timed out/i),

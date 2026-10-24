@@ -1,7 +1,7 @@
-import { readBoundedJson } from "@/lib/bounded-response";
-import { getErrorMessage } from "@/lib/utils";
+import { readBoundedJson } from "./bounded-response";
+import { getErrorMessage } from "./utils";
 import { isIP } from "node:net";
-import { isPublicIpAddress } from "@/lib/public-ip";
+import { isPublicIpAddress } from "./public-ip";
 
 export const MAX_PAGE_CHARACTERS = 12_000;
 const READ_TIMEOUT_MS = 30_000;
@@ -15,6 +15,12 @@ export type ReadUrlResult = {
   content: string;
   truncated: boolean;
   provider: "firecrawl" | "jina";
+};
+
+export type UrlReaderConfig = {
+  /** Preferred hosted reader; Jina Reader is the fallback and also works without a key. */
+  firecrawlApiKey?: string | null;
+  jinaApiKey?: string | null;
 };
 
 export class UrlReadError extends Error {
@@ -140,7 +146,7 @@ async function readWithJina(
 /** Fetches the readable text of a public page or PDF through a hosted reader; never contacts the host directly. */
 export async function readUrl(
   input: string,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; config?: UrlReaderConfig },
 ): Promise<ReadUrlResult> {
   options?.signal?.throwIfAborted();
   const url = validatePublicHttpUrl(input);
@@ -148,8 +154,8 @@ export async function readUrl(
     AbortSignal.timeout(READ_TIMEOUT_MS),
     ...(options?.signal ? [options.signal] : []),
   ]);
-  const firecrawlKey = process.env.FIRECRAWL_API_KEY?.trim() || null;
-  const jinaKey = process.env.JINA_API_KEY?.trim() || null;
+  const firecrawlKey = options?.config?.firecrawlApiKey?.trim() || null;
+  const jinaKey = options?.config?.jinaApiKey?.trim() || null;
   try {
     let result: Omit<ReadUrlResult, "truncated"> | null = null;
     if (firecrawlKey) {

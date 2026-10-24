@@ -1,12 +1,12 @@
-import { readBoundedJson } from "@/lib/bounded-response";
-import { getErrorMessage, isRecord } from "@/lib/utils";
+import { readBoundedJson } from "./bounded-response";
+import { getErrorMessage, isRecord } from "./utils";
 import {
   searchWeb as geminiGroundedSearch,
   type WebSearchSource,
-} from "@/lib/gemini-search";
+} from "./gemini-search";
 
 // Traditional web search: a ranked list of pages the model can choose to read, rather than a
-// synthesized answer. Gemini grounding (lib/gemini-search.ts) returns a brief written by another
+// synthesized answer. Gemini grounding (gemini-search.ts) returns a brief written by another
 // model, which reads as finished evidence and discourages follow-up research; it is kept here only
 // as the fallback for deployments that have no dedicated search key.
 //
@@ -31,6 +31,16 @@ export type WebSearchResponse = {
   brief: string | null;
 };
 
+/** Search provider selection and keys. Values are trimmed; blank values count as absent. */
+export type WebSearchConfig = {
+  /** "brave", "firecrawl" or "gemini" (case-insensitive) overrides key-based selection. */
+  provider?: string | null;
+  braveApiKey?: string | null;
+  firecrawlApiKey?: string | null;
+  geminiApiKey?: string | null;
+  geminiModel?: string | null;
+};
+
 export class WebSearchError extends Error {
   constructor(
     message: string,
@@ -42,16 +52,18 @@ export class WebSearchError extends Error {
   }
 }
 
-function env(name: string): string | null {
-  return process.env[name]?.trim() || null;
+function value(input: string | null | undefined): string | null {
+  return input?.trim() || null;
 }
 
 /**
- * An explicit WEB_SEARCH_PROVIDER wins. Otherwise Brave is preferred over Firecrawl because a
- * Firecrawl key is often present only for read_url, while a Brave key is unambiguously for search.
+ * An explicit provider wins. Otherwise Brave is preferred over Firecrawl because a Firecrawl key
+ * is often present only for read_url, while a Brave key is unambiguously for search.
  */
-export function resolveWebSearchProvider(): WebSearchProviderName | null {
-  const configured = env("WEB_SEARCH_PROVIDER")?.toLowerCase();
+export function resolveWebSearchProvider(
+  config?: WebSearchConfig,
+): WebSearchProviderName | null {
+  const configured = value(config?.provider)?.toLowerCase();
   if (
     configured === "brave" ||
     configured === "firecrawl" ||
@@ -59,9 +71,9 @@ export function resolveWebSearchProvider(): WebSearchProviderName | null {
   ) {
     return configured;
   }
-  if (env("BRAVE_SEARCH_API_KEY")) return "brave";
-  if (env("FIRECRAWL_API_KEY")) return "firecrawl";
-  if (env("GEMINI_API_KEY")) return "gemini";
+  if (value(config?.braveApiKey)) return "brave";
+  if (value(config?.firecrawlApiKey)) return "firecrawl";
+  if (value(config?.geminiApiKey)) return "gemini";
   return null;
 }
 
@@ -119,8 +131,9 @@ function toResults(rawResults: unknown): WebSearchResult[] {
 async function searchBrave(
   query: string,
   signal: AbortSignal,
+  config: WebSearchConfig | undefined,
 ): Promise<WebSearchResult[]> {
-  const apiKey = env("BRAVE_SEARCH_API_KEY");
+  const apiKey = value(config?.braveApiKey);
   if (!apiKey) throw new Error("BRAVE_SEARCH_API_KEY is not set");
   const url = new URL("https://api.search.brave.com/res/v1/web/search");
   url.searchParams.set("q", query);
@@ -139,8 +152,9 @@ async function searchBrave(
 async function searchFirecrawl(
   query: string,
   signal: AbortSignal,
+  config: WebSearchConfig | undefined,
 ): Promise<WebSearchResult[]> {
-  const apiKey = env("FIRECRAWL_API_KEY");
+  const apiKey = value(config?.firecrawlApiKey);
   if (!apiKey) throw new Error("FIRECRAWL_API_KEY is not set");
   const response = await fetch("https://api.firecrawl.dev/v2/search", {
     method: "POST",
@@ -163,7 +177,7 @@ async function searchFirecrawl(
 
 export async function searchWeb(
   query: string,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; config?: WebSearchConfig },
 ): Promise<WebSearchResponse> {
   options?.signal?.throwIfAborted();
   const trimmed = query.trim();
@@ -174,7 +188,8 @@ export async function searchWeb(
     );
   }
 
-  const provider = resolveWebSearchProvider();
+  const config = options?.config;
+  const provider = resolveWebSearchProvider(config);
   if (!provider) {
     throw new WebSearchError(
       "No web search provider is configured",
@@ -186,6 +201,7 @@ export async function searchWeb(
     // Already wrapped in GeminiWebSearchError, which carries its own publicMessage.
     const grounded = await geminiGroundedSearch(trimmed, {
       signal: options?.signal,
+      config: { apiKey: config?.geminiApiKey, model: config?.geminiModel },
     });
     return {
       provider,
@@ -203,8 +219,8 @@ export async function searchWeb(
   try {
     const results =
       provider === "brave"
-        ? await searchBrave(trimmed, signal)
-        : await searchFirecrawl(trimmed, signal);
+        ? await searchBrave(trimmed, signal, config)
+        : await searchFirecrawl(trimmed, signal, config);
     if (!results.length) {
       throw new WebSearchError(
         `${provider} returned no results for ${trimmed}`,

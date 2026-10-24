@@ -5,11 +5,17 @@ const mocks = vi.hoisted(() => ({
   generate: vi.fn(),
 }));
 
-vi.mock("@/lib/llm-client", () => ({
+vi.mock("./openai-client", () => ({
   createOpenAiCompatibleClient: mocks.createClient,
-  PRIMARY_LLM_API_KEY: "secret",
-  PRIMARY_LLM_BASE_URL: "https://provider.example/v1",
 }));
+
+const config = {
+  baseURL: "https://provider.example/v1",
+  apiKey: "secret",
+  model: "gpt-image-2.5-sunburst",
+  referer: "https://signloop.test",
+  appName: "SignLoop",
+};
 
 describe("generateImageReply", () => {
   beforeEach(() => {
@@ -28,6 +34,7 @@ describe("generateImageReply", () => {
 
     await expect(
       generateImageReply("A signed contract on a desk", {
+        config,
         signal,
         userId: "user-1",
       }),
@@ -39,7 +46,7 @@ describe("generateImageReply", () => {
     expect(mocks.createClient).toHaveBeenCalledWith(
       "https://provider.example/v1",
       "secret",
-      { timeoutMs: 150_000 },
+      { timeoutMs: 150_000, referer: "https://signloop.test", appName: "SignLoop" },
     );
     expect(mocks.generate).toHaveBeenCalledWith(
       {
@@ -59,7 +66,7 @@ describe("generateImageReply", () => {
     mocks.generate.mockResolvedValue({ data: [] });
     const { generateImageReply } = await import("./image-generation");
 
-    await expect(generateImageReply("Missing image")).rejects.toThrow(
+    await expect(generateImageReply("Missing image", { config })).rejects.toThrow(
       /no image data/i,
     );
   });
@@ -69,7 +76,7 @@ describe("generateImageReply", () => {
     async (base64) => {
       mocks.generate.mockResolvedValue({ data: [{ b64_json: base64 }] });
       const { generateImageReply } = await import("./image-generation");
-      await expect(generateImageReply("test")).rejects.toThrow(
+      await expect(generateImageReply("test", { config })).rejects.toThrow(
         /invalid or oversized/,
       );
     },

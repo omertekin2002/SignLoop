@@ -1,6 +1,6 @@
 // Imported by the chat client, so it must not pull runtime values from "ai" into the browser bundle.
 import type { ChatMessage } from "@/lib/chat";
-import { isPlainAssistantReplay } from "@/lib/chat-history-shared";
+import { isPlainAssistantReplay } from "@repo/chat-engine/chat-history-shared";
 
 export const MAX_CHAT_MESSAGES = 30;
 export const MAX_CHAT_MESSAGE_LENGTH = 4_000;

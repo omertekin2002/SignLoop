@@ -2,7 +2,7 @@
 
 SignLoop is a personal AI-assisted contract workspace built with Next.js 16, React, WorkOS AuthKit, PostgreSQL, and OpenAI-compatible model providers. Users can upload contracts, request structured analysis, organize supporting documents in projects, and use temporary or saved chat. Every account has its own workspace; organizations and team membership are not used.
 
-The Bun/Turborepo repository contains one application, `apps/web`, plus shared ESLint and TypeScript configuration packages. There is no separate API server or background inference worker: API Route Handlers perform extraction, analysis, and chat orchestration.
+The Bun/Turborepo repository contains one application, `apps/web`, the shared chat engine in `packages/chat-engine`, and shared ESLint and TypeScript configuration packages. There is no separate API server or background inference worker: API Route Handlers perform extraction, analysis, and chat orchestration. See [Repository layout](#repository-layout).
 
 ## Local setup
 
@@ -38,13 +38,13 @@ This changes the configured database. The migration entry point invokes Node and
 | `bun run dev`         | Web development server on port 3000.                    |
 | `bun run build`       | Production web build through Turbo.                     |
 | `bun run lint`        | Workspace linting, rejecting warnings.                  |
-| `bun run check-types` | Next.js route type generation and TypeScript checking.  |
-| `bun run test`        | Workspace tests through Turbo.                          |
+| `bun run check-types` | TypeScript checking; web also generates route types.    |
+| `bun run test`        | Workspace tests (web and chat engine) through Turbo.    |
 | `bun run db:migrate`  | Apply pending migrations using the configured database. |
 
 Turbo may return cached results. Use `bun run build --force` for a fresh build. Run build and type checking sequentially because both generate `.next` files.
 
-From `apps/web`, `bun run test` invokes Vitest directly; a path narrows the run, for example `bun run test lib/chat-tools.test.ts`.
+From `apps/web` or `packages/chat-engine`, `bun run test` invokes that workspace's Vitest suite directly; a path narrows the run, for example `bun run test lib/contract-tools.test.ts` in `apps/web` or `bun run test src/chat.test.ts` in the package. The package also has its own `lint` and `check-types` scripts, which the root commands include.
 
 Tests include the [contract analysis evaluations](apps/web/evals/README.md), which replay hand-written model outputs through the production analysis path. They make no provider calls.
 
@@ -58,6 +58,19 @@ bun run test:integration
 It initializes local PostgreSQL, applies migrations, runs database ownership/concurrency tests, and removes the temporary database. It never uses `POSTGRES_URL`. The default binary directory is `/opt/homebrew/opt/postgresql@16/bin`; set `POSTGRES_BIN` for another installation. If `SIGNLOOP_TEST_DATABASE_URL` is already set, the script skips the temporary cluster and runs the same suites against that database instead; it must be an empty, disposable `signloop_test` database on `localhost`, such as a `postgres:16` container. This is separate from testing against production credentials or live model services.
 
 GitHub Actions ([ci.yml](.github/workflows/ci.yml)) runs on pull requests and pushes to `main`. One job installs dependencies with Vercel's hoisted linker, then runs lint, type checking, tests, and the build, and checks the OCR build traces; none of them needs secrets or environment files. A second job runs `bun run test:integration` against an empty `postgres:16` service container.
+
+## Repository layout
+
+| Path                         | Contents                                                                                                                                                                                                    |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`                   | The Next.js application: pages, API routes, auth, database, quotas, uploads/extraction, contract analysis, saved chats and titles, and SignLoop's binding of the chat engine.                               |
+| `packages/chat-engine`       | `@repo/chat-engine`, the agent loop shared with the SLgateway service: provider routing, the generic tools, replay, source catalogs, and citations. TypeScript source only; it never reads the environment. |
+| `packages/eslint-config`     | Shared ESLint presets (`base`, `next-js`).                                                                                                                                                                  |
+| `packages/typescript-config` | Shared TypeScript presets (`base`, `nextjs`, `source-package`).                                                                                                                                             |
+
+The chat engine package contains `generateChatReplyStream`/`generateChatReply` with the tool loop, first-chunk provider fallback and research modes ([chat.ts](packages/chat-engine/src/chat.ts), [routing.ts](packages/chat-engine/src/routing.ts)); `search_web`, `read_url`, `http_get`, `generate_image`, the contract egress guard and untrusted-content fences ([chat-tools.ts](packages/chat-engine/src/chat-tools.ts)) with their search, reader, fetch, DNS-guard and image modules; replay compaction, source catalogs, citations, the time context, reasoning policy, safe provider-failure metadata, bounded reads, and the hardened OpenAI-compatible client. [index.ts](packages/chat-engine/src/index.ts) is the public entry point. Single modules can be imported as `@repo/chat-engine/<module>`, which browser code uses for `chat-history-shared` and `bounded-response`.
+
+`apps/web` binds the engine in [chat.ts](apps/web/lib/chat.ts), which keeps the API the routes use. [chat-engine-config.ts](apps/web/lib/chat-engine-config.ts) builds the provider chain (selected primary model, then the OpenRouter chain from [model-settings.ts](apps/web/lib/model-settings.ts), with pinning) and the tool settings from the environment, and [contract-tools.ts](apps/web/lib/contract-tools.ts) adds `list_contracts`/`read_contract` as an engine tool extension. Everything that touches the database, authentication, quotas, persistence, or Next.js stays in `apps/web`. Next.js compiles the package through `transpilePackages`.
 
 ## Configuration
 
@@ -111,7 +124,7 @@ Search is model-selected during a chat turn; there is no mandatory pre-search on
 - `read_url` uses Firecrawl when `FIRECRAWL_API_KEY` is set, otherwise Jina Reader. A Firecrawl failure can also fall back to Jina while the shared deadline remains. `JINA_API_KEY` is optional.
 - `http_get` requires no provider key. It fetches public HTTP(S) addresses directly, validating each redirect and DNS addresses at connection time; it returns bounded response bodies and status codes.
 
-See [web-search.ts](apps/web/lib/web-search.ts), [url-reader.ts](apps/web/lib/url-reader.ts), and [http-fetch.ts](apps/web/lib/http-fetch.ts).
+See [web-search.ts](packages/chat-engine/src/web-search.ts), [url-reader.ts](packages/chat-engine/src/url-reader.ts), and [http-fetch.ts](packages/chat-engine/src/http-fetch.ts). The engine receives these settings as explicit configuration; [chat-engine-config.ts](apps/web/lib/chat-engine-config.ts) reads them from the environment for each turn.
 
 ### Object storage
 
@@ -211,7 +224,7 @@ Signed-in users can read the shared chat/analysis quota from `GET /api/usage`, w
 
 For signed-in users, the usage endpoint and chat and analysis responses, including 429s, carry IETF draft rate-limit fields: `RateLimit-Policy: "account";q=30;w=3600` and `RateLimit: "account";r=<remaining>;t=<seconds until reset>`. The chat `done` event and 429 bodies also include the account `quota` object, as of admission or rejection. A 429 body names its `reason` (`busy`, `hourly`, or `daily`) and `resetAt`. `Retry-After` is the time until that reset plus up to 15 seconds of jitter; a busy wait is at most 30 seconds, or less when a held slot expires sooner. Settings shows the hourly allowance with a meter, the chat composer counts down from five remaining requests and disables Send at zero until the reset, and the analysis buttons show the remaining allowance. Anonymous temporary chat shows none of these.
 
-Budget sources: [chat.ts](apps/web/lib/chat.ts), [chat route](apps/web/app/api/chat/route.ts), [analysis route](apps/web/app/api/contracts/[id]/analyze/route.ts), [chat-tools.ts](apps/web/lib/chat-tools.ts), [inference-policy.ts](apps/web/lib/inference-policy.ts), and the [usage route](apps/web/app/api/usage/route.ts).
+Budget sources: the engine's [chat.ts](packages/chat-engine/src/chat.ts), [routing.ts](packages/chat-engine/src/routing.ts), and [chat-tools.ts](packages/chat-engine/src/chat-tools.ts), SignLoop's [contract-tools.ts](apps/web/lib/contract-tools.ts), the [chat route](apps/web/app/api/chat/route.ts), the [analysis route](apps/web/app/api/contracts/[id]/analyze/route.ts), [inference-policy.ts](apps/web/lib/inference-policy.ts), and the [usage route](apps/web/app/api/usage/route.ts).
 
 ## Persistence and operations
 

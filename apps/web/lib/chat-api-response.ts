@@ -2,7 +2,7 @@
 import type { ChatToolActivity, ChatToolName } from "@/lib/chat";
 import type { AccountQuota } from "@/lib/inference-policy";
 import type { ChatThreadMessage } from "@/lib/workspace-query-options";
-import { parseWebSources } from "@/lib/chat-history-shared";
+import { parseWebSources } from "@repo/chat-engine/chat-history-shared";
 import { chatRequestFailure } from "@/lib/chat-request-error";
 import { parseAccountQuota } from "@/lib/usage-client";
 import { isRecord } from "@/lib/utils";

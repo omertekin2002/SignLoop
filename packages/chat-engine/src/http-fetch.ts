@@ -1,9 +1,9 @@
-import { getErrorMessage } from "@/lib/utils";
-import { validatePublicHttpUrl } from "@/lib/url-reader";
+import { getErrorMessage } from "./utils";
+import { validatePublicHttpUrl } from "./url-reader";
 import { fetch, type Response } from "undici/index.js";
-import { createPublicHttpDispatcher } from "@/lib/public-http-dispatcher";
+import { createPublicHttpDispatcher } from "./public-http-dispatcher";
 
-// Raw HTTP GET for the chat agent. Unlike lib/url-reader.ts, which proxies through a hosted
+// Raw HTTP GET for the chat agent. Unlike url-reader.ts, which proxies through a hosted
 // reader and returns readability-extracted prose, this contacts the target host directly and
 // returns the response body verbatim — the shape APIs answer in, and the shape a model can quote
 // a single field out of instead of paraphrasing a summary.
@@ -16,6 +16,12 @@ const FETCH_TIMEOUT_MS = 30_000;
 const MAX_REDIRECTS = 5;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+export const DEFAULT_HTTP_USER_AGENT = "SignLoop/1.0";
+
+export type HttpFetchConfig = {
+  /** Identifies the application to the hosts it contacts. */
+  userAgent?: string;
+};
 
 export type HttpGetResult = {
   /** Final address after redirects, so citations point at what actually answered. */
@@ -107,7 +113,7 @@ async function readBoundedBody(
  */
 export async function httpGet(
   input: string,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; config?: HttpFetchConfig },
 ): Promise<HttpGetResult> {
   options?.signal?.throwIfAborted();
   const signal = AbortSignal.any([
@@ -125,7 +131,7 @@ export async function httpGet(
         redirect: "manual",
         headers: {
           Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
-          "User-Agent": `SignLoop/1.0 (+${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"})`,
+          "User-Agent": options?.config?.userAgent || DEFAULT_HTTP_USER_AGENT,
         },
         signal,
       });

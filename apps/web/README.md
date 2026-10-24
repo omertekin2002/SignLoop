@@ -18,7 +18,7 @@ bun run build
 
 The production server is `bun run start` after a successful build. Build and type checking both generate `.next` files, so run them sequentially. After a build, `bun run check:ocr-trace` verifies that the image-upload routes trace everything OCR loads at runtime.
 
-`bun run test lib/chat-tools.test.ts` focuses a test run. Database tests skip without `SIGNLOOP_TEST_DATABASE_URL`; use `bun run test:integration` to create and remove a disposable local PostgreSQL database. See the root README for the `POSTGRES_BIN` override.
+`bun run test lib/contract-tools.test.ts` focuses a test run. Chat engine tests live in `packages/chat-engine`. Database tests skip without `SIGNLOOP_TEST_DATABASE_URL`; use `bun run test:integration` to create and remove a disposable local PostgreSQL database. See the root README for the `POSTGRES_BIN` override.
 
 `bun run db:migrate` and `bun run storage:cleanup` modify the configured database/storage. They are operational commands, not tests. The root README explains environment loading and cleanup limitations.
 
@@ -26,7 +26,7 @@ The production server is `bun run start` after a successful build. Build and typ
 
 - `app/`: pages, layouts, and API Route Handlers.
 - `components/`: dashboard, chat, upload, privacy, and shared UI.
-- `lib/`: SQL, extraction, analysis, chat tools/providers, client helpers, and tests.
+- `lib/`: SQL, extraction, analysis, SignLoop's chat-engine binding (provider chain, contract tools, environment config), client helpers, and tests. The agent loop itself is in `packages/chat-engine`.
 - `db/`: ordered migrations, migration runner, cleanup command, and integration-test setup.
 - `evals/`: deterministic contract analysis evaluations replayed through the production pipeline ([README](evals/README.md)).
 - `scripts/`: post-build checks (OCR build traces).

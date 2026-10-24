@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ search: vi.fn() }));
-vi.mock("@/lib/web-search", () => ({ searchWeb: mocks.search }));
+vi.mock("@repo/chat-engine/web-search", () => ({ searchWeb: mocks.search }));
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();

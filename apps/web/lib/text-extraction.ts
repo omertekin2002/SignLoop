@@ -19,7 +19,7 @@ import {
 import type { createWorker } from "tesseract.js";
 import type WordExtractor from "word-extractor";
 import { getErrorMessage } from "@/lib/utils";
-import { withAbort } from "@/lib/bounded-response";
+import { withAbort } from "@repo/chat-engine/bounded-response";
 import { isOleCompoundFile, validateOleCompoundFile } from "@/lib/ole-guard";
 
 const MIN_TEXT_DENSITY = 50; // Minimum characters per page for non-scanned PDF

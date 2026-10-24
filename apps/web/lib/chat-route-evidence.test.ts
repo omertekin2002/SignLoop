@@ -41,10 +41,10 @@ vi.mock("@/lib/llm-client", () => ({
   resolvePrimaryModel: (value: string | null | undefined) =>
     value === null ? null : (value ?? "primary"),
 }));
-vi.mock("@/lib/web-search", () => ({ searchWeb: vi.fn() }));
-vi.mock("@/lib/url-reader", () => ({ readUrl: vi.fn() }));
-vi.mock("@/lib/http-fetch", () => ({ httpGet: vi.fn() }));
-vi.mock("@/lib/image-generation", () => ({ generateImageReply: vi.fn() }));
+vi.mock("@repo/chat-engine/web-search", () => ({ searchWeb: vi.fn() }));
+vi.mock("@repo/chat-engine/url-reader", () => ({ readUrl: vi.fn() }));
+vi.mock("@repo/chat-engine/http-fetch", () => ({ httpGet: vi.fn() }));
+vi.mock("@repo/chat-engine/image-generation", () => ({ generateImageReply: vi.fn() }));
 vi.mock("@/lib/chat-title", () => ({ generateChatTitle: vi.fn() }));
 vi.mock("@/lib/model-settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./model-settings")>()),

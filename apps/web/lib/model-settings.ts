@@ -1,4 +1,4 @@
-import { readBoundedJson } from "@/lib/bounded-response";
+import { readBoundedJson } from "@repo/chat-engine/bounded-response";
 import { getErrorMessage, isRecord } from "@/lib/utils";
 
 export type PrimaryModel = string;

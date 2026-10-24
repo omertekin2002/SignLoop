@@ -1,4 +1,4 @@
-import { withAbort } from "@/lib/bounded-response";
+import { withAbort } from "@repo/chat-engine/bounded-response";
 import {
   PROGRESS_MEDIA_TYPE,
   isOperationStage,

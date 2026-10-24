@@ -1,4 +1,5 @@
-import OpenAI from "openai";
+import type OpenAI from "openai";
+import { createOpenAiCompatibleClient as createEngineClient } from "@repo/chat-engine/openai-client";
 import {
   isOpenRouterModel,
   OPENROUTER_MODELS,
@@ -7,10 +8,9 @@ import {
 } from "@/lib/model-settings";
 import { getErrorMessage } from "@/lib/utils";
 
-// Shared LLM provider configuration and the primary -> OpenRouter fallback used by
-// both the contract-analysis pipeline (lib/analysis.ts) and the chat pipeline (lib/chat.ts).
-// Keeping it here prevents the provider config, client factory, and fallback loop from
-// drifting between the two callers.
+// Shared LLM provider configuration and the primary -> OpenRouter fallback used by the
+// contract-analysis pipeline (lib/analysis.ts). The chat pipeline builds its provider chain from
+// the same settings in lib/chat-engine-config.ts.
 
 export { PRIMARY_LLM_BASE_URL, OPENROUTER_MODELS, isOpenRouterModel };
 
@@ -36,70 +36,19 @@ export class LlmResponseValidationError extends Error {
   }
 }
 
-type ProviderFetch = (
-  resource: RequestInfo | URL,
-  init?: RequestInit,
-) => Promise<Response>;
-
 /**
- * Rebuild each request's headers from explicit settings. The OpenAI SDK merges the ambient
- * OPENAI_CUSTOM_HEADERS variable into every request, which could send unrelated credentials to
- * the primary endpoint or OpenRouter.
+ * The shared hardened client (explicit headers only, ambient OPENAI_* settings pinned), identified
+ * as SignLoop to the provider.
  */
-function createRestrictedProviderFetch(apiKey: string): ProviderFetch {
-  return (resource, init) => {
-    const headers = new Headers({
-      Accept: "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      "HTTP-Referer": SITE_URL,
-      "X-Title": APP_NAME,
-    });
-    const contentType = new Headers(init?.headers).get("content-type");
-    if (contentType) headers.set("Content-Type", contentType);
-    return fetch(resource, { ...init, headers });
-  };
-}
-
 export function createOpenAiCompatibleClient(
   baseURL: string,
   apiKey?: string,
   options?: { timeoutMs?: number },
 ): OpenAI {
-  const resolvedBaseUrl = baseURL.trim();
-  // The OpenAI client requires a non-empty value even when the compatible endpoint does not use
-  // authentication. Real configured credentials still pass through unchanged.
-  const resolvedApiKey = apiKey?.trim() || "not-required";
-
-  if (!resolvedBaseUrl) {
-    throw new Error("LLM base URL is not configured");
-  }
-
-  let parsedBaseUrl: URL;
-  try {
-    parsedBaseUrl = new URL(resolvedBaseUrl);
-  } catch {
-    throw new Error("LLM base URL is invalid");
-  }
-  if (
-    parsedBaseUrl.protocol !== "https:" &&
-    parsedBaseUrl.protocol !== "http:"
-  ) {
-    throw new Error("LLM base URL must use HTTP or HTTPS");
-  }
-
-  return new OpenAI({
-    apiKey: resolvedApiKey,
-    // Pin ambient SDK settings that could send unrelated credentials to these endpoints.
-    // OPENAI_LOG=debug would otherwise log full request bodies, including contract text.
-    adminAPIKey: null,
-    organization: null,
-    project: null,
-    webhookSecret: null,
-    logLevel: "off",
-    baseURL: resolvedBaseUrl,
-    timeout: options?.timeoutMs ?? 60_000,
-    maxRetries: 0,
-    fetch: createRestrictedProviderFetch(resolvedApiKey),
+  return createEngineClient(baseURL, apiKey, {
+    timeoutMs: options?.timeoutMs,
+    referer: SITE_URL,
+    appName: APP_NAME,
   });
 }
 

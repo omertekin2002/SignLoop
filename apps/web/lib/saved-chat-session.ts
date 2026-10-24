@@ -1,4 +1,4 @@
-import { withAbort } from "@/lib/bounded-response";
+import { withAbort } from "@repo/chat-engine/bounded-response";
 
 /** Owns lazy thread creation for one mounted saved-chat composer. */
 export function createSavedChatSession(discardThread: (id: string) => Promise<void>) {

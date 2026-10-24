@@ -1,5 +1,5 @@
 import { type ReportProgress } from "@/lib/operation-progress";
-import { withAbort } from "@/lib/bounded-response";
+import { withAbort } from "@repo/chat-engine/bounded-response";
 import { MAX_EXTRACTED_TEXT_LENGTH } from "@/lib/extraction-limits";
 import { randomUUID } from "node:crypto";
 import { createUploadCleanupIntent } from "@/lib/server-db";

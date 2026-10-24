@@ -8,43 +8,8 @@ import {
   SITE_URL,
 } from "./llm-client";
 
+// The hardened client itself is tested in packages/chat-engine; this checks SignLoop's identity.
 describe("createOpenAiCompatibleClient", () => {
-  it("fails closed when the endpoint is absent", () => {
-    expect(() => createOpenAiCompatibleClient("", "configured-key")).toThrow(
-      /base URL is not configured/i,
-    );
-  });
-
-  it("supports intentionally unauthenticated compatible endpoints", () => {
-    expect(() =>
-      createOpenAiCompatibleClient("https://provider.example/v1"),
-    ).not.toThrow();
-  });
-
-  it("rejects non-HTTP provider URLs", () => {
-    expect(() =>
-      createOpenAiCompatibleClient("file:///tmp/provider", "configured-key"),
-    ).toThrow(/must use HTTP or HTTPS/i);
-  });
-
-  it("disables ambient SDK logging and unrelated OpenAI credentials", () => {
-    vi.stubEnv("OPENAI_LOG", "debug");
-    vi.stubEnv("OPENAI_ORG_ID", "ambient-organization");
-    vi.stubEnv("OPENAI_PROJECT_ID", "ambient-project");
-    vi.stubEnv("OPENAI_ADMIN_KEY", "ambient-admin-key");
-    vi.stubEnv("OPENAI_WEBHOOK_SECRET", "ambient-webhook-secret");
-    try {
-      const client = createOpenAiCompatibleClient("https://explicit.example/v1", "explicit-key");
-      expect(client.logLevel).toBe("off");
-      expect(client.organization).toBeNull();
-      expect(client.project).toBeNull();
-      expect(client.adminAPIKey).toBeNull();
-      expect(client.webhookSecret).toBeNull();
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
   it("strips ambient custom headers before provider requests", async () => {
     vi.stubEnv("OPENAI_CUSTOM_HEADERS", "Authorization: Bearer ambient-secret\nX-Ambient: private-value");
     let outbound: Headers | undefined;

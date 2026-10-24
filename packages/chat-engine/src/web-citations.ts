@@ -1,6 +1,6 @@
 import { marked } from "marked";
-import type { WebSearchSource } from "@/lib/gemini-search";
-import { sourceCitationNumber } from "@/lib/chat-history-shared";
+import type { WebSearchSource } from "./gemini-search";
+import { sourceCitationNumber } from "./chat-history-shared";
 
 // Post-processing applied to a finished answer. Everything here works from server-side ground
 // truth — which pages were actually fetched, and what text came back — rather than from the
