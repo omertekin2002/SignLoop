@@ -50,6 +50,7 @@ export interface ProjectDetail {
 }
 
 export type ChatThreadMessage = {
+  files?: import("@/lib/chat-files-shared").ChatFileInfo[];
   toolActivity?: ChatToolActivity[];
   id: string;
   position: number;

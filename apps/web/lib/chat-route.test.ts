@@ -7,6 +7,7 @@ const {
   appendChatMessagesToThread,
   getRecentChatMessagesForThreadForUser,
   getUserSettingsByUserId,
+  getChatDocumentsForUser,
   getModelAvailabilitySnapshot,
   generateChatTitle,
   generateChatReply,
@@ -18,6 +19,7 @@ const {
   appendChatMessagesToThread: vi.fn(),
   getRecentChatMessagesForThreadForUser: vi.fn(),
   getUserSettingsByUserId: vi.fn(),
+  getChatDocumentsForUser: vi.fn(),
   getModelAvailabilitySnapshot: vi.fn(),
   generateChatTitle: vi.fn(),
   generateChatReply: vi.fn(),
@@ -30,6 +32,7 @@ vi.mock("@/lib/server-db", () => ({
   appendChatMessagesToThread,
   getRecentChatMessagesForThreadForUser,
   getUserSettingsByUserId,
+  getChatDocumentsForUser,
 }));
 vi.mock("@/lib/chat-title", () => ({ generateChatTitle }));
 vi.mock("@/lib/chat", () => ({ generateChatReply, generateChatReplyStream }));
@@ -278,6 +281,56 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
       yield { type: "done", reply };
     });
     appendChatMessagesToThread.mockResolvedValue([]);
+  });
+
+  it("loads saved document contents from the owner-scoped database and persists only file descriptors", async () => {
+    const file = { id: "abcdef01-2345-4678-9abc-def012345678", name: "terms.txt", mediaType: "text/plain", size: 12, text: "Private terms" };
+    getChatDocumentsForUser.mockResolvedValue([file]);
+    const result = await completion(await POST(request({ messages: [{ role: "user", content: "Read my terms", fileIds: [file.id], documents: [{ ...file, text: "fabricated" }] }] })));
+    expect(result.persisted).toBe(true);
+    expect(stream ? generateChatReplyStream : generateChatReply).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ role: "user", fileIds: [file.id] })]),
+      expect.objectContaining({ documents: [file], enableDocuments: true }),
+    );
+    const written = appendChatMessagesToThread.mock.calls[0]![0];
+    expect(written.messages[0].metadata.files[0]).toMatchObject({ id: file.id, url: expect.stringContaining(`/threads/${threadId}/files/`) });
+    expect(JSON.stringify(written)).not.toContain("fabricated");
+    expect(JSON.stringify(written)).not.toContain("Private terms");
+  });
+
+  it("rejects a foreign attachment without charging quota", async () => {
+    getChatDocumentsForUser.mockResolvedValue([]);
+    const response = await POST(request({ messages: [{ role: "user", content: "Read my terms", fileIds: ["abcdef01-2345-4678-9abc-def012345678"] }] }));
+    expect(response.status).toBe(400);
+    expect(admitChat).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("returns generated file downloads even when saved persistence is %s", async (persisted) => {
+    const file = { id: "abcdef01-2345-4678-9abc-def012345678", name: "notes.txt", mediaType: "text/plain", size: 5, text: "Hello", data: "SGVsbG8=" };
+    const withFile = { ...reply, files: [file] };
+    generateChatReply.mockResolvedValue(withFile);
+    generateChatReplyStream.mockImplementation(async function* () { yield { type: "delta", text: reply.message }; yield { type: "done", reply: withFile }; });
+    const saved = { id: file.id, name: file.name, mediaType: file.mediaType, size: file.size, url: `/api/chat/threads/${threadId}/files/${file.id}` };
+    if (persisted) appendChatMessagesToThread.mockResolvedValue([{ role: "assistant", content: reply.message, files: [saved] }]);
+    else appendChatMessagesToThread.mockRejectedValue(new Error("Database unavailable"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await completion(await POST(request()));
+    expect(result.persisted).toBe(persisted);
+    expect(result.files).toEqual(persisted ? [saved] : [{ id: file.id, name: file.name, mediaType: file.mediaType, size: file.size, data: file.data }]);
+    expect(appendChatMessagesToThread.mock.calls[0]![0].generatedFiles).toEqual([file]);
+    log.mockRestore();
+  });
+
+  it("keeps editable generated text in temporary browser state without storing bytes in replay", async () => {
+    const file = { id: "abcdef01-2345-4678-9abc-def012345678", name: "notes.txt", mediaType: "text/plain", size: 5, text: "Hello", data: "SGVsbG8=" };
+    const withFile = { ...reply, files: [file] };
+    generateChatReply.mockResolvedValue(withFile);
+    generateChatReplyStream.mockImplementation(async function* () { yield { type: "delta", text: reply.message }; yield { type: "done", reply: withFile }; });
+    const result = await completion(await POST(request({ temporary: true })));
+    expect(result.documents).toEqual([{ id: file.id, name: file.name, mediaType: file.mediaType, size: file.size, text: "Hello" }]);
+    expect(result.documents[0]).not.toHaveProperty("data");
+    expect(result.files[0].data).toBe(file.data);
+    expect(appendChatMessagesToThread).not.toHaveBeenCalled();
   });
 
   it("names the first saved turn using the same resolved model as the reply", async () => {

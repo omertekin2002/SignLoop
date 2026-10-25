@@ -99,6 +99,13 @@ afterEach(() => {
 });
 
 describe("production chat response coalescing", () => {
+  it("retains downloadable files on terminal completion", async () => {
+    const files = [{ id: "abcdef01-2345-4678-9abc-def012345678", name: "notes.txt", mediaType: "text/plain", size: 5, data: "SGVsbG8=" }];
+    const documents = [{ id: files[0]!.id, name: "notes.txt", mediaType: "text/plain", size: 5, text: "Hello" }];
+    const response = new Response(line({ type: "done", message: "Here are your notes.", files, documents }), { headers: { "Content-Type": "application/x-ndjson" } });
+    const result = await readChatApiResponse(response).next();
+    expect(result.value).toMatchObject({ done: true, files, documents });
+  });
   it("paints first useful text immediately, even after tools and whitespace", async () => {
     const input = source();
     const run = collect(readChatApiResponse(input.response));

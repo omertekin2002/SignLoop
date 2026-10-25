@@ -48,6 +48,9 @@ import {
   deleteContractForUser,
   deleteProjectForUser,
   getChatImageForUser,
+  saveChatFileForUser,
+  getChatFileForUser,
+  getChatDocumentsForUser,
   getChatThreadByIdForUser,
   getContractAnalysisGateForUser,
   getContractByIdForUser,
@@ -75,6 +78,43 @@ if (process.env.REQUIRE_DB_TESTS === "1" && !connectionString)
   );
 
 describe.skipIf(!connectionString)("database integration", () => {
+  it("keeps chat uploads/downloads owner-scoped, transactional, and deleted with their thread", async () => {
+    const thread = await createChatThreadForUser({ userId: "file-owner" });
+    const document = { id: crypto.randomUUID(), name: "terms.txt", mediaType: "text/plain", size: 12, text: "Private text" };
+    const saved = await saveChatFileForUser({ userId: "file-owner", threadId: thread.id, file: document, data: Buffer.from(document.text) });
+    expect(saved?.url).toContain(document.id);
+    expect(await saveChatFileForUser({ userId: "other", threadId: thread.id, file: { ...document, id: crypto.randomUUID() }, data: Buffer.from(document.text) })).toBeNull();
+    expect(await getChatFileForUser("other", thread.id, document.id)).toBeNull();
+    expect(await getChatDocumentsForUser("other", thread.id, [document.id])).toEqual([]);
+    expect(await getChatDocumentsForUser("file-owner", thread.id, [document.id])).toEqual([document]);
+    const generated = { ...document, id: crypto.randomUUID(), name: "summary.txt", text: "Summary", data: Buffer.from("Summary").toString("base64"), size: 7 };
+    const download = { id: generated.id, name: generated.name, mediaType: generated.mediaType, size: generated.size, url: `/api/chat/threads/${thread.id}/files/${generated.id}` };
+    await appendChatMessagesToThread({ userId: "file-owner", threadId: thread.id, generatedFiles: [generated], messages: [
+      { role: "user", content: "Summarize", metadata: { files: [saved] } },
+      { role: "assistant", content: "Here is your file.", metadata: { files: [download] } },
+    ] });
+    expect((await getChatFileForUser("file-owner", thread.id, generated.id))?.data.toString()).toBe("Summary");
+    const visible = await getChatThreadByIdForUser("file-owner", thread.id);
+    expect(visible?.messages[0]?.files).toEqual([saved]);
+    expect(visible?.messages[1]?.files).toEqual([download]);
+    expect(JSON.stringify(visible)).not.toContain(generated.data);
+    // A download derived from stale contract evidence stays visible, but must not restore that
+    // evidence to model context through read_file after the receipt has been invalidated.
+    await appendChatMessagesToThread({ userId: "file-owner", threadId: thread.id, messages: [
+      { role: "assistant", content: "Historical contract export", metadata: { files: [download], contractEvidenceInvalid: true } },
+    ] });
+    expect((await getChatThreadByIdForUser("file-owner", thread.id))?.messages.at(-1)?.files).toEqual([download]);
+    expect((await getRecentChatMessagesForThreadForUser("file-owner", thread.id, 10))?.at(-1)?.files).toBeUndefined();
+    const failed = { ...generated, id: crypto.randomUUID() };
+    await expect(appendChatMessagesToThread({ userId: "file-owner", threadId: thread.id, generatedFiles: [failed], messages: [
+      { role: "assistant", content: "Uncommitted", metadata: { cannotSerialize: 1n } },
+    ] })).rejects.toThrow();
+    expect(await getChatFileForUser("file-owner", thread.id, failed.id)).toBeNull();
+    await deleteChatThreadForUser({ userId: "file-owner", threadId: thread.id });
+    expect(await getChatFileForUser("file-owner", thread.id, document.id)).toBeNull();
+    expect((await pool.current!.query("SELECT id FROM chat_files WHERE thread_id = $1", [thread.id])).rowCount).toBe(0);
+  });
+
   beforeAll(async () => {
     const url = new URL(connectionString!);
     if (url.hostname !== "localhost" || url.pathname !== "/signloop_test")

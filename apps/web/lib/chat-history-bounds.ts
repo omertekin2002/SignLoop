@@ -5,7 +5,8 @@ import { isPlainAssistantReplay } from "@repo/chat-engine/chat-history-shared";
 export const MAX_CHAT_MESSAGES = 30;
 export const MAX_CHAT_MESSAGE_LENGTH = 4_000;
 export const MAX_CHAT_TOTAL_MESSAGE_LENGTH = 60_000;
-export const MAX_CHAT_REQUEST_BODY_BYTES = 128 * 1024;
+// Temporary document text travels with the conversation, below Vercel's request ceiling.
+export const MAX_CHAT_REQUEST_BODY_BYTES = 3 * 1024 * 1024;
 
 /** Replace generated image payloads before a message is sent back to a text model. */
 export function compactInlineImageDataUris(text: string): string {
@@ -77,6 +78,8 @@ export function boundCanonicalChatHistory(
     selected.push({
       role: message.role,
       content,
+      ...(message.fileIds ? { fileIds: message.fileIds } : {}),
+      ...(message.documents ? { documents: message.documents } : {}),
       ...(includeAgentState
         ? {
             agentMessages,

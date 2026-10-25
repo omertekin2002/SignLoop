@@ -4,8 +4,31 @@ import {
   boundCanonicalChatHistory,
   parseClientAgentMessages,
   parseClientChatMessages,
+  parseLatestClientUserMessage,
 } from "./chat-policy";
 import type { ChatMessage } from "./chat";
+import { MAX_CHAT_FILE_TEXT } from "./chat-files-shared";
+
+it("keeps saved uploads as IDs and accepts bounded temporary text only on user messages", () => {
+  const id = "ABCDEF01-2345-4678-9ABC-DEF012345678";
+  const document = { id, name: "notes.txt", mediaType: "text/plain", size: 10, text: "Private notes" };
+  expect(parseLatestClientUserMessage({ messages: [{ role: "user", content: "Read this", fileIds: [id], documents: [document] }] })).toEqual({
+    ok: true, messages: [{ role: "user", content: "Read this", fileIds: [id.toLowerCase()] }],
+  });
+  const parsed = parseClientChatMessages({ messages: [{ role: "user", content: "Read this", documents: [document] }] });
+  expect(parsed).toMatchObject({ ok: true, messages: [{ documents: [document] }] });
+  expect(parseClientChatMessages({ messages: [
+    { role: "assistant", content: "Here is the generated file", documents: [document] },
+    { role: "user", content: "Revise that file" },
+  ] })).toMatchObject({ ok: true, messages: [{ role: "assistant", documents: [document] }, { role: "user" }] });
+  expect(parseClientChatMessages({ messages: [{ role: "user", content: "Read this", documents: [{ ...document, text: "x".repeat(MAX_CHAT_FILE_TEXT + 1) }] }] }).ok).toBe(false);
+  expect(parseLatestClientUserMessage({ messages: [{ role: "user", content: "Read this", fileIds: ["not-an-id"] }] }).ok).toBe(false);
+});
+
+it("preserves file references when bounding canonical history", () => {
+  const message: ChatMessage = { role: "user", content: "Read this", fileIds: ["abcdef01-2345-4678-9abc-def012345678"] };
+  expect(boundCanonicalChatHistory([message])).toEqual([message]);
+});
 
 it.each([
   {

@@ -37,7 +37,14 @@ import {
   appendChatMessagesToThread,
   getRecentChatMessagesForThreadForUser,
   getUserSettingsByUserId,
+  getChatDocumentsForUser,
 } from "@/lib/server-db";
+import {
+  MAX_CHAT_DOCUMENT_CONTEXT,
+  savedChatFile,
+  type ChatDocument,
+  type ChatFileInfo,
+} from "@/lib/chat-files-shared";
 import { isRecord, isUuid } from "@/lib/utils";
 import { admissionRejectedResponse, admitChat } from "@/lib/chat-admission";
 import {
@@ -117,6 +124,8 @@ async function persistChatMessages(input: {
   toolActivity?: ChatReply["toolActivity"];
   temporary: boolean;
   generatedTitle?: string | null;
+  inputFiles?: ChatFileInfo[];
+  generatedFiles?: ChatReply["files"];
   signal: AbortSignal;
 }): Promise<ChatMessageRecord[]> {
   if (input.temporary) {
@@ -134,8 +143,17 @@ async function persistChatMessages(input: {
     userId: input.userId,
     threadId: input.threadId,
     generatedTitle: input.generatedTitle,
+    ...(input.generatedFiles?.length
+      ? { generatedFiles: input.generatedFiles }
+      : {}),
     messages: [
-      { role: "user", content: input.latestUserMessage.content },
+      {
+        role: "user",
+        content: input.latestUserMessage.content,
+        ...(input.inputFiles?.length
+          ? { metadata: { files: input.inputFiles } }
+          : {}),
+      },
       {
         role: "assistant",
         content: input.assistantMessage,
@@ -152,6 +170,13 @@ async function persistChatMessages(input: {
           contractEvidence: input.contractEvidence,
           webSources: input.webSources ?? [],
           toolActivity: input.toolActivity ?? [],
+          ...(input.generatedFiles?.length
+            ? {
+                files: input.generatedFiles.map((file) =>
+                  savedChatFile(file, input.threadId),
+                ),
+              }
+            : {}),
         },
       },
     ],
@@ -201,6 +226,23 @@ function toDoneStreamEvent(input: {
     toolActivity: reply.toolActivity ?? [],
     // The account quota as of this request's admission, so the client can update without a refetch.
     quota: input.quota,
+    ...(temporary && reply.files?.length
+      ? {
+          documents: reply.files.map(
+            ({ data: _data, ...document }) => document,
+          ),
+        }
+      : {}),
+    ...(reply.files?.length
+      ? {
+          files:
+            !temporary && persisted
+              ? (input.storedMessages.find(
+                  (message) => message.role === "assistant",
+                )?.files ?? [])
+              : reply.files.map(({ text: _text, ...file }) => file),
+        }
+      : {}),
   };
 }
 
@@ -290,6 +332,16 @@ export async function POST(req: Request) {
 
     let conversationMessages = parsedMessages.messages;
     const latestUserMessage = conversationMessages.at(-1)!;
+    if (
+      !userId &&
+      conversationMessages.some((message) => message.documents?.length)
+    )
+      return NextResponse.json(
+        { error: "Sign in to attach files." },
+        { status: 401 },
+      );
+    let inputFiles: ChatFileInfo[] = [];
+    let currentDocuments: ChatDocument[] = [];
     let persistedMessages: ChatMessageRecord[] = [];
 
     if (userId && !isTemporaryChat) {
@@ -315,7 +367,31 @@ export async function POST(req: Request) {
           { status: 404 },
         );
       persistedMessages = recentMessages;
+      if (latestUserMessage.fileIds?.length) {
+        currentDocuments = await getChatDocumentsForUser(
+          userId,
+          threadId,
+          latestUserMessage.fileIds,
+        );
+        if (new Set(latestUserMessage.fileIds).size !== currentDocuments.length)
+          return NextResponse.json(
+            { error: "An attached file was not found in this chat." },
+            { status: 400 },
+          );
+        inputFiles = currentDocuments.map((file) =>
+          savedChatFile(file, threadId),
+        );
+      }
     }
+
+    if (
+      currentDocuments.reduce((total, file) => total + file.text.length, 0) >
+      MAX_CHAT_DOCUMENT_CONTEXT
+    )
+      return NextResponse.json(
+        { error: "Attach at most 400,000 extracted characters per message." },
+        { status: 413 },
+      );
 
     let quota: AccountQuota | undefined;
     try {
@@ -377,10 +453,45 @@ export async function POST(req: Request) {
             agentMessages: message.agentMessages,
             contractEvidence: message.contractEvidence,
             webSources: message.webSources,
+            ...(message.files?.length
+              ? { fileIds: message.files.map((file) => file.id) }
+              : {}),
           })),
         latestUserMessage.content.length,
       );
       conversationMessages = [...canonicalMessages, latestUserMessage];
+    }
+
+    const requestedFileIds = conversationMessages.flatMap(
+      (message) => message.fileIds ?? [],
+    );
+    const currentIds = new Set(currentDocuments.map((file) => file.id));
+    const priorFileIds = requestedFileIds.filter((id) => !currentIds.has(id));
+    const allDocuments = isTemporaryChat
+      ? conversationMessages.flatMap((message) => message.documents ?? [])
+      : [
+          ...currentDocuments,
+          ...(priorFileIds.length
+            ? await getChatDocumentsForUser(userId!, threadId, priorFileIds)
+            : []),
+        ];
+    let documentCharacters = 0;
+    const documents: ChatDocument[] = [];
+    const documentById = new Map(allDocuments.map((file) => [file.id, file]));
+    for (const message of [...conversationMessages].reverse()) {
+      for (const id of message.fileIds ??
+        message.documents?.map((file) => file.id) ??
+        []) {
+        const file = documentById.get(id);
+        if (
+          !file ||
+          documents.some((item) => item.id === id) ||
+          documentCharacters + file.text.length > MAX_CHAT_DOCUMENT_CONTEXT
+        )
+          continue;
+        documents.push(file);
+        documentCharacters += file.text.length;
+      }
     }
 
     const personality =
@@ -431,6 +542,8 @@ export async function POST(req: Request) {
               primaryModel: selectedPrimaryModel,
               signal: operationSignal,
               enableWebSearch,
+              enableDocuments: Boolean(userId),
+              documents,
               enableUrlReader: enableWebSearch,
               enableHttpFetch: enableWebSearch,
               contractsUserId: userId,
@@ -493,6 +606,8 @@ export async function POST(req: Request) {
                       assistantProvider: chunk.reply.provider ?? null,
                       temporary: isTemporaryChat,
                       generatedTitle: title,
+                      inputFiles,
+                      generatedFiles: chunk.reply.files,
                       signal: operationSignal,
                     }),
                 );
@@ -595,10 +710,13 @@ export async function POST(req: Request) {
       toolActivity,
       readSources,
       figures,
+      files,
     } = await generateChatReply(promptMessages, {
       primaryModel: selectedPrimaryModel,
       signal: operationSignal,
       enableWebSearch,
+      enableDocuments: Boolean(userId),
+      documents,
       enableUrlReader: enableWebSearch,
       enableHttpFetch: enableWebSearch,
       contractsUserId: userId,
@@ -637,6 +755,8 @@ export async function POST(req: Request) {
             assistantProvider: provider ?? null,
             temporary: false,
             generatedTitle: title,
+            inputFiles,
+            generatedFiles: files,
             signal: operationSignal,
           }),
         );
@@ -672,6 +792,19 @@ export async function POST(req: Request) {
         webSearchSuccessfulCount: webSearch?.successfulSearches ?? 0,
         webSources: webSearch?.sources ?? [],
         quota,
+        ...(isTemporaryChat && files?.length
+          ? { documents: files.map(({ data: _data, ...document }) => document) }
+          : {}),
+        ...(files?.length
+          ? {
+              files:
+                persisted && !isTemporaryChat
+                  ? (storedMessages.find(
+                      (message) => message.role === "assistant",
+                    )?.files ?? [])
+                  : files.map(({ text: _text, ...file }) => file),
+            }
+          : {}),
       },
       { headers: rateLimitHeaders(quota) },
     );

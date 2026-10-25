@@ -6,6 +6,12 @@ import {
   parseWebSources,
 } from "@repo/chat-engine/chat-agent-history";
 import { withAbort } from "@repo/chat-engine/bounded-response";
+import { z } from "zod";
+import {
+  chatDocumentSchema,
+  MAX_CHAT_DOCUMENT_CONTEXT,
+  MAX_CHAT_FILES_PER_MESSAGE,
+} from "@/lib/chat-files-shared";
 import {
   MAX_CHAT_MESSAGE_LENGTH,
   MAX_CHAT_MESSAGES,
@@ -94,6 +100,7 @@ export function parseClientChatMessages(payload: unknown): ParsedChatMessages {
 
   const normalized: ChatMessage[] = [];
   let totalLength = 0;
+  let documentCharacters = 0;
 
   for (const item of rawMessages) {
     if (!isRecord(item)) {
@@ -144,6 +151,27 @@ export function parseClientChatMessages(payload: unknown): ParsedChatMessages {
         : undefined;
     const webSources =
       role === "assistant" ? parseWebSources(item.webSources) : undefined;
+    const documents =
+      item.documents !== undefined
+        ? z
+            .array(chatDocumentSchema)
+            .max(MAX_CHAT_FILES_PER_MESSAGE)
+            .safeParse(item.documents)
+        : null;
+    if (documents && !documents.success)
+      return { ok: false, error: "Invalid chat files.", status: 400 };
+    if (documents?.success)
+      documentCharacters += documents.data.reduce(
+        (total, file) => total + file.text.length,
+        0,
+      );
+    if (documentCharacters > MAX_CHAT_DOCUMENT_CONTEXT)
+      return {
+        ok: false,
+        error:
+          "Attached documents exceed the conversation's 400,000 character limit. Start a new chat.",
+        status: 413,
+      };
     totalLength += JSON.stringify({ agentMessages, webSources }).length;
     if (totalLength > MAX_CHAT_TOTAL_MESSAGE_LENGTH) {
       return {
@@ -157,6 +185,7 @@ export function parseClientChatMessages(payload: unknown): ParsedChatMessages {
       content: trimmed,
       ...(agentMessages ? { agentMessages } : {}),
       ...(webSources ? { webSources } : {}),
+      ...(documents?.success ? { documents: documents.data } : {}),
     });
   }
 
@@ -213,7 +242,11 @@ export async function parseBoundedJsonRequest<T>(
   } catch {
     void reader.cancel().catch(() => {});
     return signal.aborted
-      ? { ok: false, error: "Chat request timed out or was canceled.", status: 503 }
+      ? {
+          ok: false,
+          error: "Chat request timed out or was canceled.",
+          status: 503,
+        }
       : { ok: false, error: "Invalid JSON body", status: 400 };
   } finally {
     reader.releaseLock();
@@ -281,5 +314,25 @@ export function parseLatestClientUserMessage(
     return { ok: false, error: "Messages cannot be empty.", status: 400 };
   }
 
-  return { ok: true, messages: [{ role: "user", content }] };
+  const ids =
+    latest.fileIds === undefined
+      ? null
+      : z
+          .array(z.uuid())
+          .max(MAX_CHAT_FILES_PER_MESSAGE)
+          .safeParse(latest.fileIds);
+  if (ids && !ids.success)
+    return { ok: false, status: 400, error: "Invalid chat file IDs." };
+  return {
+    ok: true,
+    messages: [
+      {
+        role: "user",
+        content,
+        ...(ids?.success
+          ? { fileIds: ids.data.map((id) => id.toLowerCase()) }
+          : {}),
+      },
+    ],
+  };
 }
