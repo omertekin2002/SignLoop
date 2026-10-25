@@ -63,6 +63,7 @@ const nextConfig = {
   ],
   outputFileTracingIncludes: {
     "/api/**/*": ["./db/migrations/*.sql"],
+    "/api/chat/route": ["./lib/fonts/DejaVuSans.ttf"],
     "/callback": ["./db/migrations/*.sql"],
     ...Object.fromEntries(ocrRouteKeys.map((key) => [key, ocrFiles])),
   },

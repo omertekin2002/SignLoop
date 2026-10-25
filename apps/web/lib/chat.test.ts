@@ -169,6 +169,36 @@ afterEach(() => {
 });
 
 describe("SignLoop chat", () => {
+  it("reads a chat attachment and creates a download without replaying file bytes", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const text = "The invoice requires payment within thirty days.";
+    const model = sequencedModel([
+      toolStep(0, "read_file", { fileId: id }),
+      toolStep(1, "create_file", { name: "Summary", format: "txt", content: "Payment is due in thirty days." }),
+    ]);
+    mocks.responses.mockReturnValue(model);
+    const reply = await generateChatReply([{ role: "user", content: "Summarize the file as a download.", fileIds: [id] }], {
+      enableDocuments: true,
+      documents: [{ id, name: "invoice.txt", mediaType: "text/plain", size: text.length, text }],
+    });
+    expect(JSON.stringify(model.doStreamCalls[0]!.prompt)).toContain("invoice.txt");
+    expect(JSON.stringify(model.doStreamCalls[0]!.prompt)).not.toContain(text);
+    expect(JSON.stringify(model.doStreamCalls[1]!.prompt)).toContain(text);
+    expect(reply.files).toHaveLength(1);
+    expect(Buffer.from(reply.files![0]!.data, "base64").toString()).toBe("Payment is due in thirty days.");
+    expect(JSON.stringify(reply.agentMessages)).not.toContain(reply.files![0]!.data);
+    expect(reply.toolActivity?.map((activity) => activity.tool)).toEqual(["read_file", "create_file"]);
+    const { data: _bytes, ...document } = reply.files![0]!;
+    const followup = sequencedModel([toolStep(0, "read_file", { fileId: document.id })]);
+    mocks.responses.mockReturnValue(followup);
+    await generateChatReply([
+      { role: "assistant", content: reply.message, documents: [document] },
+      { role: "user", content: "Revise your download" },
+    ], { enableDocuments: true, documents: [document] });
+    expect(JSON.stringify(followup.doStreamCalls[1]!.prompt)).toContain(document.text);
+    expect(JSON.stringify(followup.doStreamCalls)).not.toContain(reply.files![0]!.data);
+  });
+
   it("reads the user's contracts only when a user is attached", async () => {
     const contractId = "11111111-1111-4111-8111-111111111111";
     mocks.listContracts.mockResolvedValue({

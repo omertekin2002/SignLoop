@@ -20,6 +20,8 @@ import {
 } from "@/lib/inference-policy";
 import type { PrimaryModel } from "@/lib/model-settings";
 import type { PersonalityMode } from "@/lib/personality-settings";
+import { parseChatFileInfos, savedChatFile, type ChatDocument, type ChatFileInfo } from "@/lib/chat-files-shared";
+import type { GeneratedChatFile } from "@/lib/chat-file-generation";
 import {
   ChatThreadNotFoundError,
   ContractRevisionChangedError,
@@ -397,6 +399,7 @@ export type UserSettingsRecord = {
 export type ChatMessageRole = "system" | "user" | "assistant";
 
 export type ChatMessageRecord = {
+  files?: ChatFileInfo[];
   agentMessages?: import("ai").ModelMessage[];
   contractEvidence?: ContractEvidence[];
   webSources?: import("@repo/chat-engine/gemini-search").WebSearchSource[];
@@ -1682,6 +1685,7 @@ export async function upsertUserSettings(input: {
   return rows[0];
 }
 
+/** Normalize stored metadata, omitting private replay and stale evidence when requested. */
 function mapChatMessageRow(
   row: {
     id: string;
@@ -1724,6 +1728,8 @@ function mapChatMessageRow(
     toolActivity: metadata.toolActivity,
     model,
     provider,
+    ...(Array.isArray(metadata.files) && !(replayState === "include" && metadata.contractEvidenceInvalid === true)
+      ? { files: parseChatFileInfos(metadata.files) } : {}),
   };
 }
 
@@ -1864,6 +1870,7 @@ export async function getRecentChatMessagesForThreadForUser(
           'contractEvidence', m.metadata_json->'contractEvidence',
           'contractEvidenceInvalid', m.metadata_json->'contractEvidenceInvalid',
           'toolActivity', m.metadata_json->'toolActivity',
+          'files', m.metadata_json->'files',
           'agentMessages', CASE WHEN char_length((m.metadata_json->'agentMessages')::text) <= ${MAX_AGENT_STATE_CHARACTERS * 2}
             THEN m.metadata_json->'agentMessages' END,
           'webSources', CASE WHEN char_length((m.metadata_json->'webSources')::text) <= ${MAX_SOURCE_CATALOG_CHARACTERS * 2}
@@ -1985,9 +1992,11 @@ export async function getChatThreadByIdForUser(
   };
 }
 
+/** Atomically append a turn and generated files under the owning thread's row lock. */
 export async function appendChatMessagesToThread(input: {
   userId: string;
   threadId: string;
+  generatedFiles?: GeneratedChatFile[];
   /** Applied only to an untitled thread's first saved turn, under the same row lock. */
   generatedTitle?: string | null;
   messages: Array<{
@@ -2032,6 +2041,14 @@ export async function appendChatMessagesToThread(input: {
     if (!lockedThreadCount) {
       await client.query("ROLLBACK");
       throw new ChatThreadNotFoundError();
+    }
+
+    // Original uploads are staged under this thread; generated downloads commit with the turn.
+    for (const file of input.generatedFiles ?? []) {
+      await client.query(
+        "INSERT INTO chat_files(id, thread_id, filename, media_type, file_data, text_content) VALUES ($1, $2, $3, $4, decode($5, 'base64'), $6)",
+        [file.id, input.threadId, file.name, file.mediaType, file.data, file.text],
+      );
     }
 
     // Contract row locks serialize receipt validation with uploads/deletions. If a deletion
@@ -2121,6 +2138,57 @@ export async function appendChatMessagesToThread(input: {
   } finally {
     client.release();
   }
+}
+
+/** Check thread ownership before performing expensive upload extraction. */
+export async function isChatThreadOwnedByUser(userId: string, threadId: string): Promise<boolean> {
+  await ensureSchema();
+  const result = await sql.query("SELECT id FROM chat_threads WHERE id = $1 AND user_id = $2", [threadId, userId]);
+  return Boolean(result.rowCount);
+}
+
+/** Store an upload under an owner-scoped lock, enforcing the thread's 100-file cap atomically. */
+export async function saveChatFileForUser(input: {
+  userId: string; threadId: string; file: ChatDocument; data: Buffer;
+}): Promise<ChatFileInfo | null> {
+  await ensureSchema();
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
+    const owned = await client.query("SELECT id FROM chat_threads WHERE id = $1 AND user_id = $2 FOR UPDATE", [input.threadId, input.userId]);
+    if (!owned.rowCount) { await client.query("ROLLBACK"); return null; }
+    const count = await client.query<{ count: number }>("SELECT count(*)::integer AS count FROM chat_files WHERE thread_id = $1", [input.threadId]);
+    if (count.rows[0]!.count >= 100) throw new Error("This chat has reached its 100-file limit. Start a new chat.");
+    const file = input.file;
+    await client.query("INSERT INTO chat_files(id, thread_id, filename, media_type, file_data, text_content, warning) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+      [file.id, input.threadId, file.name, file.mediaType, input.data, file.text, file.warning ?? null]);
+    await client.query("COMMIT");
+    return savedChatFile(file, input.threadId);
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally { client.release(); }
+}
+
+/** Load extracted text only for requested files in the caller's own thread. */
+export async function getChatDocumentsForUser(userId: string, threadId: string, ids: readonly string[]): Promise<ChatDocument[]> {
+  if (!ids.length) return [];
+  await ensureSchema();
+  const { rows } = await sql.query<ChatDocument>(
+    `SELECT f.id, f.filename AS name, f.media_type AS "mediaType", octet_length(f.file_data) AS size, f.text_content AS text, f.warning
+     FROM chat_files f JOIN chat_threads t ON t.id = f.thread_id
+     WHERE t.user_id = $1 AND t.id = $2 AND f.id = ANY($3::uuid[])`, [userId, threadId, [...new Set(ids)]]);
+  return rows.map(({ warning, ...file }) => ({ ...file, ...(warning ? { warning } : {}) }));
+}
+
+/** Fetch original download bytes with ownership and thread membership checked in SQL. */
+export async function getChatFileForUser(userId: string, threadId: string, fileId: string): Promise<{ name: string; mediaType: string; data: Buffer } | null> {
+  await ensureSchema();
+  const { rows } = await sql.query<{ name: string; mediaType: string; data: Buffer }>(
+    `SELECT f.filename AS name, f.media_type AS "mediaType", f.file_data AS data
+     FROM chat_files f JOIN chat_threads t ON t.id = f.thread_id
+     WHERE t.user_id = $1 AND t.id = $2 AND f.id = $3`, [userId, threadId, fileId]);
+  return rows[0] ?? null;
 }
 
 export async function getChatImageForUser(

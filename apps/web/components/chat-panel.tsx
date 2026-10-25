@@ -7,6 +7,19 @@ import {
 
 import type { ModelMessage } from "ai";
 import type { ChatToolActivity } from "@/lib/chat";
+import { chatAttachmentAdapter, uploadChatFile } from "@/lib/chat-files-client";
+import {
+  MAX_CHAT_DOCUMENT_CONTEXT,
+  MAX_CHAT_FILES_PER_MESSAGE,
+  parseChatDocuments,
+  type ChatDocument,
+  type ChatFileInfo,
+} from "@/lib/chat-files-shared";
+import {
+  ComposerFile,
+  UploadedFile,
+  MessageFileDownloads,
+} from "@/components/chat-files";
 
 import { toast } from "sonner";
 import { chatRequestFailure } from "@/lib/chat-request-error";
@@ -63,6 +76,7 @@ import {
   Check,
   Copy,
   Loader2,
+  Paperclip,
   Send,
   Sparkles,
   Square,
@@ -85,12 +99,15 @@ import {
 } from "@/lib/privacy-consent";
 
 type ChatApiMessage = {
+  fileIds?: string[];
+  documents?: ChatDocument[];
   role: "system" | "user" | "assistant";
   content: string;
   agentMessages?: unknown[];
   webSources?: ReturnType<typeof parseWebSources>;
 };
 
+/** Flatten runtime message parts into text, replacing binary media with compact placeholders. */
 function extractMessageText(message: Pick<ThreadMessage, "content">): string {
   const chunks: string[] = [];
 
@@ -152,16 +169,59 @@ function readAgentMessages(message: ThreadMessage): ModelMessage[] | undefined {
     : undefined;
 }
 
-function toApiMessages(messages: readonly ThreadMessage[]): ChatApiMessage[] {
+/** Serialize history, prioritizing newest documents within temporary transport and text budgets. */
+function toApiMessages(
+  messages: readonly ThreadMessage[],
+  preparedFiles: ReadonlyMap<string, ChatDocument | ChatFileInfo>,
+  scope: string,
+  temporary: boolean,
+): ChatApiMessage[] {
+  let documentCharacters = 0;
+  const selectedDocuments = new Set<string>();
+  const messageFiles = (message: ThreadMessage) =>
+    message.role === "user"
+      ? message.attachments.flatMap((attachment) => {
+          const file = preparedFiles.get(`${scope}:${attachment.id}`);
+          return file ? [file] : [];
+        })
+      : temporary
+        ? parseChatDocuments(message.metadata.custom?.documents)
+        : [];
+  for (const message of [...messages].reverse()) {
+    for (const file of messageFiles(message)) {
+      if (
+        file &&
+        "text" in file &&
+        !selectedDocuments.has(file.id) &&
+        documentCharacters + file.text.length <= MAX_CHAT_DOCUMENT_CONTEXT
+      ) {
+        selectedDocuments.add(file.id);
+        documentCharacters += file.text.length;
+      }
+    }
+  }
   return boundTemporaryChatHistory(
     messages
       .slice(-30)
       .map((message) => {
         const agentMessages =
           message.role === "assistant" ? readAgentMessages(message) : undefined;
+        const files = messageFiles(message);
         return {
           role: message.role,
-          content: extractMessageText(message),
+          content:
+            extractMessageText(message) ||
+            (files.length ? "Please read the attached files." : ""),
+          ...(temporary
+            ? {
+                documents: files.filter(
+                  (file): file is ChatDocument =>
+                    "text" in file && selectedDocuments.has(file.id),
+                ),
+              }
+            : files.length
+              ? { fileIds: files.map((file) => file.id) }
+              : {}),
           ...(agentMessages ? { agentMessages } : {}),
           webSources: parseWebSources(
             (
@@ -175,6 +235,7 @@ function toApiMessages(messages: readonly ThreadMessage[]): ChatApiMessage[] {
   );
 }
 
+/** Show request failures with sign-in or quota-aware retry controls. */
 function ChatMessageError() {
   const failure = useMessage((state) => state.metadata.custom?.requestError) as
     ReturnType<typeof chatRequestFailure> | undefined;
@@ -191,10 +252,17 @@ function ChatMessageError() {
   }, [retryAt]);
   const remaining = Math.max(0, Math.ceil((retryAt - now) / 1000));
   return (
-    <div role="alert" className="mt-4 space-y-3 rounded-card border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm">
-      <p className="text-destructive"><ErrorPrimitive.Message /></p>
+    <div
+      role="alert"
+      className="mt-4 space-y-3 rounded-card border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm"
+    >
+      <p className="text-destructive">
+        <ErrorPrimitive.Message />
+      </p>
       {failure?.status === 401 ? (
-        <Button asChild variant="outline" size="sm"><a href="/sign-in">Sign in</a></Button>
+        <Button asChild variant="outline" size="sm">
+          <a href="/sign-in">Sign in</a>
+        </Button>
       ) : (
         <ActionBarPrimitive.Reload asChild>
           <Button variant="outline" size="sm" disabled={remaining > 0}>
@@ -211,6 +279,7 @@ function ChatMessageError() {
   );
 }
 
+/** Label current tools while retaining compatibility with legacy search-only activity rows. */
 function describeToolActivity(activity: ChatToolActivity): string {
   // Rows saved before other tools existed carry no tool name and were always searches.
   const label =
@@ -218,21 +287,36 @@ function describeToolActivity(activity: ChatToolActivity): string {
   return activity.query ? `${label}: ${activity.query}` : label;
 }
 
+/** Restore saved messages, attachment links, and model metadata into assistant-ui's runtime. */
 function toRuntimeMessages(messages: ChatThreadMessage[]): ThreadMessageLike[] {
   return messages.map((message) => ({
     id: message.id,
     role: message.role,
     content: message.content,
     createdAt: new Date(message.createdAt),
+    ...(message.role === "user" && message.files?.length
+      ? {
+          attachments: message.files.map((file) => ({
+            id: file.id,
+            type: "document",
+            name: file.name,
+            contentType: file.mediaType,
+            status: { type: "complete" as const },
+            content: [{ type: "text" as const, text: file.url ?? "" }],
+          })),
+        }
+      : {}),
     // Re-attach the persisted generating model/provider so the "generated by" label renders for
     // saved messages exactly as it did live during streaming.
-    ...(message.role === "assistant" && (message.model || message.provider)
+    ...(message.role === "assistant" &&
+    (message.model || message.provider || message.files?.length)
       ? {
           metadata: {
             custom: {
               model: message.model ?? null,
               provider: message.provider ?? null,
               toolActivity: parseToolActivity(message.toolActivity),
+              files: message.files ?? [],
             },
           },
         }
@@ -240,6 +324,7 @@ function toRuntimeMessages(messages: ChatThreadMessage[]): ThreadMessageLike[] {
   }));
 }
 
+/** Preserve the user's whitespace without interpreting their message as Markdown. */
 const UserTextPart = () => (
   <MessagePartPrimitive.Text
     component="p"
@@ -251,6 +336,7 @@ const UserTextPart = () => (
 // reply, so the landing and dashboard first paint do not ship it.
 const MarkdownSourceContext = createContext("");
 
+/** Keep assistant text readable while the Markdown chunk loads or after a chunk failure. */
 function PlainMarkdownSource() {
   const markdown = useContext(MarkdownSourceContext);
   return (
@@ -281,6 +367,7 @@ class MarkdownChunkBoundary extends Component<
   }
 }
 
+/** Style assistant Markdown and retain a plain-text fallback across lazy chunk failures. */
 const MarkdownMessage = forwardRef<
   HTMLDivElement,
   ComponentPropsWithoutRef<"div">
@@ -319,17 +406,17 @@ const MarkdownMessage = forwardRef<
 
 MarkdownMessage.displayName = "MarkdownMessage";
 
+/** Render assistant content directly so streamed deltas do not receive a second smoothing delay. */
 const AssistantTextPart = () => (
   <MessagePartPrimitive.Text component={MarkdownMessage} smooth={false} />
 );
 
-// Drop a trailing ":free" tier suffix for readability (e.g. OpenRouter "...:free" models).
+/** Drop a trailing ":free" tier suffix for readability (e.g. OpenRouter "...:free" models). */
 function formatModelLabel(model: string): string {
   return model.replace(/:free$/i, "");
 }
 
-// Shows the model that actually generated the assistant message, read from the metadata the
-// server attaches on completion. Reflects an OpenRouter fallback model when the primary failed.
+/** Show the model recorded on completion, including fallback models chosen by the provider. */
 const AssistantModelLabel = () => {
   const model = useMessage((message) => {
     const custom = (
@@ -351,6 +438,7 @@ const AssistantModelLabel = () => {
   );
 };
 
+/** Announce validated tool progress, including document reads and file creation. */
 const SearchActivity = () => {
   const rawActivity = useMessage(
     (message) => message.metadata?.custom?.toolActivity,
@@ -366,8 +454,7 @@ const SearchActivity = () => {
   );
 };
 
-// Copies the message the same way it is sent to the API, so a generated image becomes a short
-// placeholder instead of a megabyte of base64 on the clipboard.
+/** Copy the text representation, replacing generated image data with a compact placeholder. */
 const MessageCopyButton = ({ className }: { className?: string }) => {
   const content = useMessage((message) => message.content);
   const [copied, setCopied] = useState(false);
@@ -422,6 +509,7 @@ const MessageCopyButton = ({ className }: { className?: string }) => {
   );
 };
 
+/** Compose user attachments and assistant text, tool progress, downloads, and recovery controls. */
 const ChatMessage = () => {
   return (
     <MessagePrimitive.Root className="group relative flex w-full flex-col gap-2 mb-6">
@@ -430,6 +518,9 @@ const ChatMessage = () => {
           <div className="relative flex w-full items-end gap-2">
             <div className="flex w-full flex-col gap-1 rounded-card rounded-br-[6px] bg-secondary px-5 py-3.5 text-secondary-foreground">
               <MessagePrimitive.Content components={{ Text: UserTextPart }} />
+              <MessagePrimitive.Attachments
+                components={{ Attachment: UploadedFile }}
+              />
             </div>
           </div>
           <MessageCopyButton />
@@ -453,6 +544,7 @@ const ChatMessage = () => {
                 Reasoning: AssistantTextPart,
               }}
             />
+            <MessageFileDownloads />
             <MessagePrimitive.Error>
               <ChatMessageError />
             </MessagePrimitive.Error>
@@ -464,7 +556,7 @@ const ChatMessage = () => {
   );
 };
 
-// The landing composition starts at the top; only conversations follow new content to the bottom.
+/** Start the landing composition at the top and follow new content only for conversations. */
 function ChatViewport({ children }: { children: ReactNode }) {
   const hasMessages = useThread((state) => state.messages.length > 0);
 
@@ -486,7 +578,7 @@ const REPLY_END_ANNOUNCEMENTS: Partial<Record<string, string>> = {
   cancelled: "Reply stopped",
 };
 
-// Announces reply transitions so the streamed transcript itself never needs to be a live region.
+/** Announce reply transitions without making the streamed transcript itself a live region. */
 function ReplyStatusAnnouncer() {
   const replyId = useThread((state) => {
     const last = state.messages.at(-1);
@@ -536,6 +628,7 @@ type ChatPanelProps = {
   onContentChange?: (hasContent: boolean) => void;
 };
 
+/** Manage saved and temporary chat lifecycles, authenticated attachments, streaming, and cancellation. */
 export function ChatPanel({
   selectedThreadId = null,
   onThreadSelected,
@@ -562,20 +655,32 @@ export function ChatPanel({
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreGuard] = useState(createOperationGuard);
-  const [savedChatSession] = useState(() => createSavedChatSession(async (id) => {
-    const response = await fetch(`/api/chat/threads/${encodeURIComponent(id)}?onlyIfEmpty=1`, {
-      method: "DELETE",
-    });
-    if (response.ok) {
-      queryClient.removeQueries({ queryKey: ["chat-thread", id] });
-      void queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
-    }
-  }));
+  const [savedChatSession] = useState(() =>
+    createSavedChatSession(async (id) => {
+      const response = await fetch(
+        `/api/chat/threads/${encodeURIComponent(id)}?onlyIfEmpty=1`,
+        {
+          method: "DELETE",
+        },
+      );
+      if (response.ok) {
+        queryClient.removeQueries({ queryKey: ["chat-thread", id] });
+        void queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+      }
+    }),
+  );
   const loadingOlderRef = useRef(false);
   const hydratedSignatureRef = useRef<string | null>(null);
   const initialPromptSignatureRef = useRef<string | null>(null);
   const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
   const previousActiveThreadIdRef = useRef<string | null>(null);
+  const [attachmentAdapter] = useState(chatAttachmentAdapter);
+  const preparedFilesRef = useRef(
+    new Map<string, ChatDocument | ChatFileInfo>(),
+  );
+  useEffect(() => {
+    preparedFilesRef.current.clear();
+  }, [user?.id, temporarySessionKey]);
 
   useLayoutEffect(() => {
     savedChatSession.select(selectedThreadId, active && !temporary);
@@ -589,7 +694,13 @@ export function ChatPanel({
     restoreGuard.invalidate();
     setIsRestoring(false);
     return () => restoreGuard.invalidate();
-  }, [activeThreadId, selectedThreadId, temporary, temporarySessionKey, restoreGuard]);
+  }, [
+    activeThreadId,
+    selectedThreadId,
+    temporary,
+    temporarySessionKey,
+    restoreGuard,
+  ]);
 
   useEffect(() => {
     if (!isLoaded) {
@@ -652,7 +763,8 @@ export function ChatPanel({
           savedRun?.assertCurrent();
         };
         if (savedRun) {
-          let creationFailure: ReturnType<typeof chatRequestFailure> | null = null;
+          let creationFailure: ReturnType<typeof chatRequestFailure> | null =
+            null;
           try {
             threadId = await savedRun.resolveThread(async () => {
               const createThreadResponse = await fetch("/api/chat/threads", {
@@ -698,15 +810,57 @@ export function ChatPanel({
           newlyCreatedThreadIdsRef.current.add(threadId);
           setActiveThreadId(threadId);
           onThreadSelected?.(threadId);
-          void refreshWorkspaceList(queryClient, "chat-threads", "/chat/threads").catch(() => {});
+          void refreshWorkspaceList(
+            queryClient,
+            "chat-threads",
+            "/chat/threads",
+          ).catch(() => {});
         }
 
         // Saved-thread history is reconstructed from the database; submit only the new user turn.
         // Slice before mapping — toApiMessages runs image-data-URI compaction over every message,
         // so mapping the full history first would scan megabytes of base64 only to discard it.
-        const payloadMessages = temporary
-          ? toApiMessages(messages)
-          : toApiMessages(messages.slice(-1));
+        const scope = `${user?.id}:${temporary ? `temporary:${temporarySessionKey}` : threadId}`;
+        const latestMessage = messages.at(-1);
+        const attachments =
+          latestMessage?.role === "user"
+            ? (latestMessage.attachments ?? [])
+            : [];
+        if (attachments.length > MAX_CHAT_FILES_PER_MESSAGE)
+          throw new Error("Attach at most four files per message.");
+        if (attachments.length && !user)
+          throw new Error("Sign in to attach files.");
+        for (const attachment of attachments) {
+          assertCurrent();
+          const key = `${scope}:${attachment.id}`;
+          if (!preparedFilesRef.current.has(key)) {
+            if (!attachment.file)
+              throw new Error("Reattach the file before sending it again.");
+            const file = await uploadChatFile(
+              attachment.file,
+              temporary ? null : threadId,
+              abortSignal,
+            );
+            assertCurrent();
+            preparedFilesRef.current.set(key, file);
+          }
+        }
+        const attachedText = attachments.reduce((total, attachment) => {
+          const file = preparedFilesRef.current.get(
+            `${scope}:${attachment.id}`,
+          );
+          return total + (file && "text" in file ? file.text.length : 0);
+        }, 0);
+        if (attachedText > MAX_CHAT_DOCUMENT_CONTEXT)
+          throw new Error(
+            "Attach at most 400,000 extracted characters per message.",
+          );
+        const payloadMessages = toApiMessages(
+          temporary ? messages : messages.slice(-1),
+          preparedFilesRef.current,
+          scope,
+          temporary,
+        );
 
         const response = await fetch("/api/chat", {
           method: "POST",
@@ -724,7 +878,11 @@ export function ChatPanel({
         assertCurrent();
 
         if (!response.ok) {
-          const failure = chatRequestFailure(await response.json().catch(() => null), response.status, response.headers.get("Retry-After"));
+          const failure = chatRequestFailure(
+            await response.json().catch(() => null),
+            response.status,
+            response.headers.get("Retry-After"),
+          );
           assertCurrent();
           // Any failure may follow admission (e.g. a provider error before streaming), so refresh
           // usage for all of them; 429s also carry the current quota.
@@ -737,7 +895,10 @@ export function ChatPanel({
 
         // An admitted request counts against the hourly quota however it ends.
         try {
-          for await (const snapshot of readChatApiResponse(response, abortSignal)) {
+          for await (const snapshot of readChatApiResponse(
+            response,
+            abortSignal,
+          )) {
             assertCurrent();
             completedSnapshot = snapshot.done ? snapshot : completedSnapshot;
             yield {
@@ -753,6 +914,8 @@ export function ChatPanel({
                   // Retained so the next temporary turn can replay this turn's tool exchange.
                   agentMessages: snapshot.agentMessages ?? [],
                   webSources: snapshot.webSources ?? [],
+                  files: snapshot.files ?? [],
+                  documents: snapshot.documents ?? [],
                 },
               },
             };
@@ -769,7 +932,11 @@ export function ChatPanel({
         if (!temporary) {
           setPersistenceWarning(completedSnapshot.persisted === false);
           if (completedSnapshot.persisted !== false) {
-            void refreshWorkspaceList(queryClient, "chat-threads", "/chat/threads").catch(() => {});
+            void refreshWorkspaceList(
+              queryClient,
+              "chat-threads",
+              "/chat/threads",
+            ).catch(() => {});
           }
           if (
             completedSnapshot.persisted !== false &&
@@ -806,23 +973,32 @@ export function ChatPanel({
       queryClient,
       savedChatSession,
       temporary,
+      temporarySessionKey,
+      user,
     ],
   );
 
-  const runtime = useLocalRuntime(chatModel);
+  const runtime = useLocalRuntime(chatModel, {
+    adapters: { attachments: attachmentAdapter },
+  });
   useEffect(() => {
     if (!active) runtime.thread.cancelRun();
   }, [active, runtime]);
   useEffect(() => {
     if (!onContentChange) return;
-    const update = () => onContentChange(
-      runtime.thread.getState().messages.length > 0 ||
-      Boolean(runtime.thread.composer.getState().text.trim()),
-    );
+    const update = () =>
+      onContentChange(
+        runtime.thread.getState().messages.length > 0 ||
+          Boolean(runtime.thread.composer.getState().text.trim()) ||
+          runtime.thread.composer.getState().attachments.length > 0,
+      );
     update();
     const stopThread = runtime.thread.subscribe(update);
     const stopComposer = runtime.thread.composer.subscribe(update);
-    return () => { stopThread(); stopComposer(); };
+    return () => {
+      stopThread();
+      stopComposer();
+    };
   }, [runtime, onContentChange]);
   const isHydratingThread =
     !temporary &&
@@ -861,7 +1037,7 @@ export function ChatPanel({
 
     runtime.thread.cancelRun();
     runtime.thread.reset([]);
-    runtime.thread.composer.setText("");
+    void runtime.thread.composer.reset();
     hydratedSignatureRef.current = signature;
     newlyCreatedThreadIdsRef.current.clear();
   }, [runtime, temporary, temporarySessionKey]);
@@ -989,7 +1165,13 @@ export function ChatPanel({
   };
 
   const restorePersistedConversation = async () => {
-    if (!activeThreadId || activeThreadId !== selectedThreadId || temporary || isRestoring) return;
+    if (
+      !activeThreadId ||
+      activeThreadId !== selectedThreadId ||
+      temporary ||
+      isRestoring
+    )
+      return;
     const threadId = activeThreadId;
     const isCurrent = restoreGuard.begin();
     setIsRestoring(true);
@@ -997,7 +1179,9 @@ export function ChatPanel({
       const result = await activeThreadQuery.refetch();
       if (!isCurrent()) return;
       if (result.isError) {
-        toast.error("Could not restore the saved conversation. Please try again.");
+        toast.error(
+          "Could not restore the saved conversation. Please try again.",
+        );
         return;
       }
       if (!result.data || result.data.id !== threadId) return;
@@ -1150,24 +1334,48 @@ export function ChatPanel({
                 </div>
               ) : null}
               <div className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-card border border-input bg-popover p-1.5 transition-colors focus-within:border-primary/70">
-                <ComposerPrimitive.Input
-                  className={cn(
-                    "min-h-[40px] max-h-60 w-full resize-none bg-transparent px-4 py-2.5 text-[15px] text-foreground outline-none",
-                    "placeholder:text-muted-foreground",
-                    "composer-input-no-scrollbar",
-                  )}
-                  aria-label="Chat message"
-                  disabled={composerDisabled}
-                  placeholder={
-                    isHydratingThread
-                      ? "Loading conversation..."
-                      : isThreadUnavailable
-                        ? "Conversation unavailable"
-                        : "Ask SignLoop..."
-                  }
-                  submitMode="enter"
-                  rows={1}
-                />
+                <ComposerPrimitive.AddAttachment asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="mb-1 h-9 w-9 shrink-0"
+                    disabled={composerDisabled || !user}
+                    title={
+                      user
+                        ? "Attach PDF, TXT, or DOCX (4 MB each)"
+                        : "Sign in to attach files"
+                    }
+                  >
+                    <Paperclip className="h-4 w-4" />
+                    <span className="sr-only">Attach files</span>
+                  </Button>
+                </ComposerPrimitive.AddAttachment>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap gap-2 px-2">
+                    <ComposerPrimitive.Attachments
+                      components={{ Attachment: ComposerFile }}
+                    />
+                  </div>
+                  <ComposerPrimitive.Input
+                    className={cn(
+                      "min-h-[40px] max-h-60 w-full resize-none bg-transparent px-4 py-2.5 text-[15px] text-foreground outline-none",
+                      "placeholder:text-muted-foreground",
+                      "composer-input-no-scrollbar",
+                    )}
+                    aria-label="Chat message"
+                    disabled={composerDisabled}
+                    placeholder={
+                      isHydratingThread
+                        ? "Loading conversation..."
+                        : isThreadUnavailable
+                          ? "Conversation unavailable"
+                          : "Ask SignLoop..."
+                    }
+                    submitMode="enter"
+                    rows={1}
+                  />
+                </div>
 
                 <div className="flex shrink-0 p-1">
                   <ThreadPrimitive.If running={false}>

@@ -7,6 +7,7 @@ const {
   appendChatMessagesToThread,
   getRecentChatMessagesForThreadForUser,
   getUserSettingsByUserId,
+  getChatDocumentsForUser,
   getModelAvailabilitySnapshot,
   generateChatTitle,
   generateChatReply,
@@ -18,6 +19,7 @@ const {
   appendChatMessagesToThread: vi.fn(),
   getRecentChatMessagesForThreadForUser: vi.fn(),
   getUserSettingsByUserId: vi.fn(),
+  getChatDocumentsForUser: vi.fn(),
   getModelAvailabilitySnapshot: vi.fn(),
   generateChatTitle: vi.fn(),
   generateChatReply: vi.fn(),
@@ -30,6 +32,7 @@ vi.mock("@/lib/server-db", () => ({
   appendChatMessagesToThread,
   getRecentChatMessagesForThreadForUser,
   getUserSettingsByUserId,
+  getChatDocumentsForUser,
 }));
 vi.mock("@/lib/chat-title", () => ({ generateChatTitle }));
 vi.mock("@/lib/chat", () => ({ generateChatReply, generateChatReplyStream }));
@@ -48,6 +51,10 @@ vi.mock("@/lib/telemetry", () => ({
 
 import { POST } from "@/app/api/chat/route";
 import { validateContractReplay } from "@/lib/contract-evidence";
+import {
+  MAX_CHAT_REQUEST_BODY_BYTES,
+  MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES,
+} from "./chat-history-bounds";
 
 const resetAt = "2026-10-19T15:00:00.000Z";
 const quota = (used: number) => ({
@@ -62,6 +69,75 @@ afterEach(() => {
   vi.useRealTimers();
   vi.resetAllMocks();
   vi.restoreAllMocks();
+});
+
+describe("authenticated chat body limits", () => {
+  it("rejects an impossible declared size before authentication or body reads", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Length": String(MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES + 1),
+        },
+        body: "{}",
+      }),
+    );
+    expect(response.status).toBe(413);
+    expect(auth).not.toHaveBeenCalled();
+    expect(admitChat).not.toHaveBeenCalled();
+  });
+
+  it("rejects an anonymous declared size above 128 KiB without reading its body", async () => {
+    auth.mockResolvedValue({ userId: null });
+    const pull = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ pull }, { highWaterMark: 0 });
+    const req = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Length": String(MAX_CHAT_REQUEST_BODY_BYTES + 1) },
+      body,
+      duplex: "half",
+    } as RequestInit);
+    expect((await POST(req)).status).toBe(413);
+    expect(auth).toHaveBeenCalledOnce();
+    expect(pull).not.toHaveBeenCalled();
+    expect(admitChat).not.toHaveBeenCalled();
+  });
+
+  it("waits for authentication and caps an anonymous chunked body at 128 KiB", async () => {
+    let authenticate!: (value: { userId: null }) => void;
+    auth.mockReturnValue(
+      new Promise((resolve) => {
+        authenticate = resolve;
+      }),
+    );
+    const cancel = vi.fn();
+    const pull = vi.fn(
+      (controller: ReadableStreamDefaultController<Uint8Array>) => {
+        controller.enqueue(new Uint8Array(MAX_CHAT_REQUEST_BODY_BYTES + 1));
+      },
+    );
+    const body = new ReadableStream<Uint8Array>(
+      { pull, cancel },
+      { highWaterMark: 0 },
+    );
+    const pending = POST(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        body,
+        duplex: "half",
+      } as RequestInit),
+    );
+    await Promise.resolve();
+    expect(auth).toHaveBeenCalledOnce();
+    expect(pull).not.toHaveBeenCalled();
+    authenticate({ userId: null });
+    expect((await pending).status).toBe(413);
+    expect(pull).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(admitChat).not.toHaveBeenCalled();
+    expect(generateChatReply).not.toHaveBeenCalled();
+    expect(generateChatReplyStream).not.toHaveBeenCalled();
+  });
 });
 
 describe("saved chat admission", () => {
@@ -278,6 +354,83 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
       yield { type: "done", reply };
     });
     appendChatMessagesToThread.mockResolvedValue([]);
+  });
+
+  it("accepts an authenticated temporary document body above the anonymous limit", async () => {
+    const document = {
+      id: "abcdef01-2345-4678-9abc-def012345678",
+      name: "large.txt",
+      mediaType: "text/plain",
+      size: 140_000,
+      text: "x".repeat(140_000),
+    };
+    const input = request({
+      temporary: true,
+      messages: [
+        { role: "user", content: "Read this document", documents: [document] },
+      ],
+    });
+    expect(Buffer.byteLength(await input.clone().text())).toBeGreaterThan(
+      MAX_CHAT_REQUEST_BODY_BYTES,
+    );
+    const result = await completion(await POST(input));
+    expect(result.message).toBe(reply.message);
+    expect(
+      stream ? generateChatReplyStream : generateChatReply,
+    ).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ documents: [document] }),
+    );
+  });
+
+  it("loads saved document contents from the owner-scoped database and persists only file descriptors", async () => {
+    const file = { id: "abcdef01-2345-4678-9abc-def012345678", name: "terms.txt", mediaType: "text/plain", size: 12, text: "Private terms" };
+    getChatDocumentsForUser.mockResolvedValue([file]);
+    const result = await completion(await POST(request({ messages: [{ role: "user", content: "Read my terms", fileIds: [file.id], documents: [{ ...file, text: "fabricated" }] }] })));
+    expect(result.persisted).toBe(true);
+    expect(stream ? generateChatReplyStream : generateChatReply).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ role: "user", fileIds: [file.id] })]),
+      expect.objectContaining({ documents: [file], enableDocuments: true }),
+    );
+    const written = appendChatMessagesToThread.mock.calls[0]![0];
+    expect(written.messages[0].metadata.files[0]).toMatchObject({ id: file.id, url: expect.stringContaining(`/threads/${threadId}/files/`) });
+    expect(JSON.stringify(written)).not.toContain("fabricated");
+    expect(JSON.stringify(written)).not.toContain("Private terms");
+  });
+
+  it("rejects a foreign attachment without charging quota", async () => {
+    getChatDocumentsForUser.mockResolvedValue([]);
+    const response = await POST(request({ messages: [{ role: "user", content: "Read my terms", fileIds: ["abcdef01-2345-4678-9abc-def012345678"] }] }));
+    expect(response.status).toBe(400);
+    expect(admitChat).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("returns generated file downloads even when saved persistence is %s", async (persisted) => {
+    const file = { id: "abcdef01-2345-4678-9abc-def012345678", name: "notes.txt", mediaType: "text/plain", size: 5, text: "Hello", data: "SGVsbG8=" };
+    const withFile = { ...reply, files: [file] };
+    generateChatReply.mockResolvedValue(withFile);
+    generateChatReplyStream.mockImplementation(async function* () { yield { type: "delta", text: reply.message }; yield { type: "done", reply: withFile }; });
+    const saved = { id: file.id, name: file.name, mediaType: file.mediaType, size: file.size, url: `/api/chat/threads/${threadId}/files/${file.id}` };
+    if (persisted) appendChatMessagesToThread.mockResolvedValue([{ role: "assistant", content: reply.message, files: [saved] }]);
+    else appendChatMessagesToThread.mockRejectedValue(new Error("Database unavailable"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await completion(await POST(request()));
+    expect(result.persisted).toBe(persisted);
+    expect(result.files).toEqual(persisted ? [saved] : [{ id: file.id, name: file.name, mediaType: file.mediaType, size: file.size, data: file.data }]);
+    expect(appendChatMessagesToThread.mock.calls[0]![0].generatedFiles).toEqual([file]);
+    log.mockRestore();
+  });
+
+  it("keeps editable generated text in temporary browser state without storing bytes in replay", async () => {
+    const file = { id: "abcdef01-2345-4678-9abc-def012345678", name: "notes.txt", mediaType: "text/plain", size: 5, text: "Hello", data: "SGVsbG8=" };
+    const withFile = { ...reply, files: [file] };
+    generateChatReply.mockResolvedValue(withFile);
+    generateChatReplyStream.mockImplementation(async function* () { yield { type: "delta", text: reply.message }; yield { type: "done", reply: withFile }; });
+    const result = await completion(await POST(request({ temporary: true })));
+    expect(result.documents).toEqual([{ id: file.id, name: file.name, mediaType: file.mediaType, size: file.size, text: "Hello" }]);
+    expect(result.documents[0]).not.toHaveProperty("data");
+    expect(result.files[0].data).toBe(file.data);
+    expect(appendChatMessagesToThread).not.toHaveBeenCalled();
   });
 
   it("names the first saved turn using the same resolved model as the reply", async () => {

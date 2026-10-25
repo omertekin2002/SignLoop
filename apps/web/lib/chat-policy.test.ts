@@ -9,7 +9,34 @@ import {
   parseBoundedJsonRequest,
   parseClientChatMessages,
   parseLatestClientUserMessage,
+  boundTemporaryChatHistory,
+  MAX_CHAT_REQUEST_BODY_BYTES,
+  MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES,
 } from "@/lib/chat-policy";
+
+it("uses the larger browser transport budget only when document text is present", () => {
+  const document = {
+    id: "abcdef01-2345-4678-9abc-def012345678",
+    name: "large.txt",
+    mediaType: "text/plain",
+    size: 140_000,
+    text: "x".repeat(140_000),
+  };
+  const history = [
+    {
+      role: "user" as const,
+      content: "Read this document",
+      documents: [document],
+    },
+  ];
+  const bounded = boundTemporaryChatHistory(history);
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({ messages: bounded }),
+  ).byteLength;
+  expect(bytes).toBeGreaterThan(MAX_CHAT_REQUEST_BODY_BYTES);
+  expect(bytes).toBeLessThan(MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES);
+  expect(bounded).toEqual(history);
+});
 
 describe("parseClientChatMessages", () => {
   it("accepts and trims a conversation that ends with a user message", () => {

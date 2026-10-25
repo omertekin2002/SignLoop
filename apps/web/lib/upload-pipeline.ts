@@ -101,11 +101,14 @@ export function getExtractionWarning(input: {
   return null;
 }
 
-// Parse + validate the multipart upload and extract its text. Does NOT persist anything, so the
-// caller decides its own empty-text policy before storing (e.g. contracts reject empty text).
+/**
+ * Validate and extract a bounded multipart upload using the caller's allowed file formats.
+ * Does not persist data; callers decide whether empty or partially extracted text is acceptable.
+ */
 export async function prepareUpload(
   req: Request,
   progress?: ReportProgress,
+  options?: { allowedExtensions: readonly string[]; allowedMimeTypes?: readonly string[] },
 ): Promise<PreparedUpload | UploadValidationError> {
   const signal = AbortSignal.any([req.signal, AbortSignal.timeout(150_000)]);
   const declaredContentLength = Number(req.headers.get("content-length"));
@@ -179,6 +182,10 @@ export async function prepareUpload(
   }
   const file = files[0];
 
+  if (options && !options.allowedExtensions.includes(file.name.split(".").at(-1)?.toLowerCase() ?? "")) {
+    return { ok: false, status: 400, error: "Attach a PDF, TXT, or DOCX file." };
+  }
+
   if (file.size === 0) {
     return { ok: false, status: 400, error: "The uploaded file is empty" };
   }
@@ -203,6 +210,8 @@ export async function prepareUpload(
     };
   }
 
+  if (options?.allowedMimeTypes && !options.allowedMimeTypes.includes(mimeType))
+    return { ok: false, status: 400, error: "Attach a PDF, TXT, or DOCX file." };
   const buffer = Buffer.from(await file.arrayBuffer());
   try {
     validateFileSignature(buffer, mimeType);

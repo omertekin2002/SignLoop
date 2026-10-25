@@ -8,6 +8,7 @@ export const metadata: Metadata = {
 
 const ISSUES_URL = "https://github.com/omertekin2002/SignLoop/issues";
 
+/** Explain storage, temporary chats, uploads, and data processing by external providers. */
 export default function PrivacyPage() {
   return (
     <div className="app-page">
@@ -45,6 +46,9 @@ export default function PrivacyPage() {
               <strong>Temporary chats.</strong> Temporary chats are not saved to SignLoop’s
               database. They stay in your browser, but their messages are still sent to AI
               providers to generate replies.
+              Files attached to temporary chats are processed to extract text and then kept
+              only in your browser conversation. Saved-chat files and generated downloads
+              are kept with the chat and removed when you delete it.
             </li>
             <li>
               <strong>Technical information.</strong> SignLoop’s hosting provider processes

@@ -6,8 +6,16 @@ import { parseWebSources } from "@repo/chat-engine/chat-history-shared";
 import { chatRequestFailure } from "@/lib/chat-request-error";
 import { parseAccountQuota } from "@/lib/usage-client";
 import { isRecord } from "@/lib/utils";
+import {
+  parseChatDownloads,
+  parseChatDocuments,
+  type ChatDownloadFile,
+  type ChatDocument,
+} from "@/lib/chat-files-shared";
 
 type ChatApiSuccess = {
+  files?: ChatDownloadFile[];
+  documents?: ChatDocument[];
   toolActivity?: ChatToolActivity[];
   /** Temporary chat keeps its tool exchanges here; saved threads reload them from the database. */
   agentMessages?: unknown[];
@@ -43,6 +51,7 @@ function parseError(payload: unknown, status: number): string {
   return chatRequestFailure(payload, status, null).message;
 }
 
+/** Normalize a complete reply and validate any document or download metadata at the boundary. */
 function parseSuccess(payload: unknown): ChatApiSuccess {
   if (!isRecord(payload) || typeof payload.message !== "string") {
     throw new Error("Chat response did not include a message.");
@@ -55,6 +64,12 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
 
   return {
     message,
+    ...(payload.documents !== undefined
+      ? { documents: parseChatDocuments(payload.documents) }
+      : {}),
+    ...(payload.files !== undefined
+      ? { files: parseChatDownloads(payload.files) }
+      : {}),
     webSources: parseWebSources(payload.webSources),
     toolActivity: parseToolActivity(payload.toolActivity),
     agentMessages: Array.isArray(payload.agentMessages)
@@ -83,6 +98,16 @@ export const TOOL_ACTIVITY_LABELS: Record<
   ChatToolName,
   { running: string; complete: string; error: string }
 > = {
+  read_file: {
+    running: "Reading file",
+    complete: "Read file",
+    error: "File unavailable",
+  },
+  create_file: {
+    running: "Creating file",
+    complete: "Created file",
+    error: "File creation failed",
+  },
   search_web: {
     running: "Searching",
     complete: "Searched",
@@ -111,6 +136,7 @@ export const TOOL_ACTIVITY_LABELS: Record<
   },
 };
 
+/** Keep only recognized tool activity so malformed saved metadata cannot break the transcript. */
 export function parseToolActivity(value: unknown): ChatToolActivity[] {
   return Array.isArray(value)
     ? value.flatMap((item): ChatToolActivity[] =>
@@ -136,6 +162,7 @@ export function parseToolActivity(value: unknown): ChatToolActivity[] {
     : [];
 }
 
+/** Validate an NDJSON event before the client applies it to a streamed reply. */
 function parseStreamEvent(payload: unknown): ChatApiStreamEvent {
   if (!isRecord(payload) || typeof payload.type !== "string") {
     throw new Error("Chat stream included an invalid event.");
@@ -222,6 +249,7 @@ export function readChatApiResponse(
   return iterator;
 }
 
+/** Consume bounded JSON or NDJSON replies while preserving cancellation and final metadata. */
 async function* consumeChatApiResponse(
   response: Response,
   cancellation: AbortController,

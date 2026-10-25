@@ -30,5 +30,6 @@ export function toPublicChatMessage(message: ChatMessageRecord) {
     model: message.model,
     provider: message.provider,
     toolActivity: message.toolActivity,
+    ...(message.files?.length ? { files: message.files } : {}),
   };
 }
