@@ -127,5 +127,95 @@ describe("real PDF extraction", () => {
     expect(result.text).toContain("recipientAccount: EXAMPLE-ACCOUNT-123");
     expect(result.text).not.toContain("unfilledField");
   });
+  it.each(["FreeText", "Widget", "Choice"])(
+    "preserves a %s value when unrelated page text contains it",
+    async (kind) => {
+      const document = await PDFDocument.create();
+      const page = document.addPage();
+      page.drawText("Contract signed in 2026. Payment term (days):", {
+        x: 40,
+        y: 730,
+      });
+      // Test both a substring of an unrelated year and an exact value elsewhere.
+      page.drawText("30", { x: 40, y: 700 });
+      for (const [index, value] of ["20", "30"].entries()) {
+        const y = 650 - index * 40;
+        if (kind === "FreeText") {
+          addPdfAnnotation(document, page, kind, value, y);
+        } else {
+          const form = document.getForm();
+          const name = `paymentTermDays${index}`;
+          if (kind === "Choice") {
+            const field = form.createDropdown(name);
+            field.addOptions([value]);
+            field.select(value);
+            field.addToPage(page, { x: 40, y, width: 250, height: 24 });
+          } else {
+            const field = form.createTextField(name);
+            field.setText(value);
+            field.addToPage(page, { x: 40, y, width: 250, height: 24 });
+          }
+        }
+      }
 
+      const result = await extractTextFromPdf(
+        Buffer.from(await document.save()),
+      );
+
+      expect(result.text).toContain(
+        kind === "FreeText"
+          ? "Visible annotations: 20 | 30"
+          : "Visible annotations: paymentTermDays0: 20 | paymentTermDays1: 30",
+      );
+    },
+  );
+
+  it.each(["FreeText", "Widget"])(
+    "keeps a scanned-page warning with a one-character %s annotation",
+    async (kind) => {
+      const source = await readFile(
+        new URL("./fixtures/pdf-scanned-middle-page.pdf", import.meta.url),
+      );
+      const document = await PDFDocument.load(source);
+      const page = document.getPage(1);
+      if (kind === "FreeText") {
+        addPdfAnnotation(document, page, kind, "X", 650);
+      } else {
+        const field = document
+          .getForm()
+          .createTextField("Long internal field name that is not page text");
+        field.setText("X");
+        field.addToPage(page, { x: 40, y: 650, width: 250, height: 24 });
+      }
+
+      const result = await extractTextFromPdf(
+        Buffer.from(await document.save()),
+      );
+
+      expect(result.text).toContain("Visible annotations:");
+      expect(result).toMatchObject({
+        method: "pdf_parse",
+        confidence: 66,
+        sparseTextPages: [2],
+      });
+    },
+  );
+
+  it("deduplicates only the annotation at the matching text-layer location", async () => {
+    const document = await PDFDocument.create();
+    const page = document.addPage();
+    page.drawText("Agreement with two account fields below.", {
+      x: 40,
+      y: 730,
+    });
+    const value = "EXAMPLE-ACCOUNT-123";
+    page.drawText(value, { x: 40, y: 660, size: 12 });
+    addPdfAnnotation(document, page, "FreeText", value, 650);
+    addPdfAnnotation(document, page, "FreeText", value, 610);
+
+    const result = await extractTextFromPdf(Buffer.from(await document.save()));
+
+    expect(result.text.split(value)).toHaveLength(3);
+    expect(result.text).toContain(`Visible annotations: ${value}`);
+  });
 });

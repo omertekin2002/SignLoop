@@ -547,6 +547,7 @@ export function validateMimeType(mimeType: string, fileName?: string): string {
 
 type VisiblePdfAnnotation = {
   subtype?: string;
+  rect?: number[];
   hidden?: boolean;
   annotationFlags?: number;
   contentsObj?: { str?: string };
@@ -557,11 +558,47 @@ type VisiblePdfAnnotation = {
   options?: Array<{ exportValue: string; displayValue: string }>;
 };
 
+type PdfAnnotationText = { value: string; text: string };
+type PdfTextItem = { str: string; transform: number[]; hasEOL: boolean };
+
+/** A value elsewhere on the page is not evidence that this annotation was flattened. */
+function annotationDuplicatesPageText(
+  annotation: VisiblePdfAnnotation,
+  value: string,
+  items: PdfTextItem[],
+): boolean {
+  const rect = annotation.rect;
+  if (!rect || rect.length !== 4) return false;
+  const [left, bottom, right, top] = rect;
+  if (
+    left === undefined ||
+    bottom === undefined ||
+    right === undefined ||
+    top === undefined
+  )
+    return false;
+  const localItems = items.filter(({ transform }) => {
+    const [, , , , x, y] = transform;
+    if (x === undefined || y === undefined) return false;
+    return x >= left && x <= right && y >= bottom && y <= top;
+  });
+  const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+  const normalizedValue = normalize(value);
+  // PDF.js can split a value into several items, with explicit or implicit spaces.
+  return ["", " "].some(
+    (separator) =>
+      normalize(
+        localItems
+          .map((item) => item.str + (item.hasEOL ? "\n" : ""))
+          .join(separator),
+      ) === normalizedValue,
+  );
+}
+
 /** Only extract text that is displayed on the page, not comments or hidden notes. */
 function visiblePdfAnnotationText(
   annotation: VisiblePdfAnnotation,
-  baseText: string,
-): string | null {
+): PdfAnnotationText | null {
   // PDF.js may expose the raw /F bits without setting `hidden`. Hide
   // annotations marked Hidden (0x02) or NoView (0x20), even for display intent.
   if (
@@ -572,7 +609,7 @@ function visiblePdfAnnotationText(
 
   if (annotation.subtype === "FreeText") {
     const text = annotation.contentsObj?.str?.trim();
-    return text && !baseText.includes(text) ? text : null;
+    return text ? { value: text, text } : null;
   }
 
   if (
@@ -591,17 +628,17 @@ function visiblePdfAnnotationText(
       annotation.fieldType === "Ch"
         ? selectedValues.map(
             (selected) =>
-              annotation.options?.find((option) => option.exportValue === selected)
-                ?.displayValue ?? selected,
+              annotation.options?.find(
+                (option) => option.exportValue === selected,
+              )?.displayValue ?? selected,
           )
         : selectedValues;
     const text = displayedValues.join(", ").trim();
-    // Compare the displayed value before prefixing the field name, otherwise
-    // a named widget duplicates a value already present in the page text layer.
-    if (!text || baseText.includes(text)) return null;
-    return annotation.fieldName
-      ? `${annotation.fieldName}: ${text}`
-      : text;
+    if (!text) return null;
+    return {
+      value: text,
+      text: annotation.fieldName ? `${annotation.fieldName}: ${text}` : text,
+    };
   }
 
   return null;
@@ -637,15 +674,16 @@ export async function extractTextFromPdf(
     const pages: string[] = [];
     const sparseTextPages: number[] = [];
     let characters = 0;
+    let densityCharacters = 0;
     // Read one page at a time: unpdf's convenience helper materializes every page in parallel.
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
       options?.signal?.throwIfAborted();
       const page = await pdf.getPage(pageNumber);
       try {
         const content = await withAbort(page.getTextContent(), options?.signal);
+        const textItems = content.items.filter((item) => "str" in item);
         const parts: string[] = [];
-        for (const item of content.items) {
-          if (!("str" in item)) continue;
+        for (const item of textItems) {
           characters += item.str.length + 1;
           if (characters > MAX_EXTRACTED_TEXT_LENGTH)
             throw new ExtractionLimitError(
@@ -660,11 +698,15 @@ export async function extractTextFromPdf(
           page.getAnnotations({ intent: "display" }),
           options?.signal,
         );
-        const annotationTexts = annotations
-          .map((annotation) => visiblePdfAnnotationText(annotation, baseText))
-          .filter((text): text is string => text !== null);
+        const annotationTexts = annotations.flatMap((annotation) => {
+          const text = visiblePdfAnnotationText(annotation);
+          return text &&
+            !annotationDuplicatesPageText(annotation, text.value, textItems)
+            ? [text]
+            : [];
+        });
         const annotationText = annotationTexts.length
-          ? `\nVisible annotations: ${annotationTexts.join(" | ")}`
+          ? `\nVisible annotations: ${annotationTexts.map(({ text }) => text).join(" | ")}`
           : "";
         characters += annotationText.length;
         if (characters > MAX_EXTRACTED_TEXT_LENGTH)
@@ -673,10 +715,19 @@ export async function extractTextFromPdf(
           );
         const pageText = baseText + annotationText;
         pages.push(pageText);
-        // Counted per page because joining and whitespace collapsing below lose page boundaries.
-        // Only this tally is kept; the stored text, and the offsets citations take into it, are
-        // unchanged.
-        if (pageText.replace(/\s+/g, "").length < MIN_PAGE_TEXT_CHARACTERS) {
+        // Count only actual page text and displayed values. Generated labels, field names,
+        // and separators must not make a sparse scanned page appear fully extracted.
+        const densityText =
+          baseText + annotationTexts.map(({ value }) => value).join("");
+        const pageDensityCharacters = densityText
+          .replace(/\s+/g, " ")
+          .trim().length;
+        if (pageDensityCharacters > 0) {
+          // Preserve a single page boundary between non-empty pages, as in extractedText.
+          densityCharacters +=
+            pageDensityCharacters + (densityCharacters > 0 ? 1 : 0);
+        }
+        if (densityText.replace(/\s+/g, "").length < MIN_PAGE_TEXT_CHARACTERS) {
           sparseTextPages.push(pageNumber);
         }
       } finally {
@@ -688,7 +739,7 @@ export async function extractTextFromPdf(
 
     // Check if it's a scanned PDF (low text density)
     const pageCount = totalPages || 1;
-    const avgCharsPerPage = extractedText.length / pageCount;
+    const avgCharsPerPage = densityCharacters / pageCount;
 
     // Density alone decides for anything longer than a couple of pages. A previous
     // `&& extractedText.length < 500` conjunct here was inert for short documents (under ~10 pages,
@@ -698,7 +749,7 @@ export async function extractTextFromPdf(
     // parsed contract at confidence 100 and analyzed as if that furniture were the agreement.
     const isSparse = avgCharsPerPage < MIN_TEXT_DENSITY;
     const isShortDocument = pageCount <= SHORT_DOCUMENT_PAGE_COUNT;
-    if (isSparse && (!isShortDocument || extractedText.length < 500)) {
+    if (isSparse && (!isShortDocument || densityCharacters < 500)) {
       // Scanned PDF with no usable text layer (OCR of rasterized PDF pages is not implemented).
       // Empty text is rejected by the callers' "no text extracted" check. Sparse non-empty text is
       // kept and flagged pdf_scanned, and upload-pipeline turns that flag into a persisted warning.
