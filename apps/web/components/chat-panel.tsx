@@ -1333,13 +1333,13 @@ export function ChatPanel({
                   </div>
                 </div>
               ) : null}
-              <div className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-card border border-input bg-popover p-1.5 transition-colors focus-within:border-primary/70">
+              <div className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-card border border-input bg-popover p-2 transition-colors focus-within:border-primary/70">
                 <ComposerPrimitive.AddAttachment asChild>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="mb-1 h-9 w-9 shrink-0"
+                    className="h-9 w-9 shrink-0"
                     disabled={composerDisabled || !user}
                     title={
                       user
@@ -1359,7 +1359,7 @@ export function ChatPanel({
                   </div>
                   <ComposerPrimitive.Input
                     className={cn(
-                      "min-h-[40px] max-h-60 w-full resize-none bg-transparent px-4 py-2.5 text-[15px] text-foreground outline-none",
+                      "block min-h-9 max-h-60 w-full resize-none bg-transparent px-2 py-[7px] text-[15px] leading-[22px] text-foreground outline-none",
                       "placeholder:text-muted-foreground",
                       "composer-input-no-scrollbar",
                     )}
@@ -1377,7 +1377,7 @@ export function ChatPanel({
                   />
                 </div>
 
-                <div className="flex shrink-0 p-1">
+                <div className="flex shrink-0">
                   <ThreadPrimitive.If running={false}>
                     <ComposerPrimitive.Send asChild>
                       <Button
