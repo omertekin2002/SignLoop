@@ -553,10 +553,15 @@ type VisiblePdfAnnotation = {
   fieldType?: string;
   fieldValue?: unknown;
   fieldName?: string;
+  password?: boolean;
+  options?: Array<{ exportValue: string; displayValue: string }>;
 };
 
 /** Only extract text that is displayed on the page, not comments or hidden notes. */
-function visiblePdfAnnotationText(annotation: VisiblePdfAnnotation): string | null {
+function visiblePdfAnnotationText(
+  annotation: VisiblePdfAnnotation,
+  baseText: string,
+): string | null {
   // PDF.js may expose the raw /F bits without setting `hidden`. Hide
   // annotations marked Hidden (0x02) or NoView (0x20), even for display intent.
   if (
@@ -566,24 +571,37 @@ function visiblePdfAnnotationText(annotation: VisiblePdfAnnotation): string | nu
     return null;
 
   if (annotation.subtype === "FreeText") {
-    return annotation.contentsObj?.str?.trim() || null;
+    const text = annotation.contentsObj?.str?.trim();
+    return text && !baseText.includes(text) ? text : null;
   }
 
   if (
     annotation.subtype === "Widget" &&
+    !annotation.password &&
     (annotation.fieldType === "Tx" || annotation.fieldType === "Ch")
   ) {
     const value = annotation.fieldValue;
-    const text =
+    const selectedValues =
       typeof value === "string"
-        ? value
+        ? [value]
         : Array.isArray(value)
-          ? value.filter((item): item is string => typeof item === "string").join(", ")
-          : "";
-    if (!text.trim()) return null;
+          ? value.filter((item): item is string => typeof item === "string")
+          : [];
+    const displayedValues =
+      annotation.fieldType === "Ch"
+        ? selectedValues.map(
+            (selected) =>
+              annotation.options?.find((option) => option.exportValue === selected)
+                ?.displayValue ?? selected,
+          )
+        : selectedValues;
+    const text = displayedValues.join(", ").trim();
+    // Compare the displayed value before prefixing the field name, otherwise
+    // a named widget duplicates a value already present in the page text layer.
+    if (!text || baseText.includes(text)) return null;
     return annotation.fieldName
-      ? `${annotation.fieldName}: ${text.trim()}`
-      : text.trim();
+      ? `${annotation.fieldName}: ${text}`
+      : text;
   }
 
   return null;
@@ -643,8 +661,8 @@ export async function extractTextFromPdf(
           options?.signal,
         );
         const annotationTexts = annotations
-          .map((annotation) => visiblePdfAnnotationText(annotation))
-          .filter((text): text is string => text !== null && !baseText.includes(text));
+          .map((annotation) => visiblePdfAnnotationText(annotation, baseText))
+          .filter((text): text is string => text !== null);
         const annotationText = annotationTexts.length
           ? `\nVisible annotations: ${annotationTexts.join(" | ")}`
           : "";
