@@ -41,19 +41,26 @@ function pdfFixture(
       .fn()
       .mockResolvedValue({
         cleanup: vi.fn(),
+        getAnnotations: vi.fn().mockResolvedValue([]),
         getTextContent: vi.fn().mockResolvedValue({ items: [{ str: text }] }),
       }),
   };
 }
 
 /** One text item per page, so each page can have its own text layer (or none). */
-function pdfPagesFixture(pageTexts: string[]) {
+function pdfPagesFixture(
+  pageTexts: string[],
+  pageAnnotations: Array<Array<Record<string, unknown>>> = [],
+) {
   return {
     numPages: pageTexts.length,
     destroy: vi.fn().mockResolvedValue(undefined),
     getPage: vi.fn((pageNumber: number) =>
       Promise.resolve({
         cleanup: vi.fn(),
+        getAnnotations: vi
+          .fn()
+          .mockResolvedValue(pageAnnotations[pageNumber - 1] ?? []),
         getTextContent: vi.fn().mockResolvedValue({
           items: [{ str: pageTexts[pageNumber - 1] }],
         }),
@@ -162,6 +169,93 @@ describe("extraction resource guards", () => {
       confidence: 66,
       sparseTextPages: [7, 8, 9, 12],
     });
+  });
+
+  it("never exposes password widget values, but preserves ordinary filled fields", async () => {
+    mocks.getDocumentProxy.mockResolvedValue(
+      pdfPagesFixture([CLAUSE.repeat(4)], [
+        [
+          {
+            subtype: "Widget",
+            fieldType: "Tx",
+            fieldName: "password",
+            password: true,
+            fieldValue: "PRIVATE-PASSWORD-VALUE",
+          },
+          {
+            subtype: "Widget",
+            fieldType: "Tx",
+            fieldName: "reference",
+            password: false,
+            fieldValue: "VISIBLE-REFERENCE-123",
+          },
+        ],
+      ]),
+    );
+
+    const result = await extractTextFromPdf(Buffer.from("%PDF-1.7"));
+
+    expect(result.text).not.toContain("PRIVATE-PASSWORD-VALUE");
+    expect(result.text).not.toContain("password:");
+    expect(result.text).toContain("reference: VISIBLE-REFERENCE-123");
+  });
+
+  it("uses displayed labels for selected choice values and falls back for unknown options", async () => {
+    mocks.getDocumentProxy.mockResolvedValue(
+      pdfPagesFixture([CLAUSE.repeat(4)], [
+        [
+          {
+            subtype: "Widget",
+            fieldType: "Ch",
+            fieldName: "paymentMethod",
+            fieldValue: ["WIRE", "ACH", "OTHER"],
+            options: [
+              { exportValue: "WIRE", displayValue: "Wire transfer" },
+              { exportValue: "ACH", displayValue: "Bank transfer" },
+            ],
+          },
+        ],
+      ]),
+    );
+
+    const result = await extractTextFromPdf(Buffer.from("%PDF-1.7"));
+
+    expect(result.text).toContain(
+      "paymentMethod: Wire transfer, Bank transfer, OTHER",
+    );
+    expect(result.text).not.toContain("paymentMethod: WIRE");
+  });
+
+  it("does not duplicate page text when a named widget contains the same value", async () => {
+    const existingValue = "EXAMPLE-ACCOUNT-123";
+    mocks.getDocumentProxy.mockResolvedValue(
+      pdfPagesFixture([`${CLAUSE.repeat(4)}Account: ${existingValue}`], [
+        [
+          {
+            subtype: "Widget",
+            fieldType: "Tx",
+            fieldName: "recipientAccount",
+            fieldValue: existingValue,
+          },
+          {
+            subtype: "FreeText",
+            contentsObj: { str: existingValue },
+          },
+          {
+            subtype: "Widget",
+            fieldType: "Tx",
+            fieldName: "newAccount",
+            fieldValue: "NEW-ACCOUNT-456",
+          },
+        ],
+      ]),
+    );
+
+    const result = await extractTextFromPdf(Buffer.from("%PDF-1.7"));
+
+    expect(result.text.split(existingValue)).toHaveLength(2);
+    expect(result.text).not.toContain("recipientAccount:");
+    expect(result.text).toContain("newAccount: NEW-ACCOUNT-456");
   });
 
   it("rejects a NUL character that the PDF parser emits instead of returning it for storage", async () => {

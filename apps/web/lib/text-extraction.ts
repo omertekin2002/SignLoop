@@ -545,8 +545,71 @@ export function validateMimeType(mimeType: string, fileName?: string): string {
   return supportedMimeType;
 }
 
+type VisiblePdfAnnotation = {
+  subtype?: string;
+  hidden?: boolean;
+  annotationFlags?: number;
+  contentsObj?: { str?: string };
+  fieldType?: string;
+  fieldValue?: unknown;
+  fieldName?: string;
+  password?: boolean;
+  options?: Array<{ exportValue: string; displayValue: string }>;
+};
+
+/** Only extract text that is displayed on the page, not comments or hidden notes. */
+function visiblePdfAnnotationText(
+  annotation: VisiblePdfAnnotation,
+  baseText: string,
+): string | null {
+  // PDF.js may expose the raw /F bits without setting `hidden`. Hide
+  // annotations marked Hidden (0x02) or NoView (0x20), even for display intent.
+  if (
+    annotation.hidden ||
+    ((annotation.annotationFlags ?? 0) & (0x02 | 0x20)) !== 0
+  )
+    return null;
+
+  if (annotation.subtype === "FreeText") {
+    const text = annotation.contentsObj?.str?.trim();
+    return text && !baseText.includes(text) ? text : null;
+  }
+
+  if (
+    annotation.subtype === "Widget" &&
+    !annotation.password &&
+    (annotation.fieldType === "Tx" || annotation.fieldType === "Ch")
+  ) {
+    const value = annotation.fieldValue;
+    const selectedValues =
+      typeof value === "string"
+        ? [value]
+        : Array.isArray(value)
+          ? value.filter((item): item is string => typeof item === "string")
+          : [];
+    const displayedValues =
+      annotation.fieldType === "Ch"
+        ? selectedValues.map(
+            (selected) =>
+              annotation.options?.find((option) => option.exportValue === selected)
+                ?.displayValue ?? selected,
+          )
+        : selectedValues;
+    const text = displayedValues.join(", ").trim();
+    // Compare the displayed value before prefixing the field name, otherwise
+    // a named widget duplicates a value already present in the page text layer.
+    if (!text || baseText.includes(text)) return null;
+    return annotation.fieldName
+      ? `${annotation.fieldName}: ${text}`
+      : text;
+  }
+
+  return null;
+}
+
 /**
  * Extract text from a PDF buffer using unpdf.
+ * Includes visible FreeText annotations and filled text/choice widgets in addition to page text.
  * If the PDF appears to be scanned (low text density), returns the extracted text with method
  * pdf_scanned. Otherwise individual pages with little or no selectable text are listed in
  * sparseTextPages; their text, if any, stays in the result.
@@ -590,7 +653,25 @@ export async function extractTextFromPdf(
             );
           parts.push(item.str + (item.hasEOL ? "\n" : ""));
         }
-        const pageText = parts.join("");
+        const baseText = parts.join("");
+        // PDF.js keeps editable fields and FreeText stamps in annotations, outside
+        // getTextContent(). Read the display layer too so chat can see filled PDFs.
+        const annotations = await withAbort(
+          page.getAnnotations({ intent: "display" }),
+          options?.signal,
+        );
+        const annotationTexts = annotations
+          .map((annotation) => visiblePdfAnnotationText(annotation, baseText))
+          .filter((text): text is string => text !== null);
+        const annotationText = annotationTexts.length
+          ? `\nVisible annotations: ${annotationTexts.join(" | ")}`
+          : "";
+        characters += annotationText.length;
+        if (characters > MAX_EXTRACTED_TEXT_LENGTH)
+          throw new ExtractionLimitError(
+            "PDF text exceeds the 2,000,000-character processing limit.",
+          );
+        const pageText = baseText + annotationText;
         pages.push(pageText);
         // Counted per page because joining and whitespace collapsing below lose page boundaries.
         // Only this tally is kept; the stored text, and the offsets citations take into it, are
