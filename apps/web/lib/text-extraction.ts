@@ -545,8 +545,46 @@ export function validateMimeType(mimeType: string, fileName?: string): string {
   return supportedMimeType;
 }
 
+type VisiblePdfAnnotation = {
+  subtype?: string;
+  hidden?: boolean;
+  contentsObj?: { str?: string };
+  fieldType?: string;
+  fieldValue?: unknown;
+  fieldName?: string;
+};
+
+/** Only extract text that is displayed on the page, not comments or hidden notes. */
+function visiblePdfAnnotationText(annotation: VisiblePdfAnnotation): string | null {
+  if (annotation.hidden) return null;
+
+  if (annotation.subtype === "FreeText") {
+    return annotation.contentsObj?.str?.trim() || null;
+  }
+
+  if (
+    annotation.subtype === "Widget" &&
+    (annotation.fieldType === "Tx" || annotation.fieldType === "Ch")
+  ) {
+    const value = annotation.fieldValue;
+    const text =
+      typeof value === "string"
+        ? value
+        : Array.isArray(value)
+          ? value.filter((item): item is string => typeof item === "string").join(", ")
+          : "";
+    if (!text.trim()) return null;
+    return annotation.fieldName
+      ? `${annotation.fieldName}: ${text.trim()}`
+      : text.trim();
+  }
+
+  return null;
+}
+
 /**
  * Extract text from a PDF buffer using unpdf.
+ * Includes visible FreeText annotations and filled text/choice widgets in addition to page text.
  * If the PDF appears to be scanned (low text density), returns the extracted text with method
  * pdf_scanned. Otherwise individual pages with little or no selectable text are listed in
  * sparseTextPages; their text, if any, stays in the result.
@@ -590,7 +628,25 @@ export async function extractTextFromPdf(
             );
           parts.push(item.str + (item.hasEOL ? "\n" : ""));
         }
-        const pageText = parts.join("");
+        const baseText = parts.join("");
+        // PDF.js keeps editable fields and FreeText stamps in annotations, outside
+        // getTextContent(). Read the display layer too so chat can see filled PDFs.
+        const annotations = await withAbort(
+          page.getAnnotations({ intent: "display" }),
+          options?.signal,
+        );
+        const annotationTexts = annotations
+          .map((annotation) => visiblePdfAnnotationText(annotation))
+          .filter((text): text is string => text !== null && !baseText.includes(text));
+        const annotationText = annotationTexts.length
+          ? `\nVisible annotations: ${annotationTexts.join(" | ")}`
+          : "";
+        characters += annotationText.length;
+        if (characters > MAX_EXTRACTED_TEXT_LENGTH)
+          throw new ExtractionLimitError(
+            "PDF text exceeds the 2,000,000-character processing limit.",
+          );
+        const pageText = baseText + annotationText;
         pages.push(pageText);
         // Counted per page because joining and whitespace collapsing below lose page boundaries.
         // Only this tally is kept; the stored text, and the offsets citations take into it, are
