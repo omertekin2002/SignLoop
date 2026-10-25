@@ -8,6 +8,7 @@ export const metadata: Metadata = {
 
 const ISSUES_URL = "https://github.com/omertekin2002/SignLoop/issues";
 
+/** Explain storage, temporary chats, uploads, and data processing by external providers. */
 export default function PrivacyPage() {
   return (
     <div className="app-page">
