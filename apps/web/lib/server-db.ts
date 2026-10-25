@@ -1685,6 +1685,7 @@ export async function upsertUserSettings(input: {
   return rows[0];
 }
 
+/** Normalize stored metadata, omitting private replay and stale evidence when requested. */
 function mapChatMessageRow(
   row: {
     id: string;
@@ -1991,6 +1992,7 @@ export async function getChatThreadByIdForUser(
   };
 }
 
+/** Atomically append a turn and generated files under the owning thread's row lock. */
 export async function appendChatMessagesToThread(input: {
   userId: string;
   threadId: string;
@@ -2138,12 +2140,14 @@ export async function appendChatMessagesToThread(input: {
   }
 }
 
+/** Check thread ownership before performing expensive upload extraction. */
 export async function isChatThreadOwnedByUser(userId: string, threadId: string): Promise<boolean> {
   await ensureSchema();
   const result = await sql.query("SELECT id FROM chat_threads WHERE id = $1 AND user_id = $2", [threadId, userId]);
   return Boolean(result.rowCount);
 }
 
+/** Store an upload under an owner-scoped lock, enforcing the thread's 100-file cap atomically. */
 export async function saveChatFileForUser(input: {
   userId: string; threadId: string; file: ChatDocument; data: Buffer;
 }): Promise<ChatFileInfo | null> {
@@ -2166,6 +2170,7 @@ export async function saveChatFileForUser(input: {
   } finally { client.release(); }
 }
 
+/** Load extracted text only for requested files in the caller's own thread. */
 export async function getChatDocumentsForUser(userId: string, threadId: string, ids: readonly string[]): Promise<ChatDocument[]> {
   if (!ids.length) return [];
   await ensureSchema();
@@ -2176,6 +2181,7 @@ export async function getChatDocumentsForUser(userId: string, threadId: string, 
   return rows.map(({ warning, ...file }) => ({ ...file, ...(warning ? { warning } : {}) }));
 }
 
+/** Fetch original download bytes with ownership and thread membership checked in SQL. */
 export async function getChatFileForUser(userId: string, threadId: string, fileId: string): Promise<{ name: string; mediaType: string; data: Buffer } | null> {
   await ensureSchema();
   const { rows } = await sql.query<{ name: string; mediaType: string; data: Buffer }>(

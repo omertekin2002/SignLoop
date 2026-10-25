@@ -35,6 +35,7 @@ export const chatDocumentSchema = fileInfoSchema.omit({ url: true }).extend({
 });
 export type ChatDocument = z.infer<typeof chatDocumentSchema>;
 
+/** Accept a bounded document batch; reject the entire batch if any item is malformed. */
 export function parseChatDocuments(value: unknown): ChatDocument[] {
   const parsed = z
     .array(chatDocumentSchema)
@@ -49,6 +50,7 @@ export function parseChatFileInfos(value: unknown): ChatFileInfo[] {
   return parsed.success ? parsed.data : [];
 }
 
+/** Validate download descriptors and cap inline base64 before the browser decodes it. */
 export function parseChatDownloads(value: unknown): ChatDownloadFile[] {
   const parsed = z
     .array(
@@ -65,6 +67,7 @@ export function parseChatDownloads(value: unknown): ChatDownloadFile[] {
   return parsed.success ? parsed.data : [];
 }
 
+/** Bound filenames and remove path/control characters before storage or HTTP headers. */
 export function chatFileName(name: string): string {
   const bounded = name.replace(/[\p{Cc}/\\]/gu, "_").slice(-180);
   // UTF-8 round-trip repairs lone surrogates so Content-Disposition encoding cannot throw.
@@ -74,6 +77,7 @@ export function chatFileName(name: string): string {
   );
 }
 
+/** Publish a saved file's owner-checked download URL without its bytes or extracted text. */
 export function savedChatFile(
   file: ChatFileInfo,
   threadId: string,

@@ -51,6 +51,10 @@ vi.mock("@/lib/telemetry", () => ({
 
 import { POST } from "@/app/api/chat/route";
 import { validateContractReplay } from "@/lib/contract-evidence";
+import {
+  MAX_CHAT_REQUEST_BODY_BYTES,
+  MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES,
+} from "./chat-history-bounds";
 
 const resetAt = "2026-10-19T15:00:00.000Z";
 const quota = (used: number) => ({
@@ -65,6 +69,75 @@ afterEach(() => {
   vi.useRealTimers();
   vi.resetAllMocks();
   vi.restoreAllMocks();
+});
+
+describe("authenticated chat body limits", () => {
+  it("rejects an impossible declared size before authentication or body reads", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Length": String(MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES + 1),
+        },
+        body: "{}",
+      }),
+    );
+    expect(response.status).toBe(413);
+    expect(auth).not.toHaveBeenCalled();
+    expect(admitChat).not.toHaveBeenCalled();
+  });
+
+  it("rejects an anonymous declared size above 128 KiB without reading its body", async () => {
+    auth.mockResolvedValue({ userId: null });
+    const pull = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ pull }, { highWaterMark: 0 });
+    const req = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Length": String(MAX_CHAT_REQUEST_BODY_BYTES + 1) },
+      body,
+      duplex: "half",
+    } as RequestInit);
+    expect((await POST(req)).status).toBe(413);
+    expect(auth).toHaveBeenCalledOnce();
+    expect(pull).not.toHaveBeenCalled();
+    expect(admitChat).not.toHaveBeenCalled();
+  });
+
+  it("waits for authentication and caps an anonymous chunked body at 128 KiB", async () => {
+    let authenticate!: (value: { userId: null }) => void;
+    auth.mockReturnValue(
+      new Promise((resolve) => {
+        authenticate = resolve;
+      }),
+    );
+    const cancel = vi.fn();
+    const pull = vi.fn(
+      (controller: ReadableStreamDefaultController<Uint8Array>) => {
+        controller.enqueue(new Uint8Array(MAX_CHAT_REQUEST_BODY_BYTES + 1));
+      },
+    );
+    const body = new ReadableStream<Uint8Array>(
+      { pull, cancel },
+      { highWaterMark: 0 },
+    );
+    const pending = POST(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        body,
+        duplex: "half",
+      } as RequestInit),
+    );
+    await Promise.resolve();
+    expect(auth).toHaveBeenCalledOnce();
+    expect(pull).not.toHaveBeenCalled();
+    authenticate({ userId: null });
+    expect((await pending).status).toBe(413);
+    expect(pull).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(admitChat).not.toHaveBeenCalled();
+    expect(generateChatReply).not.toHaveBeenCalled();
+    expect(generateChatReplyStream).not.toHaveBeenCalled();
+  });
 });
 
 describe("saved chat admission", () => {
@@ -281,6 +354,33 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
       yield { type: "done", reply };
     });
     appendChatMessagesToThread.mockResolvedValue([]);
+  });
+
+  it("accepts an authenticated temporary document body above the anonymous limit", async () => {
+    const document = {
+      id: "abcdef01-2345-4678-9abc-def012345678",
+      name: "large.txt",
+      mediaType: "text/plain",
+      size: 140_000,
+      text: "x".repeat(140_000),
+    };
+    const input = request({
+      temporary: true,
+      messages: [
+        { role: "user", content: "Read this document", documents: [document] },
+      ],
+    });
+    expect(Buffer.byteLength(await input.clone().text())).toBeGreaterThan(
+      MAX_CHAT_REQUEST_BODY_BYTES,
+    );
+    const result = await completion(await POST(input));
+    expect(result.message).toBe(reply.message);
+    expect(
+      stream ? generateChatReplyStream : generateChatReply,
+    ).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ documents: [document] }),
+    );
   });
 
   it("loads saved document contents from the owner-scoped database and persists only file descriptors", async () => {

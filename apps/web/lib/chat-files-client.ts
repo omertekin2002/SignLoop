@@ -11,6 +11,7 @@ import {
 } from "@/lib/chat-files-shared";
 import { MAX_UPLOAD_FILE_SIZE } from "@/lib/upload-constants";
 
+/** Stage up to four supported files in the composer; uploading waits for message submission. */
 export function chatAttachmentAdapter(): AttachmentAdapter {
   const pending = new Set<string>();
   return {
@@ -50,6 +51,7 @@ export function chatAttachmentAdapter(): AttachmentAdapter {
   };
 }
 
+/** Upload one file, returning extracted text for temporary chats or a saved descriptor. */
 export async function uploadChatFile(
   file: File,
   threadId: string | null,

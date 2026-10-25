@@ -18,6 +18,7 @@ const fontPath = path.join(process.cwd(), "lib/fonts/DejaVuSans.ttf");
 let fontBytes: Promise<Buffer> | undefined;
 
 type Block = { text: string; heading?: 1 | 2 | 3; bullet?: boolean };
+/** Interpret only headings and bullets so PDF and DOCX share predictable text formatting. */
 function blocks(content: string): Block[] {
   return content
     .replace(/\r\n?/g, "\n")
@@ -31,6 +32,7 @@ function blocks(content: string): Block[] {
     });
 }
 
+/** Lay out an A4 PDF with wrapping and pagination; reject glyphs the bundled font lacks. */
 async function createPdf(content: string, title: string): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   pdf.setTitle(title);
@@ -95,6 +97,7 @@ async function createPdf(content: string, title: string): Promise<Uint8Array> {
   return pdf.save();
 }
 
+/** Render bounded model-supplied text into a real download, retaining text for later turns. */
 export async function generateChatFile(input: {
   name: string;
   format: ChatFileFormat;

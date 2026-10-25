@@ -101,8 +101,10 @@ export function getExtractionWarning(input: {
   return null;
 }
 
-// Parse + validate the multipart upload and extract its text. Does NOT persist anything, so the
-// caller decides its own empty-text policy before storing (e.g. contracts reject empty text).
+/**
+ * Validate and extract a bounded multipart upload using the caller's allowed file formats.
+ * Does not persist data; callers decide whether empty or partially extracted text is acceptable.
+ */
 export async function prepareUpload(
   req: Request,
   progress?: ReportProgress,

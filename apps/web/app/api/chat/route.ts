@@ -19,6 +19,7 @@ import {
   MAX_AGENT_STATE_CHARACTERS,
   MAX_CHAT_MESSAGES,
   MAX_CHAT_REQUEST_BODY_BYTES,
+  MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES,
   parseBoundedJsonRequest,
   parseClientChatMessages,
   parseLatestClientUserMessage,
@@ -111,6 +112,7 @@ function streamEvent(event: Record<string, unknown>): Uint8Array {
   return streamEncoder.encode(`${JSON.stringify(event)}\n`);
 }
 
+/** Save a completed turn and its downloads together; temporary chats never write history. */
 async function persistChatMessages(input: {
   userId: string | null;
   threadId: string;
@@ -200,6 +202,7 @@ function toTemporaryAgentMessages(
     : undefined;
 }
 
+/** Build the final event, using saved URLs or temporary inline downloads according to persistence. */
 function toDoneStreamEvent(input: {
   reply: ChatReply;
   message: string;
@@ -246,6 +249,7 @@ function toDoneStreamEvent(input: {
   };
 }
 
+/** Authenticate before bounded parsing, then run a temporary or owner-scoped saved chat turn. */
 export async function POST(req: Request) {
   const timings = new GenerationTimings("chat");
   let release: (() => Promise<void>) | null = null;
@@ -266,7 +270,7 @@ export async function POST(req: Request) {
     const declaredContentLength = Number(req.headers.get("content-length"));
     if (
       Number.isFinite(declaredContentLength) &&
-      declaredContentLength > MAX_CHAT_REQUEST_BODY_BYTES
+      declaredContentLength > MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES
     ) {
       return NextResponse.json(
         { error: "Chat request body is too large." },
@@ -274,9 +278,24 @@ export async function POST(req: Request) {
       );
     }
 
+    // Authenticate from request headers before buffering any body bytes. Anonymous callers keep
+    // the original small budget, including when Content-Length is omitted or understates the body.
+    const { userId } = await timings.measure("auth", () => auth());
+    const maxBodyBytes = userId
+      ? MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES
+      : MAX_CHAT_REQUEST_BODY_BYTES;
+    if (
+      Number.isFinite(declaredContentLength) &&
+      declaredContentLength > maxBodyBytes
+    )
+      return NextResponse.json(
+        { error: "Chat request body is too large." },
+        { status: 413 },
+      );
+
     const parsedBody = await parseBoundedJsonRequest<unknown>(
       req,
-      MAX_CHAT_REQUEST_BODY_BYTES,
+      maxBodyBytes,
       operationSignal,
     );
     if (!parsedBody.ok) {
@@ -288,7 +307,6 @@ export async function POST(req: Request) {
     const body = parsedBody.value;
     const isTemporaryChat = isRecord(body) && body.temporary === true;
     timings.enabled = !isTemporaryChat;
-    const { userId } = await timings.measure("auth", () => auth());
     // Search, page reading, and direct HTTP fetches are server-side invariants for authenticated
     // chats, so clients cannot disable them. Anonymous temporary chats get none of them, to protect
     // the private search quotas and to keep unauthenticated traffic off outbound fetches.

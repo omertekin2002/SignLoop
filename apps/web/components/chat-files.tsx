@@ -13,6 +13,7 @@ import {
 } from "@/lib/chat-files-shared";
 import { Button } from "@/components/ui/button";
 
+/** Keep a local download URL alive only while its blob is mounted. */
 function useBlobUrl(blob?: Blob) {
   const [url, setUrl] = useState<string>();
   useEffect(() => {
@@ -24,6 +25,7 @@ function useBlobUrl(blob?: Blob) {
   return blob ? url : undefined;
 }
 
+/** Display a staged attachment with its accessible removal control. */
 export function ComposerFile() {
   return (
     <AttachmentPrimitive.Root className="flex max-w-full items-center gap-2 rounded-button border border-input px-3 py-1 text-sm">
@@ -46,6 +48,7 @@ export function ComposerFile() {
   );
 }
 
+/** Link sent attachments to their local bytes or an allowlisted saved-file route. */
 export function UploadedFile() {
   const attachment = useAttachment();
   const localUrl = useBlobUrl(attachment.file);
@@ -77,6 +80,7 @@ export function UploadedFile() {
   );
 }
 
+/** Render a saved download or decode temporary bytes into a lifecycle-managed blob URL. */
 function FileDownload({ file }: { file: ChatDownloadFile }) {
   const blob = useMemo(() => {
     if (!file.data) return undefined;
@@ -108,6 +112,7 @@ function FileDownload({ file }: { file: ChatDownloadFile }) {
   );
 }
 
+/** Validate assistant download metadata before exposing file links in the transcript. */
 export function MessageFileDownloads() {
   const value = useMessage((message) => message.metadata.custom?.files);
   const files = useMemo(() => parseChatDownloads(value), [value]);

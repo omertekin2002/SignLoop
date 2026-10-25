@@ -23,6 +23,7 @@ export {
   boundCanonicalChatHistory,
   boundTemporaryChatHistory,
   compactInlineImageDataUris,
+  MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES,
   MAX_CHAT_MESSAGE_LENGTH,
   MAX_CHAT_MESSAGES,
   MAX_CHAT_REQUEST_BODY_BYTES,
@@ -74,12 +75,14 @@ export type ParsedChatMessages =
 export type ParsedJsonRequest<T> =
   { ok: true; value: T } | { ok: false; error: string; status: number };
 
+/** Restrict client history to conversation roles; system instructions remain server-owned. */
 function isClientChatRole(
   value: unknown,
 ): value is Exclude<ChatRole, "system"> {
   return value === "user" || value === "assistant";
 }
 
+/** Validate temporary history, bounding text and documents and requiring a final user turn. */
 export function parseClientChatMessages(payload: unknown): ParsedChatMessages {
   if (!isRecord(payload)) {
     return { ok: false, error: "Request body must be an object.", status: 400 };

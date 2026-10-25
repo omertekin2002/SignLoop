@@ -51,6 +51,7 @@ function parseError(payload: unknown, status: number): string {
   return chatRequestFailure(payload, status, null).message;
 }
 
+/** Normalize a complete reply and validate any document or download metadata at the boundary. */
 function parseSuccess(payload: unknown): ChatApiSuccess {
   if (!isRecord(payload) || typeof payload.message !== "string") {
     throw new Error("Chat response did not include a message.");
@@ -135,6 +136,7 @@ export const TOOL_ACTIVITY_LABELS: Record<
   },
 };
 
+/** Keep only recognized tool activity so malformed saved metadata cannot break the transcript. */
 export function parseToolActivity(value: unknown): ChatToolActivity[] {
   return Array.isArray(value)
     ? value.flatMap((item): ChatToolActivity[] =>
@@ -160,6 +162,7 @@ export function parseToolActivity(value: unknown): ChatToolActivity[] {
     : [];
 }
 
+/** Validate an NDJSON event before the client applies it to a streamed reply. */
 function parseStreamEvent(payload: unknown): ChatApiStreamEvent {
   if (!isRecord(payload) || typeof payload.type !== "string") {
     throw new Error("Chat stream included an invalid event.");
@@ -246,6 +249,7 @@ export function readChatApiResponse(
   return iterator;
 }
 
+/** Consume bounded JSON or NDJSON replies while preserving cancellation and final metadata. */
 async function* consumeChatApiResponse(
   response: Response,
   cancellation: AbortController,

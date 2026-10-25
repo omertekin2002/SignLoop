@@ -3,6 +3,7 @@ import { requireUserId } from "@/lib/api-auth";
 import { getChatFileForUser } from "@/lib/server-db";
 import { isUuid } from "@/lib/utils";
 
+/** Serve a thread owner's original file bytes as a private, non-cacheable download. */
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string; fileId: string }> },

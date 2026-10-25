@@ -5,8 +5,9 @@ import { isPlainAssistantReplay } from "@repo/chat-engine/chat-history-shared";
 export const MAX_CHAT_MESSAGES = 30;
 export const MAX_CHAT_MESSAGE_LENGTH = 4_000;
 export const MAX_CHAT_TOTAL_MESSAGE_LENGTH = 60_000;
-// Temporary document text travels with the conversation, below Vercel's request ceiling.
-export const MAX_CHAT_REQUEST_BODY_BYTES = 3 * 1024 * 1024;
+export const MAX_CHAT_REQUEST_BODY_BYTES = 128 * 1024;
+// Only authenticated requests may carry the larger temporary-document payload.
+export const MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES = 3 * 1024 * 1024;
 
 /** Replace generated image payloads before a message is sent back to a text model. */
 export function compactInlineImageDataUris(text: string): string {
@@ -111,11 +112,14 @@ export function boundTemporaryChatHistory(
   );
   const encoder = new TextEncoder();
   const result = [...history, latest];
+  const maxBytes = result.some((message) => message.documents?.length)
+    ? MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES
+    : MAX_CHAT_REQUEST_BODY_BYTES;
   // Reserve framing space for thread/mode fields and account for Unicode and JSON escaping.
   while (
     result.length > 1 &&
     encoder.encode(JSON.stringify({ messages: result })).byteLength >
-      MAX_CHAT_REQUEST_BODY_BYTES - 2048
+      maxBytes - 2048
   ) {
     result.shift();
   }

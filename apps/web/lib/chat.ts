@@ -71,6 +71,7 @@ type ChatGenerationOptions = {
   onTiming?: (event: GenerationMilestone) => void;
 };
 
+/** Bind app tools to the shared engine and attach generated files only to its final reply. */
 export async function* generateChatReplyStream(
   messages: readonly ChatMessage[],
   options?: ChatGenerationOptions,
@@ -126,6 +127,7 @@ export async function* generateChatReplyStream(
   }
 }
 
+/** Consume the same streaming pipeline for callers that need a complete reply. */
 export async function generateChatReply(
   messages: readonly ChatMessage[],
   options?: ChatGenerationOptions,

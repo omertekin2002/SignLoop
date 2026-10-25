@@ -13,6 +13,7 @@ import { isUuid } from "@/lib/utils";
 
 export const maxDuration = 180;
 
+/** Extract an authenticated upload; persist bytes only when the caller owns a saved thread. */
 export async function POST(req: Request) {
   const authed = await requireUserId();
   if (authed instanceof NextResponse) return authed;

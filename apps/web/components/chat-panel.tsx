@@ -107,6 +107,7 @@ type ChatApiMessage = {
   webSources?: ReturnType<typeof parseWebSources>;
 };
 
+/** Flatten runtime message parts into text, replacing binary media with compact placeholders. */
 function extractMessageText(message: Pick<ThreadMessage, "content">): string {
   const chunks: string[] = [];
 
@@ -168,6 +169,7 @@ function readAgentMessages(message: ThreadMessage): ModelMessage[] | undefined {
     : undefined;
 }
 
+/** Serialize history, prioritizing newest documents within temporary transport and text budgets. */
 function toApiMessages(
   messages: readonly ThreadMessage[],
   preparedFiles: ReadonlyMap<string, ChatDocument | ChatFileInfo>,
@@ -233,6 +235,7 @@ function toApiMessages(
   );
 }
 
+/** Show request failures with sign-in or quota-aware retry controls. */
 function ChatMessageError() {
   const failure = useMessage((state) => state.metadata.custom?.requestError) as
     ReturnType<typeof chatRequestFailure> | undefined;
@@ -276,6 +279,7 @@ function ChatMessageError() {
   );
 }
 
+/** Label current tools while retaining compatibility with legacy search-only activity rows. */
 function describeToolActivity(activity: ChatToolActivity): string {
   // Rows saved before other tools existed carry no tool name and were always searches.
   const label =
@@ -283,6 +287,7 @@ function describeToolActivity(activity: ChatToolActivity): string {
   return activity.query ? `${label}: ${activity.query}` : label;
 }
 
+/** Restore saved messages, attachment links, and model metadata into assistant-ui's runtime. */
 function toRuntimeMessages(messages: ChatThreadMessage[]): ThreadMessageLike[] {
   return messages.map((message) => ({
     id: message.id,
@@ -319,6 +324,7 @@ function toRuntimeMessages(messages: ChatThreadMessage[]): ThreadMessageLike[] {
   }));
 }
 
+/** Preserve the user's whitespace without interpreting their message as Markdown. */
 const UserTextPart = () => (
   <MessagePartPrimitive.Text
     component="p"
@@ -330,6 +336,7 @@ const UserTextPart = () => (
 // reply, so the landing and dashboard first paint do not ship it.
 const MarkdownSourceContext = createContext("");
 
+/** Keep assistant text readable while the Markdown chunk loads or after a chunk failure. */
 function PlainMarkdownSource() {
   const markdown = useContext(MarkdownSourceContext);
   return (
@@ -360,6 +367,7 @@ class MarkdownChunkBoundary extends Component<
   }
 }
 
+/** Style assistant Markdown and retain a plain-text fallback across lazy chunk failures. */
 const MarkdownMessage = forwardRef<
   HTMLDivElement,
   ComponentPropsWithoutRef<"div">
@@ -398,17 +406,17 @@ const MarkdownMessage = forwardRef<
 
 MarkdownMessage.displayName = "MarkdownMessage";
 
+/** Render assistant content directly so streamed deltas do not receive a second smoothing delay. */
 const AssistantTextPart = () => (
   <MessagePartPrimitive.Text component={MarkdownMessage} smooth={false} />
 );
 
-// Drop a trailing ":free" tier suffix for readability (e.g. OpenRouter "...:free" models).
+/** Drop a trailing ":free" tier suffix for readability (e.g. OpenRouter "...:free" models). */
 function formatModelLabel(model: string): string {
   return model.replace(/:free$/i, "");
 }
 
-// Shows the model that actually generated the assistant message, read from the metadata the
-// server attaches on completion. Reflects an OpenRouter fallback model when the primary failed.
+/** Show the model recorded on completion, including fallback models chosen by the provider. */
 const AssistantModelLabel = () => {
   const model = useMessage((message) => {
     const custom = (
@@ -430,6 +438,7 @@ const AssistantModelLabel = () => {
   );
 };
 
+/** Announce validated tool progress, including document reads and file creation. */
 const SearchActivity = () => {
   const rawActivity = useMessage(
     (message) => message.metadata?.custom?.toolActivity,
@@ -445,8 +454,7 @@ const SearchActivity = () => {
   );
 };
 
-// Copies the message the same way it is sent to the API, so a generated image becomes a short
-// placeholder instead of a megabyte of base64 on the clipboard.
+/** Copy the text representation, replacing generated image data with a compact placeholder. */
 const MessageCopyButton = ({ className }: { className?: string }) => {
   const content = useMessage((message) => message.content);
   const [copied, setCopied] = useState(false);
@@ -501,6 +509,7 @@ const MessageCopyButton = ({ className }: { className?: string }) => {
   );
 };
 
+/** Compose user attachments and assistant text, tool progress, downloads, and recovery controls. */
 const ChatMessage = () => {
   return (
     <MessagePrimitive.Root className="group relative flex w-full flex-col gap-2 mb-6">
@@ -547,7 +556,7 @@ const ChatMessage = () => {
   );
 };
 
-// The landing composition starts at the top; only conversations follow new content to the bottom.
+/** Start the landing composition at the top and follow new content only for conversations. */
 function ChatViewport({ children }: { children: ReactNode }) {
   const hasMessages = useThread((state) => state.messages.length > 0);
 
@@ -569,7 +578,7 @@ const REPLY_END_ANNOUNCEMENTS: Partial<Record<string, string>> = {
   cancelled: "Reply stopped",
 };
 
-// Announces reply transitions so the streamed transcript itself never needs to be a live region.
+/** Announce reply transitions without making the streamed transcript itself a live region. */
 function ReplyStatusAnnouncer() {
   const replyId = useThread((state) => {
     const last = state.messages.at(-1);
@@ -619,6 +628,7 @@ type ChatPanelProps = {
   onContentChange?: (hasContent: boolean) => void;
 };
 
+/** Manage saved and temporary chat lifecycles, authenticated attachments, streaming, and cancellation. */
 export function ChatPanel({
   selectedThreadId = null,
   onThreadSelected,
