@@ -41,6 +41,7 @@ function pdfFixture(
       .fn()
       .mockResolvedValue({
         cleanup: vi.fn(),
+        getAnnotations: vi.fn().mockResolvedValue([]),
         getTextContent: vi.fn().mockResolvedValue({ items: [{ str: text }] }),
       }),
   };
@@ -54,6 +55,7 @@ function pdfPagesFixture(pageTexts: string[]) {
     getPage: vi.fn((pageNumber: number) =>
       Promise.resolve({
         cleanup: vi.fn(),
+        getAnnotations: vi.fn().mockResolvedValue([]),
         getTextContent: vi.fn().mockResolvedValue({
           items: [{ str: pageTexts[pageNumber - 1] }],
         }),
