@@ -51,6 +51,7 @@ function pdfFixture(
 function pdfPagesFixture(
   pageTexts: string[],
   pageAnnotations: Array<Array<Record<string, unknown>>> = [],
+  pageTextItems: Array<Array<{ str: string; transform: number[] }>> = [],
 ) {
   return {
     numPages: pageTexts.length,
@@ -62,7 +63,9 @@ function pdfPagesFixture(
           .fn()
           .mockResolvedValue(pageAnnotations[pageNumber - 1] ?? []),
         getTextContent: vi.fn().mockResolvedValue({
-          items: [{ str: pageTexts[pageNumber - 1] }],
+          items: pageTextItems[pageNumber - 1] ?? [
+            { str: pageTexts[pageNumber - 1] },
+          ],
         }),
       }),
     ),
@@ -226,29 +229,44 @@ describe("extraction resource guards", () => {
     expect(result.text).not.toContain("paymentMethod: WIRE");
   });
 
-  it("does not duplicate page text when a named widget contains the same value", async () => {
+  it("does not duplicate a value already in the text layer at the annotation's location", async () => {
     const existingValue = "EXAMPLE-ACCOUNT-123";
     mocks.getDocumentProxy.mockResolvedValue(
-      pdfPagesFixture([`${CLAUSE.repeat(4)}Account: ${existingValue}`], [
+      pdfPagesFixture(
+        [`${CLAUSE.repeat(4)}Account: ${existingValue}`],
         [
-          {
-            subtype: "Widget",
-            fieldType: "Tx",
-            fieldName: "recipientAccount",
-            fieldValue: existingValue,
-          },
-          {
-            subtype: "FreeText",
-            contentsObj: { str: existingValue },
-          },
-          {
-            subtype: "Widget",
-            fieldType: "Tx",
-            fieldName: "newAccount",
-            fieldValue: "NEW-ACCOUNT-456",
-          },
+          [
+            {
+              subtype: "Widget",
+              fieldType: "Tx",
+              fieldName: "recipientAccount",
+              fieldValue: existingValue,
+              rect: [40, 650, 430, 674],
+            },
+            {
+              subtype: "FreeText",
+              contentsObj: { str: existingValue },
+              rect: [40, 650, 430, 674],
+            },
+            {
+              subtype: "Widget",
+              fieldType: "Tx",
+              fieldName: "newAccount",
+              fieldValue: "NEW-ACCOUNT-456",
+            },
+          ],
         ],
-      ]),
+        [
+          [
+            {
+              str: `${CLAUSE.repeat(4)}Account: `,
+              transform: [1, 0, 0, 1, 40, 730],
+            },
+            { str: "EXAMPLE-", transform: [1, 0, 0, 1, 40, 660] },
+            { str: "ACCOUNT-123", transform: [1, 0, 0, 1, 95, 660] },
+          ],
+        ],
+      ),
     );
 
     const result = await extractTextFromPdf(Buffer.from("%PDF-1.7"));
@@ -256,6 +274,50 @@ describe("extraction resource guards", () => {
     expect(result.text.split(existingValue)).toHaveLength(2);
     expect(result.text).not.toContain("recipientAccount:");
     expect(result.text).toContain("newAccount: NEW-ACCOUNT-456");
+  });
+
+  it.each([1, 26])(
+    "does not count metadata or separators for %i fields toward document text density",
+    async (fieldCount) => {
+      mocks.getDocumentProxy.mockResolvedValue(
+        pdfPagesFixture(
+          ["", "", ""],
+          Array.from({ length: 3 }, () =>
+            Array.from({ length: fieldCount }, () => ({
+              subtype: "Widget",
+              fieldType: "Tx",
+              fieldName:
+                "Long internal field name that is not visible on the scanned page",
+              fieldValue: "X",
+            })),
+          ),
+        ),
+      );
+
+      const result = await extractTextFromPdf(Buffer.from("%PDF-1.7"));
+
+      expect(result.text).toContain("Long internal field name");
+      expect(result).toMatchObject({ method: "pdf_scanned", confidence: 0 });
+    },
+  );
+
+  it("counts substantial annotation values toward text density", async () => {
+    mocks.getDocumentProxy.mockResolvedValue(
+      pdfPagesFixture(
+        ["", "", ""],
+        Array.from({ length: 3 }, () => [
+          {
+            subtype: "FreeText",
+            contentsObj: { str: CLAUSE.repeat(4) },
+          },
+        ]),
+      ),
+    );
+
+    const result = await extractTextFromPdf(Buffer.from("%PDF-1.7"));
+
+    expect(result).toMatchObject({ method: "pdf_parse", confidence: 100 });
+    expect(result.sparseTextPages).toBeUndefined();
   });
 
   it("rejects a NUL character that the PDF parser emits instead of returning it for storage", async () => {
