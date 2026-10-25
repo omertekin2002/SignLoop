@@ -548,6 +548,7 @@ export function validateMimeType(mimeType: string, fileName?: string): string {
 type VisiblePdfAnnotation = {
   subtype?: string;
   hidden?: boolean;
+  annotationFlags?: number;
   contentsObj?: { str?: string };
   fieldType?: string;
   fieldValue?: unknown;
@@ -556,7 +557,13 @@ type VisiblePdfAnnotation = {
 
 /** Only extract text that is displayed on the page, not comments or hidden notes. */
 function visiblePdfAnnotationText(annotation: VisiblePdfAnnotation): string | null {
-  if (annotation.hidden) return null;
+  // PDF.js may expose the raw /F bits without setting `hidden`. Hide
+  // annotations marked Hidden (0x02) or NoView (0x20), even for display intent.
+  if (
+    annotation.hidden ||
+    ((annotation.annotationFlags ?? 0) & (0x02 | 0x20)) !== 0
+  )
+    return null;
 
   if (annotation.subtype === "FreeText") {
     return annotation.contentsObj?.str?.trim() || null;
