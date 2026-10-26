@@ -57,7 +57,17 @@ bun run test:integration
 
 It initializes local PostgreSQL, applies migrations, runs database ownership/concurrency tests, and removes the temporary database. It never uses `POSTGRES_URL`. The default binary directory is `/opt/homebrew/opt/postgresql@16/bin`; set `POSTGRES_BIN` for another installation. If `SIGNLOOP_TEST_DATABASE_URL` is already set, the script skips the temporary cluster and runs the same suites against that database instead; it must be an empty, disposable `signloop_test` database on `localhost`, such as a `postgres:16` container. This is separate from testing against production credentials or live model services.
 
-GitHub Actions ([ci.yml](.github/workflows/ci.yml)) runs on pull requests and pushes to `main`. One job installs dependencies with Vercel's hoisted linker, fails on any high or critical advisory reported by `bun audit --audit-level=high` (low and moderate ones are listed without failing), then runs lint, type checking, tests, and the build, builds the gateway's Vercel bundle, serves it with Node and probes `/healthz`, and checks the OCR build traces; none of them needs secrets or environment files. A second job runs `bun run test:integration` against an empty `postgres:16` service container.
+A Playwright smoke suite ([apps/web/e2e](apps/web/e2e)) loads the production build in headless Chromium. After `bun run build`:
+
+```bash
+cd apps/web
+bunx playwright install chromium   # once
+bun run test:e2e
+```
+
+It starts `next start` on `127.0.0.1:3100` with placeholder WorkOS configuration from [playwright.config.ts](apps/web/playwright.config.ts), so it needs no `.env.local`, database, or model provider, and the browser blocks requests to other origins. It checks that `/` and `/privacy` render, that responses carry the security headers from `next.config.js`, that `/dashboard` and `/sign-in` redirect signed-out visitors to WorkOS, and that `/api/usage` and `/api/contracts` answer them with a JSON 401. Signed-in flows are not covered.
+
+GitHub Actions ([ci.yml](.github/workflows/ci.yml)) runs on pull requests and pushes to `main`. One job installs dependencies with Vercel's hoisted linker, fails on any high or critical advisory reported by `bun audit --audit-level=high` (low and moderate ones are listed without failing), then runs lint, type checking, tests, and the build, builds the gateway's Vercel bundle, serves it with Node and probes `/healthz`, checks the OCR build traces, and runs the Playwright smoke suite against the build (uploading its report if the job fails); none of them needs secrets or environment files. A second job runs `bun run test:integration` against an empty `postgres:16` service container.
 
 ## Repository layout
 
