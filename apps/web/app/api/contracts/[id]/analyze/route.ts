@@ -185,14 +185,16 @@ async function executePost(
           settings?.primaryModel,
           modelSnapshot.availablePrimaryModels,
         );
-        // No jurisdiction is confirmed yet. Once one is, pass it to both analyzeText and
-        // finalizeAnalysisResult; without it, finalization withholds regional comparisons.
+        // The jurisdiction the owner confirmed reaches both the prompt and finalization, so they
+        // agree on whether comparisons may be requested and kept. Without one, nothing changes:
+        // finalization withholds regional comparisons.
+        const region = contract.confirmedJurisdiction ?? undefined;
         if (progress) operationSignal.throwIfAborted();
         progress?.("analyzing");
         timings.outcome = "error";
         const { result, provider, model, promptTokens, completionTokens } =
           await timings.measure("generation", () =>
-            analyzeText(contractText, undefined, {
+            analyzeText(contractText, region ? { region } : undefined, {
               primaryModel: selectedPrimaryModel,
               signal: operationSignal,
               contextDocuments: contextDocuments.map((document) => ({
@@ -210,6 +212,7 @@ async function executePost(
             id: contract.id,
             text: contractText,
             extractionWarning: contract.extractionWarning,
+            region: region ?? null,
           },
           contextDocuments,
         );

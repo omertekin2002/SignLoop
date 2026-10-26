@@ -64,10 +64,10 @@ export function AnalysisDetails({
         <div role="note" className="rounded-card border px-4 py-3 text-sm">
           <p className="text-foreground">Regional comparisons not shown</p>
           <p className="mt-1 text-muted-foreground">
-            No jurisdiction was confirmed for this contract, and what is typical
-            or allowed depends on where it applies. This analysis describes
-            risks from the contract text alone. You&apos;ll be able to confirm
-            a jurisdiction in a later update.
+            No jurisdiction was confirmed when this analysis ran, and what is
+            typical or allowed depends on where the contract applies. This
+            analysis describes risks from the contract text alone. Confirm a
+            jurisdiction and re-run the analysis to add comparisons.
           </p>
         </div>
       )}

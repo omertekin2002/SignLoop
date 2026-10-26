@@ -9,6 +9,13 @@ export class AuthIdentityError extends Error {
   }
 }
 
+export class DeletedAuthIdentityError extends AuthIdentityError {
+  constructor() {
+    super("This account has been deleted");
+    this.name = "DeletedAuthIdentityError";
+  }
+}
+
 /** Resolve a server-side WorkOS SDK user. Only the opaque subject establishes identity. */
 export async function resolveWorkOSUserId(user: {
   id: string;
@@ -40,6 +47,16 @@ export async function resolveWorkOSUserId(user: {
 
     let userId = existing?.user_id;
     if (userId === undefined) {
+      // Check AFTER looking up the mapping: deletion commits its removal and this marker
+      // together. A concurrent lookup either returns the old (write-fenced) owner or sees
+      // the marker here; it must never provision a new owner for a still-valid session.
+      const revoked = await client.query(
+        `SELECT 1 FROM revoked_auth_identities
+         WHERE provider = 'workos' AND subject_hash = sha256(convert_to($1, 'UTF8'))`,
+        [user.id],
+      );
+      if (revoked.rows.length) throw new DeletedAuthIdentityError();
+
       // Do not inherit data even if a UUID happens to match an unimported legacy owner.
       while (userId === undefined) {
         const candidate = randomUUID();

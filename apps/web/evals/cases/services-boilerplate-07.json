@@ -13,6 +13,7 @@
     { "category": "cancellation_notice", "required": false, "span": "Either party may terminate this Agreement for convenience by giving 45 days' written notice." }
   ],
   "absent": ["arbitration"],
+  "governing_law": { "jurisdiction": "State of Vermont", "span": "This Agreement is governed by the laws of the State of Vermont." },
   "fields": {
     "summary.renewal.auto_renew": true,
     "summary.renewal.renewal_period": { "canon": [3, "month"] },

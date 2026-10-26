@@ -46,6 +46,8 @@ export type LoadedCase = {
   segments: ContractSegment[];
   context: AnalysisContextDocument[];
   clauses: LocatedClause[];
+  /** The located governing-law clause; null when the contract has none, undefined if unscored. */
+  governingLaw?: { jurisdiction: string; start: number; end: number } | null;
   /** Notices production adds for this input; the stored report must keep them. */
   expectedCoverageNotices: string[];
 };
@@ -180,6 +182,20 @@ export function buildLoadedCase(input: {
     });
   }
 
+  let governingLaw: LoadedCase["governingLaw"] = null;
+  if (spec.governing_law) {
+    const location = locateGoldSpan(input.text, spec.governing_law.span);
+    if (location.ok) {
+      governingLaw = {
+        jurisdiction: spec.governing_law.jurisdiction,
+        start: location.start,
+        end: location.end,
+      };
+    } else {
+      problems.push(`governing law ${location.problem}: ${location.detail}`);
+    }
+  }
+
   if (problems.length) {
     throw new Error(`Case ${spec.id} is invalid:\n- ${problems.join("\n- ")}`);
   }
@@ -190,6 +206,7 @@ export function buildLoadedCase(input: {
     segments: contractAnalysisSegments(input.text),
     context,
     clauses,
+    ...(spec.governing_law !== undefined ? { governingLaw } : {}),
     expectedCoverageNotices: buildAnalysisPrompt(input.text, undefined, context)
       .coverageNotices,
   };

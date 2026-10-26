@@ -34,18 +34,20 @@ const FieldsSchema = z.strictObject({
 });
 export type FieldPath = keyof z.infer<typeof FieldsSchema>;
 
+/** Exact contract text. It must occur exactly once in the contract. */
+const GoldSpanSchema = z
+  .string()
+  .refine((span) => span.trim().length > 0, "Span must not be blank")
+  .refine(
+    (span) => Array.from(span).length <= MAX_EVIDENCE_QUOTE,
+    `Span must be at most ${MAX_EVIDENCE_QUOTE} code points`,
+  );
+
 const GoldClauseSchema = z.strictObject({
   category: z.enum(CLAUSE_CATEGORIES),
   /** Required clauses count toward recall; optional ones are acceptable citations only. */
   required: z.boolean(),
-  /** Exact contract text. It must occur exactly once in the contract. */
-  span: z
-    .string()
-    .refine((span) => span.trim().length > 0, "Span must not be blank")
-    .refine(
-      (span) => Array.from(span).length <= MAX_EVIDENCE_QUOTE,
-      `Span must be at most ${MAX_EVIDENCE_QUOTE} code points`,
-    ),
+  span: GoldSpanSchema,
   /** Asserted when present. "omitted" spans sit in the unsent middle of a long contract. */
   segment: z.enum(["full", "head", "tail", "omitted"]).optional(),
 });
@@ -71,6 +73,15 @@ export const EvalCaseSchema = z
     notes: z.string().optional(),
     clauses: z.array(GoldClauseSchema),
     absent: z.array(z.enum(CLAUSE_CATEGORIES)).default([]),
+    /**
+     * The jurisdiction the governing-law clause names, and the clause, which must be in a sent
+     * segment. null means the contract has no such clause, so the ideal answer proposes none.
+     * Absent means the proposal is not scored.
+     */
+    governing_law: z
+      .strictObject({ jurisdiction: z.string().min(1), span: GoldSpanSchema })
+      .nullable()
+      .optional(),
     fields: FieldsSchema,
     key_dates: z
       .array(

@@ -1,6 +1,7 @@
 import { isSubstantiveText, type AnalysisResult } from "@/lib/schemas";
 import {
   citationForReport,
+  JURISDICTION_CITATION,
   MAX_EVIDENCE_QUOTE,
   verifyQuote,
   type ContractSegment,
@@ -391,6 +392,12 @@ export type CaseScore = {
     }>;
     benignAlarms: number | null;
   };
+  jurisdiction: {
+    /** The stored proposal against the gold governing-law clause; null when the case does not score it. */
+    outcome: FieldOutcome | null;
+    /** 1 when the model proposed a jurisdiction whose quotation production could not verify. */
+    unverified: number;
+  };
   comparisons: {
     /** Regional comparisons in the model's answer. No case confirms a jurisdiction to support one. */
     proposed: number;
@@ -438,6 +445,40 @@ const isoDate = (value: unknown) =>
   typeof value === "string"
     ? (value.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] ?? null)
     : null;
+
+/**
+ * A stored proposal is correct when its verified citation lies mostly inside the gold clause and it
+ * names the gold jurisdiction. Production stores none without a verified citation.
+ */
+function scoreJurisdiction(
+  loaded: LoadedCase,
+  run: RunOutput,
+): CaseScore["jurisdiction"] {
+  const stored = run.stored;
+  const proposed = run.analysis?.proposed_jurisdiction;
+  const citation = stored
+    ? citationForReport(stored, loaded.contractId, JURISDICTION_CITATION)
+    : null;
+  const unverified = stored && proposed && !citation ? 1 : 0;
+  const gold = loaded.governingLaw;
+  if (gold === undefined) return { outcome: null, unverified };
+  if (!stored) return { outcome: "no_result", unverified };
+  const predicted = asRecord(stored.proposed_jurisdiction)?.jurisdiction;
+  if (!citation || typeof predicted !== "string") {
+    return {
+      outcome: gold ? "false_abstention" : "correct_abstention",
+      unverified,
+    };
+  }
+  if (!gold) return { outcome: "fabricated", unverified };
+  const names = ` ${normalizeLabel(predicted)} `.includes(
+    ` ${normalizeLabel(gold.jurisdiction)} `,
+  );
+  const inside =
+    overlap(citation, gold) / (citation.end - citation.start) >=
+    CLAUSE_OVERLAP_THRESHOLD;
+  return { outcome: names && inside ? "correct" : "wrong", unverified };
+}
 
 export function scoreCase(loaded: LoadedCase, run: RunOutput): CaseScore {
   const { spec } = loaded;
@@ -624,6 +665,7 @@ export function scoreCase(loaded: LoadedCase, run: RunOutput): CaseScore {
     fields,
     autoRenew,
     negatives: { falseFlags, benignAlarms },
+    jurisdiction: scoreJurisdiction(loaded, run),
     comparisons: {
       proposed: run.analysis?.normal_in_region.length ?? 0,
       withheld:
@@ -671,6 +713,7 @@ export function caseMetrics(score: CaseScore): CaseMetrics {
     "quotes.verification_rate": score.quotes.verificationRate,
     "negatives.false_flags": score.negatives.falseFlags.length,
     "negatives.unsupported_comparisons": score.comparisons.proposed,
+    "negatives.unverified_jurisdiction": score.jurisdiction.unverified,
     "comparisons.withheld": score.comparisons.withheld,
     "dates.recall": score.dates.recall,
     "dates.unsupported": score.dates.unsupported.length,
@@ -689,6 +732,8 @@ export function caseMetrics(score: CaseScore): CaseMetrics {
   }
   if (score.autoRenew)
     metrics["auto_renew.critical"] = score.autoRenew.critical ? 1 : 0;
+  if (score.jurisdiction.outcome !== null)
+    metrics["jurisdiction.proposal"] = score.jurisdiction.outcome;
   if (score.negatives.benignAlarms !== null) {
     metrics["negatives.benign_alarms"] = score.negatives.benignAlarms;
   }
@@ -696,7 +741,7 @@ export function caseMetrics(score: CaseScore): CaseMetrics {
 }
 
 function isIdeal(key: string, value: MetricValue): boolean {
-  if (key.startsWith("fields."))
+  if (key.startsWith("fields.") || key === "jurisdiction.proposal")
     return value === "correct" || value === "correct_abstention";
   if (
     key.startsWith("quotes.diagnosis.") ||
@@ -755,6 +800,7 @@ export function summarizeScores(scores: readonly CaseScore[]) {
     Record<FieldPath, Partial<Record<FieldOutcome, number>>>
   > = {};
   const parsePaths: Partial<Record<ParsePath, number>> = {};
+  const jurisdiction: Partial<Record<FieldOutcome, number>> = {};
   const autoRenewConfusion = Object.fromEntries(
     (["true", "false", "null"] as const).map((gold) => [
       gold,
@@ -782,6 +828,8 @@ export function summarizeScores(scores: readonly CaseScore[]) {
       outcomes[field.outcome] = (outcomes[field.outcome] ?? 0) + 1;
     }
     parsePaths[score.parsePath] = (parsePaths[score.parsePath] ?? 0) + 1;
+    const proposal = score.jurisdiction.outcome;
+    if (proposal) jurisdiction[proposal] = (jurisdiction[proposal] ?? 0) + 1;
     if (score.autoRenew) {
       autoRenewConfusion[confusionKey(score.autoRenew.gold)][
         confusionKey(score.autoRenew.predicted)
@@ -825,6 +873,10 @@ export function summarizeScores(scores: readonly CaseScore[]) {
     falseFlags: sum((s) => s.negatives.falseFlags.length),
     benignAlarms: sum((s) => s.negatives.benignAlarms ?? 0),
     unsupportedComparisons: sum((s) => s.comparisons.proposed),
+    /** Stored jurisdiction proposals by outcome, for cases that score one. */
+    jurisdiction,
+    /** Proposals dropped because their governing-law quotation did not verify. */
+    unverifiedJurisdictions: sum((s) => s.jurisdiction.unverified),
     /** Cases whose stored report withheld comparisons, as every case without a jurisdiction must. */
     comparisonsWithheld: scores.filter((s) => s.comparisons.withheld).length,
     dateRecall: ratio(

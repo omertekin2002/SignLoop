@@ -59,6 +59,13 @@
         }
       }
     ],
+    "proposed_jurisdiction": {
+      "jurisdiction": "England and Wales",
+      "evidence": {
+        "quote": "This Agreement is governed by the laws of England and Wales.",
+        "segment": "full"
+      }
+    },
     "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [

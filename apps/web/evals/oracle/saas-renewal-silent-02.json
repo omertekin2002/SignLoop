@@ -69,6 +69,13 @@
         }
       }
     ],
+    "proposed_jurisdiction": {
+      "jurisdiction": "State of Washington",
+      "evidence": {
+        "quote": "This Order is governed by the laws of the State of Washington, and the parties submit to the courts located in King County, Washington.",
+        "segment": "full"
+      }
+    },
     "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [

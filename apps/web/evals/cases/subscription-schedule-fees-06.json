@@ -12,6 +12,7 @@
     { "category": "early_termination_fee", "required": true, "segment": "tail", "span": "Customer shall pay an early termination fee equal to all Subscription Fees remaining for the then-current term" }
   ],
   "absent": ["arbitration"],
+  "governing_law": { "jurisdiction": "State of Texas", "span": "This Agreement is governed by the laws of the State of Texas, and the courts of Travis County, Texas have exclusive jurisdiction." },
   "fields": {
     "summary.renewal.auto_renew": true,
     "summary.renewal.renewal_period": { "canon": [12, "month"] },

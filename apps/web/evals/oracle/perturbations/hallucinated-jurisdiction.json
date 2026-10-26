@@ -1,0 +1,15 @@
+{
+  "id": "hallucinated-jurisdiction",
+  "case": "photography-no-governing-law-09",
+  "description": "The model invents a governing-law clause for a contract that has none. Its quotation cannot be verified, so production stores no proposal and only the unverified count moves.",
+  "patch": [
+    {
+      "path": "/proposed_jurisdiction",
+      "value": {
+        "jurisdiction": "State of California",
+        "evidence": { "quote": "This Agreement is governed by the laws of the State of California.", "segment": "full" }
+      }
+    }
+  ],
+  "targets": ["negatives.unverified_jurisdiction"]
+}

@@ -1,0 +1,80 @@
+{
+  "case": "photography-no-governing-law-09",
+  "note": "Ideal answer: no governing-law clause, so no jurisdiction is proposed; the late-cancellation deposit forfeiture is the only finding.",
+  "output": {
+    "risk_badge": "LOW",
+    "key_points": [
+      "A flat $1,800.00 fee covers up to four hours of event photography on September 19, 2026.",
+      "Cancelling with at least 30 calendar days' written notice refunds the $450.00 deposit; later cancellation forfeits it.",
+      "The agreement ends once the images are delivered and the balance is paid, and it does not renew.",
+      "The contract does not say which law governs it."
+    ],
+    "summary": {
+      "what_it_is": "A one-off event photography agreement for a bookshop's anniversary reading event.",
+      "payments": {
+        "amount": "$1,800.00 flat fee",
+        "frequency": "$450.00 deposit on signing, balance on the event date",
+        "fees": []
+      },
+      "term": {
+        "start": "2026-08-03",
+        "end": null,
+        "minimum_term": null
+      },
+      "renewal": {
+        "auto_renew": false,
+        "renewal_period": null
+      },
+      "cancellation": {
+        "how": "Client gives written notice before the event date; the deposit is refunded only with enough notice.",
+        "notice_period_days": 30,
+        "notice_period_text": "30 calendar days",
+        "penalties": [
+          "The $450.00 deposit is non-refundable if Client cancels with less than 30 calendar days' notice"
+        ]
+      }
+    },
+    "red_flags": [
+      {
+        "type": "Non-refundable deposit",
+        "severity": 3,
+        "explanation": "Cancelling with less than 30 calendar days' written notice forfeits the $450.00 deposit.",
+        "where": "Section 4",
+        "confidence": 90,
+        "evidence": {
+          "quote": "If Client cancels with less notice, the deposit is non-refundable.",
+          "segment": "full"
+        }
+      }
+    ],
+    "proposed_jurisdiction": null,
+    "normal_in_region": [],
+    "next_actions": {
+      "questions_to_ask": [
+        "Can the event date move without losing the deposit if the reading is rescheduled?"
+      ],
+      "email_templates": []
+    },
+    "key_dates": [
+      {
+        "type": "OTHER",
+        "date": "2026-09-19",
+        "derived_from": "Event date"
+      },
+      {
+        "type": "OTHER",
+        "date": "2026-08-03",
+        "derived_from": "Agreement date"
+      }
+    ],
+    "obligations": [
+      "Client pays the $450.00 deposit on signing and the balance on the event date",
+      "Photographer delivers at least 150 edited images within 21 days after the event"
+    ],
+    "parties": [
+      "Bright Fern Studio (Photographer)",
+      "Quill & Compass Bookshop (Client)"
+    ],
+    "disclaimer": "This is an AI analysis, not legal advice."
+  }
+}

@@ -80,6 +80,13 @@
         }
       }
     ],
+    "proposed_jurisdiction": {
+      "jurisdiction": "State of Vermont",
+      "evidence": {
+        "quote": "This Agreement is governed by the laws of the State of Vermont.",
+        "segment": "full"
+      }
+    },
     "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [

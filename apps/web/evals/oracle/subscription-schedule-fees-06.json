@@ -83,6 +83,13 @@
         }
       }
     ],
+    "proposed_jurisdiction": {
+      "jurisdiction": "State of Texas",
+      "evidence": {
+        "quote": "This Agreement is governed by the laws of the State of Texas, and the courts of Travis County, Texas have exclusive jurisdiction.",
+        "segment": "tail"
+      }
+    },
     "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [

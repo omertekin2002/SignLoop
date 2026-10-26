@@ -8,6 +8,8 @@ import {
   MAX_SOURCE_CATALOG_CHARACTERS,
 } from "@repo/chat-engine/chat-agent-history";
 import { runMigrations } from "../db/migrations.js";
+// Applies POSTGRES_LOCAL_PROXY (local PostgreSQL only) before the first query.
+import "@/lib/postgres-local-proxy";
 import { sql, type VercelPoolClient } from "@vercel/postgres";
 import { randomInt, randomUUID } from "node:crypto";
 import {
@@ -334,7 +336,13 @@ export type ContractSummaryRecord = {
   updatedAt: string;
 };
 
-export type ContractRecord = ContractSummaryRecord & {
+/** The jurisdiction the owner confirmed for a contract, which lets analyses include comparisons. */
+export type ContractJurisdictionRecord = {
+  confirmedJurisdiction: string | null;
+  jurisdictionConfirmedAt: string | null;
+};
+
+export type ContractRecord = ContractSummaryRecord & ContractJurisdictionRecord & {
   /** Quality warning for the current extracted text, recorded by its upload. */
   extractionWarning: string | null;
   analysesHasMore: boolean;
@@ -631,6 +639,7 @@ export async function createContractForUser(input: {
     throw new ProjectNotFoundError();
   }
 
+  // Owner-rooted inserts share-lock the owner's application_users row; see deleteAccountForUser.
   const { rows } = await sql<ContractSummaryRecord>`
     insert into contracts (
       user_id,
@@ -638,12 +647,8 @@ export async function createContractForUser(input: {
       title,
       status
     )
-    values (
-      ${input.userId},
-      ${validatedProjectId},
-      ${input.title},
-      'DRAFT'
-    )
+    select id, ${validatedProjectId}::uuid, ${input.title}, 'DRAFT'
+    from application_users where id = ${input.userId} for share
     returning
       id,
       user_id as "userId",
@@ -672,7 +677,8 @@ export async function getContractByIdForUser(
   // The warning belongs to the active text (saved with it by each upload), so the page can show
   // it before any analysis exists. The text itself stays out of this response.
   const { rows: contractRows } = await sql<
-    ContractSummaryRecord & { extractionWarning: string | null }
+    ContractSummaryRecord &
+      ContractJurisdictionRecord & { extractionWarning: string | null }
   >`
     select
       id,
@@ -681,6 +687,8 @@ export async function getContractByIdForUser(
       title,
       status,
       extraction_warning as "extractionWarning",
+      confirmed_jurisdiction as "confirmedJurisdiction",
+      jurisdiction_confirmed_at as "jurisdictionConfirmedAt",
       created_at as "createdAt",
       updated_at as "updatedAt"
     from contracts
@@ -903,6 +911,8 @@ export type ContractAnalysisGate = {
 export type ContractWithLatestAnalysisRecord = ContractSummaryRecord & {
   text: string | null;
   extractionWarning: string | null;
+  /** Passed to the analysis as its region; null keeps regional comparisons withheld. */
+  confirmedJurisdiction: string | null;
   revision: string;
   latestAnalysis: { id: string } | null;
 };
@@ -948,6 +958,7 @@ export async function getContractWithLatestAnalysisForUser(
     ContractSummaryRecord & {
       text: string | null;
       extractionWarning: string | null;
+      confirmedJurisdiction: string | null;
       revision: string;
       analysisId: string | null;
     }
@@ -960,6 +971,7 @@ export async function getContractWithLatestAnalysisForUser(
       c.status,
       c.text_content as "text",
       c.extraction_warning as "extractionWarning",
+      c.confirmed_jurisdiction as "confirmedJurisdiction",
       to_char(
         c.updated_at at time zone 'UTC',
         'YYYY-MM-DD"T"HH24:MI:SS.US'
@@ -993,11 +1005,39 @@ export async function getContractWithLatestAnalysisForUser(
     status: row.status,
     text: row.text,
     extractionWarning: row.extractionWarning,
+    confirmedJurisdiction: row.confirmedJurisdiction,
     revision: row.revision,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     latestAnalysis: row.analysisId ? { id: row.analysisId } : null,
   };
+}
+
+/**
+ * Confirm, change, or clear (null) the owner's jurisdiction for a contract; null when the contract
+ * is not theirs. It describes the contract rather than its text, so the analysis revision
+ * (updated_at) is left alone; each analysis records the jurisdiction it ran with instead.
+ */
+export async function setContractJurisdictionForUser(input: {
+  userId: string;
+  contractId: string;
+  jurisdiction: string | null;
+}): Promise<ContractJurisdictionRecord | null> {
+  await ensureSchema();
+
+  const { rows } = await sql<ContractJurisdictionRecord>`
+    update contracts
+    set confirmed_jurisdiction = ${input.jurisdiction}::text,
+      jurisdiction_confirmed_at = case
+        when ${input.jurisdiction}::text is null then null else now() end
+    where id = ${input.contractId}
+      and user_id = ${input.userId}
+    returning
+      confirmed_jurisdiction as "confirmedJurisdiction",
+      jurisdiction_confirmed_at as "jurisdictionConfirmedAt"
+  `;
+
+  return rows[0] ?? null;
 }
 
 export async function saveContractUploadForUser(
@@ -1277,12 +1317,8 @@ export async function createProjectForUser(input: {
       description,
       status
     )
-    values (
-      ${input.userId},
-      ${input.title},
-      ${input.description ?? null},
-      'active'
-    )
+    select id, ${input.title}, ${input.description ?? null}::text, 'active'
+    from application_users where id = ${input.userId} for share
     returning
       id,
       user_id as "userId",
@@ -1647,6 +1683,245 @@ export async function deleteProjectForUser(input: {
   );
 }
 
+// Children go before their parents and are scoped through an owned parent, so legacy rows behind
+// foreign keys that migration 012 could not validate are removed too. Deleting contract files and
+// context documents queues their stored objects in the storage_deletions outbox (012's triggers).
+const DELETE_ACCOUNT_STATEMENTS = [
+  "DELETE FROM chat_messages m USING chat_threads t WHERE t.id = m.thread_id AND t.user_id = $1",
+  // Cascades to chat_attachments and chat_files.
+  "DELETE FROM chat_threads WHERE user_id = $1",
+  "DELETE FROM analyses a USING contracts c WHERE c.id = a.contract_id AND c.user_id = $1",
+  "DELETE FROM contract_files WHERE user_id = $1 OR contract_id IN (SELECT id FROM contracts WHERE user_id = $1)",
+  "DELETE FROM contracts WHERE user_id = $1",
+  "DELETE FROM context_documents d USING projects p WHERE p.id = d.project_id AND p.user_id = $1",
+  "DELETE FROM projects WHERE user_id = $1",
+  "DELETE FROM user_settings WHERE user_id = $1",
+  // Lease keys are `<kind>:<owner>:<uuid>`; strip the 37-character `:<uuid>` to compare exactly.
+  `DELETE FROM generation_operations
+   WHERE left(entity_key, length(entity_key) - 37) IN ('contract:' || $1, 'chat:' || $1)`,
+];
+
+/**
+ * Delete everything an owner has in one transaction. Stored objects are queued in the outbox and
+ * removed by storage cleanup, never inline. Repeating the call deletes whatever is left. Saved chat
+ * replay needs no scrubbing, because the threads go with the contracts they cite.
+ *
+ * Every owner-rooted insert (contracts, projects, settings, chat threads) share-locks the owner's
+ * application_users row, and every other owned row hangs off one of those. Locking that row first
+ * waits for writes already under way, so the deletes below see them, and blocks new ones until
+ * commit. Once the row is gone they insert nothing, so a request authenticated before the deletion
+ * cannot recreate data afterwards. `keepLogin` keeps the row and the WorkOS mapping, so that a
+ * retry after a failed WorkOS deletion resolves the session to the same owner and sweeps any late
+ * writes; the final call removes them and retains a hashed subject revocation so stale sessions
+ * cannot provision a new owner.
+ */
+export async function deleteAccountForUser(
+  userId: string,
+  options: { keepLogin?: boolean } = {},
+): Promise<void> {
+  await ensureSchema();
+  const { principal } = admissionLimits(userId);
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT id FROM application_users WHERE id = $1 FOR UPDATE", [userId]);
+    for (const statement of DELETE_ACCOUNT_STATEMENTS) {
+      await client.query(statement, [userId]);
+    }
+    // Admission rows are keyed by the one-way hash of the owner ID.
+    await client.query("DELETE FROM chat_admissions WHERE principal = $1", [principal]);
+    await client.query("DELETE FROM chat_request_budgets WHERE bucket = $1", [principal]);
+    if (!options.keepLogin) {
+      await client.query(
+        `INSERT INTO revoked_auth_identities(provider, subject_hash)
+         SELECT provider, sha256(convert_to(subject, 'UTF8'))
+         FROM auth_identities WHERE user_id = $1
+         ON CONFLICT DO NOTHING`,
+        [userId],
+      );
+      await client.query("DELETE FROM auth_identities WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM application_users WHERE id = $1", [userId]);
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export type AccountExportContractFile = {
+  id: string;
+  contractId: string | null;
+  fileName: string;
+  contentType: string | null;
+  sizeBytes: number | null;
+  extractionMethod: string | null;
+  extractionConfidence: number | null;
+  createdAt: string;
+  /** Internal object location, for reading the bytes; never part of the archive. */
+  storageKey: string | null;
+};
+
+export type AccountExportContextDocument = {
+  id: string;
+  projectId: string;
+  title: string;
+  documentType: string;
+  originalFilename: string | null;
+  contentType: string | null;
+  sizeBytes: number | null;
+  wordCount: number | null;
+  extractedText: string | null;
+  extractionWarning: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Internal object location, for reading the bytes; never part of the archive. */
+  storageKey: string | null;
+};
+
+export type AccountExportData = {
+  contracts: Array<{
+    id: string;
+    projectId: string | null;
+    title: string;
+    status: string;
+    textContent: string | null;
+    extractionWarning: string | null;
+    confirmedJurisdiction: string | null;
+    jurisdictionConfirmedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  contractFiles: AccountExportContractFile[];
+  analyses: AnalysisRecord[];
+  projects: Array<{
+    id: string;
+    title: string;
+    description: string | null;
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  contextDocuments: AccountExportContextDocument[];
+  chatThreads: Array<{ id: string; title: string; createdAt: string; updatedAt: string }>;
+  chatMessages: Array<Omit<ChatMessageRecord, "agentMessages" | "contractEvidence">>;
+  chatFiles: Array<{
+    id: string;
+    threadId: string;
+    filename: string;
+    mediaType: string;
+    sizeBytes: number;
+    warning: string | null;
+    createdAt: string;
+  }>;
+  chatImages: Array<{ id: string; threadId: string; sizeBytes: number; createdAt: string }>;
+  settings: Omit<UserSettingsRecord, "userId"> | null;
+};
+
+// Every query is scoped to the owner, directly or through an owned parent, with the same reach as
+// DELETE_ACCOUNT_STATEMENTS. Operational rows (leases, admissions, budgets, the storage outbox and
+// the login mapping) are never read. Chat file and image bytes stay in the database; the archive
+// loads them one at a time with getChatFileForUser and getChatImageForUser.
+const ACCOUNT_EXPORT_QUERIES = {
+  contracts: `SELECT id, project_id AS "projectId", title, status, text_content AS "textContent",
+      extraction_warning AS "extractionWarning", confirmed_jurisdiction AS "confirmedJurisdiction",
+      jurisdiction_confirmed_at AS "jurisdictionConfirmedAt", created_at AS "createdAt",
+      updated_at AS "updatedAt"
+    FROM contracts WHERE user_id = $1 ORDER BY created_at, id`,
+  contractFiles: `SELECT id, contract_id AS "contractId", file_name AS "fileName",
+      content_type AS "contentType", size_bytes AS "sizeBytes", extraction_method AS "extractionMethod",
+      extraction_confidence AS "extractionConfidence", created_at AS "createdAt",
+      coalesce(storage_key, blob_path) AS "storageKey"
+    FROM contract_files
+    WHERE user_id = $1 OR contract_id IN (SELECT id FROM contracts WHERE user_id = $1)
+    ORDER BY created_at, id`,
+  analyses: `SELECT a.id, a.contract_id AS "contractId", a.risk_badge AS "riskBadge",
+      a.result_json AS "resultJson", a.llm_provider AS "llmProvider", a.llm_model AS "llmModel",
+      a.llm_prompt_tokens AS "llmPromptTokens", a.llm_completion_tokens AS "llmCompletionTokens",
+      a.processing_time_ms AS "processingTimeMs", a.created_at AS "createdAt"
+    FROM analyses a JOIN contracts c ON c.id = a.contract_id
+    WHERE c.user_id = $1 ORDER BY a.created_at, a.id`,
+  projects: `SELECT id, title, description, status, created_at AS "createdAt", updated_at AS "updatedAt"
+    FROM projects WHERE user_id = $1 ORDER BY created_at, id`,
+  contextDocuments: `SELECT d.id, d.project_id AS "projectId", d.title, d.document_type AS "documentType",
+      d.original_filename AS "originalFilename", d.content_type AS "contentType",
+      d.size_bytes AS "sizeBytes", d.word_count AS "wordCount", d.extracted_text AS "extractedText",
+      d.extraction_warning AS "extractionWarning", d.created_at AS "createdAt",
+      d.updated_at AS "updatedAt", d.storage_key AS "storageKey"
+    FROM context_documents d JOIN projects p ON p.id = d.project_id
+    WHERE p.user_id = $1 ORDER BY d.created_at, d.id`,
+  chatThreads: `SELECT id, title, created_at AS "createdAt", updated_at AS "updatedAt"
+    FROM chat_threads WHERE user_id = $1 ORDER BY created_at, id`,
+  // The model's private tool transcript (agentMessages) is replay state, not conversation.
+  chatMessages: `SELECT m.id, m.thread_id AS "threadId", m.role, m.content, m.position,
+      m.created_at AS "createdAt", m.metadata_json - 'agentMessages' AS metadata
+    FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id
+    WHERE t.user_id = $1 ORDER BY m.thread_id, m.position, m.created_at`,
+  chatFiles: `SELECT f.id, f.thread_id AS "threadId", f.filename, f.media_type AS "mediaType",
+      octet_length(f.file_data) AS "sizeBytes", f.warning, f.created_at AS "createdAt"
+    FROM chat_files f JOIN chat_threads t ON t.id = f.thread_id
+    WHERE t.user_id = $1 ORDER BY f.created_at, f.id`,
+  chatImages: `SELECT a.id, a.thread_id AS "threadId", octet_length(a.image_data) AS "sizeBytes",
+      a.created_at AS "createdAt"
+    FROM chat_attachments a JOIN chat_threads t ON t.id = a.thread_id
+    WHERE t.user_id = $1 ORDER BY a.created_at, a.id`,
+  settings: `SELECT primary_model AS "primaryModel", personality, updated_at AS "updatedAt"
+    FROM user_settings WHERE user_id = $1`,
+} as const;
+
+/**
+ * Read everything an owner keeps in SignLoop for a data export, from one consistent snapshot.
+ * File bytes are not loaded here: stored objects are read by key and chat files and images by ID
+ * while the archive streams.
+ */
+export async function getAccountExportForUser(userId: string): Promise<AccountExportData> {
+  await ensureSchema();
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const read = async <T extends Record<string, unknown>>(query: string) =>
+      (await client.query<T>(query, [userId])).rows;
+    const data: AccountExportData = {
+      contracts: await read(ACCOUNT_EXPORT_QUERIES.contracts),
+      contractFiles: await read(ACCOUNT_EXPORT_QUERIES.contractFiles),
+      analyses: (await read<AnalysisRow>(ACCOUNT_EXPORT_QUERIES.analyses)).map(mapAnalysisRow),
+      projects: await read(ACCOUNT_EXPORT_QUERIES.projects),
+      contextDocuments: await read(ACCOUNT_EXPORT_QUERIES.contextDocuments),
+      chatThreads: await read(ACCOUNT_EXPORT_QUERIES.chatThreads),
+      chatMessages: (
+        await read<{
+          id: string;
+          threadId: string;
+          role: string;
+          content: string;
+          position: number;
+          createdAt: string;
+          metadata: unknown;
+        }>(ACCOUNT_EXPORT_QUERIES.chatMessages)
+      ).map((row) => {
+        const metadata = parseJsonObject(row.metadata);
+        const webSources = parseWebSources(metadata.webSources);
+        return {
+          ...mapChatMessageRow(row, "omit"),
+          ...(webSources?.length ? { webSources } : {}),
+        };
+      }),
+      chatFiles: await read(ACCOUNT_EXPORT_QUERIES.chatFiles),
+      chatImages: await read(ACCOUNT_EXPORT_QUERIES.chatImages),
+      settings: (await read<Omit<UserSettingsRecord, "userId">>(ACCOUNT_EXPORT_QUERIES.settings))[0] ?? null,
+    };
+    await client.query("COMMIT");
+    return data;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getUserSettingsByUserId(
   userId: string,
 ): Promise<UserSettingsRecord | null> {
@@ -1674,7 +1949,8 @@ export async function upsertUserSettings(input: {
   await ensureSchema();
   const { rows } = await sql<UserSettingsRecord>`
     INSERT INTO user_settings(user_id, primary_model, personality, updated_at)
-    VALUES (${input.userId}, ${input.primaryModel ?? null}, ${input.personality ?? null}, now())
+    SELECT id, ${input.primaryModel ?? null}::text, ${input.personality ?? null}::text, now()
+    FROM application_users WHERE id = ${input.userId} FOR SHARE
     ON CONFLICT (user_id) DO UPDATE SET
       primary_model = CASE WHEN ${input.primaryModel !== undefined} THEN excluded.primary_model ELSE user_settings.primary_model END,
       personality = CASE WHEN ${input.personality !== undefined} THEN excluded.personality ELSE user_settings.personality END,
@@ -1746,10 +2022,7 @@ export async function createChatThreadForUser(input: {
       user_id,
       title
     )
-    values (
-      ${input.userId},
-      ${title}
-    )
+    select id, ${title} from application_users where id = ${input.userId} for share
     returning
       id,
       user_id as "userId",

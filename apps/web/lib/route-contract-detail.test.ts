@@ -5,12 +5,14 @@ const {
   after,
   getContractByIdForUser,
   deleteContractForUser,
+  setContractJurisdictionForUser,
   flushStorageDeletions,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   after: vi.fn(),
   getContractByIdForUser: vi.fn(),
   deleteContractForUser: vi.fn(),
+  setContractJurisdictionForUser: vi.fn(),
   flushStorageDeletions: vi.fn(),
 }));
 
@@ -22,10 +24,11 @@ vi.mock("next/server", async (importOriginal) => ({
 vi.mock("@/lib/server-db", () => ({
   getContractByIdForUser,
   deleteContractForUser,
+  setContractJurisdictionForUser,
 }));
 vi.mock("@/lib/storage-cleanup", () => ({ flushStorageDeletions }));
 
-import { DELETE, GET } from "@/app/api/contracts/[id]/route";
+import { DELETE, GET, PATCH } from "@/app/api/contracts/[id]/route";
 
 const CONTRACT_ID = "11e3e947-f71f-4ecd-a901-adbf24edbb8a";
 
@@ -287,5 +290,128 @@ describe("DELETE /api/contracts/[id]", () => {
       "deadlock detected",
     );
     expect(after).not.toHaveBeenCalled();
+  });
+});
+
+describe("PATCH /api/contracts/[id]", () => {
+  const patchRequest = (body: unknown) =>
+    new Request(`http://localhost/api/contracts/${CONTRACT_ID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    });
+  const confirmedAt = "2026-10-26T15:00:00.000Z";
+
+  it("returns JSON 401 without touching the database when signed out", async () => {
+    auth.mockResolvedValue({ userId: null });
+
+    const response = await PATCH(
+      patchRequest({ jurisdiction: "Ontario" }),
+      params(CONTRACT_ID),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Unauthorized" });
+    expect(setContractJurisdictionForUser).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 for a malformed id without querying the database", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+
+    const response = await PATCH(
+      patchRequest({ jurisdiction: "Ontario" }),
+      params("not-a-uuid"),
+    );
+
+    expect(response.status).toBe(404);
+    expect(setContractJurisdictionForUser).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 for another user's contract", async () => {
+    auth.mockResolvedValue({ userId: "intruder" });
+    setContractJurisdictionForUser.mockResolvedValue(null);
+
+    const response = await PATCH(
+      patchRequest({ jurisdiction: "Ontario" }),
+      params(CONTRACT_ID),
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Contract not found" });
+    expect(setContractJurisdictionForUser).toHaveBeenCalledWith({
+      userId: "intruder",
+      contractId: CONTRACT_ID,
+      jurisdiction: "Ontario",
+    });
+  });
+
+  it.each([
+    ["malformed JSON", "{"],
+    ["a missing field", {}],
+    ["an extra field", { jurisdiction: "Ontario", region: "Ontario" }],
+    ["a number", { jurisdiction: 7 }],
+    ["a blank string", { jurisdiction: "  \n " }],
+    ["a placeholder", { jurisdiction: "Unknown" }],
+    ["a value over 100 characters", { jurisdiction: "x".repeat(101) }],
+    ["an array body", [{ jurisdiction: "Ontario" }]],
+  ])("returns 400 for %s without writing", async (_label, body) => {
+    auth.mockResolvedValue({ userId: "owner" });
+
+    const response = await PATCH(patchRequest(body), params(CONTRACT_ID));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toHaveProperty("error");
+    expect(setContractJurisdictionForUser).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["confirms the proposal", "State of Oregon", "State of Oregon"],
+    ["changes it to a normalized value", "  Ontario,\n  Canada ", "Ontario, Canada"],
+  ])("%s for the owner", async (_label, sent, stored) => {
+    auth.mockResolvedValue({ userId: "owner" });
+    setContractJurisdictionForUser.mockResolvedValue({
+      confirmedJurisdiction: stored,
+      jurisdictionConfirmedAt: confirmedAt,
+    });
+
+    const response = await PATCH(
+      patchRequest({ jurisdiction: sent }),
+      params(CONTRACT_ID),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      confirmedJurisdiction: stored,
+      jurisdictionConfirmedAt: confirmedAt,
+    });
+    expect(setContractJurisdictionForUser).toHaveBeenCalledWith({
+      userId: "owner",
+      contractId: CONTRACT_ID,
+      jurisdiction: stored,
+    });
+  });
+
+  it("clears the jurisdiction with null", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    setContractJurisdictionForUser.mockResolvedValue({
+      confirmedJurisdiction: null,
+      jurisdictionConfirmedAt: null,
+    });
+
+    const response = await PATCH(
+      patchRequest({ jurisdiction: null }),
+      params(CONTRACT_ID),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      confirmedJurisdiction: null,
+      jurisdictionConfirmedAt: null,
+    });
+    expect(setContractJurisdictionForUser).toHaveBeenCalledWith({
+      userId: "owner",
+      contractId: CONTRACT_ID,
+      jurisdiction: null,
+    });
   });
 });

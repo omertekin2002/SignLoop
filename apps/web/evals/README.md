@@ -4,7 +4,7 @@ Measures how well contract analysis finds risky clauses, quotes them verifiably,
 
 ## Tiers
 
-**Deterministic replay (this tier).** Runs with `bun run test`, so it runs in CI. It makes no provider calls and costs nothing. Each case's hand-written ideal model output (`oracle/`) is replayed through the production path: `buildAnalysisPrompt`, the OpenAI SDK client, provider fallback, JSON salvage and validation in `analyzeText`, then `finalizeAnalysisResult`, the same post-processing the analyze route stores. Every oracle must reach its documented ideal. Five deliberately bad responses (`oracle/perturbations/`) must each move exactly the metrics they declare. This tier tests the pipeline and the scorers, not a model.
+**Deterministic replay (this tier).** Runs with `bun run test`, so it runs in CI. It makes no provider calls and costs nothing. Each case's hand-written ideal model output (`oracle/`) is replayed through the production path: `buildAnalysisPrompt`, the OpenAI SDK client, provider fallback, JSON salvage and validation in `analyzeText`, then `finalizeAnalysisResult`, the same post-processing the analyze route stores. Every oracle must reach its documented ideal. Seven deliberately bad responses (`oracle/perturbations/`) must each move exactly the metrics they declare. This tier tests the pipeline and the scorers, not a model.
 
 **Live recording (later, not built).** It will run only when `SIGNLOOP_EVAL_LIVE=1` is set, with hard caps on calls and cost, from a `workflow_dispatch`-only GitHub workflow. It will record real provider exchanges in the replay format, with `expect.fingerprint` set (see `transport.ts`), so recordings replay deterministically and are rejected once the prompt or request changes.
 
@@ -37,6 +37,7 @@ Each gold span must occur exactly once in the contract, inside the segment produ
 - **Quote accuracy**: the share of flags with evidence and the share verified by production rules. Failures get an evaluation-only diagnosis, such as wrong segment, ambiguous, whitespace/typography/Unicode drift, quoted context or prompt, near miss, or fabricated. Production matching is never loosened.
 - **Abstention**: each gold field is scored as correct, wrong, false abstention, correct abstention, or fabricated. Placeholders such as "Not specified" count as abstaining. Notice and renewal periods are compared as (number, unit). `auto_renew` has a 3×3 confusion table. Answering `false` when the gold value is null is the critical error.
 - **Negative controls**: flags naming a category listed in `absent`, high-severity flags (7 or above) or a HIGH badge on `benign` contracts, and regional comparisons the model proposes, since no case confirms a jurisdiction. `comparisons.withheld` separately requires the stored report to keep none of them and to carry the server's `comparisons_withheld` flag.
+- **Jurisdiction proposal**: for cases with `governing_law` gold, the stored `proposed_jurisdiction` is correct when its verified citation lies mostly inside the gold clause and names the gold jurisdiction. `null` gold means the contract has no governing-law clause, so the ideal answer proposes none. `negatives.unverified_jurisdiction` counts proposals production dropped because their quotation did not verify, such as an invented clause.
 - **Key dates and parties**: recall of ISO dates, dates outside the gold list, and alias-matched parties.
 - **Parse path**: strict, partial, normalized, rejected (validation), or failed (provider), as far as it is observable without production hooks. Output that needed syntax salvage is reported as unobserved.
 
@@ -44,6 +45,6 @@ Each gold span must occur exactly once in the contract, inside the segment produ
 
 1. Write the contract under `contracts/` using invented parties, RFC 2606 example domains, and 555-0100 to 555-0199 telephone numbers. The privacy test rejects other emails and phone numbers, and checksum-valid card numbers, IBANs, and SSN-shaped numbers.
 2. Add `cases/<id>.json` with spans copied exactly from the contract.
-3. Add `oracle/<id>.json` with the ideal output (with no confirmed jurisdiction, `normal_in_region` stays empty), and run `bun run test evals` from `apps/web`.
+3. Add `oracle/<id>.json` with the ideal output (with no confirmed jurisdiction, `normal_in_region` stays empty; `proposed_jurisdiction` quotes the governing-law clause, or is null without one), and run `bun run test evals` from `apps/web`.
 
 Category names follow [CUAD](https://www.atticusprojectai.org/cuad) (CC BY 4.0) and UNFAIR-ToS (Lippi et al., 2019, distributed in LexGLUE). Only label names are borrowed; no dataset text is included.

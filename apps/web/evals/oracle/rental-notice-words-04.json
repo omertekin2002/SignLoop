@@ -75,6 +75,13 @@
         }
       }
     ],
+    "proposed_jurisdiction": {
+      "jurisdiction": "State of Colorado",
+      "evidence": {
+        "quote": "This Agreement is governed by the laws of the State of Colorado.",
+        "segment": "full"
+      }
+    },
     "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [

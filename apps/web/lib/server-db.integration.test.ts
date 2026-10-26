@@ -44,6 +44,8 @@ import {
   deleteChatThreadForUser,
   createContractForUser,
   createProjectForUser,
+  deleteAccountForUser,
+  getAccountExportForUser,
   deleteAnalysisForContract,
   deleteContractForUser,
   deleteProjectForUser,
@@ -63,12 +65,20 @@ import {
   listContractsByUserId,
   listContractsForChat,
   saveContractUploadForUser,
+  setContractJurisdictionForUser,
+  addContextDocumentToProject,
 } from "./server-db";
+import { resolveWorkOSUserId } from "./auth-identity";
 import { attachAnalysisSources, contractSourceRevision } from "./analysis-sources";
 import { citationForReport } from "./source-citations";
 import { buildAnalysisPrompt } from "./analysis";
 import { boundCanonicalChatHistory } from "./chat-history-bounds";
 import { admissionLimits, type AdmissionResult } from "./inference-policy";
+import { createAccountExport } from "./account-export";
+import { json, unzip } from "./test-unzip";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 // db/test-integration.sh sets this and runs vitest directly, outside turbo's env filtering.
 // eslint-disable-next-line turbo/no-undeclared-env-vars
@@ -76,6 +86,15 @@ if (process.env.REQUIRE_DB_TESTS === "1" && !connectionString)
   throw new Error(
     "REQUIRE_DB_TESTS=1 but SIGNLOOP_TEST_DATABASE_URL is unset; refusing to skip the database suite",
   );
+
+const TEST_OWNERS = [
+  "another-user", "bounded-followup-owner", "chat-owner", "chat-pagination-owner",
+  "content-receipt-owner", "empty-lookup-intruder", "empty-lookup-owner", "file-owner",
+  "intruder", "late-reply-owner", "legacy-receipt-owner", "other", "owner", "OWNER",
+  "project-analysis-owner", "quota-owner", "replay-failure-owner", "replay-intruder",
+  "replay-owner", "replay-project-owner", "revision-chat-owner", "scope-user", "settings-owner",
+  "title-owner",
+];
 
 describe.skipIf(!connectionString)("database integration", () => {
   it("keeps chat uploads/downloads owner-scoped, transactional, and deleted with their thread", async () => {
@@ -126,6 +145,12 @@ describe.skipIf(!connectionString)("database integration", () => {
     try {
       await runMigrations(client);
       await runMigrations(client);
+      // Owner-rooted inserts require the owner's application_users row, as every signed-in
+      // owner has (see deleteAccountForUser).
+      await client.query(
+        "INSERT INTO application_users(id) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING",
+        [TEST_OWNERS],
+      );
     } finally {
       client.release();
     }
@@ -250,6 +275,43 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(
       (await getContractByIdForUser("owner", item.id))?.extractionWarning,
     ).toBeNull();
+  });
+
+  it("confirms, changes, and clears a contract's jurisdiction for its owner only", async () => {
+    const item = await contract();
+    expect(await getContractByIdForUser("owner", item.id)).toMatchObject({
+      confirmedJurisdiction: null,
+      jurisdictionConfirmedAt: null,
+    });
+    const before = await getContractWithLatestAnalysisForUser("owner", item.id);
+    expect(before?.confirmedJurisdiction).toBeNull();
+
+    expect(
+      await setContractJurisdictionForUser({ userId: "intruder", contractId: item.id, jurisdiction: "Quebec" }),
+    ).toBeNull();
+    const confirmed = await setContractJurisdictionForUser({ userId: "owner", contractId: item.id, jurisdiction: "Ontario" });
+    expect(confirmed).toMatchObject({ confirmedJurisdiction: "Ontario" });
+    expect(confirmed?.jurisdictionConfirmedAt).toBeTruthy();
+    expect(await getContractByIdForUser("owner", item.id)).toMatchObject({ confirmedJurisdiction: "Ontario" });
+    expect(await getContractByIdForUser("intruder", item.id)).toBeNull();
+    // The next analysis reads it, and confirming does not move the analysis revision.
+    const after = await getContractWithLatestAnalysisForUser("owner", item.id);
+    expect(after).toMatchObject({ confirmedJurisdiction: "Ontario", revision: before!.revision });
+
+    expect(
+      await setContractJurisdictionForUser({ userId: "owner", contractId: item.id, jurisdiction: "England and Wales" }),
+    ).toMatchObject({ confirmedJurisdiction: "England and Wales" });
+    expect(
+      await setContractJurisdictionForUser({ userId: "owner", contractId: item.id, jurisdiction: null }),
+    ).toEqual({ confirmedJurisdiction: null, jurisdictionConfirmedAt: null });
+
+    // Migration 019 bounds the value and keeps it paired with its confirmation time.
+    await expect(
+      pool.current!.query("UPDATE contracts SET confirmed_jurisdiction = $2, jurisdiction_confirmed_at = now() WHERE id = $1", [item.id, "x".repeat(101)]),
+    ).rejects.toThrow(/check constraint/);
+    await expect(
+      pool.current!.query("UPDATE contracts SET confirmed_jurisdiction = 'Ontario' WHERE id = $1", [item.id]),
+    ).rejects.toThrow(/contracts_jurisdiction_confirmation_check/);
   });
 
   it("serves bounded source pages with Unicode/hash agreement and owner isolation", async () => {
@@ -2044,6 +2106,282 @@ describe.skipIf(!connectionString)("database integration", () => {
       gate.release();
       for (const runner of runners) runner.release(true);
       await db.query("DROP SCHEMA IF EXISTS migration_race CASCADE");
+    }
+  });
+
+  it("deletes every row an account owns and queues its stored objects, leaving other accounts intact", async () => {
+    async function seed() {
+      const userId = await resolveWorkOSUserId({ id: `user_${crypto.randomUUID()}` });
+      const { principal } = admissionLimits(userId);
+      const project = await createProjectForUser({ userId, title: "Lease" });
+      const contextKey = `account-context-${crypto.randomUUID()}`;
+      await addContextDocumentToProject({
+        userId, projectId: project.id, title: "Brief", documentType: "other", storageKey: contextKey,
+        bucket: "test", originalFilename: "brief.txt", contentType: "text/plain", sizeBytes: 5,
+        extractedText: "Brief", wordCount: 1,
+      });
+      const contracts = [
+        await createContractForUser({ userId, title: "In project", projectId: project.id }),
+        await createContractForUser({ userId, title: "Loose" }),
+      ];
+      const fileKeys: string[] = [];
+      for (const item of contracts) {
+        const storageKey = `account-file-${crypto.randomUUID()}`;
+        fileKeys.push(storageKey);
+        await saveContractUploadForUser({
+          userId, contractId: item.id, projectId: item.projectId, title: item.title,
+          fileName: "agreement.txt", storageKey, bucket: "test", contentType: "text/plain",
+          sizeBytes: 12, extractionMethod: null, extractionConfidence: null, text: "Clause text.",
+        });
+        const snapshot = await getContractWithLatestAnalysisForUser(userId, item.id);
+        await createAnalysisForContract({
+          userId, contractId: item.id, expectedRevision: snapshot!.revision, riskBadge: "LOW",
+          resultJson: result, llmProvider: "test", llmModel: "test",
+        });
+      }
+      // A legacy file row: no contract, and its object key in blob_path.
+      const legacyKey = `account-legacy-${crypto.randomUUID()}`;
+      await pool.current!.query(
+        "INSERT INTO contract_files(user_id, file_name, blob_path) VALUES ($1, 'old.pdf', $2)",
+        [userId, legacyKey],
+      );
+      const thread = await createChatThreadForUser({ userId });
+      await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
+        { role: "user", content: "Summarize" },
+        { role: "assistant", content: "Summary" },
+      ] });
+      const document = { id: crypto.randomUUID(), name: "notes.txt", mediaType: "text/plain", size: 5, text: "Notes" };
+      await saveChatFileForUser({ userId, threadId: thread.id, file: document, data: Buffer.from(document.text) });
+      await pool.current!.query(
+        "INSERT INTO chat_attachments(thread_id, image_data) VALUES ($1, $2)",
+        [thread.id, Buffer.from("png")],
+      );
+      await upsertUserSettings({ userId, personality: "bare-llm" });
+      expect(await claimGenerationOperation(userId, "contract", contracts[0]!.id, 60)).toBeTypeOf("function");
+      expect(await claimGenerationOperation(userId, "chat", thread.id, 60)).toBeTypeOf("function");
+      await pool.current!.query(
+        "INSERT INTO chat_admissions(token, principal, expires_at) VALUES ($1, $2, now() + interval '1 minute')",
+        [crypto.randomUUID(), principal],
+      );
+      await pool.current!.query(
+        "INSERT INTO chat_request_budgets(bucket, window_start, requests) VALUES ($1, date_trunc('hour', now()), 1)",
+        [principal],
+      );
+      return {
+        userId, principal, projectIds: [project.id], threadIds: [thread.id],
+        contractIds: contracts.map((item) => item.id), storageKeys: [contextKey, ...fileKeys, legacyKey],
+      };
+    }
+    type Account = Awaited<ReturnType<typeof seed>>;
+
+    async function count(table: string, where: string, values: unknown[]) {
+      const { rows } = await pool.current!.query<{ count: number }>(
+        `SELECT count(*)::integer AS count FROM ${table} WHERE ${where}`, values,
+      );
+      return rows[0]!.count;
+    }
+    const rowsOf = async (account: Account) => ({
+      projects: await count("projects", "user_id = $1", [account.userId]),
+      contracts: await count("contracts", "user_id = $1", [account.userId]),
+      contractsById: await count("contracts", "id = ANY($1::uuid[])", [account.contractIds]),
+      analyses: await count("analyses", "contract_id = ANY($1::uuid[])", [account.contractIds]),
+      contractFiles: await count("contract_files", "user_id = $1", [account.userId]),
+      contextDocuments: await count("context_documents", "project_id = ANY($1::uuid[])", [account.projectIds]),
+      threads: await count("chat_threads", "user_id = $1", [account.userId]),
+      messages: await count("chat_messages", "thread_id = ANY($1::uuid[])", [account.threadIds]),
+      attachments: await count("chat_attachments", "thread_id = ANY($1::uuid[])", [account.threadIds]),
+      chatFiles: await count("chat_files", "thread_id = ANY($1::uuid[])", [account.threadIds]),
+      settings: await count("user_settings", "user_id = $1", [account.userId]),
+      leases: await count("generation_operations", "entity_key LIKE '%:' || $1 || ':%'", [account.userId]),
+      admissions: await count("chat_admissions", "principal = $1", [account.principal]),
+      budgets: await count("chat_request_budgets", "bucket = $1", [account.principal]),
+      identities: await count("auth_identities", "user_id = $1", [account.userId]),
+      users: await count("application_users", "id = $1", [account.userId]),
+    });
+    const queued = async (account: Account) =>
+      (await pool.current!.query<{ storage_key: string }>(
+        "SELECT DISTINCT storage_key FROM storage_deletions WHERE storage_key = ANY($1)",
+        [account.storageKeys],
+      )).rows.map((row) => row.storage_key).sort();
+
+    const deleted = await seed();
+    const kept = await seed();
+    const keptBefore = await rowsOf(kept);
+    expect(Object.values(keptBefore).every((rows) => rows > 0)).toBe(true);
+    expect(await queued(deleted)).toEqual([]);
+
+    // Data first: the login mapping stays until WorkOS has deleted the user.
+    await deleteAccountForUser(deleted.userId, { keepLogin: true });
+    const { identities, users, ...data } = await rowsOf(deleted);
+    expect({ identities, users }).toEqual({ identities: 1, users: 1 });
+    expect(Object.values(data).every((rows) => rows === 0)).toBe(true);
+
+    // A write already under way when the final deletion starts is waited for and swept.
+    const late = await pool.current!.connect();
+    let lateContractId: string;
+    try {
+      await late.query("BEGIN");
+      await late.query("SELECT id FROM application_users WHERE id = $1 FOR SHARE", [deleted.userId]);
+      lateContractId = (await late.query<{ id: string }>(
+        "INSERT INTO contracts(user_id, title) VALUES ($1, 'Late') RETURNING id", [deleted.userId],
+      )).rows[0]!.id;
+      const deletion = deleteAccountForUser(deleted.userId);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await late.query("COMMIT");
+      await deletion;
+    } finally {
+      late.release();
+    }
+    expect(await count("contracts", "id = $1", [lateContractId])).toBe(0);
+    // A request that resolved the owner before the deletion cannot recreate data after it.
+    await expect(createContractForUser({ userId: deleted.userId, title: "After" })).rejects.toThrow();
+    await expect(createProjectForUser({ userId: deleted.userId, title: "After" })).rejects.toThrow();
+    await expect(createChatThreadForUser({ userId: deleted.userId })).rejects.toThrow();
+    await expect(upsertUserSettings({ userId: deleted.userId, personality: "bare-llm" })).rejects.toThrow();
+
+    const remaining = await rowsOf(deleted);
+    expect(remaining).toEqual(Object.fromEntries(Object.keys(remaining).map((key) => [key, 0])));
+    // No text column anywhere holds the owner ID any more.
+    const { rows: columns } = await pool.current!.query<{ table_name: string; column_name: string }>(
+      `SELECT c.table_name, c.column_name FROM information_schema.columns c
+       JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+       WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE' AND c.data_type IN ('text', 'character varying')`,
+    );
+    expect(columns.length).toBeGreaterThan(10);
+    for (const { table_name, column_name } of columns) {
+      expect(await count(`"${table_name}"`, `"${column_name}" = $1`, [deleted.userId]), `${table_name}.${column_name}`).toBe(0);
+    }
+    expect(await queued(deleted)).toEqual([...deleted.storageKeys].sort());
+
+    expect(await rowsOf(kept)).toEqual(keptBefore);
+    expect(await queued(kept)).toEqual([]);
+
+    // Idempotent: a repeat finds nothing left and succeeds.
+    await expect(deleteAccountForUser(deleted.userId)).resolves.toBeUndefined();
+    expect(await rowsOf(kept)).toEqual(keptBefore);
+  });
+
+  it("exports exactly one account's rows and files, without operational rows or storage keys", async () => {
+    const storageRoot = await fs.mkdtemp(path.join(os.tmpdir(), "signloop-export-"));
+    vi.stubEnv("LOCAL_STORAGE_PATH", storageRoot);
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3]);
+    async function store(prefix: string, bytes: Buffer) {
+      const storageKey = `${prefix}-${crypto.randomUUID()}`;
+      await fs.writeFile(path.join(storageRoot, storageKey), bytes);
+      return storageKey;
+    }
+    async function seed() {
+      const userId = await resolveWorkOSUserId({ id: `user_${crypto.randomUUID()}` });
+      const { principal } = admissionLimits(userId);
+      const tag = crypto.randomUUID();
+      const project = await createProjectForUser({ userId, title: `Project ${tag}` });
+      const contextBytes = Buffer.from(`Context ${tag}`);
+      const contextKey = await store("export-context", contextBytes);
+      const contextDocument = await addContextDocumentToProject({
+        userId, projectId: project.id, title: "Brief", documentType: "other", storageKey: contextKey,
+        bucket: "test", originalFilename: "../brief.txt", contentType: "text/plain",
+        sizeBytes: contextBytes.length, extractedText: "Brief", wordCount: 1,
+      });
+      const contract = await createContractForUser({ userId, title: "Lease", projectId: project.id });
+      await setContractJurisdictionForUser({ userId, contractId: contract.id, jurisdiction: `Ontario ${tag}` });
+      const uploads: Buffer[] = [];
+      // Two uploads with one name: both originals are exported, the second renamed.
+      for (const text of ["First lease.", "Second lease."]) {
+        const bytes = Buffer.from(text);
+        uploads.push(bytes);
+        await saveContractUploadForUser({
+          userId, contractId: contract.id, projectId: project.id, title: "Lease", fileName: "lease.txt",
+          storageKey: await store("export-file", bytes), bucket: "test", contentType: "text/plain",
+          sizeBytes: bytes.length, extractionMethod: null, extractionConfidence: null, text,
+        });
+      }
+      const snapshot = await getContractWithLatestAnalysisForUser(userId, contract.id);
+      await createAnalysisForContract({
+        userId, contractId: contract.id, expectedRevision: snapshot!.revision, riskBadge: "LOW",
+        resultJson: { summary: `Analysis ${tag}` }, llmProvider: "test", llmModel: "test",
+      });
+      const thread = await createChatThreadForUser({ userId, title: "Questions" });
+      const webSources = [{ number: 1, title: "Source", url: "https://source.test" }];
+      await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
+        { role: "user", content: "Draw it" },
+        {
+          role: "assistant",
+          content: `![Generated image](data:image/png;base64,${png.toString("base64")})`,
+          metadata: { agentMessages: [{ role: "assistant", content: [{ type: "text", text: "private replay" }] }], webSources },
+        },
+      ] });
+      const chatBytes = Buffer.from(`Notes ${tag}`);
+      const chatFile = { id: crypto.randomUUID(), name: "notes.txt", mediaType: "text/plain", size: chatBytes.length, text: "Notes" };
+      await saveChatFileForUser({ userId, threadId: thread.id, file: chatFile, data: chatBytes });
+      await upsertUserSettings({ userId, personality: "bare-llm" });
+      expect(await claimGenerationOperation(userId, "contract", contract.id, 60)).toBeTypeOf("function");
+      await pool.current!.query(
+        "INSERT INTO chat_admissions(token, principal, expires_at) VALUES ($1, $2, now() + interval '1 minute')",
+        [crypto.randomUUID(), principal],
+      );
+      return { userId, principal, tag, project, contextDocument, contextBytes, contract, uploads, thread, chatFile, chatBytes, webSources };
+    }
+
+    try {
+      const owner = await seed();
+      const other = await seed();
+      const data = await getAccountExportForUser(owner.userId);
+
+      expect(data.projects.map((row) => row.id)).toEqual([owner.project.id]);
+      expect(data.contextDocuments.map((row) => row.id)).toEqual([owner.contextDocument.id]);
+      expect(data.contracts.map((row) => [row.id, row.textContent])).toEqual([[owner.contract.id, "Second lease."]]);
+      expect(data.contracts[0]).toMatchObject({ confirmedJurisdiction: `Ontario ${owner.tag}` });
+      expect(data.contracts[0]!.jurisdictionConfirmedAt).toBeTruthy();
+      expect(data.contractFiles.map((row) => row.contractId)).toEqual([owner.contract.id, owner.contract.id]);
+      expect(data.analyses.map((row) => [row.contractId, row.resultJson])).toEqual([
+        [owner.contract.id, { summary: `Analysis ${owner.tag}` }],
+      ]);
+      expect(data.chatThreads.map((row) => row.id)).toEqual([owner.thread.id]);
+      expect(data.chatMessages.map((row) => row.role)).toEqual(["user", "assistant"]);
+      expect(data.chatMessages[1]!.webSources).toEqual(owner.webSources);
+      expect(data.chatMessages[1]).not.toHaveProperty("agentMessages");
+      expect(data.chatFiles.map((row) => [row.id, row.sizeBytes])).toEqual([[owner.chatFile.id, owner.chatBytes.length]]);
+      expect(data.chatImages).toHaveLength(1);
+      expect(data.settings).toMatchObject({ personality: "bare-llm", primaryModel: null });
+
+      const exportedText = JSON.stringify(data);
+      for (const id of [other.userId, other.tag, other.project.id, other.contract.id, other.thread.id, other.chatFile.id]) {
+        expect(exportedText).not.toContain(id);
+      }
+      // Leases, admissions and the login mapping are never read.
+      expect(exportedText).not.toContain(owner.principal);
+      expect(exportedText).not.toContain(owner.userId);
+      expect(exportedText).not.toContain("private replay");
+
+      // The archive built from it holds every original file byte-for-byte, and no storage keys.
+      const entries = await unzip(createAccountExport({ userId: owner.userId, data, exportedAt: new Date() }));
+      const root = "signloop-export";
+      const contractsJson = json(entries, `${root}/contracts.json`) as Array<{ files: Array<{ path: string }> }>;
+      expect(contractsJson[0]!.files.map((file) => file.path)).toEqual([
+        `files/contracts/${owner.contract.id}/lease.txt`,
+        `files/contracts/${owner.contract.id}/lease (2).txt`,
+      ]);
+      expect(entries.get(`${root}/files/contracts/${owner.contract.id}/lease.txt`)).toEqual(owner.uploads[0]);
+      expect(entries.get(`${root}/files/contracts/${owner.contract.id}/lease (2).txt`)).toEqual(owner.uploads[1]);
+      expect(entries.get(`${root}/files/projects/${owner.project.id}/_brief.txt`)).toEqual(owner.contextBytes);
+      expect(entries.get(`${root}/files/chats/${owner.thread.id}/notes.txt`)).toEqual(owner.chatBytes);
+      expect(entries.get(`${root}/files/chats/${owner.thread.id}/${data.chatImages[0]!.id}.png`)).toEqual(png);
+      const archiveText = [...entries.values()].map((entry) => entry.toString("latin1")).join("\n");
+      expect(archiveText).not.toContain("export-file-");
+      expect(archiveText).not.toContain("export-context-");
+      expect(archiveText).not.toContain(other.userId);
+      expect(archiveText).not.toContain(other.tag);
+      expect(entries.get(`${root}/README.txt`)!.toString()).not.toContain("could not be found");
+
+      // An account with nothing in it exports empty collections.
+      const empty = await getAccountExportForUser(await resolveWorkOSUserId({ id: `user_${crypto.randomUUID()}` }));
+      expect(empty).toEqual({
+        contracts: [], contractFiles: [], analyses: [], projects: [], contextDocuments: [],
+        chatThreads: [], chatMessages: [], chatFiles: [], chatImages: [], settings: null,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      await fs.rm(storageRoot, { recursive: true, force: true });
     }
   });
 });
