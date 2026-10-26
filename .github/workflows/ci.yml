@@ -90,6 +90,26 @@ jobs:
         working-directory: apps/web
         run: bun run check:ocr-trace
 
+      # Headless Chromium against the build above, served by `next start` with the placeholder
+      # WorkOS configuration in playwright.config.ts: public pages, security headers and auth gating.
+      - name: Install Playwright Chromium
+        working-directory: apps/web
+        run: bunx playwright install --with-deps --only-shell chromium
+
+      - name: End-to-end smoke
+        working-directory: apps/web
+        run: bun run test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          retention-days: 7
+
   database:
     name: Database integration tests
     runs-on: ubuntu-latest

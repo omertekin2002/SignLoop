@@ -16,7 +16,7 @@ bun run check-types
 bun run build
 ```
 
-The production server is `bun run start` after a successful build. Build and type checking both generate `.next` files, so run them sequentially. After a build, `bun run check:ocr-trace` verifies that the image-upload routes trace everything OCR loads at runtime.
+The production server is `bun run start` after a successful build. Build and type checking both generate `.next` files, so run them sequentially. After a build, `bun run check:ocr-trace` verifies that the image-upload routes trace everything OCR loads at runtime, and `bun run test:e2e` runs the Playwright smoke suite in `e2e/` against it in headless Chromium (install the browser once with `bunx playwright install chromium`). The suite supplies placeholder configuration itself and needs no `.env.local`.
 
 `bun run test lib/contract-tools.test.ts` focuses a test run. Chat engine tests live in `packages/chat-engine`. Database tests skip without `SIGNLOOP_TEST_DATABASE_URL`; use `bun run test:integration` to create and remove a disposable local PostgreSQL database. See the root README for the `POSTGRES_BIN` override.
 

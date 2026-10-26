@@ -1,3 +1,4 @@
+import { globalIgnores } from "eslint/config";
 import { nextJsConfig } from "@repo/eslint-config/next-js";
 
 // `bun run` loads apps/web/.env.local, so evaluation code could reach real infrastructure. The
@@ -18,6 +19,8 @@ const evalForbiddenModules = [
 /** @type {import("eslint").Linter.Config[]} */
 export default [
   ...nextJsConfig,
+  // Playwright writes its HTML report and traces here.
+  globalIgnores(["playwright-report/**", "test-results/**"]),
   {
     files: ["db/**/*.js", "scripts/**/*.mjs"],
     languageOptions: { globals: { process: "readonly" } },
