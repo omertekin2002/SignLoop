@@ -1,7 +1,7 @@
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { del, get, put } from "@vercel/blob";
+import { BlobNotFoundError, del, get, head, put } from "@vercel/blob";
 
 function getDefaultStorageRoot(): string {
   // Workspace scripts execute with apps/web as their cwd. Keeping the dynamic portion scoped to
@@ -28,7 +28,15 @@ function isBlobEnabled(): boolean {
   );
 }
 
-function getBlobAccess(): "public" | "private" {
+/**
+ * Browsers can upload straight to Blob only with client tokens, which are signed with a
+ * read-write token; store-ID (OIDC) setups keep the multipart path.
+ */
+export function isDirectUploadAvailable(): boolean {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+}
+
+export function getBlobAccess(): "public" | "private" {
   const configuredAccess = process.env.BLOB_ACCESS?.trim().toLowerCase();
   if (configuredAccess === "public") return "public";
   if (!configuredAccess || configuredAccess === "private") return "private";
@@ -158,6 +166,72 @@ export async function readObject(
   return Readable.toWeb(
     handle.createReadStream({ signal }),
   ) as ReadableStream<Uint8Array>;
+}
+
+/** Whether a Blob pathname is already taken. Errors other than "not found" propagate. */
+export async function blobExists(
+  pathname: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  try {
+    await head(sanitizeStorageKey(pathname), {
+      abortSignal: AbortSignal.any([
+        AbortSignal.timeout(10_000),
+        ...(signal ? [signal] : []),
+      ]),
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof BlobNotFoundError) return false;
+    throw error;
+  }
+}
+
+export type UploadedBlob =
+  | { ok: true; url: string; contentType: string; buffer: Buffer }
+  | { ok: false; reason: "missing" | "too_large" };
+
+/**
+ * Read back a blob the browser uploaded, stopping past maxBytes whatever size Blob reports, so a
+ * finalize request never buffers more than the upload limit.
+ */
+export async function readUploadedBlob(
+  pathname: string,
+  maxBytes: number,
+  signal?: AbortSignal,
+): Promise<UploadedBlob> {
+  signal?.throwIfAborted();
+  const result = await get(sanitizeStorageKey(pathname), {
+    access: getBlobAccess(),
+    useCache: false,
+    abortSignal: AbortSignal.any([
+      AbortSignal.timeout(30_000),
+      ...(signal ? [signal] : []),
+    ]),
+  });
+  if (result?.statusCode !== 200) return { ok: false, reason: "missing" };
+  const reader = result.stream.getReader();
+  try {
+    if (result.blob.size > maxBytes) return { ok: false, reason: "too_large" };
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) return { ok: false, reason: "too_large" };
+      chunks.push(value);
+    }
+    return {
+      ok: true,
+      url: result.blob.url,
+      contentType: result.blob.contentType,
+      buffer: Buffer.concat(chunks, bytes),
+    };
+  } finally {
+    void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }
 
 export function getStorageBucketName(): string {

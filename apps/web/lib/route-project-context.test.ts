@@ -12,6 +12,7 @@ const {
   listProjectContextDocumentsForUser,
   addContextDocumentToProject,
   prepareUpload,
+  prepareDirectUpload,
   storeUploadedFile,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -19,6 +20,7 @@ const {
   listProjectContextDocumentsForUser: vi.fn(),
   addContextDocumentToProject: vi.fn(),
   prepareUpload: vi.fn(),
+  prepareDirectUpload: vi.fn(),
   storeUploadedFile: vi.fn(),
 }));
 
@@ -28,7 +30,14 @@ vi.mock("@/lib/server-db", () => ({
   listProjectContextDocumentsForUser,
   addContextDocumentToProject,
 }));
-vi.mock("@/lib/upload-pipeline", () => ({ prepareUpload, storeUploadedFile }));
+vi.mock("@/lib/upload-pipeline", async (importOriginal) => ({
+  isDirectUploadRequest: (
+    await importOriginal<typeof import("@/lib/upload-pipeline")>()
+  ).isDirectUploadRequest,
+  prepareUpload,
+  prepareDirectUpload,
+  storeUploadedFile,
+}));
 
 import { GET, maxDuration, POST } from "@/app/api/projects/[id]/context/route";
 import { ProjectNotFoundError } from "@/lib/errors";
@@ -58,13 +67,12 @@ const preparedUpload = (
   overrides: Record<string, unknown> = {},
   fields: Record<string, string> = {},
 ) => {
-  const formData = new FormData();
-  for (const [key, value] of Object.entries(fields)) formData.set(key, value);
   return {
     ok: true as const,
     signal: new AbortController().signal,
-    formData,
-    file: new File(["addendum"], "addendum.pdf", { type: "application/pdf" }),
+    fields,
+    fileName: "addendum.pdf",
+    stored: null,
     buffer: Buffer.from("%PDF-1.4 addendum"),
     mimeType: "application/pdf",
     text: "The supplier may raise fees once per year.",
@@ -458,7 +466,7 @@ describe("POST /api/projects/[id]/context", () => {
       bucket: "signloop-uploads",
       originalFilename: "addendum.pdf",
       contentType: "application/pdf",
-      sizeBytes: prepared.file.size,
+      sizeBytes: prepared.buffer.length,
       extractedText: "The supplier may raise fees once per year.",
       extractionWarning: null,
       wordCount: 8,
@@ -500,25 +508,6 @@ describe("POST /api/projects/[id]/context", () => {
         title: "addendum.pdf",
         documentType: "other",
       }),
-    );
-  });
-
-  it("ignores a file uploaded under the title field instead of using it as a string", async () => {
-    auth.mockResolvedValue({ userId: "owner" });
-    isProjectOwnedByUser.mockResolvedValue(true);
-    const prepared = preparedUpload();
-    prepared.formData.set(
-      "title",
-      new File(["x"], "sneaky.txt", { type: "text/plain" }),
-    );
-    prepareUpload.mockResolvedValue(prepared);
-    storeUploadedFile.mockResolvedValue(storedFile());
-    addContextDocumentToProject.mockResolvedValue({ id: "doc-9" });
-
-    await POST(uploadRequest(), params(PROJECT_ID));
-
-    expect(addContextDocumentToProject).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "addendum.pdf" }),
     );
   });
 
@@ -622,5 +611,71 @@ describe("context upload progress", () => {
     const response = await POST(progressContextRequest(), params(PROJECT_ID));
     await expect(readOperationResponse(response, { validate: isContextUploadResult })).rejects.toMatchObject({ response: { status: 422 } });
     expect(storeUploadedFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/projects/[id]/context finalizing a direct upload", () => {
+  const PATHNAME = "uploads/0b6c3c1e-8d7a-4f2b-9c1d-2e3f4a5b6c7d";
+  const BLOB_URL = `https://store.private.blob.vercel-storage.com/${PATHNAME}`;
+  const finalizeRequest = () =>
+    new Request(`http://localhost/api/projects/${PROJECT_ID}/context`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        pathname: PATHNAME,
+        fileName: "addendum.pdf",
+        title: "Supplier addendum",
+        documentType: "addendum",
+      }),
+    });
+
+  it("saves the blob with the request's title and type, without storing the bytes again", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    isProjectOwnedByUser.mockResolvedValue(true);
+    prepareDirectUpload.mockResolvedValue(
+      preparedUpload(
+        {
+          stored: {
+            storageKey: BLOB_URL,
+            bucket: "vercel-blob",
+            storageIntentId: "44e3e947-f71f-4ecd-a901-adbf24edbb8a",
+          },
+        },
+        { title: "Supplier addendum", documentType: "addendum" },
+      ),
+    );
+    addContextDocumentToProject.mockResolvedValue({ id: "doc-9" });
+    const request = finalizeRequest();
+
+    const response = await POST(request, params(PROJECT_ID));
+
+    expect(response.status).toBe(201);
+    expect(prepareDirectUpload).toHaveBeenCalledExactlyOnceWith(
+      request,
+      { userId: "owner", target: { kind: "project", id: PROJECT_ID } },
+      undefined,
+    );
+    expect(prepareUpload).not.toHaveBeenCalled();
+    expect(storeUploadedFile).not.toHaveBeenCalled();
+    expect(addContextDocumentToProject).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        title: "Supplier addendum",
+        documentType: "addendum",
+        storageKey: BLOB_URL,
+        storageIntentId: "44e3e947-f71f-4ecd-a901-adbf24edbb8a",
+        bucket: "vercel-blob",
+        originalFilename: "addendum.pdf",
+      }),
+    );
+  });
+
+  it("checks project ownership before touching the uploaded blob", async () => {
+    auth.mockResolvedValue({ userId: "intruder" });
+    isProjectOwnedByUser.mockResolvedValue(false);
+
+    const response = await POST(finalizeRequest(), params(PROJECT_ID));
+
+    expect(response.status).toBe(404);
+    expect(prepareDirectUpload).not.toHaveBeenCalled();
   });
 });

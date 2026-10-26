@@ -6,7 +6,12 @@ import {
   getContractMetaForUser,
   saveContractUploadForUser,
 } from "@/lib/server-db";
-import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
+import {
+  isDirectUploadRequest,
+  prepareDirectUpload,
+  prepareUpload,
+  storeUploadedFile,
+} from "@/lib/upload-pipeline";
 import { isUuid } from "@/lib/utils";
 
 // Image uploads run OCR, which budgets 60s for worker init plus 90s for recognition. The platform
@@ -41,9 +46,16 @@ async function executePost(
   }
 
   progress?.("uploading");
-  const prepared = await (progress
-    ? prepareUpload(req, progress)
-    : prepareUpload(req));
+  // A JSON body finalizes a file the browser already uploaded to Blob; otherwise it is multipart.
+  const prepared = await (isDirectUploadRequest(req)
+    ? prepareDirectUpload(
+        req,
+        { userId, target: { kind: "contract", id } },
+        progress,
+      )
+    : progress
+      ? prepareUpload(req, progress)
+      : prepareUpload(req));
   if (!prepared.ok) {
     return NextResponse.json(
       { error: prepared.error },
@@ -71,19 +83,21 @@ async function executePost(
 
   prepared.signal.throwIfAborted();
   progress?.("saving");
-  let stored: Awaited<ReturnType<typeof storeUploadedFile>>;
-  try {
-    stored = await storeUploadedFile({
-      buffer: prepared.buffer,
-      signal: prepared.signal,
-      mimeType: prepared.mimeType,
-    });
-  } catch (error: unknown) {
-    console.error("Upload storage failed:", error);
-    return NextResponse.json(
-      { error: "Failed to store the uploaded file. Please try again." },
-      { status: 500 },
-    );
+  let stored = prepared.stored;
+  if (!stored) {
+    try {
+      stored = await storeUploadedFile({
+        buffer: prepared.buffer,
+        signal: prepared.signal,
+        mimeType: prepared.mimeType,
+      });
+    } catch (error: unknown) {
+      console.error("Upload storage failed:", error);
+      return NextResponse.json(
+        { error: "Failed to store the uploaded file. Please try again." },
+        { status: 500 },
+      );
+    }
   }
 
   try {
@@ -95,12 +109,12 @@ async function executePost(
       extractionWarning: prepared.extractionWarning,
       projectId: contract.projectId,
       title: contract.title,
-      fileName: prepared.file.name,
+      fileName: prepared.fileName,
       storageKey: stored.storageKey,
       storageIntentId: stored.storageIntentId,
       bucket: stored.bucket,
       contentType: prepared.mimeType,
-      sizeBytes: prepared.file.size,
+      sizeBytes: prepared.buffer.length,
       extractionMethod: prepared.method,
       extractionConfidence: prepared.confidence,
     });

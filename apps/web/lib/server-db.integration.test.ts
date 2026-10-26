@@ -32,6 +32,8 @@ import {
   deferStorageDeletion,
   completeStorageDeletion,
   createUploadCleanupIntent,
+  createDirectUploadIntent,
+  findDirectUploadIntent,
   getContractWindowForUser,
   getContractSourceForUser,
   getAnalysisForUser,
@@ -1931,7 +1933,7 @@ describe.skipIf(!connectionString)("database integration", () => {
   });
 
   it("claims deletion rows exclusively, defers failures, and rejects stale acknowledgments", async () => {
-    await pool.current!.query("TRUNCATE storage_deletions");
+    await pool.current!.query("TRUNCATE storage_deletions CASCADE");
     await pool.current!.query(
       "INSERT INTO storage_deletions(storage_key) SELECT 'test-' || n FROM generate_series(1,5) n",
     );
@@ -1979,7 +1981,7 @@ describe.skipIf(!connectionString)("database integration", () => {
   });
 
   it("consumes upload intents with persistence and rolls back writes if cleanup already claimed them", async () => {
-    await pool.current!.query("TRUNCATE storage_deletions");
+    await pool.current!.query("TRUNCATE storage_deletions CASCADE");
     const item = await contract();
     const input = {
       userId: "owner",
@@ -2032,6 +2034,98 @@ describe.skipIf(!connectionString)("database integration", () => {
         )
       ).rowCount,
     ).toBe(0);
+  });
+
+  it("binds direct-upload intents to the owner's target and keeps them for cleanup", async () => {
+    const item = await contract();
+    const project = await createProjectForUser({ userId: "owner", title: "Direct" });
+    const pathname = `uploads/${crypto.randomUUID()}`;
+    const cleanupKey = `blob:${pathname}`;
+    const target = { kind: "contract", id: item.id } as const;
+    const intents = async (key: string) =>
+      (
+        await pool.current!.query<{ id: string; due: boolean }>(
+          "SELECT id, available_at > now() + interval '59 minutes' AS due FROM storage_deletions WHERE storage_key = $1",
+          [key],
+        )
+      ).rows;
+
+    expect(
+      await createDirectUploadIntent({ userId: "intruder", pathname, cleanupKey, target }),
+    ).toBeNull();
+    expect(await intents(cleanupKey)).toEqual([]);
+
+    const created = await createDirectUploadIntent({ userId: "owner", pathname, cleanupKey, target });
+    if (!created || created === "conflict") throw new Error("expected an intent");
+    // Not due for an hour, so the outbox removes an abandoned upload only after that.
+    expect(await intents(cleanupKey)).toEqual([{ id: created.id, due: true }]);
+
+    // A second token for an unclaimed pathname would add an intent that outlives the first claim.
+    expect(
+      await createDirectUploadIntent({
+        userId: "owner", pathname, cleanupKey, target: { kind: "project", id: project.id },
+      }),
+    ).toBe("conflict");
+    expect(await intents(cleanupKey)).toHaveLength(1);
+
+    expect(await findDirectUploadIntent({ userId: "owner", pathname, target })).toBe(created.id);
+    expect(await findDirectUploadIntent({ userId: "intruder", pathname, target })).toBeNull();
+    expect(
+      await findDirectUploadIntent({ userId: "owner", pathname, target: { kind: "project", id: project.id } }),
+    ).toBeNull();
+    expect(
+      await findDirectUploadIntent({ userId: "owner", pathname: `uploads/${crypto.randomUUID()}`, target }),
+    ).toBeNull();
+    await pool.current!.query(
+      "UPDATE storage_deletions SET lease_token = gen_random_uuid() WHERE id = $1",
+      [created.id],
+    );
+    expect(await findDirectUploadIntent({ userId: "owner", pathname, target })).toBeNull();
+    await pool.current!.query(
+      "UPDATE storage_deletions SET lease_token = NULL WHERE id = $1",
+      [created.id],
+    );
+
+    expect(
+      await saveContractUploadForUser({
+        userId: "owner",
+        contractId: item.id,
+        projectId: null,
+        title: "Direct",
+        fileName: "scan.pdf",
+        storageKey: `https://store.private.blob.vercel-storage.com/${pathname}`,
+        storageIntentId: created.id,
+        bucket: "vercel-blob",
+        contentType: "application/pdf",
+        sizeBytes: 9 * 1024 * 1024,
+        text: "finalized",
+        extractionMethod: "pdf_parse",
+        extractionConfidence: 100,
+      }),
+    ).toBe(true);
+    expect(await intents(cleanupKey)).toEqual([]);
+    expect(await findDirectUploadIntent({ userId: "owner", pathname, target })).toBeNull();
+    expect(
+      (await pool.current!.query("SELECT 1 FROM direct_uploads WHERE pathname = $1", [pathname])).rowCount,
+    ).toBe(0);
+
+    // Deleting the target drops the binding but keeps the intent, so the blob is still removed.
+    const projectPathname = `uploads/${crypto.randomUUID()}`;
+    const projectTarget = { kind: "project", id: project.id } as const;
+    const pending = await createDirectUploadIntent({
+      userId: "owner", pathname: projectPathname, cleanupKey: `blob:${projectPathname}`, target: projectTarget,
+    });
+    if (!pending || pending === "conflict") throw new Error("expected an intent");
+    await deleteProjectForUser({ userId: "owner", projectId: project.id });
+    expect(await intents(`blob:${projectPathname}`)).toEqual([{ id: pending.id, due: true }]);
+    expect(
+      (await pool.current!.query("SELECT 1 FROM direct_uploads WHERE pathname = $1", [projectPathname])).rowCount,
+    ).toBe(0);
+    expect(
+      await createDirectUploadIntent({
+        userId: "owner", pathname: `uploads/${crypto.randomUUID()}`, cleanupKey: "blob:x", target: projectTarget,
+      }),
+    ).toBeNull();
   });
 
   it("uses code point offsets for SQL windows without splitting supplementary characters", async () => {

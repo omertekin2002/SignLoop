@@ -7,7 +7,12 @@ import {
   listProjectContextDocumentsForUser,
   isProjectOwnedByUser,
 } from "@/lib/server-db";
-import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
+import {
+  isDirectUploadRequest,
+  prepareDirectUpload,
+  prepareUpload,
+  storeUploadedFile,
+} from "@/lib/upload-pipeline";
 import { ProjectNotFoundError } from "@/lib/errors";
 import { isUuid } from "@/lib/utils";
 
@@ -68,9 +73,16 @@ async function executePost(
   }
 
   progress?.("uploading");
-  const prepared = await (progress
-    ? prepareUpload(req, progress)
-    : prepareUpload(req));
+  // A JSON body finalizes a file the browser already uploaded to Blob; otherwise it is multipart.
+  const prepared = await (isDirectUploadRequest(req)
+    ? prepareDirectUpload(
+        req,
+        { userId, target: { kind: "project", id } },
+        progress,
+      )
+    : progress
+      ? prepareUpload(req, progress)
+      : prepareUpload(req));
   if (!prepared.ok) {
     return NextResponse.json(
       { error: prepared.error },
@@ -78,16 +90,10 @@ async function executePost(
     );
   }
 
-  const titleValue = prepared.formData.get("title");
-  const documentTypeValue = prepared.formData.get("documentType");
-  const title =
-    typeof titleValue === "string" && titleValue.trim()
-      ? titleValue.trim()
-      : prepared.file.name;
-  const documentType =
-    typeof documentTypeValue === "string" && documentTypeValue.trim()
-      ? documentTypeValue.trim()
-      : "other";
+  const titleValue = prepared.fields.title;
+  const documentTypeValue = prepared.fields.documentType;
+  const title = titleValue?.trim() || prepared.fileName;
+  const documentType = documentTypeValue?.trim() || "other";
 
   // A context document is useful only when it can contribute text to analysis. Reject failed
   // extraction before storage rather than retaining an unusable public object.
@@ -113,19 +119,21 @@ async function executePost(
 
   prepared.signal.throwIfAborted();
   progress?.("saving");
-  let stored: Awaited<ReturnType<typeof storeUploadedFile>>;
-  try {
-    stored = await storeUploadedFile({
-      buffer: prepared.buffer,
-      signal: prepared.signal,
-      mimeType: prepared.mimeType,
-    });
-  } catch (error: unknown) {
-    console.error("Context upload storage failed:", error);
-    return NextResponse.json(
-      { error: "Failed to store the context document. Please try again." },
-      { status: 500 },
-    );
+  let stored = prepared.stored;
+  if (!stored) {
+    try {
+      stored = await storeUploadedFile({
+        buffer: prepared.buffer,
+        signal: prepared.signal,
+        mimeType: prepared.mimeType,
+      });
+    } catch (error: unknown) {
+      console.error("Context upload storage failed:", error);
+      return NextResponse.json(
+        { error: "Failed to store the context document. Please try again." },
+        { status: 500 },
+      );
+    }
   }
 
   let created: { id: string };
@@ -140,9 +148,9 @@ async function executePost(
       storageKey: stored.storageKey,
       storageIntentId: stored.storageIntentId,
       bucket: stored.bucket,
-      originalFilename: prepared.file.name,
+      originalFilename: prepared.fileName,
       contentType: prepared.mimeType,
-      sizeBytes: prepared.file.size,
+      sizeBytes: prepared.buffer.length,
       extractedText: prepared.text,
       extractionWarning: prepared.extractionWarning,
       wordCount,

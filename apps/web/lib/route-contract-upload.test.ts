@@ -11,12 +11,14 @@ const {
   getContractMetaForUser,
   saveContractUploadForUser,
   prepareUpload,
+  prepareDirectUpload,
   storeUploadedFile,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   getContractMetaForUser: vi.fn(),
   saveContractUploadForUser: vi.fn(),
   prepareUpload: vi.fn(),
+  prepareDirectUpload: vi.fn(),
   storeUploadedFile: vi.fn(),
 }));
 
@@ -25,7 +27,14 @@ vi.mock("@/lib/server-db", () => ({
   getContractMetaForUser,
   saveContractUploadForUser,
 }));
-vi.mock("@/lib/upload-pipeline", () => ({ prepareUpload, storeUploadedFile }));
+vi.mock("@/lib/upload-pipeline", async (importOriginal) => ({
+  isDirectUploadRequest: (
+    await importOriginal<typeof import("@/lib/upload-pipeline")>()
+  ).isDirectUploadRequest,
+  prepareUpload,
+  prepareDirectUpload,
+  storeUploadedFile,
+}));
 
 import { maxDuration, POST } from "@/app/api/contracts/[id]/upload/route";
 
@@ -55,8 +64,9 @@ const contractMeta = () => ({
 const preparedUpload = (overrides: Record<string, unknown> = {}) => ({
   ok: true as const,
   signal: new AbortController().signal,
-  formData: new FormData(),
-  file: new File(["lease"], "lease.pdf", { type: "application/pdf" }),
+  fields: {},
+  fileName: "lease.pdf",
+  stored: null,
   buffer: Buffer.from("%PDF-1.4 lease"),
   mimeType: "application/pdf",
   text: "This lease renews automatically.",
@@ -359,7 +369,7 @@ describe("POST /api/contracts/[id]/upload", () => {
       storageIntentId: "33e3e947-f71f-4ecd-a901-adbf24edbb8a",
       bucket: "signloop-uploads",
       contentType: "application/pdf",
-      sizeBytes: prepared.file.size,
+      sizeBytes: prepared.buffer.length,
       extractionMethod: "pdf_parse",
       extractionConfidence: 97.5,
     });
@@ -504,4 +514,83 @@ it("does not start the upload metadata write if its processing deadline expires 
   storage.resolve();
   await expect(readOperationResponse(response, { validate: isUploadResult })).rejects.toMatchObject({ response: { status: 500 } });
   expect(saveContractUploadForUser).not.toHaveBeenCalled();
+});
+
+describe("POST /api/contracts/[id]/upload finalizing a direct upload", () => {
+  const PATHNAME = "uploads/0b6c3c1e-8d7a-4f2b-9c1d-2e3f4a5b6c7d";
+  const BLOB_URL = `https://store.private.blob.vercel-storage.com/${PATHNAME}`;
+  const finalizeRequest = () =>
+    new Request(`http://localhost/api/contracts/${CONTRACT_ID}/upload`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pathname: PATHNAME, fileName: "scan.pdf" }),
+    });
+
+  it("saves the blob under its claimed intent without storing the bytes again", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    getContractMetaForUser.mockResolvedValue(contractMeta());
+    const prepared = preparedUpload({
+      fileName: "scan.pdf",
+      buffer: Buffer.alloc(9 * 1024 * 1024, "%PDF"),
+      stored: {
+        storageKey: BLOB_URL,
+        bucket: "vercel-blob",
+        storageIntentId: "44e3e947-f71f-4ecd-a901-adbf24edbb8a",
+      },
+    });
+    prepareDirectUpload.mockResolvedValue(prepared);
+    saveContractUploadForUser.mockResolvedValue(true);
+    const request = finalizeRequest();
+
+    const response = await POST(request, params(CONTRACT_ID));
+
+    expect(response.status).toBe(200);
+    expect(prepareDirectUpload).toHaveBeenCalledExactlyOnceWith(
+      request,
+      { userId: "owner", target: { kind: "contract", id: CONTRACT_ID } },
+      undefined,
+    );
+    expect(prepareUpload).not.toHaveBeenCalled();
+    expect(storeUploadedFile).not.toHaveBeenCalled();
+    expect(saveContractUploadForUser).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        userId: "owner",
+        contractId: CONTRACT_ID,
+        fileName: "scan.pdf",
+        storageKey: BLOB_URL,
+        storageIntentId: "44e3e947-f71f-4ecd-a901-adbf24edbb8a",
+        bucket: "vercel-blob",
+        sizeBytes: 9 * 1024 * 1024,
+      }),
+    );
+  });
+
+  it("checks contract ownership before touching the uploaded blob", async () => {
+    auth.mockResolvedValue({ userId: "intruder" });
+    getContractMetaForUser.mockResolvedValue(null);
+
+    const response = await POST(finalizeRequest(), params(CONTRACT_ID));
+
+    expect(response.status).toBe(404);
+    expect(prepareDirectUpload).not.toHaveBeenCalled();
+  });
+
+  it("passes through a refused finalize without saving anything", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    getContractMetaForUser.mockResolvedValue(contractMeta());
+    prepareDirectUpload.mockResolvedValue({
+      ok: false,
+      status: 404,
+      error: "The uploaded file was not found. Upload it again.",
+    });
+
+    const response = await POST(finalizeRequest(), params(CONTRACT_ID));
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: "The uploaded file was not found. Upload it again.",
+    });
+    expect(storeUploadedFile).not.toHaveBeenCalled();
+    expect(saveContractUploadForUser).not.toHaveBeenCalled();
+  });
 });

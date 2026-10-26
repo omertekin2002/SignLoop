@@ -65,7 +65,7 @@ export async function POST(req: Request) {
     upload.signal.throwIfAborted();
     const document: ChatDocument = {
       id: randomUUID(),
-      name: chatFileName(upload.file.name),
+      name: chatFileName(upload.fileName),
       mediaType: upload.mimeType,
       size: upload.buffer.length,
       text: upload.text,
