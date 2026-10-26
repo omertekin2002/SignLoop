@@ -14,6 +14,7 @@ const {
   prepareUpload,
   prepareDirectUpload,
   storeUploadedFile,
+  parseUpload,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   isProjectOwnedByUser: vi.fn(),
@@ -22,6 +23,7 @@ const {
   prepareUpload: vi.fn(),
   prepareDirectUpload: vi.fn(),
   storeUploadedFile: vi.fn(),
+  parseUpload: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth }));
@@ -37,6 +39,7 @@ vi.mock("@/lib/upload-pipeline", async (importOriginal) => ({
   prepareUpload,
   prepareDirectUpload,
   storeUploadedFile,
+  parseUpload,
 }));
 
 import { GET, maxDuration, POST } from "@/app/api/projects/[id]/context/route";
@@ -75,14 +78,20 @@ const preparedUpload = (
     stored: null,
     buffer: Buffer.from("%PDF-1.4 addendum"),
     mimeType: "application/pdf",
-    text: "The supplier may raise fees once per year.",
-    method: "pdf_parse",
-    confidence: null,
-    extractionError: null,
-    extractionWarning: null,
     ...overrides,
   };
 };
+
+// What the parse-only function's answer becomes (parseUpload).
+const extractedText = (overrides: Record<string, unknown> = {}) => ({
+  ok: true as const,
+  text: "The supplier may raise fees once per year.",
+  method: "pdf_parse",
+  confidence: null,
+  extractionError: null,
+  extractionWarning: null,
+  ...overrides,
+});
 
 const storedFile = () => ({
   storageKey: "https://storage.example/uploads/ctx",
@@ -94,6 +103,7 @@ let consoleError: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  parseUpload.mockResolvedValue(extractedText());
 });
 
 afterEach(() => {
@@ -254,8 +264,7 @@ describe("POST /api/projects/[id]/context", () => {
     [400, "The uploaded file is empty"],
     [400, "Invalid multipart upload"],
     [413, "File too large. Maximum size is 10 MB."],
-    [422, "Extracted text is too large. Maximum length is 500,000 characters."],
-    [503, "Upload processing timed out or was canceled."],
+    [503, "Upload timed out or was canceled."],
   ])(
     "passes through the pipeline validation failure %i (%s) without storing anything",
     async (status, error) => {
@@ -272,11 +281,45 @@ describe("POST /api/projects/[id]/context", () => {
     },
   );
 
-  it("rejects text with a late NUL character through the real pipeline before storage", async () => {
-    const { prepareUpload: realPrepareUpload } = await vi.importActual<
+  it.each([
+    [422, "Extracted text is too large. Maximum length is 2,000,000 characters."],
+    [503, "Image text extraction is unavailable right now. Please try again shortly."],
+    [503, "Upload processing timed out or was canceled."],
+  ])(
+    "passes through the parse failure %i (%s) after storing, without saving",
+    async (status, error) => {
+      auth.mockResolvedValue({ userId: "owner" });
+      isProjectOwnedByUser.mockResolvedValue(true);
+      prepareUpload.mockResolvedValue(preparedUpload());
+      storeUploadedFile.mockResolvedValue(storedFile());
+      parseUpload.mockResolvedValue({ ok: false, status, error });
+
+      const response = await POST(uploadRequest(), params(PROJECT_ID));
+
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({ error });
+      expect(storeUploadedFile).toHaveBeenCalledOnce();
+      expect(addContextDocumentToProject).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects text with a late NUL character through the real parsers without saving", async () => {
+    const pipeline = await vi.importActual<
       typeof import("@/lib/upload-pipeline")
     >("@/lib/upload-pipeline");
-    prepareUpload.mockImplementation(realPrepareUpload);
+    const { parseDocument } = await vi.importActual<
+      typeof import("@/lib/document-parser")
+    >("@/lib/document-parser");
+    prepareUpload.mockImplementation(pipeline.prepareUpload);
+    storeUploadedFile.mockResolvedValue(storedFile());
+    // The parse-only function's work, in-process on the validated bytes.
+    parseUpload.mockImplementation(
+      async (_req: Request, prepared: { buffer: Buffer; mimeType: string; signal: AbortSignal }) =>
+        pipeline.toExtractedText(
+          await parseDocument(prepared.buffer, prepared.mimeType, prepared.signal),
+          prepared.signal,
+        ),
+    );
     auth.mockResolvedValue({ userId: "owner" });
     isProjectOwnedByUser.mockResolvedValue(true);
     const body = new FormData();
@@ -302,7 +345,7 @@ describe("POST /api/projects/[id]/context", () => {
       error:
         "The file's text contains a null character (U+0000), which cannot be stored. Remove it, or save the document in another format, and upload it again.",
     });
-    expect(storeUploadedFile).not.toHaveBeenCalled();
+    expect(storeUploadedFile).toHaveBeenCalledOnce();
     expect(addContextDocumentToProject).not.toHaveBeenCalled();
   });
 
@@ -324,8 +367,10 @@ describe("POST /api/projects/[id]/context", () => {
   it("returns 422 with a generic message when text extraction threw, without leaking the cause", async () => {
     auth.mockResolvedValue({ userId: "owner" });
     isProjectOwnedByUser.mockResolvedValue(true);
-    prepareUpload.mockResolvedValue(
-      preparedUpload({
+    prepareUpload.mockResolvedValue(preparedUpload());
+    storeUploadedFile.mockResolvedValue(storedFile());
+    parseUpload.mockResolvedValue(
+      extractedText({
         text: "",
         method: null,
         extractionError: "bad xref table at offset 4096",
@@ -345,7 +390,6 @@ describe("POST /api/projects/[id]/context", () => {
       "Context text extraction failed:",
       "bad xref table at offset 4096",
     );
-    expect(storeUploadedFile).not.toHaveBeenCalled();
     expect(addContextDocumentToProject).not.toHaveBeenCalled();
   });
 
@@ -355,7 +399,9 @@ describe("POST /api/projects/[id]/context", () => {
   ])("returns 422 when the extracted text is %s", async (_label, text) => {
     auth.mockResolvedValue({ userId: "owner" });
     isProjectOwnedByUser.mockResolvedValue(true);
-    prepareUpload.mockResolvedValue(preparedUpload({ text }));
+    prepareUpload.mockResolvedValue(preparedUpload());
+    storeUploadedFile.mockResolvedValue(storedFile());
+    parseUpload.mockResolvedValue(extractedText({ text }));
 
     const response = await POST(uploadRequest(), params(PROJECT_ID));
 
@@ -363,7 +409,6 @@ describe("POST /api/projects/[id]/context", () => {
     expect(await response.json()).toEqual({
       error: "Could not extract any text from the context document",
     });
-    expect(storeUploadedFile).not.toHaveBeenCalled();
     expect(addContextDocumentToProject).not.toHaveBeenCalled();
   });
 
@@ -385,6 +430,7 @@ describe("POST /api/projects/[id]/context", () => {
       "Context upload storage failed:",
       expect.any(Error),
     );
+    expect(parseUpload).not.toHaveBeenCalled();
     expect(addContextDocumentToProject).not.toHaveBeenCalled();
   });
 
@@ -430,14 +476,16 @@ describe("POST /api/projects/[id]/context", () => {
     auth.mockResolvedValue({ userId: "owner" });
     isProjectOwnedByUser.mockResolvedValue(true);
     const prepared = preparedUpload(
-      { confidence: 97.5 },
+      {},
       { title: "  Supplier addendum  ", documentType: " addendum " },
     );
     prepareUpload.mockResolvedValue(prepared);
     storeUploadedFile.mockResolvedValue(storedFile());
+    parseUpload.mockResolvedValue(extractedText({ confidence: 97.5 }));
     addContextDocumentToProject.mockResolvedValue({ id: "doc-9" });
+    const request = uploadRequest();
 
-    const response = await POST(uploadRequest(), params(PROJECT_ID));
+    const response = await POST(request, params(PROJECT_ID));
 
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({
@@ -456,6 +504,12 @@ describe("POST /api/projects/[id]/context", () => {
       signal: prepared.signal,
       mimeType: "application/pdf",
     });
+    // The stored object is what the parse-only function reads.
+    expect(parseUpload).toHaveBeenCalledExactlyOnceWith(
+      request,
+      prepared,
+      storedFile(),
+    );
     expect(addContextDocumentToProject).toHaveBeenCalledExactlyOnceWith({
       userId: "owner",
       projectId: PROJECT_ID,
@@ -514,8 +568,9 @@ describe("POST /api/projects/[id]/context", () => {
   it("counts words across any whitespace in the extracted text", async () => {
     auth.mockResolvedValue({ userId: "owner" });
     isProjectOwnedByUser.mockResolvedValue(true);
-    prepareUpload.mockResolvedValue(
-      preparedUpload({ text: "  one two\n\nthree\tfour  " }),
+    prepareUpload.mockResolvedValue(preparedUpload());
+    parseUpload.mockResolvedValue(
+      extractedText({ text: "  one two\n\nthree\tfour  " }),
     );
     storeUploadedFile.mockResolvedValue(storedFile());
     addContextDocumentToProject.mockResolvedValue({ id: "doc-9" });
@@ -535,9 +590,9 @@ describe("POST /api/projects/[id]/context", () => {
       "OCR confidence is low (42%). Verify the extracted text before relying on the analysis.";
     auth.mockResolvedValue({ userId: "owner" });
     isProjectOwnedByUser.mockResolvedValue(true);
-    prepareUpload.mockResolvedValue(
-      preparedUpload({
-        mimeType: "image/png",
+    prepareUpload.mockResolvedValue(preparedUpload({ mimeType: "image/png" }));
+    parseUpload.mockResolvedValue(
+      extractedText({
         method: "tesseract_ocr",
         confidence: 42,
         extractionWarning: warning,
@@ -593,8 +648,9 @@ describe("context upload progress", () => {
   });
   it("reports persisted 201 and real extraction warnings only after the owner insert", async () => {
     auth.mockResolvedValue({ userId: "owner" }); isProjectOwnedByUser.mockResolvedValue(true);
-    prepareUpload.mockImplementation(async (_, report) => { report("extracting"); return preparedUpload({ extractionWarning: "Verify scanned page" }); });
+    prepareUpload.mockResolvedValue(preparedUpload());
     storeUploadedFile.mockResolvedValue(storedFile());
+    parseUpload.mockImplementation(async (_req, _prepared, _stored, report) => { report("extracting"); return extractedText({ extractionWarning: "Verify scanned page" }); });
     const saving = progressDeferred<{ id: string }>(); addContextDocumentToProject.mockReturnValue(saving.promise);
     const response = await POST(progressContextRequest(), params(PROJECT_ID));
     const onStage = vi.fn(); const finished = vi.fn();
@@ -605,12 +661,14 @@ describe("context upload progress", () => {
     saving.resolve({ id: "saved" }); await reading;
     expect(finished).toHaveBeenCalledWith(expect.objectContaining({ documentId: "saved", extractionFailed: false, warning: "Verify scanned page" }));
   });
-  it("rejects failed extraction before storage with its late 422", async () => {
+  it("rejects failed extraction after storage with its late 422, without saving", async () => {
     auth.mockResolvedValue({ userId: "owner" }); isProjectOwnedByUser.mockResolvedValue(true);
-    prepareUpload.mockImplementation(async (_, report) => { report("extracting"); return preparedUpload({ extractionError: "private", text: "" }); });
+    prepareUpload.mockResolvedValue(preparedUpload());
+    storeUploadedFile.mockResolvedValue(storedFile());
+    parseUpload.mockImplementation(async (_req, _prepared, _stored, report) => { report("extracting"); return extractedText({ extractionError: "private", text: "" }); });
     const response = await POST(progressContextRequest(), params(PROJECT_ID));
     await expect(readOperationResponse(response, { validate: isContextUploadResult })).rejects.toMatchObject({ response: { status: 422 } });
-    expect(storeUploadedFile).not.toHaveBeenCalled();
+    expect(addContextDocumentToProject).not.toHaveBeenCalled();
   });
 });
 
@@ -632,31 +690,34 @@ describe("POST /api/projects/[id]/context finalizing a direct upload", () => {
   it("saves the blob with the request's title and type, without storing the bytes again", async () => {
     auth.mockResolvedValue({ userId: "owner" });
     isProjectOwnedByUser.mockResolvedValue(true);
-    prepareDirectUpload.mockResolvedValue(
-      preparedUpload(
-        {
-          stored: {
-            storageKey: BLOB_URL,
-            bucket: "vercel-blob",
-            storageIntentId: "44e3e947-f71f-4ecd-a901-adbf24edbb8a",
-          },
+    const prepared = preparedUpload(
+      {
+        stored: {
+          storageKey: BLOB_URL,
+          bucket: "vercel-blob",
+          storageIntentId: "44e3e947-f71f-4ecd-a901-adbf24edbb8a",
         },
-        { title: "Supplier addendum", documentType: "addendum" },
-      ),
+      },
+      { title: "Supplier addendum", documentType: "addendum" },
     );
+    prepareDirectUpload.mockResolvedValue(prepared);
     addContextDocumentToProject.mockResolvedValue({ id: "doc-9" });
     const request = finalizeRequest();
 
     const response = await POST(request, params(PROJECT_ID));
 
     expect(response.status).toBe(201);
-    expect(prepareDirectUpload).toHaveBeenCalledExactlyOnceWith(
-      request,
-      { userId: "owner", target: { kind: "project", id: PROJECT_ID } },
-      undefined,
-    );
+    expect(prepareDirectUpload).toHaveBeenCalledExactlyOnceWith(request, {
+      userId: "owner",
+      target: { kind: "project", id: PROJECT_ID },
+    });
     expect(prepareUpload).not.toHaveBeenCalled();
     expect(storeUploadedFile).not.toHaveBeenCalled();
+    expect(parseUpload).toHaveBeenCalledExactlyOnceWith(
+      request,
+      prepared,
+      prepared.stored,
+    );
     expect(addContextDocumentToProject).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         title: "Supplier addendum",

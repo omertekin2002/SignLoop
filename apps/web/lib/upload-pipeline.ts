@@ -1,6 +1,5 @@
 import { type ReportProgress } from "@/lib/operation-progress";
 import { withAbort } from "@repo/chat-engine/bounded-response";
-import { MAX_EXTRACTED_TEXT_LENGTH } from "@/lib/extraction-limits";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -8,15 +7,10 @@ import {
   findDirectUploadIntent,
   type DirectUploadTarget,
 } from "@/lib/server-db";
-import {
-  ExtractedTextContentError,
-  ExtractionLimitError,
-  ExtractionUnavailableError,
-  processValidatedFile,
-  validateFileSignature,
-  validateMimeType,
-  type ExtractionMethod,
-} from "@/lib/text-extraction";
+import { validateFileSignature, validateMimeType } from "@/lib/file-types";
+import { requestParse } from "@/lib/parse-client";
+import type { ParseOutcome } from "@/lib/parse-protocol";
+import type { ExtractionMethod } from "@/lib/text-extraction";
 import {
   getStorageBucketName,
   getUploadCleanupKey,
@@ -26,6 +20,7 @@ import {
 import { getErrorMessage } from "@/lib/utils";
 import {
   DIRECT_UPLOAD_PATHNAME,
+  MAX_EXTRACTED_TEXT_LENGTH,
   MAX_DIRECT_UPLOAD_FILE_SIZE,
   MAX_DIRECT_UPLOAD_FILE_SIZE_MB,
   MAX_MULTIPART_UPLOAD_FILE_SIZE,
@@ -36,8 +31,10 @@ const MAX_MULTIPART_OVERHEAD = 64 * 1024;
 const LOW_OCR_CONFIDENCE = 60;
 const MAX_LISTED_PAGE_RANGES = 6;
 
-// Shared file-upload pipeline used by both the contract-upload and project-context routes,
-// so size/MIME validation, the single buffer conversion, and text extraction live in one place.
+// Shared file-upload pipeline used by both the contract-upload and project-context routes, so
+// size/MIME validation, the single buffer conversion, storage, and the call to the parse-only
+// function live in one place. It imports no parser: the routes store a validated file, then
+// parseUpload asks app/api/internal/parse to read it back and extract its text.
 
 export type UploadValidationError = {
   ok: false;
@@ -51,6 +48,7 @@ export type StoredUpload = {
   storageIntentId: string;
 };
 
+/** A received upload whose size, MIME type and signature passed validation. Not parsed yet. */
 export type PreparedUpload = {
   signal: AbortSignal;
   ok: true;
@@ -59,14 +57,19 @@ export type PreparedUpload = {
   fileName: string;
   buffer: Buffer;
   mimeType: string;
+  // Set for a direct-to-Blob upload, whose bytes are already stored under the claimed intent.
+  stored: StoredUpload | null;
+};
+
+export type ExtractedText = {
+  ok: true;
   text: string;
   method: ExtractionMethod | null;
   confidence: number | null;
-  // Non-null when text extraction threw; the text/method/confidence fields are then empty/null.
+  // Non-null when the parser rejected the file; the text/method/confidence fields are then
+  // empty/null.
   extractionError: string | null;
   extractionWarning: string | null;
-  // Set for a direct-to-Blob upload, whose bytes are already stored under the claimed intent.
-  stored: StoredUpload | null;
 };
 
 /**
@@ -173,24 +176,16 @@ type UploadFormatOptions = {
   allowedMimeTypes?: readonly string[];
 };
 
-/**
- * The validation and extraction both upload paths share: size, MIME type and signature checks,
- * then text extraction within the extracted-text bound. Does not persist data.
- */
-async function validateAndExtract(input: {
-  signal: AbortSignal;
-  progress?: ReportProgress;
+/** The validation both upload paths share: size, MIME type and signature checks. */
+function validateUploadedFile(input: {
   options?: UploadFormatOptions;
   buffer: Buffer;
   fileName: string;
   declaredMimeType: string;
   maxBytes: number;
   maxMb: number;
-}): Promise<
-  | Omit<PreparedUpload, "fields" | "stored">
-  | UploadValidationError
-> {
-  const { signal, progress, options, buffer, fileName } = input;
+}): { ok: true; mimeType: string } | UploadValidationError {
+  const { options, buffer, fileName } = input;
   if (options && !options.allowedExtensions.includes(fileName.split(".").at(-1)?.toLowerCase() ?? "")) {
     return { ok: false, status: 400, error: "Attach a PDF, TXT, or DOCX file." };
   }
@@ -233,73 +228,90 @@ async function validateAndExtract(input: {
       ),
     };
   }
+  return { ok: true, mimeType };
+}
 
-  let text = "";
-  let method: ExtractionMethod | null = null;
-  let confidence: number | null = null;
-  let extractionError: string | null = null;
-  let extractionWarning: string | null = null;
-  try {
-    signal.throwIfAborted();
-    progress?.("extracting");
-    const extracted = await processValidatedFile(buffer, mimeType, { signal });
-    signal.throwIfAborted();
-    if (extracted.text.length > MAX_EXTRACTED_TEXT_LENGTH) {
-      return {
-        ok: false,
-        status: 422,
-        error: `Extracted text is too large. Maximum length is ${MAX_EXTRACTED_TEXT_LENGTH.toLocaleString("en-US")} characters.`,
-      };
-    }
-    text = extracted.text;
-    method = extracted.method;
-    confidence =
-      typeof extracted.confidence === "number" ? extracted.confidence : null;
-    extractionWarning = getExtractionWarning({
-      method,
-      confidence,
-      sparseTextPages: extracted.sparseTextPages,
-    });
-  } catch (error: unknown) {
-    if (
-      error instanceof ExtractionLimitError ||
-      error instanceof ExtractedTextContentError
-    ) {
-      return { ok: false, status: 422, error: error.message };
-    }
-    if (signal.aborted)
-      return {
-        ok: false,
-        status: 503,
-        error: "Upload processing timed out or was canceled.",
-      };
-    if (error instanceof ExtractionUnavailableError) {
-      return { ok: false, status: 503, error: error.message };
-    }
-    extractionError = getErrorMessage(error, "Text extraction failed");
+const PROCESSING_TIMED_OUT: UploadValidationError = {
+  ok: false,
+  status: 503,
+  error: "Upload processing timed out or was canceled.",
+};
+
+/**
+ * Turn a parse result into what the routes report: limit and content problems are the uploader's
+ * to fix (422), a canceled or expired upload and transient failures are 503, and a parser failure
+ * becomes `extractionError`, which each route answers with its own message.
+ */
+export function toExtractedText(
+  outcome: ParseOutcome,
+  signal: AbortSignal,
+): ExtractedText | UploadValidationError {
+  if (!outcome.ok && (outcome.kind === "limit" || outcome.kind === "content")) {
+    return { ok: false, status: 422, error: outcome.message };
   }
-
+  if (signal.aborted) return PROCESSING_TIMED_OUT;
+  if (!outcome.ok && outcome.kind === "unavailable") {
+    return { ok: false, status: 503, error: outcome.message };
+  }
+  if (!outcome.ok) {
+    return {
+      ok: true,
+      text: "",
+      method: null,
+      confidence: null,
+      extractionError: outcome.message,
+      extractionWarning: null,
+    };
+  }
+  // The parse function enforces this bound too; never trust a larger answer.
+  if (outcome.text.length > MAX_EXTRACTED_TEXT_LENGTH) {
+    return {
+      ok: false,
+      status: 422,
+      error: `Extracted text is too large. Maximum length is ${MAX_EXTRACTED_TEXT_LENGTH.toLocaleString("en-US")} characters.`,
+    };
+  }
   return {
     ok: true,
-    signal,
-    fileName,
-    buffer,
-    mimeType,
-    text,
-    method,
-    confidence,
-    extractionError,
-    extractionWarning,
+    text: outcome.text,
+    method: outcome.method,
+    confidence: outcome.confidence,
+    extractionError: null,
+    extractionWarning: getExtractionWarning(outcome),
   };
 }
 
 /**
- * Validate and extract a bounded multipart upload using the caller's allowed file formats.
- * Does not persist data; callers decide whether empty or partially extracted text is acceptable.
+ * Extract a stored upload's text in the parse-only function. The upload is stored first, so a
+ * failure here leaves the object to the outbox, which deletes it once its cleanup intent is due.
+ */
+export async function parseUpload(
+  req: Request,
+  upload: Pick<PreparedUpload, "signal" | "mimeType">,
+  stored: StoredUpload,
+  progress?: ReportProgress,
+): Promise<ExtractedText | UploadValidationError> {
+  try {
+    upload.signal.throwIfAborted();
+    progress?.("extracting");
+  } catch {
+    return PROCESSING_TIMED_OUT;
+  }
+  const outcome = await requestParse({
+    req,
+    storageKey: stored.storageKey,
+    mimeType: upload.mimeType,
+    signal: upload.signal,
+  });
+  return toExtractedText(outcome, upload.signal);
+}
+
+/**
+ * Receive and validate a bounded multipart upload using the caller's allowed file formats.
+ * Does not persist or parse it.
  */
 export async function prepareUpload(
   req: Request,
-  progress?: ReportProgress,
   options?: UploadFormatOptions,
 ): Promise<PreparedUpload | UploadValidationError> {
   const signal = uploadSignal(req);
@@ -367,17 +379,25 @@ export async function prepareUpload(
     };
   }
 
-  const prepared = await validateAndExtract({
-    signal,
-    progress,
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const validated = validateUploadedFile({
     options,
-    buffer: Buffer.from(await file.arrayBuffer()),
+    buffer,
     fileName: file.name,
     declaredMimeType: file.type,
     maxBytes: MAX_MULTIPART_UPLOAD_FILE_SIZE,
     maxMb: MAX_MULTIPART_UPLOAD_FILE_SIZE_MB,
   });
-  return prepared.ok ? { ...prepared, fields, stored: null } : prepared;
+  if (!validated.ok) return validated;
+  return {
+    ok: true,
+    signal,
+    fields,
+    fileName: file.name,
+    buffer,
+    mimeType: validated.mimeType,
+    stored: null,
+  };
 }
 
 /** A finalize request names an uploaded blob in JSON; anything else is a multipart upload. */
@@ -399,13 +419,12 @@ const finalizeBodySchema = z.object({
 /**
  * Finalize a direct-to-Blob upload: claim the blob only through the cleanup intent its token was
  * issued under for this owner's target, read it back within the direct-upload limit, and run the
- * multipart path's validation and extraction. Failures leave the blob to the outbox, which
- * deletes it once the intent becomes due.
+ * multipart path's validation. Failures leave the blob to the outbox, which deletes it once the
+ * intent becomes due.
  */
 export async function prepareDirectUpload(
   req: Request,
   input: { userId: string; target: DirectUploadTarget },
-  progress?: ReportProgress,
 ): Promise<PreparedUpload | UploadValidationError> {
   const signal = uploadSignal(req);
   const body = await readBoundedBody(
@@ -464,21 +483,23 @@ export async function prepareDirectUpload(
         };
   }
 
-  const prepared = await validateAndExtract({
-    signal,
-    progress,
+  const validated = validateUploadedFile({
     buffer: blob.buffer,
     fileName: parsed.fileName,
     declaredMimeType: blob.contentType,
     maxBytes: MAX_DIRECT_UPLOAD_FILE_SIZE,
     maxMb: MAX_DIRECT_UPLOAD_FILE_SIZE_MB,
   });
-  if (!prepared.ok) return prepared;
+  if (!validated.ok) return validated;
   const fields: Record<string, string> = {};
   if (parsed.title !== undefined) fields.title = parsed.title;
   if (parsed.documentType !== undefined) fields.documentType = parsed.documentType;
   return {
-    ...prepared,
+    ok: true,
+    signal,
+    fileName: parsed.fileName,
+    buffer: blob.buffer,
+    mimeType: validated.mimeType,
     fields,
     stored: {
       storageKey: blob.url,
