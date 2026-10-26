@@ -41,7 +41,7 @@ From `apps/gateway`:
 
 For application changes, run appropriate tests and the root build, lint, and type checks. Turbo can reuse cached results; use `bun run build --force` when a fresh build is needed. Run build and `check-types` sequentially because both generate `.next` files. Documentation-only edits need command/link/configuration checks rather than an application rebuild.
 
-GitHub Actions (`.github/workflows/ci.yml`) runs lint, `check-types`, tests, and the build without secrets, builds the gateway's Vercel bundle, serves it with Node and probes `/healthz`, plus `bun run test:integration` against a `postgres:16` service container, on pull requests and pushes to `main`.
+GitHub Actions (`.github/workflows/ci.yml`) runs `bun audit --audit-level=high` (any high or critical advisory fails the build; ignore one only with `--ignore=<GHSA id>` and a comment when no fix exists), lint, `check-types`, tests, and the build without secrets, builds the gateway's Vercel bundle, serves it with Node and probes `/healthz`, plus `bun run test:integration` against a `postgres:16` service container, on pull requests and pushes to `main`.
 
 ## Repository Map
 
