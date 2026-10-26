@@ -9,6 +9,8 @@ const isCI = Boolean(process.env.CI);
 // without one. The server gets placeholder configuration and needs no database or model provider.
 export default defineConfig({
   testDir: "./e2e",
+  // The signed-in suite needs real credentials and a database: playwright.signed-in.config.ts.
+  testIgnore: "signed-in/**",
   fullyParallel: true,
   forbidOnly: isCI,
   retries: isCI ? 1 : 0,

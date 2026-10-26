@@ -18,6 +18,8 @@ coverage
 # Playwright end-to-end output (apps/web)
 test-results/
 playwright-report/
+# Signed-in Playwright session state (a live session cookie)
+**/playwright/.auth/
 blob-report/
 
 # Turbo

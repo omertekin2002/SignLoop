@@ -17,6 +17,23 @@ jobs:
     name: Lint, type-check, test, build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      # An empty database for the signed-in end-to-end tests, which apply every migration on first
+      # use. The Neon driver needs a password in the URL; trust authentication ignores it.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: signloop_e2e
+          POSTGRES_DB: signloop_e2e
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_INITDB_ARGS: --encoding=UTF8 --no-locale
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h localhost -U signloop_e2e -d signloop_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -101,6 +118,33 @@ jobs:
       - name: End-to-end smoke
         working-directory: apps/web
         run: bun run test:e2e
+
+      # Signs in to the dedicated WorkOS staging environment through AuthKit's hosted page, then
+      # exercises the workspace against the PostgreSQL service above. Pull requests from forks and
+      # Dependabot receive no repository secrets, so the tests are skipped there. Secrets cannot
+      # appear in an `if:`, hence the check step; only these two steps see them.
+      - name: Check for signed-in end-to-end secrets
+        id: signed-in-secrets
+        env:
+          E2E_WORKOS_API_KEY: ${{ secrets.E2E_WORKOS_API_KEY }}
+        run: |
+          if [ -n "$E2E_WORKOS_API_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Signed-in end-to-end tests skipped: the E2E_* repository secrets are unavailable."
+          fi
+
+      - name: Signed-in end-to-end
+        if: steps.signed-in-secrets.outputs.available == 'true'
+        working-directory: apps/web
+        env:
+          E2E_WORKOS_API_KEY: ${{ secrets.E2E_WORKOS_API_KEY }}
+          E2E_WORKOS_CLIENT_ID: ${{ secrets.E2E_WORKOS_CLIENT_ID }}
+          E2E_WORKOS_COOKIE_PASSWORD: ${{ secrets.E2E_WORKOS_COOKIE_PASSWORD }}
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          E2E_DATABASE_URL: postgresql://signloop_e2e:unused@localhost:5432/signloop_e2e
+        run: bun run test:e2e:signed-in
 
       - name: Upload Playwright report
         if: failure()
