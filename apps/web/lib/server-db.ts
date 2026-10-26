@@ -1712,7 +1712,8 @@ const DELETE_ACCOUNT_STATEMENTS = [
  * commit. Once the row is gone they insert nothing, so a request authenticated before the deletion
  * cannot recreate data afterwards. `keepLogin` keeps the row and the WorkOS mapping, so that a
  * retry after a failed WorkOS deletion resolves the session to the same owner and sweeps any late
- * writes; the final call removes them.
+ * writes; the final call removes them and retains a hashed subject revocation so stale sessions
+ * cannot provision a new owner.
  */
 export async function deleteAccountForUser(
   userId: string,
@@ -1731,6 +1732,13 @@ export async function deleteAccountForUser(
     await client.query("DELETE FROM chat_admissions WHERE principal = $1", [principal]);
     await client.query("DELETE FROM chat_request_budgets WHERE bucket = $1", [principal]);
     if (!options.keepLogin) {
+      await client.query(
+        `INSERT INTO revoked_auth_identities(provider, subject_hash)
+         SELECT provider, sha256(convert_to(subject, 'UTF8'))
+         FROM auth_identities WHERE user_id = $1
+         ON CONFLICT DO NOTHING`,
+        [userId],
+      );
       await client.query("DELETE FROM auth_identities WHERE user_id = $1", [userId]);
       await client.query("DELETE FROM application_users WHERE id = $1", [userId]);
     }

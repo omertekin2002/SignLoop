@@ -164,6 +164,11 @@ export default function PrivacyPage() {
             cleanup job, which runs daily, usually within a day. It cannot be undone. Temporary
             chats stay in your browser until you clear them.
           </p>
+          <p>
+            SignLoop keeps a one-way hash of the deleted sign-in account’s identifier so that
+            old sessions cannot recreate your account. This record contains no workspace content,
+            email address, or internal account ID.
+          </p>
 
           <h2>Security</h2>
           <p>

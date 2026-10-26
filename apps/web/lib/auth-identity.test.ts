@@ -14,7 +14,7 @@ vi.mock("@vercel/postgres", () => ({ sql: { connect, query: fastQuery } }));
 vi.mock("./server-db", () => ({ ensureSchema }));
 vi.mock("node:crypto", () => ({ randomUUID }));
 
-import { AuthIdentityError, resolveWorkOSUserId } from "./auth-identity";
+import { AuthIdentityError, DeletedAuthIdentityError, resolveWorkOSUserId } from "./auth-identity";
 
 const ownerId = "fe38d076-12df-4bf2-90d0-fcb19ede8af4";
 let existingOwner: string | undefined;
@@ -152,6 +152,22 @@ describe("WorkOS application identity", () => {
     ).rejects.toBeInstanceOf(AuthIdentityError);
     expect(query.mock.calls.at(-1)).toEqual(["ROLLBACK"]);
     expect(query).not.toHaveBeenCalledWith("COMMIT");
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a deleted subject before allocating an owner", async () => {
+    const normalQuery = query.getMockImplementation()!;
+    query.mockImplementation(async (statement: string, values?: string[]) => {
+      if (statement.includes("FROM revoked_auth_identities")) {
+        return { rows: [{ "?column?": 1 }] };
+      }
+      return normalQuery(statement, values);
+    });
+    await expect(resolveWorkOSUserId({ id: "user_deleted" }))
+      .rejects.toBeInstanceOf(DeletedAuthIdentityError);
+    expect(randomUUID).not.toHaveBeenCalled();
+    expect(query.mock.calls.some(([statement]) => statement.startsWith("INSERT"))).toBe(false);
+    expect(query.mock.calls.at(-1)).toEqual(["ROLLBACK"]);
     expect(release).toHaveBeenCalledOnce();
   });
 

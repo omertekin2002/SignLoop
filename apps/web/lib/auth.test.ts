@@ -6,9 +6,13 @@ const { withAuth, resolveWorkOSUserId } = vi.hoisted(() => ({
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@workos-inc/authkit-nextjs", () => ({ withAuth }));
-vi.mock("@/lib/auth-identity", () => ({ resolveWorkOSUserId }));
+vi.mock("@/lib/auth-identity", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./auth-identity")>()),
+  resolveWorkOSUserId,
+}));
 
 import { auth, authWithWorkOSUser } from "./auth";
+import { DeletedAuthIdentityError } from "./auth-identity";
 import { requireUserId } from "./api-auth";
 
 beforeEach(() => vi.resetAllMocks());
@@ -44,6 +48,18 @@ describe("application authentication", () => {
     withAuth.mockResolvedValue({ user: { id: "user_workos" } });
     resolveWorkOSUserId.mockRejectedValue(new Error("database unavailable"));
     await expect(auth()).rejects.toThrow("database unavailable");
+  });
+
+  it("rejects a deleted account's still-valid session as signed out", async () => {
+    withAuth.mockResolvedValue({ user: { id: "user_deleted" } });
+    resolveWorkOSUserId.mockRejectedValue(new DeletedAuthIdentityError());
+
+    expect(await auth()).toEqual({ userId: null });
+    expect(await authWithWorkOSUser()).toBeNull();
+    const result = await requireUserId();
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(401);
+    expect(await (result as Response).json()).toEqual({ error: "Unauthorized" });
   });
 
   it("returns the owner with the session's WorkOS user ID for account deletion", async () => {
