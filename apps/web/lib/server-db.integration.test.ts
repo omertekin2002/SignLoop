@@ -45,6 +45,7 @@ import {
   createContractForUser,
   createProjectForUser,
   deleteAccountForUser,
+  getAccountExportForUser,
   deleteAnalysisForContract,
   deleteContractForUser,
   deleteProjectForUser,
@@ -72,6 +73,11 @@ import { citationForReport } from "./source-citations";
 import { buildAnalysisPrompt } from "./analysis";
 import { boundCanonicalChatHistory } from "./chat-history-bounds";
 import { admissionLimits, type AdmissionResult } from "./inference-policy";
+import { createAccountExport } from "./account-export";
+import { json, unzip } from "./test-unzip";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 // db/test-integration.sh sets this and runs vitest directly, outside turbo's env filtering.
 // eslint-disable-next-line turbo/no-undeclared-env-vars
@@ -2215,5 +2221,126 @@ describe.skipIf(!connectionString)("database integration", () => {
     // Idempotent: a repeat finds nothing left and succeeds.
     await expect(deleteAccountForUser(deleted.userId)).resolves.toBeUndefined();
     expect(await rowsOf(kept)).toEqual(keptBefore);
+  });
+
+  it("exports exactly one account's rows and files, without operational rows or storage keys", async () => {
+    const storageRoot = await fs.mkdtemp(path.join(os.tmpdir(), "signloop-export-"));
+    vi.stubEnv("LOCAL_STORAGE_PATH", storageRoot);
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 1, 2, 3]);
+    async function store(prefix: string, bytes: Buffer) {
+      const storageKey = `${prefix}-${crypto.randomUUID()}`;
+      await fs.writeFile(path.join(storageRoot, storageKey), bytes);
+      return storageKey;
+    }
+    async function seed() {
+      const userId = await resolveWorkOSUserId({ id: `user_${crypto.randomUUID()}` });
+      const { principal } = admissionLimits(userId);
+      const tag = crypto.randomUUID();
+      const project = await createProjectForUser({ userId, title: `Project ${tag}` });
+      const contextBytes = Buffer.from(`Context ${tag}`);
+      const contextKey = await store("export-context", contextBytes);
+      const contextDocument = await addContextDocumentToProject({
+        userId, projectId: project.id, title: "Brief", documentType: "other", storageKey: contextKey,
+        bucket: "test", originalFilename: "../brief.txt", contentType: "text/plain",
+        sizeBytes: contextBytes.length, extractedText: "Brief", wordCount: 1,
+      });
+      const contract = await createContractForUser({ userId, title: "Lease", projectId: project.id });
+      const uploads: Buffer[] = [];
+      // Two uploads with one name: both originals are exported, the second renamed.
+      for (const text of ["First lease.", "Second lease."]) {
+        const bytes = Buffer.from(text);
+        uploads.push(bytes);
+        await saveContractUploadForUser({
+          userId, contractId: contract.id, projectId: project.id, title: "Lease", fileName: "lease.txt",
+          storageKey: await store("export-file", bytes), bucket: "test", contentType: "text/plain",
+          sizeBytes: bytes.length, extractionMethod: null, extractionConfidence: null, text,
+        });
+      }
+      const snapshot = await getContractWithLatestAnalysisForUser(userId, contract.id);
+      await createAnalysisForContract({
+        userId, contractId: contract.id, expectedRevision: snapshot!.revision, riskBadge: "LOW",
+        resultJson: { summary: `Analysis ${tag}` }, llmProvider: "test", llmModel: "test",
+      });
+      const thread = await createChatThreadForUser({ userId, title: "Questions" });
+      const webSources = [{ number: 1, title: "Source", url: "https://source.test" }];
+      await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
+        { role: "user", content: "Draw it" },
+        {
+          role: "assistant",
+          content: `![Generated image](data:image/png;base64,${png.toString("base64")})`,
+          metadata: { agentMessages: [{ role: "assistant", content: [{ type: "text", text: "private replay" }] }], webSources },
+        },
+      ] });
+      const chatBytes = Buffer.from(`Notes ${tag}`);
+      const chatFile = { id: crypto.randomUUID(), name: "notes.txt", mediaType: "text/plain", size: chatBytes.length, text: "Notes" };
+      await saveChatFileForUser({ userId, threadId: thread.id, file: chatFile, data: chatBytes });
+      await upsertUserSettings({ userId, personality: "bare-llm" });
+      expect(await claimGenerationOperation(userId, "contract", contract.id, 60)).toBeTypeOf("function");
+      await pool.current!.query(
+        "INSERT INTO chat_admissions(token, principal, expires_at) VALUES ($1, $2, now() + interval '1 minute')",
+        [crypto.randomUUID(), principal],
+      );
+      return { userId, principal, tag, project, contextDocument, contextBytes, contract, uploads, thread, chatFile, chatBytes, webSources };
+    }
+
+    try {
+      const owner = await seed();
+      const other = await seed();
+      const data = await getAccountExportForUser(owner.userId);
+
+      expect(data.projects.map((row) => row.id)).toEqual([owner.project.id]);
+      expect(data.contextDocuments.map((row) => row.id)).toEqual([owner.contextDocument.id]);
+      expect(data.contracts.map((row) => [row.id, row.textContent])).toEqual([[owner.contract.id, "Second lease."]]);
+      expect(data.contractFiles.map((row) => row.contractId)).toEqual([owner.contract.id, owner.contract.id]);
+      expect(data.analyses.map((row) => [row.contractId, row.resultJson])).toEqual([
+        [owner.contract.id, { summary: `Analysis ${owner.tag}` }],
+      ]);
+      expect(data.chatThreads.map((row) => row.id)).toEqual([owner.thread.id]);
+      expect(data.chatMessages.map((row) => row.role)).toEqual(["user", "assistant"]);
+      expect(data.chatMessages[1]!.webSources).toEqual(owner.webSources);
+      expect(data.chatMessages[1]).not.toHaveProperty("agentMessages");
+      expect(data.chatFiles.map((row) => [row.id, row.sizeBytes])).toEqual([[owner.chatFile.id, owner.chatBytes.length]]);
+      expect(data.chatImages).toHaveLength(1);
+      expect(data.settings).toMatchObject({ personality: "bare-llm", primaryModel: null });
+
+      const exportedText = JSON.stringify(data);
+      for (const id of [other.userId, other.tag, other.project.id, other.contract.id, other.thread.id, other.chatFile.id]) {
+        expect(exportedText).not.toContain(id);
+      }
+      // Leases, admissions and the login mapping are never read.
+      expect(exportedText).not.toContain(owner.principal);
+      expect(exportedText).not.toContain(owner.userId);
+      expect(exportedText).not.toContain("private replay");
+
+      // The archive built from it holds every original file byte-for-byte, and no storage keys.
+      const entries = await unzip(createAccountExport({ userId: owner.userId, data, exportedAt: new Date() }));
+      const root = "signloop-export";
+      const contractsJson = json(entries, `${root}/contracts.json`) as Array<{ files: Array<{ path: string }> }>;
+      expect(contractsJson[0]!.files.map((file) => file.path)).toEqual([
+        `files/contracts/${owner.contract.id}/lease.txt`,
+        `files/contracts/${owner.contract.id}/lease (2).txt`,
+      ]);
+      expect(entries.get(`${root}/files/contracts/${owner.contract.id}/lease.txt`)).toEqual(owner.uploads[0]);
+      expect(entries.get(`${root}/files/contracts/${owner.contract.id}/lease (2).txt`)).toEqual(owner.uploads[1]);
+      expect(entries.get(`${root}/files/projects/${owner.project.id}/_brief.txt`)).toEqual(owner.contextBytes);
+      expect(entries.get(`${root}/files/chats/${owner.thread.id}/notes.txt`)).toEqual(owner.chatBytes);
+      expect(entries.get(`${root}/files/chats/${owner.thread.id}/${data.chatImages[0]!.id}.png`)).toEqual(png);
+      const archiveText = [...entries.values()].map((entry) => entry.toString("latin1")).join("\n");
+      expect(archiveText).not.toContain("export-file-");
+      expect(archiveText).not.toContain("export-context-");
+      expect(archiveText).not.toContain(other.userId);
+      expect(archiveText).not.toContain(other.tag);
+      expect(entries.get(`${root}/README.txt`)!.toString()).not.toContain("could not be found");
+
+      // An account with nothing in it exports empty collections.
+      const empty = await getAccountExportForUser(await resolveWorkOSUserId({ id: `user_${crypto.randomUUID()}` }));
+      expect(empty).toEqual({
+        contracts: [], contractFiles: [], analyses: [], projects: [], contextDocuments: [],
+        chatThreads: [], chatMessages: [], chatFiles: [], chatImages: [], settings: null,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      await fs.rm(storageRoot, { recursive: true, force: true });
+    }
   });
 });
