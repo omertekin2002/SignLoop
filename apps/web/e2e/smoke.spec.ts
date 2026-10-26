@@ -63,13 +63,29 @@ for (const path of ["/dashboard", "/sign-in"]) {
   });
 }
 
-for (const path of ["/api/usage", "/api/contracts", "/api/account/export"]) {
+for (const path of ["/api/usage", "/api/contracts", "/api/account/export", "/api/uploads"]) {
   test(`unauthenticated GET ${path} returns a JSON 401`, async ({ request }) => {
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.status()).toBe(401);
     expect(await response.json()).toEqual({ error: "Unauthorized" });
   });
 }
+
+test("unauthenticated POST /api/uploads issues no upload token", async ({ request }) => {
+  const response = await request.post("/api/uploads", {
+    data: {
+      type: "blob.generate-client-token",
+      payload: {
+        pathname: "uploads/0b6c3c1e-8d7a-4f2b-9c1d-2e3f4a5b6c7d",
+        clientPayload: JSON.stringify({ contractId: "11e3e947-f71f-4ecd-a901-adbf24edbb8a" }),
+        multipart: false,
+      },
+    },
+    maxRedirects: 0,
+  });
+  expect(response.status()).toBe(401);
+  expect(await response.json()).toEqual({ error: "Unauthorized" });
+});
 
 test("unauthenticated DELETE /api/account returns a JSON 401", async ({ request }) => {
   const response = await request.delete("/api/account", {
