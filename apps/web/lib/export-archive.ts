@@ -5,14 +5,18 @@ export type ExportFileSource = () => Promise<ReadableStream<Uint8Array> | Uint8A
 
 type ArchiveFile = { path: string; open: ExportFileSource };
 
-const MAX_SEGMENT_LENGTH = 120;
+// File systems limit a name to 255 bytes (APFS, ext4) or UTF-16 units (NTFS). 150 UTF-8 bytes
+// leaves room for a duplicate suffix and for macOS's decomposed forms, which can grow a name.
+const MAX_SEGMENT_BYTES = 150;
+const utf8 = new TextEncoder();
+const byteLength = (text: string) => utf8.encode(text).length;
 // Device names Windows refuses as file names, with or without an extension.
 const RESERVED_WINDOWS_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
 
 /**
  * Make one user-supplied name safe as a single archive path segment: no separators, no `.`/`..`,
- * no control or Windows-invalid characters, no reserved device names, and a bounded length that
- * keeps the extension.
+ * no control or Windows-invalid characters, no reserved device names, and at most
+ * MAX_SEGMENT_BYTES of UTF-8, cut between code points and keeping the extension.
  */
 export function sanitizeArchiveSegment(name: string, fallback = "file"): string {
   let clean = name
@@ -24,10 +28,17 @@ export function sanitizeArchiveSegment(name: string, fallback = "file"): string 
     .replace(/^[.\s]+|[.\s]+$/g, "");
   if (!clean) clean = fallback;
   if (RESERVED_WINDOWS_NAME.test(clean)) clean = `_${clean}`;
-  if (clean.length > MAX_SEGMENT_LENGTH) {
+  if (byteLength(clean) > MAX_SEGMENT_BYTES) {
     const dot = clean.lastIndexOf(".");
     const extension = dot > 0 && clean.length - dot <= 16 ? clean.slice(dot) : "";
-    clean = clean.slice(0, MAX_SEGMENT_LENGTH - extension.length).trimEnd() + extension;
+    let budget = MAX_SEGMENT_BYTES - byteLength(extension);
+    let stem = "";
+    for (const character of clean.slice(0, clean.length - extension.length)) {
+      budget -= byteLength(character);
+      if (budget < 0) break;
+      stem += character;
+    }
+    clean = stem.trimEnd() + extension;
   }
   return clean;
 }

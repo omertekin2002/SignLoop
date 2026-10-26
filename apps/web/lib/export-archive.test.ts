@@ -3,6 +3,7 @@ import { ExportArchive, sanitizeArchiveSegment } from "@/lib/export-archive";
 import { json, unzip } from "@/lib/test-unzip";
 
 const modifiedAt = new Date("2026-10-26T12:00:00Z");
+const bytes = (text: string) => new TextEncoder().encode(text).length;
 const readme = (missing: string[]) => `README\n${missing.join("\n")}`;
 
 function chunked(bytes: Uint8Array, size: number) {
@@ -35,10 +36,20 @@ describe("sanitizeArchiveSegment", () => {
     expect(sanitizeArchiveSegment(input)).toBe(expected);
   });
 
-  it("bounds long names and keeps the extension", () => {
+  it("bounds long names to 150 UTF-8 bytes and keeps the extension", () => {
     const name = sanitizeArchiveSegment(`${"x".repeat(500)}.pdf`);
-    expect(name).toHaveLength(120);
-    expect(name.endsWith(".pdf")).toBe(true);
+    expect(name).toBe(`${"x".repeat(146)}.pdf`);
+  });
+
+  it.each([
+    ["CJK", `${"合".repeat(100)}.pdf`, `${"合".repeat(48)}.pdf`],
+    ["emoji", `${"📄".repeat(60)}.docx`, `${"📄".repeat(36)}.docx`],
+    ["Turkish", `${"ş".repeat(200)}.txt`, `${"ş".repeat(73)}.txt`],
+  ])("cuts long %s names between code points", (_label, input, expected) => {
+    const name = sanitizeArchiveSegment(input);
+    expect(name).toBe(expected);
+    expect(bytes(name)).toBeLessThanOrEqual(150);
+    expect(name).not.toContain("\uFFFD");
   });
 });
 
@@ -88,6 +99,8 @@ describe("ExportArchive", () => {
       archive.addFile(["files", "contracts", "c1"], "CONTRACT.pdf", open),
       archive.addFile(["files", "contracts", "c2"], "contract.pdf", open),
       archive.addFile(["files", "..", "c1"], "readme", open),
+      archive.addFile(["files", "contracts", "c3"], `${"合".repeat(100)}.pdf`, open),
+      archive.addFile(["files", "contracts", "c3"], `${"合".repeat(120)}.pdf`, open),
     ];
 
     expect(paths).toEqual([
@@ -99,7 +112,11 @@ describe("ExportArchive", () => {
       "files/contracts/c1/CONTRACT (3).pdf",
       "files/contracts/c2/contract.pdf",
       "files/folder/c1/readme",
+      `files/contracts/c3/${"合".repeat(48)}.pdf`,
+      `files/contracts/c3/${"合".repeat(48)} (2).pdf`,
     ]);
+    // Even numbered, every name fits a 255-byte file-system limit.
+    for (const path of paths) expect(bytes(path.split("/").at(-1)!)).toBeLessThan(255);
 
     const entries = await unzip(archive.stream({ modifiedAt, documents: {}, readme }));
     expect(entries.size).toBe(paths.length + 1);
