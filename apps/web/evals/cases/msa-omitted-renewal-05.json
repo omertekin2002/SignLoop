@@ -13,6 +13,7 @@
     { "category": "limitation_of_liability", "required": true, "segment": "tail", "span": "each party's aggregate liability arising out of or relating to this Agreement shall not exceed the Fees paid or payable by Customer in the twelve (12) months before the event giving rise to the claim" }
   ],
   "absent": ["arbitration"],
+  "governing_law": { "jurisdiction": "State of Delaware", "span": "This Agreement is governed by the laws of the State of Delaware, without regard to its conflict of laws rules." },
   "fields": {
     "summary.renewal.auto_renew": null,
     "summary.renewal.renewal_period": null,

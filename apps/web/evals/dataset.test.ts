@@ -18,7 +18,7 @@ const cases = loadCases();
 
 describe("evaluation cases", () => {
   it("locate every gold span exactly once, at production code point offsets", () => {
-    expect(cases).toHaveLength(8);
+    expect(cases).toHaveLength(9);
     for (const loaded of cases) {
       const codePoints = Array.from(loaded.text);
       for (const clause of loaded.clauses) {
@@ -26,7 +26,23 @@ describe("evaluation cases", () => {
           clause.span,
         );
       }
+      const law = loaded.spec.governing_law;
+      if (law) {
+        expect(
+          codePoints
+            .slice(loaded.governingLaw!.start, loaded.governingLaw!.end)
+            .join(""),
+        ).toBe(law.span);
+      }
     }
+  });
+
+  it("cover contracts with and without a governing-law clause", () => {
+    expect(cases.filter((loaded) => loaded.governingLaw).length).toBeGreaterThan(0);
+    for (const loaded of cases.filter((item) => item.governingLaw === null)) {
+      expect(loaded.text).not.toMatch(/govern(?:ed|ing) by|governing law/i);
+    }
+    expect(cases.some((loaded) => loaded.governingLaw === null)).toBe(true);
   });
 
   it("place omitted spans wholly in the unsent middle of a long contract", () => {
@@ -82,7 +98,7 @@ describe("evaluation cases", () => {
       cases.map((loaded) => loaded.spec.id),
     );
     const perturbations = loadPerturbations();
-    expect(perturbations).toHaveLength(5);
+    expect(perturbations).toHaveLength(7);
     for (const perturbation of perturbations) {
       const oracle = oracles.find(
         (candidate) => candidate.case === perturbation.case,

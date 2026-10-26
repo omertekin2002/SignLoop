@@ -13,6 +13,7 @@
     { "category": "late_payment", "required": false, "span": "A late fee of $15.00 applies to any payment that remains unpaid ten (10) days after its due date." }
   ],
   "absent": ["arbitration"],
+  "governing_law": { "jurisdiction": "State of Illinois", "span": "This Agreement is governed by the laws of the State of Illinois." },
   "fields": {
     "summary.renewal.auto_renew": true,
     "summary.renewal.renewal_period": { "canon": [12, "month"] },

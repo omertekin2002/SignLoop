@@ -1,0 +1,30 @@
+{
+  "id": "photography-no-governing-law-09",
+  "title": "Benign event photography agreement with no governing-law clause",
+  "provenance": "synthetic/hand-written",
+  "contract": "contracts/photography-no-governing-law-09.txt",
+  "context": [],
+  "benign": true,
+  "notes": "No clause names a governing law, so the ideal answer proposes no jurisdiction. Notice addresses and party names must not be turned into one. The deposit becomes non-refundable on late cancellation, a low-severity finding.",
+  "clauses": [
+    { "category": "non_refundable", "required": true, "span": "If Client cancels with less notice, the deposit is non-refundable." },
+    { "category": "cancellation_notice", "required": false, "span": "Client may cancel this Agreement by giving Photographer 30 calendar days' written notice before the event date, and Photographer will refund the deposit." },
+    { "category": "limitation_of_liability", "required": false, "span": "Photographer's total liability under this Agreement is limited to the fee Client has paid." }
+  ],
+  "absent": ["auto_renewal", "arbitration", "governing_law"],
+  "governing_law": null,
+  "fields": {
+    "summary.renewal.auto_renew": false,
+    "summary.renewal.renewal_period": null,
+    "summary.cancellation.notice_period_text": { "canon": [30, "day"] },
+    "summary.cancellation.notice_period_days": 30
+  },
+  "key_dates": [
+    { "type": "OTHER", "date": "2026-09-19" },
+    { "type": "OTHER", "date": "2026-08-03", "required": false }
+  ],
+  "parties": [
+    { "name": "Bright Fern Studio" },
+    { "name": "Quill & Compass Bookshop", "aliases": ["Quill and Compass Bookshop"] }
+  ]
+}

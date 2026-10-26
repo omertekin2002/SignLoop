@@ -235,7 +235,7 @@ describe("oracle responses through the production pipeline", () => {
       cases.map((loaded) => scoreCase(loaded, runs.get(loaded.spec.id)!)),
     );
     expect(summary).toMatchObject({
-      cases: 8,
+      cases: 9,
       clauseRecall: 1,
       labelRecall: 1,
       spanPrecision: 1,
@@ -244,17 +244,19 @@ describe("oracle responses through the production pipeline", () => {
       falseFlags: 0,
       benignAlarms: 0,
       unsupportedComparisons: 0,
-      comparisonsWithheld: 8,
+      comparisonsWithheld: 9,
+      jurisdiction: { correct: 8, correct_abstention: 1 },
+      unverifiedJurisdictions: 0,
       dateRecall: 1,
       unsupportedDates: 0,
       partyRecall: 1,
     });
     expect(summary.autoRenewConfusion).toEqual({
       true: { true: 4, false: 0, null: 0 },
-      false: { true: 0, false: 1, null: 0 },
+      false: { true: 0, false: 2, null: 0 },
       null: { true: 0, false: 0, null: 3 },
     });
-    expect(summary.parsePaths).toEqual({ strict: 7, normalized: 1 });
+    expect(summary.parsePaths).toEqual({ strict: 8, normalized: 1 });
   });
 
   it.each(
