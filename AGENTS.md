@@ -27,6 +27,7 @@ From `apps/web`:
 - `bun run test:integration` creates a disposable local PostgreSQL database, applies migrations, runs database regressions, and removes it. Set `POSTGRES_BIN` if PostgreSQL binaries are not in `/opt/homebrew/opt/postgresql@16/bin`.
 - Database integration tests skip in ordinary test runs unless `SIGNLOOP_TEST_DATABASE_URL` is set. The disposable-database script sets this itself, or uses an already-set URL for an empty `localhost` `signloop_test` database (as CI does), and does not use `POSTGRES_URL`.
 - `bun run storage:cleanup` processes the real storage-deletion outbox using configured database/storage credentials.
+- `bun run test:e2e` runs after a build: Playwright starts `next start` on `127.0.0.1:3100` with the placeholder WorkOS configuration in `e2e/placeholder-env.ts` (no `.env.local`, database, or model provider) and smoke-tests public pages, security headers, and signed-out redirects and 401s in headless Chromium (`playwright.config.ts`, specs in `e2e/`). Install the browser once with `bunx playwright install chromium`. Vitest does not collect `e2e/`; `check-types` and `lint` cover it.
 - `bun run check:ocr-trace` runs after a build and verifies that the OCR upload routes trace tesseract.js's worker modules, WebAssembly core builds, and English model, and that server output contains no unexpected build-machine (`/ROOT/node_modules`) paths. CI runs it after the build.
 
 From `packages/chat-engine`, `bun run test`, `bun run lint`, and `bun run check-types` run the engine's own Vitest suite (`src/**/*.test.ts`), ESLint, and `tsc --noEmit`.
@@ -41,7 +42,7 @@ From `apps/gateway`:
 
 For application changes, run appropriate tests and the root build, lint, and type checks. Turbo can reuse cached results; use `bun run build --force` when a fresh build is needed. Run build and `check-types` sequentially because both generate `.next` files. Documentation-only edits need command/link/configuration checks rather than an application rebuild.
 
-GitHub Actions (`.github/workflows/ci.yml`) runs lint, `check-types`, tests, and the build without secrets, builds the gateway's Vercel bundle, serves it with Node and probes `/healthz`, plus `bun run test:integration` against a `postgres:16` service container, on pull requests and pushes to `main`.
+GitHub Actions (`.github/workflows/ci.yml`) runs `bun audit --audit-level=high` (any high or critical advisory fails the build; ignore one only with `--ignore=<GHSA id>` and a comment when no fix exists), lint, `check-types`, tests, and the build without secrets, builds the gateway's Vercel bundle, serves it with Node and probes `/healthz`, checks OCR traces, installs Playwright's Chromium and runs `bun run test:e2e` against the build (uploading the report on failure), plus `bun run test:integration` against a `postgres:16` service container, on pull requests and pushes to `main`.
 
 ## Repository Map
 
