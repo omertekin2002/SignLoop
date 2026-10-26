@@ -60,6 +60,7 @@ import {
 import { toast } from "sonner";
 import { ContractSourceProvider, FindingSource, OpenContractSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
+import { ContractJurisdiction } from "@/components/contract-jurisdiction";
 import type { AnalysisResult } from "@/lib/schemas";
 import {
   contractDetailOptions,
@@ -1028,6 +1029,33 @@ const ContractDetails = () => {
             </CardContent>
           </Card>
         )}
+
+        <ContractJurisdiction
+          contractId={id}
+          confirmed={
+            typeof contract.confirmedJurisdiction === "string"
+              ? contract.confirmedJurisdiction
+              : null
+          }
+          report={
+            resultJson
+              ? {
+                  proposed:
+                    typeof resultJson.proposed_jurisdiction?.jurisdiction ===
+                    "string"
+                      ? resultJson.proposed_jurisdiction.jurisdiction
+                      : null,
+                  ranWith:
+                    typeof resultJson.comparison_jurisdiction === "string"
+                      ? resultJson.comparison_jurisdiction
+                      : null,
+                  isLatest: !isViewingHistoricalAnalysis,
+                }
+              : null
+          }
+          onRerun={() => analyzeMutation.mutate({ force: true })}
+          rerunPending={analyzeMutation.isPending}
+        />
 
         {resultJson && <AnalysisDetails result={resultJson} />}
 

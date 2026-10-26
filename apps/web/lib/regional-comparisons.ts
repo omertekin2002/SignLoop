@@ -3,6 +3,9 @@ import { isRecord } from "@/lib/utils";
 
 export type RegionalComparison = AnalysisResult["normal_in_region"][number];
 
+/** Longest jurisdiction a user can confirm; migration 019 enforces the same bound. */
+export const MAX_JURISDICTION_LENGTH = 100;
+
 /**
  * The region a user confirmed for an analysis, as the prompt shows it, or null when none was.
  * Placeholders such as "Unknown" are not a confirmation. The prompt builder and the stored-report
@@ -11,11 +14,39 @@ export type RegionalComparison = AnalysisResult["normal_in_region"][number];
 export function confirmedRegion(
   region: string | null | undefined,
 ): string | null {
+  // Cut by code points, as PostgreSQL counts them: a split surrogate pair cannot be stored as JSON.
   const normalized =
     typeof region === "string"
-      ? region.trim().replace(/\s+/g, " ").slice(0, 100)
+      ? Array.from(region.trim().replace(/\s+/g, " "))
+          .slice(0, MAX_JURISDICTION_LENGTH)
+          .join("")
+          .trim()
       : "";
   return isSubstantiveText(normalized) ? normalized : null;
+}
+
+/**
+ * The body of PATCH /api/contracts/[id]: exactly `{ "jurisdiction": string | null }`. A string is
+ * stored as confirmedRegion normalizes it; null clears the confirmation. Returns null for anything
+ * else, including placeholders and values too long to keep without cutting them.
+ */
+export function parseJurisdictionUpdate(
+  body: unknown,
+): { jurisdiction: string | null } | null {
+  if (!isRecord(body) || Object.keys(body).join() !== "jurisdiction") {
+    return null;
+  }
+  const { jurisdiction } = body;
+  if (jurisdiction === null) return { jurisdiction: null };
+  if (
+    typeof jurisdiction !== "string" ||
+    Array.from(jurisdiction.trim().replace(/\s+/g, " ")).length >
+      MAX_JURISDICTION_LENGTH
+  ) {
+    return null;
+  }
+  const confirmed = confirmedRegion(jurisdiction);
+  return confirmed ? { jurisdiction: confirmed } : null;
 }
 
 /**

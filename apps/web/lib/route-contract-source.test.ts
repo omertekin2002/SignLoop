@@ -92,9 +92,63 @@ describe("owner-scoped bounded source endpoint", () => {
     `?analysisId=${analysisId}`,
     `?analysisId=${analysisId}&flag=-1`,
     "?analysisId=bad&flag=0",
+    `?analysisId=${analysisId}&flag=Jurisdiction`,
+    `?analysisId=${analysisId}&flag=jurisdiction0`,
   ])("rejects malformed/unbounded requests: %s", async (query) => {
     expect((await get(query)).status).toBe(400);
     expect(getContractSourceForUser).not.toHaveBeenCalled();
+  });
+  it("highlights the governing-law quotation behind a jurisdiction proposal", async () => {
+    const text = "Governed by the laws of Ontario.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: attachAnalysisSources(
+        {
+          proposed_jurisdiction: {
+            jurisdiction: "Ontario",
+            evidence: { quote: "laws of Ontario", segment: "full" },
+          },
+        },
+        id,
+        text,
+      ),
+    });
+    const response = await get(
+      `?revision=${sourceRevision}&analysisId=${analysisId}&flag=jurisdiction`,
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).highlight).toMatchObject({
+      quote: "laws of Ontario",
+      start: 16,
+      end: 31,
+    });
+    // A report without a verified proposal has nothing to highlight.
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: attachAnalysisSources(
+        {
+          proposed_jurisdiction: {
+            jurisdiction: "Ontario",
+            evidence: { quote: "laws of Quebec", segment: "full" },
+          },
+        },
+        id,
+        text,
+      ),
+    });
+    expect(
+      (
+        await get(
+          `?revision=${sourceRevision}&analysisId=${analysisId}&flag=jurisdiction`,
+        )
+      ).status,
+    ).toBe(422);
   });
   it("returns the same 404 for missing, deleted, or unowned contracts", async () => {
     auth.mockResolvedValue({ userId: "intruder" });

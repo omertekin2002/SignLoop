@@ -18,6 +18,9 @@ export type ContractDetail = {
   status?: string | null;
   /** Quality warning for the current extracted text; absent when extraction was clean. */
   extractionWarning?: string | null;
+  /** The jurisdiction the owner confirmed; analyses run afterwards may include comparisons. */
+  confirmedJurisdiction?: string | null;
+  jurisdictionConfirmedAt?: string | Date | null;
   createdAt?: string | Date | null;
   updatedAt?: string | Date | null;
   analyses?: AnalysisRecord[] | null;

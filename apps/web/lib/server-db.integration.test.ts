@@ -65,6 +65,7 @@ import {
   listContractsByUserId,
   listContractsForChat,
   saveContractUploadForUser,
+  setContractJurisdictionForUser,
   addContextDocumentToProject,
 } from "./server-db";
 import { resolveWorkOSUserId } from "./auth-identity";
@@ -274,6 +275,43 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(
       (await getContractByIdForUser("owner", item.id))?.extractionWarning,
     ).toBeNull();
+  });
+
+  it("confirms, changes, and clears a contract's jurisdiction for its owner only", async () => {
+    const item = await contract();
+    expect(await getContractByIdForUser("owner", item.id)).toMatchObject({
+      confirmedJurisdiction: null,
+      jurisdictionConfirmedAt: null,
+    });
+    const before = await getContractWithLatestAnalysisForUser("owner", item.id);
+    expect(before?.confirmedJurisdiction).toBeNull();
+
+    expect(
+      await setContractJurisdictionForUser({ userId: "intruder", contractId: item.id, jurisdiction: "Quebec" }),
+    ).toBeNull();
+    const confirmed = await setContractJurisdictionForUser({ userId: "owner", contractId: item.id, jurisdiction: "Ontario" });
+    expect(confirmed).toMatchObject({ confirmedJurisdiction: "Ontario" });
+    expect(confirmed?.jurisdictionConfirmedAt).toBeTruthy();
+    expect(await getContractByIdForUser("owner", item.id)).toMatchObject({ confirmedJurisdiction: "Ontario" });
+    expect(await getContractByIdForUser("intruder", item.id)).toBeNull();
+    // The next analysis reads it, and confirming does not move the analysis revision.
+    const after = await getContractWithLatestAnalysisForUser("owner", item.id);
+    expect(after).toMatchObject({ confirmedJurisdiction: "Ontario", revision: before!.revision });
+
+    expect(
+      await setContractJurisdictionForUser({ userId: "owner", contractId: item.id, jurisdiction: "England and Wales" }),
+    ).toMatchObject({ confirmedJurisdiction: "England and Wales" });
+    expect(
+      await setContractJurisdictionForUser({ userId: "owner", contractId: item.id, jurisdiction: null }),
+    ).toEqual({ confirmedJurisdiction: null, jurisdictionConfirmedAt: null });
+
+    // Migration 019 bounds the value and keeps it paired with its confirmation time.
+    await expect(
+      pool.current!.query("UPDATE contracts SET confirmed_jurisdiction = $2, jurisdiction_confirmed_at = now() WHERE id = $1", [item.id, "x".repeat(101)]),
+    ).rejects.toThrow(/check constraint/);
+    await expect(
+      pool.current!.query("UPDATE contracts SET confirmed_jurisdiction = 'Ontario' WHERE id = $1", [item.id]),
+    ).rejects.toThrow(/contracts_jurisdiction_confirmation_check/);
   });
 
   it("serves bounded source pages with Unicode/hash agreement and owner isolation", async () => {
@@ -2245,6 +2283,7 @@ describe.skipIf(!connectionString)("database integration", () => {
         sizeBytes: contextBytes.length, extractedText: "Brief", wordCount: 1,
       });
       const contract = await createContractForUser({ userId, title: "Lease", projectId: project.id });
+      await setContractJurisdictionForUser({ userId, contractId: contract.id, jurisdiction: `Ontario ${tag}` });
       const uploads: Buffer[] = [];
       // Two uploads with one name: both originals are exported, the second renamed.
       for (const text of ["First lease.", "Second lease."]) {
@@ -2291,6 +2330,8 @@ describe.skipIf(!connectionString)("database integration", () => {
       expect(data.projects.map((row) => row.id)).toEqual([owner.project.id]);
       expect(data.contextDocuments.map((row) => row.id)).toEqual([owner.contextDocument.id]);
       expect(data.contracts.map((row) => [row.id, row.textContent])).toEqual([[owner.contract.id, "Second lease."]]);
+      expect(data.contracts[0]).toMatchObject({ confirmedJurisdiction: `Ontario ${owner.tag}` });
+      expect(data.contracts[0]!.jurisdictionConfirmedAt).toBeTruthy();
       expect(data.contractFiles.map((row) => row.contractId)).toEqual([owner.contract.id, owner.contract.id]);
       expect(data.analyses.map((row) => [row.contractId, row.resultJson])).toEqual([
         [owner.contract.id, { summary: `Analysis ${owner.tag}` }],

@@ -10,11 +10,27 @@ const CoverageNoticesSchema = z.array(z.string()).optional();
 const ComparisonsWithheldSchema = z.boolean().optional().catch(undefined);
 // The jurisdiction a comparison assumes. The prompt asks for it only once a region is confirmed.
 const ComparisonJurisdictionSchema = z.string().nullable().optional();
+// Server-owned: the confirmed jurisdiction this analysis ran with, or null when none was confirmed.
+const ComparisonRegionSchema = z.string().nullable().optional().catch(undefined);
+// The jurisdiction a governing-law clause names. The model proposes it with evidence; stored
+// reports keep it only with a server-verified citation (finalizeAnalysisResult), otherwise null.
+// A malformed proposal is dropped rather than failing the analysis.
+const ProposedJurisdictionSchema = z
+  .object({
+    jurisdiction: z.string().trim().min(1).max(200),
+    evidence: EvidenceProposalSchema.nullable().optional().catch(null),
+    citation: CitationSchema.nullable().optional().catch(null),
+  })
+  .nullable()
+  .optional()
+  .catch(null);
 
 const BaseAnalysisResultSchema = z.object({
   source: SourceIdentitySchema.nullable().optional().catch(null),
   coverage_notices: CoverageNoticesSchema,
   comparisons_withheld: ComparisonsWithheldSchema,
+  comparison_jurisdiction: ComparisonRegionSchema,
+  proposed_jurisdiction: ProposedJurisdictionSchema,
   risk_badge: z.enum(["LOW", "MEDIUM", "HIGH"]),
 
   key_points: z.array(z.string()),
@@ -92,6 +108,9 @@ const BaseAnalysisResultSchema = z.object({
 });
 
 export type AnalysisResult = z.infer<typeof BaseAnalysisResultSchema>;
+export type ProposedJurisdiction = NonNullable<
+  AnalysisResult["proposed_jurisdiction"]
+>;
 
 /**
  * Defaults make partial provider output safe to render, but defaults alone are not an analysis.
@@ -166,6 +185,8 @@ export const PartialAnalysisResultSchema = z
     source: SourceIdentitySchema.nullable().optional().catch(null),
     coverage_notices: CoverageNoticesSchema,
     comparisons_withheld: ComparisonsWithheldSchema,
+    comparison_jurisdiction: ComparisonRegionSchema,
+    proposed_jurisdiction: ProposedJurisdictionSchema,
     risk_badge: z.enum(["LOW", "MEDIUM", "HIGH"]),
     key_points: z.array(z.string()).optional().default([]),
     summary: z.object({

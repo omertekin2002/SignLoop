@@ -45,7 +45,7 @@ const stored = new Map<string, Uint8Array<ArrayBuffer>>([
 
 const workspace: AccountExportData = {
   contracts: [
-    { id: "c1", projectId: "p1", title: "Lease", status: "ANALYZED", textContent: "Clause 1.", extractionWarning: null, createdAt: at, updatedAt: at },
+    { id: "c1", projectId: "p1", title: "Lease", status: "ANALYZED", textContent: "Clause 1.", extractionWarning: null, confirmedJurisdiction: "Ontario", jurisdictionConfirmedAt: at, createdAt: at, updatedAt: at },
   ],
   contractFiles: [
     { id: "f1", contractId: "c1", fileName: "lease.pdf", contentType: "application/pdf", sizeBytes: contractPdf.length, extractionMethod: "pdf_text", extractionConfidence: null, createdAt: at, storageKey: "https://store.private.blob.vercel-storage.com/contracts/c1/lease.pdf" },
@@ -144,7 +144,7 @@ describe("GET /api/account/export", () => {
 
     expect(json(entries, `${root}/contracts.json`)).toEqual([
       {
-        id: "c1", projectId: "p1", title: "Lease", status: "ANALYZED", text: "Clause 1.", extractionWarning: null, createdAt: at, updatedAt: at,
+        id: "c1", projectId: "p1", title: "Lease", status: "ANALYZED", text: "Clause 1.", extractionWarning: null, confirmedJurisdiction: "Ontario", jurisdictionConfirmedAt: at, createdAt: at, updatedAt: at,
         files: [
           { id: "f1", fileName: "lease.pdf", contentType: "application/pdf", sizeBytes: contractPdf.length, extractionMethod: "pdf_text", extractionConfidence: null, uploadedAt: at, path: "files/contracts/c1/lease.pdf" },
           { id: "f2", fileName: "../lease.pdf", contentType: "application/pdf", sizeBytes: 1, extractionMethod: null, extractionConfidence: null, uploadedAt: at, path: "files/contracts/c1/_lease.pdf" },

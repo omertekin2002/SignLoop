@@ -73,6 +73,7 @@ const contractRecord = (overrides: Record<string, unknown> = {}) => ({
   status: "DRAFT",
   text: "This agreement is made between the parties.",
   extractionWarning: null,
+  confirmedJurisdiction: null,
   revision: REVISION,
   latestAnalysis: null,
   ...overrides,
@@ -588,7 +589,7 @@ describe("POST /api/contracts/[id]/analyze", () => {
         contractId: CONTRACT_ID,
         expectedRevision: REVISION,
         riskBadge: "HIGH",
-        resultJson: { risk_badge: "HIGH", summary: "Risky clauses found", coverage_notices: [], normal_in_region: [], comparisons_withheld: true, source: expect.objectContaining({ contract_id: CONTRACT_ID, revision: expect.stringMatching(/^sha256:/) }) },
+        resultJson: { risk_badge: "HIGH", summary: "Risky clauses found", coverage_notices: [], normal_in_region: [], comparisons_withheld: true, comparison_jurisdiction: null, proposed_jurisdiction: null, source: expect.objectContaining({ contract_id: CONTRACT_ID, revision: expect.stringMatching(/^sha256:/) }) },
         llmProvider: "primary",
         llmModel: "gpt-5",
         llmPromptTokens: 1200,
@@ -659,6 +660,96 @@ describe("POST /api/contracts/[id]/analyze", () => {
       expect(
         createAnalysisForContract.mock.calls[0]![0].resultJson,
       ).toMatchObject({ normal_in_region: [], comparisons_withheld: true });
+    });
+
+    it("passes the confirmed jurisdiction as the region to the prompt and to finalization", async () => {
+      arrangeRunnableContract(
+        contractRecord({ confirmedJurisdiction: "Ontario" }),
+      );
+      analyzeText.mockResolvedValue(
+        analysisOutput({
+          result: {
+            risk_badge: "LOW",
+            comparisons_withheld: true,
+            normal_in_region: [
+              {
+                topic: "Notice period",
+                jurisdiction: "Ontario",
+                typical_range: "30 days",
+                yours: "10 days",
+                label: "unusual",
+              },
+              {
+                topic: "Late fee",
+                jurisdiction: null,
+                typical_range: "Varies",
+                yours: "5%",
+                label: "typical",
+              },
+            ],
+          },
+        }),
+      );
+
+      expect((await POST(postRequest(), params(CONTRACT_ID))).status).toBe(200);
+      expect(analyzeText).toHaveBeenCalledWith(
+        expect.any(String),
+        { region: "Ontario" },
+        expect.any(Object),
+      );
+      // Kept comparisons each name their jurisdiction, and the report records the region used.
+      expect(
+        createAnalysisForContract.mock.calls[0]![0].resultJson,
+      ).toMatchObject({
+        comparisons_withheld: false,
+        comparison_jurisdiction: "Ontario",
+        normal_in_region: [
+          expect.objectContaining({ topic: "Notice period", jurisdiction: "Ontario" }),
+        ],
+      });
+      expect(
+        createAnalysisForContract.mock.calls[0]![0].resultJson.normal_in_region,
+      ).toHaveLength(1);
+    });
+
+    it("stores a jurisdiction proposal only with a verified governing-law quotation", async () => {
+      const text =
+        "Fees are due monthly. This Agreement is governed by the laws of the State of Oregon.";
+      for (const [quote, expected] of [
+        [
+          "This Agreement is governed by the laws of the State of Oregon.",
+          {
+            jurisdiction: "State of Oregon",
+            citation: expect.objectContaining({
+              status: "verified",
+              contract_id: CONTRACT_ID,
+              start: 22,
+            }),
+          },
+        ],
+        ["This Agreement is governed by the laws of California.", null],
+      ] as const) {
+        vi.clearAllMocks();
+        arrangeRunnableContract(contractRecord({ text }));
+        analyzeText.mockResolvedValue(
+          analysisOutput({
+            result: {
+              risk_badge: "LOW",
+              proposed_jurisdiction: {
+                jurisdiction: "State of Oregon",
+                evidence: { quote, segment: "full" },
+                citation: { status: "verified", start: 0 },
+              },
+            },
+          }),
+        );
+
+        expect((await POST(postRequest(), params(CONTRACT_ID))).status).toBe(200);
+        expect(
+          createAnalysisForContract.mock.calls[0]![0].resultJson
+            .proposed_jurisdiction,
+        ).toEqual(expected);
+      }
     });
 
     it("releases the lease only after the analysis has been persisted", async () => {
@@ -791,6 +882,8 @@ describe("POST /api/contracts/[id]/analyze", () => {
             ],
             normal_in_region: [],
             comparisons_withheld: true,
+            comparison_jurisdiction: null,
+            proposed_jurisdiction: null,
           },
         }),
       );
@@ -804,7 +897,7 @@ describe("POST /api/contracts/[id]/analyze", () => {
 
       expect(createAnalysisForContract).toHaveBeenCalledWith(
         expect.objectContaining({
-          resultJson: { risk_badge: "LOW", coverage_notices: [], normal_in_region: [], comparisons_withheld: true, source: expect.objectContaining({ contract_id: CONTRACT_ID, revision: expect.stringMatching(/^sha256:/) }) },
+          resultJson: { risk_badge: "LOW", coverage_notices: [], normal_in_region: [], comparisons_withheld: true, comparison_jurisdiction: null, proposed_jurisdiction: null, source: expect.objectContaining({ contract_id: CONTRACT_ID, revision: expect.stringMatching(/^sha256:/) }) },
         }),
       );
     });

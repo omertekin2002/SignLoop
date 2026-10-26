@@ -11,7 +11,9 @@ import { useQuery } from "@tanstack/react-query";
 import { apiClient, getApiErrorMessage, type ApiError } from "@/lib/api-client";
 import {
   citationForReport,
+  JURISDICTION_CITATION,
   SourcePageSchema,
+  type CitationRef,
   type SourceCitation,
 } from "@/lib/source-citations";
 import { Button } from "@/components/ui/button";
@@ -24,11 +26,11 @@ import {
 } from "@/components/ui/dialog";
 
 const SourceContext = createContext<{
-  open: (index?: number) => void;
-  citation: (index: number) => SourceCitation | null;
+  open: (ref?: CitationRef) => void;
+  citation: (ref: CitationRef) => SourceCitation | null;
 } | null>(null);
 
-type SourceRequest = { offset: number; revision?: string; flag?: number };
+type SourceRequest = { offset: number; revision?: string; flag?: CitationRef };
 
 /** The caller keys this workspace by contract/report/revision, retiring old requests on a switch. */
 export function ContractSourceProvider({
@@ -44,11 +46,11 @@ export function ContractSourceProvider({
 }) {
   const [request, setRequest] = useState<SourceRequest | null>(null);
   const opener = useRef<HTMLElement | null>(null);
-  const citation = (index: number) =>
-    citationForReport(result, contractId, index);
-  const open = (index?: number) => {
-    const match = index === undefined ? null : citation(index);
-    if (index !== undefined && !match) return;
+  const citation = (ref: CitationRef) =>
+    citationForReport(result, contractId, ref);
+  const open = (ref?: CitationRef) => {
+    const match = ref === undefined ? null : citation(ref);
+    if (ref !== undefined && !match) return;
     if (request === null)
       opener.current =
         document.activeElement instanceof HTMLElement
@@ -59,7 +61,7 @@ export function ContractSourceProvider({
         ? {
             offset: Math.max(0, match.start - 250),
             revision: match.revision,
-            flag: index,
+            flag: ref,
           }
         : { offset: 0 },
     );
@@ -253,9 +255,15 @@ export function OpenContractSource() {
   );
 }
 
-export function FindingSource({ index }: { index: number }) {
+function QuotedSource({
+  citationRef,
+  label,
+}: {
+  citationRef: CitationRef;
+  label: string;
+}) {
   const source = useContext(SourceContext);
-  const citation = source?.citation(index);
+  const citation = source?.citation(citationRef);
   return citation ? (
     <div className="mt-3 space-y-2">
       <blockquote className="whitespace-pre-wrap break-words text-sm text-subtle-foreground">
@@ -264,12 +272,32 @@ export function FindingSource({ index }: { index: number }) {
       <Button
         variant="outline"
         size="sm"
-        onClick={() => source?.open(index)}
-        aria-label={`View source quotation for finding ${index + 1}`}
+        onClick={() => source?.open(citationRef)}
+        aria-label={label}
       >
         View matched quotation
       </Button>
     </div>
+  ) : null;
+}
+
+/** The verified governing-law quotation behind a report's jurisdiction proposal, if it has one. */
+export function JurisdictionSource() {
+  return (
+    <QuotedSource
+      citationRef={JURISDICTION_CITATION}
+      label="View the governing-law clause in the source text"
+    />
+  );
+}
+
+export function FindingSource({ index }: { index: number }) {
+  const source = useContext(SourceContext);
+  return source?.citation(index) ? (
+    <QuotedSource
+      citationRef={index}
+      label={`View source quotation for finding ${index + 1}`}
+    />
   ) : (
     <p className="mt-2 text-xs text-muted-foreground">
       Verified source quotation unavailable.
