@@ -65,7 +65,7 @@ bunx playwright install chromium   # once
 bun run test:e2e
 ```
 
-It starts `next start` on `127.0.0.1:3100` with placeholder WorkOS configuration from [playwright.config.ts](apps/web/playwright.config.ts), so it needs no `.env.local`, database, or model provider, and the browser blocks requests to other origins. It checks that `/` and `/privacy` render, that responses carry the security headers from `next.config.js`, that `/dashboard` and `/sign-in` redirect signed-out visitors to WorkOS, and that `/api/usage` and `/api/contracts` answer them with a JSON 401. Signed-in flows are not covered.
+It starts `next start` on `127.0.0.1:3100` with placeholder WorkOS configuration from [playwright.config.ts](apps/web/playwright.config.ts), so it needs no `.env.local`, database, or model provider, and the browser blocks requests to other origins. It checks that `/` and `/privacy` render, that responses carry the security headers from `next.config.js`, that `/dashboard` and `/sign-in` redirect signed-out visitors to WorkOS, that `GET /api/usage`, `GET /api/contracts`, and `DELETE /api/account` answer them with a JSON 401, and that the privacy policy points account deletion to Settings. Signed-in flows are not covered.
 
 GitHub Actions ([ci.yml](.github/workflows/ci.yml)) runs on pull requests and pushes to `main`. One job installs dependencies with Vercel's hoisted linker, fails on any high or critical advisory reported by `bun audit --audit-level=high` (low and moderate ones are listed without failing), then runs lint, type checking, tests, and the build, builds the gateway's Vercel bundle, serves it with Node and probes `/healthz`, checks the OCR build traces, and runs the Playwright smoke suite against the build (uploading its report if the job fails); none of them needs secrets or environment files. A second job runs `bun run test:integration` against an empty `postgres:16` service container.
 
@@ -259,6 +259,16 @@ bun run storage:cleanup
 ```
 
 Cleanup atomically claims due rows with expiring leases and processes four objects concurrently. Failed deletions back off from one minute to at most one day so newer work can proceed. Acknowledgments require the claim token. The command continues while full batches of eligible work remain. Vercel Cron calls `/api/cron/storage-cleanup` daily at 03:00 UTC; its 240-second work deadline cancels remote deletes and stops dispatching new objects within a batch. Remaining claims are deferred, reserving time for database acknowledgments before the 300-second platform limit. Set a random `CRON_SECRET` in the production Vercel environment to authorize those requests. Deletion requests and the manual command can also process due items.
+
+### Account deletion
+
+Settings has a **Delete account** section behind a confirmation dialog in which the user types `DELETE`. It calls `DELETE /api/account` ([route](apps/web/app/api/account/route.ts)), which answers a signed-out request with a JSON `401` and a body without `{"confirm":"DELETE"}` with `400`, deleting nothing. Otherwise it:
+
+1. deletes, in one transaction, every row the owner has ([`deleteAccountForUser`](apps/web/lib/server-db.ts)): contracts with their analyses and file records, projects with their context documents, chat threads with their messages, attachments and files, settings, generation leases, admission slots and hourly budgets (keyed by the owner hash), and the `auth_identities`/`application_users` mapping. Deleted file records queue their object keys in `storage_deletions`; the route flushes due items after responding and the daily cleanup cron removes the rest. Nothing is deleted from storage inline;
+2. deletes the WorkOS user with `userManagement.deleteUser`, treating a 404 as already deleted; and
+3. expires the AuthKit session cookie (`WORKOS_COOKIE_NAME`, default `wos-session`, on `WORKOS_COOKIE_DOMAIN` if set) and returns `{ "deleted": true }`. The client then navigates to `/`.
+
+Data goes first so a WorkOS failure (`502`) leaves an empty, still signed-in workspace rather than data without a login. A retry maps the session to a fresh, empty owner, deletes it, and tries WorkOS again. Langfuse traces are not deleted.
 
 ## Deployment
 

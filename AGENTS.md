@@ -80,6 +80,7 @@ UI follows `DESIGN.md` at the repository root: the Dala style reference plus a "
 - Migrations are tracked by filename. Add a new numbered SQL file for schema changes; do not rewrite an applied migration.
 - Unless `SKIP_SCHEMA_BOOTSTRAP=1`, the first database operation runs pending migrations through the shared runner. Apply migrations before enabling that flag.
 - Preserve owner-scoped SQL, transactional writes, generation leases, revision checks, and deletion-outbox behavior when changing persistence paths.
+- `DELETE /api/account` deletes every owned row in one transaction (`deleteAccountForUser` in `apps/web/lib/server-db.ts`), then the WorkOS user, then the session cookie. A new table holding owner data must be added to that function's statements and to its two-user test in `lib/server-db.integration.test.ts`, which checks that no text column still holds the deleted owner ID.
 - Keep secrets and generated uploads out of source control. When adding environment variables, check the example file and Turbo's environment configuration.
 
 ## TypeScript
