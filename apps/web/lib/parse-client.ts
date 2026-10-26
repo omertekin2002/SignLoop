@@ -1,8 +1,12 @@
 import { withAbort } from "@repo/chat-engine/bounded-response";
 import { MAX_EXTRACTED_TEXT_LENGTH } from "@/lib/upload-constants";
 import {
+  encodeBytesParseHeader,
+  PARSE_BYTES_CONTENT_TYPE,
+  PARSE_BYTES_HEADER,
   PARSE_ROUTE,
   parseOutcomeSchema,
+  signBytesParseRequest,
   signParseRequest,
   type ParseOutcome,
 } from "@/lib/parse-protocol";
@@ -25,7 +29,7 @@ const MAX_RESPONSE_BYTES = MAX_EXTRACTED_TEXT_LENGTH * 6 + 64 * 1024;
  * start`) it is the origin the request arrived on, served by the same process.
  */
 function parseTarget(req: Request): { url: URL; headers: Headers } {
-  const headers = new Headers({ "Content-Type": "application/json" });
+  const headers = new Headers();
   const deployment = process.env.VERCEL_URL;
   if (deployment) {
     const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
@@ -59,27 +63,46 @@ async function readBoundedText(
 }
 
 /**
- * Ask the parse function to parse a stored upload whose MIME type and signature were validated.
- * Transport failures become an `unavailable` outcome; aborting `signal` cancels the call, and the
- * caller checks it.
+ * Ask the parse function to parse an upload whose MIME type and signature were validated: a stored
+ * object by its key, or bytes that were never stored (chat attachments, within MAX_PARSE_BYTES),
+ * sent as the body. Transport failures become an `unavailable` outcome; aborting `signal` cancels
+ * the call, and the caller checks it.
  */
-export async function requestParse(input: {
-  req: Request;
-  storageKey: string;
-  mimeType: string;
-  signal: AbortSignal;
-}): Promise<ParseOutcome> {
+export async function requestParse(
+  input: {
+    req: Request;
+    mimeType: string;
+    signal: AbortSignal;
+  } & ({ storageKey: string } | { buffer: Buffer }),
+): Promise<ParseOutcome> {
   try {
     const { url, headers } = parseTarget(input.req);
-    const response = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(
+    let requestBody: string | Uint8Array<ArrayBuffer>;
+    if ("buffer" in input) {
+      headers.set("Content-Type", PARSE_BYTES_CONTENT_TYPE);
+      headers.set(
+        PARSE_BYTES_HEADER,
+        encodeBytesParseHeader(
+          signBytesParseRequest({
+            mimeType: input.mimeType,
+            body: input.buffer,
+          }),
+        ),
+      );
+      requestBody = new Uint8Array(input.buffer);
+    } else {
+      headers.set("Content-Type", "application/json");
+      requestBody = JSON.stringify(
         signParseRequest({
           storageKey: input.storageKey,
           mimeType: input.mimeType,
         }),
-      ),
+      );
+    }
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: requestBody,
       signal: input.signal,
       redirect: "manual",
       cache: "no-store",

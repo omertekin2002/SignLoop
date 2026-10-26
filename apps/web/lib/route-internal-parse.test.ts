@@ -12,7 +12,11 @@ vi.mock("@/lib/text-extraction", async (importOriginal) => ({
 }));
 
 import { maxDuration, POST } from "@/app/api/internal/parse/route";
-import { signParseRequest } from "./parse-protocol";
+import {
+  encodeBytesParseHeader,
+  signBytesParseRequest,
+  signParseRequest,
+} from "./parse-protocol";
 import {
   ExtractedTextContentError,
   ExtractionLimitError,
@@ -232,5 +236,114 @@ describe("POST /api/internal/parse", () => {
       kind: "unavailable",
       message: "Upload processing timed out or was canceled.",
     });
+  });
+});
+
+describe("POST /api/internal/parse with bytes", () => {
+  const BYTES = Buffer.from("Payment is due in thirty days.");
+
+  const bytesRequest = (
+    body: Uint8Array,
+    signedFor: { mimeType?: string; body?: Uint8Array } = {},
+    headers: Record<string, string> = {},
+  ) =>
+    new Request("http://localhost/api/internal/parse", {
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-signloop-parse": encodeBytesParseHeader(
+          signBytesParseRequest({
+            mimeType: signedFor.mimeType ?? "text/plain",
+            body: signedFor.body ?? body,
+          }),
+        ),
+        ...headers,
+      },
+      body: new Uint8Array(body),
+    });
+
+  it("parses the signed bytes without reading storage", async () => {
+    processValidatedFile.mockResolvedValue({ text: "Payment is due in thirty days.", method: "plain_text" });
+
+    const response = await POST(bytesRequest(BYTES));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      ok: true,
+      text: "Payment is due in thirty days.",
+      method: "plain_text",
+      confidence: null,
+      sparseTextPages: [],
+    });
+    expect(processValidatedFile).toHaveBeenCalledExactlyOnceWith(BYTES, "text/plain", {
+      signal: expect.any(AbortSignal),
+    });
+    expect(readObject).not.toHaveBeenCalled();
+  });
+
+  it("accepts a body of exactly 4 MiB", async () => {
+    processValidatedFile.mockResolvedValue({ text: "ok", method: "plain_text" });
+
+    const response = await POST(bytesRequest(new Uint8Array(4 * 1024 * 1024)));
+
+    expect(response.status).toBe(200);
+    expect(processValidatedFile).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["a body over 4 MiB", () => bytesRequest(new Uint8Array(4 * 1024 * 1024 + 1))],
+    [
+      "a declared length over 4 MiB",
+      () => bytesRequest(BYTES, {}, { "content-length": String(4 * 1024 * 1024 + 1) }),
+    ],
+    ["a body that does not match the signed hash", () => bytesRequest(BYTES, { body: Buffer.from("Other text.") })],
+    ["a truncated body", () => bytesRequest(BYTES.subarray(0, -1), { body: BYTES })],
+    ["a missing signature header", () => {
+      const request = bytesRequest(BYTES);
+      request.headers.delete("x-signloop-parse");
+      return request;
+    }],
+    ["a malformed signature header", () => bytesRequest(BYTES, {}, { "x-signloop-parse": "{" })],
+    ["a tampered MIME type", () => {
+      const signed = { ...signBytesParseRequest({ mimeType: "text/plain", body: BYTES }), mimeType: "image/png" };
+      return bytesRequest(BYTES, {}, { "x-signloop-parse": encodeBytesParseHeader(signed) });
+    }],
+    ["a stored-object signature", () => {
+      const stored = signParseRequest({ storageKey: STORAGE_KEY, mimeType: "text/plain" });
+      const signed = { ...signBytesParseRequest({ mimeType: "text/plain", body: BYTES }), signature: stored.signature };
+      return bytesRequest(BYTES, {}, { "x-signloop-parse": encodeBytesParseHeader(signed) });
+    }],
+  ])("answers 404 for %s without parsing", async (_label, makeRequest) => {
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(404);
+    expect(processValidatedFile).not.toHaveBeenCalled();
+    expect(readObject).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 for an expired signature", async () => {
+    const request = bytesRequest(BYTES);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 60_001);
+
+    expect((await POST(request)).status).toBe(404);
+    expect(processValidatedFile).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 for signed bytes sent as a JSON body", async () => {
+    const request = bytesRequest(BYTES, {}, { "content-type": "application/json" });
+
+    expect((await POST(request)).status).toBe(404);
+    expect(processValidatedFile).not.toHaveBeenCalled();
+  });
+
+  it("reports parser errors in the same shapes as for stored uploads", async () => {
+    processValidatedFile.mockRejectedValue(new Error(`Unexpected token near "${SECRET_TEXT}"`));
+
+    const body = await (await POST(bytesRequest(BYTES))).text();
+
+    expect(JSON.parse(body)).toEqual({ ok: false, kind: "failed", message: "Text extraction failed" });
+    expect(body).not.toContain("Confidential");
   });
 });
