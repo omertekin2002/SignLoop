@@ -2,7 +2,6 @@
 
 import { useOperationProgress, isOperationCanceled } from "@/lib/use-operation-progress";
 import { OperationStatus } from "@/components/operation-status";
-import { postOperation } from "@/lib/operation-progress-client";
 import { isContextUploadResult } from "@/lib/operation-progress";
 
 import { uploadContract } from "@/lib/upload-contract";
@@ -14,9 +13,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, getApiErrorMessage } from "@/lib/api-client";
 import { formatDate, formatFileSize, getRiskColor } from "@/lib/utils";
 import {
-  MAX_UPLOAD_FILE_SIZE,
-  MAX_UPLOAD_FILE_SIZE_MB,
-} from "@/lib/upload-constants";
+  formatUploadLimit,
+  sendUpload,
+  uploadConfigOptions,
+} from "@/lib/upload-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -98,6 +98,10 @@ const ProjectDetails = () => {
     ...projectDetailOptions(id, contractsOffset, contextOffset),
     enabled: !!id,
   });
+  const { data: uploadConfig } = useQuery({
+    ...uploadConfigOptions(),
+    enabled: !!id,
+  });
 
   const deleteProjectMutation = useMutation({
     mutationFn: async () => {
@@ -156,10 +160,11 @@ const ProjectDetails = () => {
 
   const uploadContractMutation = useMutation({
     mutationFn: () =>
-      contractOperation.run("creating", (options) => uploadContract({
+      contractOperation.run("creating", async (options) => uploadContract({
         file: selectedContractFile,
         title: contractName,
         projectId: id,
+        config: await queryClient.fetchQuery(uploadConfigOptions()),
         ...options,
       })),
     onSuccess: (result) => {
@@ -181,16 +186,17 @@ const ProjectDetails = () => {
   });
 
   const uploadContextMutation = useMutation({
-    mutationFn: () => contextOperation.run("uploading", async (options) => {
-      const formData = new FormData();
-      formData.append("file", selectedContextFile as File);
-      formData.append("title", contextTitle);
-      formData.append("documentType", contextType);
-
-      return postOperation(`/projects/${id}/context`, {
-        body: formData, ...options, validate: isContextUploadResult,
-      });
-    }),
+    mutationFn: () => contextOperation.run("uploading", async (options) =>
+      sendUpload({
+        path: `/projects/${id}/context`,
+        file: selectedContextFile as File,
+        fields: { title: contextTitle, documentType: contextType },
+        target: { projectId: id },
+        config: await queryClient.fetchQuery(uploadConfigOptions()),
+        ...options,
+        validate: isContextUploadResult,
+      }),
+    ),
     onSuccess: (result) => {
       if (result.extractionFailed || result.warning) {
         toast.warning(
@@ -217,9 +223,9 @@ const ProjectDetails = () => {
 
   const handleUploadContract = () => {
     if (!selectedContractFile || !contractName || uploadContractMutation.isPending) return;
-    if (selectedContractFile.size > MAX_UPLOAD_FILE_SIZE) {
+    if (uploadConfig && selectedContractFile.size > uploadConfig.maxFileSizeBytes) {
       toast.error(
-        `File too large. Maximum size is ${MAX_UPLOAD_FILE_SIZE_MB} MB.`,
+        `File too large. Maximum size is ${formatUploadLimit(uploadConfig)}.`,
       );
       return;
     }
@@ -228,9 +234,9 @@ const ProjectDetails = () => {
 
   const handleUploadContext = () => {
     if (!selectedContextFile || !contextTitle || uploadContextMutation.isPending) return;
-    if (selectedContextFile.size > MAX_UPLOAD_FILE_SIZE) {
+    if (uploadConfig && selectedContextFile.size > uploadConfig.maxFileSizeBytes) {
       toast.error(
-        `File too large. Maximum size is ${MAX_UPLOAD_FILE_SIZE_MB} MB.`,
+        `File too large. Maximum size is ${formatUploadLimit(uploadConfig)}.`,
       );
       return;
     }
@@ -473,6 +479,9 @@ const ProjectDetails = () => {
                           </p>
                           <p className="text-xs text-muted-foreground">
                             PDF, DOC, DOCX, TXT, or images
+                            {uploadConfig
+                              ? ` up to ${formatUploadLimit(uploadConfig)}`
+                              : ""}
                           </p>
                         </div>
                       )}
@@ -647,6 +656,12 @@ const ProjectDetails = () => {
                           <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                           <p className="text-sm">
                             Click to select context file
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            PDF, DOC, DOCX, or TXT
+                            {uploadConfig
+                              ? ` up to ${formatUploadLimit(uploadConfig)}`
+                              : ""}
                           </p>
                         </div>
                       )}

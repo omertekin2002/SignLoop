@@ -131,17 +131,22 @@ export async function readOperationResponse<T>(
 export async function postOperation<T>(
   path: string,
   options: {
-    body?: FormData;
+    // FormData is sent as multipart; a plain object as JSON.
+    body?: FormData | Record<string, unknown>;
     signal?: AbortSignal;
     onStage?: (stage: OperationStage) => void;
     validate: (value: unknown) => value is T;
   },
 ): Promise<T> {
+  const json = options.body !== undefined && !(options.body instanceof FormData);
   const response = await fetch(`/api${path}`, {
     method: "POST",
-    body: options.body,
+    body: json ? JSON.stringify(options.body) : (options.body as FormData | undefined),
     signal: options.signal,
-    headers: { Accept: PROGRESS_MEDIA_TYPE },
+    headers: {
+      Accept: PROGRESS_MEDIA_TYPE,
+      ...(json ? { "Content-Type": "application/json" } : {}),
+    },
   });
   return readOperationResponse(response, options);
 }

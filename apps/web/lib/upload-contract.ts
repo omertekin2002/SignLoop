@@ -1,23 +1,22 @@
 import { apiClient } from "@/lib/api-client";
-import {
-  MAX_UPLOAD_FILE_SIZE,
-  MAX_UPLOAD_FILE_SIZE_MB,
-} from "@/lib/upload-constants";
 import { isUploadResult, type OperationStage } from "@/lib/operation-progress";
-import { postOperation } from "@/lib/operation-progress-client";
+import {
+  assertUploadSize,
+  sendUpload,
+  type UploadConfig,
+} from "@/lib/upload-client";
 
 export async function uploadContract(input: {
   file: File | null;
   title: string;
   projectId?: string;
+  config: UploadConfig;
   signal?: AbortSignal;
   onStage?: (stage: OperationStage) => void;
 }) {
   if (!input.file) throw new Error("No file selected");
-  if (input.file.size > MAX_UPLOAD_FILE_SIZE)
-    throw new Error(
-      `File too large. Maximum size is ${MAX_UPLOAD_FILE_SIZE_MB} MB.`,
-    );
+  // Fail fast on oversize files before the two-step network flow creates an orphan contract.
+  assertUploadSize(input.file, input.config);
   input.signal?.throwIfAborted();
   input.onStage?.("creating");
   // Wait for the ID even if the UI closes: creation may have committed already,
@@ -28,11 +27,12 @@ export async function uploadContract(input: {
   );
   try {
     input.signal?.throwIfAborted();
-    const form = new FormData();
-    form.append("file", input.file);
     input.onStage?.("uploading");
-    return await postOperation(`/contracts/${contract.id}/upload`, {
-      body: form,
+    return await sendUpload({
+      path: `/contracts/${contract.id}/upload`,
+      file: input.file,
+      target: { contractId: contract.id },
+      config: input.config,
       signal: input.signal,
       onStage: input.onStage,
       validate: isUploadResult,
