@@ -1,15 +1,32 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { randomBytes } from "node:crypto";
+import { PDFDocument, StandardFonts } from "pdf-lib";
 import {
   getExtractionWarning,
+  isDirectUploadRequest,
+  prepareDirectUpload,
   prepareUpload,
   storeUploadedFile,
 } from "./upload-pipeline";
+import { MAX_DIRECT_UPLOAD_FILE_SIZE } from "./upload-constants";
+
+const { findDirectUploadIntent, blobGet, blobDel } = vi.hoisted(() => ({
+  findDirectUploadIntent: vi.fn(),
+  blobGet: vi.fn(),
+  blobDel: vi.fn(),
+}));
 
 vi.mock("@/lib/server-db", () => ({
   createUploadCleanupIntent: vi.fn().mockResolvedValue("intent"),
+  findDirectUploadIntent,
+}));
+vi.mock("@vercel/blob", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@vercel/blob")>()),
+  get: blobGet,
+  del: blobDel,
 }));
 
 const temporaryDirectories: string[] = [];
@@ -289,5 +306,298 @@ describe("upload extraction progress boundary", () => {
     const form = new FormData(); form.set("file", new File(["invalid PDF"], "contract.pdf", { type: "application/pdf" }));
     const result = await prepareUpload(new Request("http://localhost/upload", { method: "POST", body: form }), onStage);
     expect(result.ok).toBe(false); expect(onStage).not.toHaveBeenCalled();
+  });
+});
+
+describe("prepareUpload fields", () => {
+  it("keeps the first string value of each text field and ignores files under field names", async () => {
+    const form = new FormData();
+    form.set("file", new File(["Signed agreement"], "contract.txt", { type: "text/plain" }));
+    form.set("title", new File(["x"], "sneaky.txt", { type: "text/plain" }));
+    form.append("documentType", "addendum");
+    form.append("documentType", "other");
+
+    const result = await prepareUpload(
+      new Request("http://localhost/upload", { method: "POST", body: form }),
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      fileName: "contract.txt",
+      fields: { documentType: "addendum" },
+      stored: null,
+    });
+    if (!result.ok) throw new Error("expected a prepared upload");
+    expect(result.fields).not.toHaveProperty("title");
+  });
+});
+
+describe("prepareDirectUpload", () => {
+  const PATHNAME = "uploads/0b6c3c1e-8d7a-4f2b-9c1d-2e3f4a5b6c7d";
+  const INTENT_ID = "33e3e947-f71f-4ecd-a901-adbf24edbb8a";
+  const BLOB_URL = `https://store.private.blob.vercel-storage.com/${PATHNAME}`;
+  const target = { kind: "contract" as const, id: "11e3e947-f71f-4ecd-a901-adbf24edbb8a" };
+
+  const finalizeRequest = (body: unknown) =>
+    new Request("http://localhost/upload", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    });
+
+  const blobResult = (
+    chunks: Uint8Array[],
+    meta: { contentType?: string; size?: number } = {},
+  ) => {
+    let index = 0;
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = chunks[index++];
+        if (chunk) controller.enqueue(chunk);
+        else controller.close();
+      },
+      cancel,
+    });
+    return {
+      cancel,
+      result: {
+        statusCode: 200,
+        stream,
+        headers: new Headers(),
+        blob: {
+          url: BLOB_URL,
+          downloadUrl: `${BLOB_URL}?download=1`,
+          pathname: PATHNAME,
+          contentDisposition: "inline",
+          cacheControl: "private",
+          uploadedAt: new Date(),
+          etag: "etag",
+          contentType: meta.contentType ?? "application/pdf",
+          size: meta.size ?? chunks.reduce((total, chunk) => total + chunk.byteLength, 0),
+        },
+      },
+    };
+  };
+
+  /** A real PDF with readable text, padded to about 9 MiB with an attachment. */
+  async function nineMebibytePdf(): Promise<Buffer> {
+    const document = await PDFDocument.create();
+    const font = await document.embedFont(StandardFonts.Helvetica);
+    const page = document.addPage();
+    page.drawText("MASTER SERVICES AGREEMENT", { x: 50, y: 700, size: 18, font });
+    page.drawText(
+      "Either party may terminate this agreement with sixty days written notice.",
+      { x: 50, y: 660, size: 11, font },
+    );
+    await document.attach(randomBytes(9 * 1024 * 1024 - 4096), "padding.bin", {
+      mimeType: "application/octet-stream",
+    });
+    return Buffer.from(await document.save({ useObjectStreams: false }));
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("BLOB_READ_WRITE_TOKEN", "vercel_blob_rw_teststore_secret");
+    vi.stubEnv("BLOB_ACCESS", "");
+    findDirectUploadIntent.mockResolvedValue(INTENT_ID);
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("recognizes finalize requests by their JSON content type", () => {
+    expect(isDirectUploadRequest(finalizeRequest({}))).toBe(true);
+    const form = new FormData();
+    form.set("file", new File(["x"], "x.txt"));
+    expect(
+      isDirectUploadRequest(new Request("http://localhost/upload", { method: "POST", body: form })),
+    ).toBe(false);
+  });
+
+  it("finalizes a 9 MiB PDF read back from Blob under the claimed intent", async () => {
+    const pdf = await nineMebibytePdf();
+    expect(pdf.length).toBeGreaterThan(9 * 1024 * 1024 - 8192);
+    expect(pdf.length).toBeLessThanOrEqual(MAX_DIRECT_UPLOAD_FILE_SIZE);
+    const chunks: Uint8Array[] = [];
+    for (let offset = 0; offset < pdf.length; offset += 1024 * 1024)
+      chunks.push(pdf.subarray(offset, offset + 1024 * 1024));
+    blobGet.mockResolvedValue(blobResult(chunks).result);
+    const onStage = vi.fn();
+
+    const result = await prepareDirectUpload(
+      finalizeRequest({
+        pathname: PATHNAME,
+        fileName: "Scanned lease.pdf",
+        title: "Lease",
+        documentType: "addendum",
+      }),
+      { userId: "owner", target },
+      onStage,
+    );
+
+    expect(findDirectUploadIntent).toHaveBeenCalledExactlyOnceWith({
+      userId: "owner",
+      pathname: PATHNAME,
+      target,
+    });
+    expect(blobGet).toHaveBeenCalledExactlyOnceWith(
+      PATHNAME,
+      expect.objectContaining({ access: "private", useCache: false }),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      fileName: "Scanned lease.pdf",
+      mimeType: "application/pdf",
+      method: "pdf_parse",
+      extractionError: null,
+      fields: { title: "Lease", documentType: "addendum" },
+      stored: {
+        storageKey: BLOB_URL,
+        bucket: "vercel-blob",
+        storageIntentId: INTENT_ID,
+      },
+    });
+    if (!result.ok) throw new Error("expected a prepared upload");
+    expect(result.buffer.equals(pdf)).toBe(true);
+    expect(result.text).toContain("MASTER SERVICES AGREEMENT");
+    expect(result.text).toContain("sixty days written notice");
+    expect(onStage).toHaveBeenCalledExactlyOnceWith("extracting");
+  }, 30_000);
+
+  it.each([
+    ["malformed JSON", "{"],
+    ["a client-chosen pathname", { pathname: "contracts/owner/lease.pdf", fileName: "lease.pdf" }],
+    ["a pathname with a filename", { pathname: `${PATHNAME}.pdf`, fileName: "lease.pdf" }],
+    ["a traversal pathname", { pathname: `uploads/../${PATHNAME}`, fileName: "lease.pdf" }],
+    ["a missing file name", { pathname: PATHNAME }],
+    ["a blank file name", { pathname: PATHNAME, fileName: "  " }],
+  ])("rejects %s without looking up an intent or reading Blob", async (_label, body) => {
+    const result = await prepareDirectUpload(finalizeRequest(body), {
+      userId: "owner",
+      target,
+    });
+
+    expect(result).toEqual({ ok: false, status: 400, error: "Invalid upload request" });
+    expect(findDirectUploadIntent).not.toHaveBeenCalled();
+    expect(blobGet).not.toHaveBeenCalled();
+  });
+
+  it("rejects a pathname with no unclaimed intent for this owner's target without reading Blob", async () => {
+    findDirectUploadIntent.mockResolvedValue(null);
+
+    const result = await prepareDirectUpload(
+      finalizeRequest({ pathname: PATHNAME, fileName: "lease.pdf" }),
+      { userId: "intruder", target },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 404,
+      error: "The uploaded file was not found. Upload it again.",
+    });
+    expect(findDirectUploadIntent).toHaveBeenCalledExactlyOnceWith({
+      userId: "intruder",
+      pathname: PATHNAME,
+      target,
+    });
+    expect(blobGet).not.toHaveBeenCalled();
+  });
+
+  it("reports a blob that was never uploaded as not found", async () => {
+    blobGet.mockResolvedValue(null);
+
+    const result = await prepareDirectUpload(
+      finalizeRequest({ pathname: PATHNAME, fileName: "lease.pdf" }),
+      { userId: "owner", target },
+    );
+
+    expect(result).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("refuses a blob whose reported size is over 10 MiB without reading it", async () => {
+    const { result: blob, cancel } = blobResult([new Uint8Array(16)], {
+      size: MAX_DIRECT_UPLOAD_FILE_SIZE + 1,
+    });
+    blobGet.mockResolvedValue(blob);
+
+    const result = await prepareDirectUpload(
+      finalizeRequest({ pathname: PATHNAME, fileName: "lease.pdf" }),
+      { userId: "owner", target },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 413,
+      error: "File too large. Maximum size is 10 MB.",
+    });
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it("stops reading past 10 MiB even when Blob reports a smaller size", async () => {
+    const chunk = new Uint8Array(1024 * 1024);
+    const chunks = Array.from({ length: 12 }, () => chunk);
+    const { result: blob, cancel } = blobResult(chunks, { size: 1024 });
+    blobGet.mockResolvedValue(blob);
+
+    const result = await prepareDirectUpload(
+      finalizeRequest({ pathname: PATHNAME, fileName: "lease.pdf" }),
+      { userId: "owner", target },
+    );
+
+    expect(result).toMatchObject({ ok: false, status: 413 });
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it("rejects bytes that fail the signature check and leaves the blob for the outbox", async () => {
+    blobGet.mockResolvedValue(
+      blobResult([Buffer.from("<html>not a pdf</html>")]).result,
+    );
+    const onStage = vi.fn();
+
+    const result = await prepareDirectUpload(
+      finalizeRequest({ pathname: PATHNAME, fileName: "lease.pdf" }),
+      { userId: "owner", target },
+      onStage,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 400,
+      error: expect.stringMatching(/contents do not match/i),
+    });
+    expect(onStage).not.toHaveBeenCalled();
+    expect(blobDel).not.toHaveBeenCalled();
+  });
+
+  it("rejects a declared type that does not match the file name", async () => {
+    blobGet.mockResolvedValue(
+      blobResult([Buffer.from("%PDF-1.4\n")], { contentType: "image/png" }).result,
+    );
+
+    const result = await prepareDirectUpload(
+      finalizeRequest({ pathname: PATHNAME, fileName: "lease.pdf" }),
+      { userId: "owner", target },
+    );
+
+    expect(result).toMatchObject({ ok: false, status: 400 });
+  });
+
+  it("answers 503 when Blob cannot be read", async () => {
+    blobGet.mockRejectedValue(new Error("network down"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await prepareDirectUpload(
+      finalizeRequest({ pathname: PATHNAME, fileName: "lease.pdf" }),
+      { userId: "owner", target },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 503,
+      error: "The uploaded file could not be read. Please try again.",
+    });
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });

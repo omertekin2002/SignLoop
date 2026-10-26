@@ -9,7 +9,7 @@ import {
   type ChatDocument,
   type ChatFileInfo,
 } from "@/lib/chat-files-shared";
-import { MAX_UPLOAD_FILE_SIZE } from "@/lib/upload-constants";
+import { MAX_MULTIPART_UPLOAD_FILE_SIZE } from "@/lib/upload-constants";
 
 /** Stage up to four supported files in the composer; uploading waits for message submission. */
 export function chatAttachmentAdapter(): AttachmentAdapter {
@@ -25,7 +25,7 @@ export function chatAttachmentAdapter(): AttachmentAdapter {
       if (
         !/\.(pdf|txt|docx)$/i.test(file.name) ||
         !file.size ||
-        file.size > MAX_UPLOAD_FILE_SIZE
+        file.size > MAX_MULTIPART_UPLOAD_FILE_SIZE
       ) {
         const message = "Attach a non-empty PDF, TXT, or DOCX up to 4 MB.";
         toast.error(message);

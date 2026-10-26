@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import { E2E_PORT } from "../placeholder-env";
 
 // AuthKit's callback redirects to the host Next.js reports for the request, and `next start` reports
@@ -54,6 +56,9 @@ export function signedInServerEnv(env: SignedInEnv): Record<string, string> {
     NEXT_PUBLIC_WORKOS_REDIRECT_URI: SIGNED_IN_REDIRECT_URI,
     POSTGRES_URL: env.E2E_DATABASE_URL,
     POSTGRES_LOCAL_PROXY: `127.0.0.1:${E2E_DATABASE_PROXY_PORT}`,
+    // No Blob token, so uploads take the multipart path and land in local storage, which a
+    // production build accepts only from an explicit directory.
+    LOCAL_STORAGE_PATH: path.join(os.tmpdir(), "signloop-e2e-uploads"),
     NEXT_TELEMETRY_DISABLED: "1",
   };
 }

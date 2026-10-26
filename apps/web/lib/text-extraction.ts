@@ -356,6 +356,24 @@ const GENERIC_MIME_TYPES = new Set<string>([
   "application/x-zip-compressed",
 ]);
 
+/**
+ * Every content type validateMimeType can accept as declared, for upload paths that must name
+ * them up front (direct-to-Blob client tokens). Generic types still need a known file extension.
+ */
+export const DECLARABLE_UPLOAD_MIME_TYPES: readonly string[] = [
+  ...new Set([
+    ...ALLOWED_MIME_TYPES,
+    ...DOC_MIME_TYPE_ALIASES,
+    ...PDF_MIME_TYPE_ALIASES,
+    ...DOCX_MIME_TYPE_ALIASES,
+    "image/jpg",
+    "image/pjpeg",
+    "image/x-jpeg",
+    "image/x-png",
+    ...[...GENERIC_MIME_TYPES].filter(Boolean),
+  ]),
+];
+
 function normalizeMimeType(input: string): string {
   return input.toLowerCase().split(";")[0]?.trim() || "";
 }
