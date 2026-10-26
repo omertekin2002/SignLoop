@@ -39,6 +39,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --linker hoisted
 
+      # The first run lists every advisory, low and moderate ones included, without failing; the
+      # second fails the build on any high or critical one. If a high advisory has no fix yet,
+      # ignore it here with --ignore=<GHSA id> and a comment giving the reason.
+      - name: Audit dependencies
+        run: |
+          bun audit || true
+          bun audit --audit-level=high
+
       # None of these steps needs secrets or placeholder configuration: the app reads its
       # environment at request time, and the database suites skip without a test database.
       - name: Lint
