@@ -1647,6 +1647,53 @@ export async function deleteProjectForUser(input: {
   );
 }
 
+// Children go before their parents and are scoped through an owned parent, so legacy rows behind
+// foreign keys that migration 012 could not validate are removed too. Deleting contract files and
+// context documents queues their stored objects in the storage_deletions outbox (012's triggers).
+const DELETE_ACCOUNT_STATEMENTS = [
+  "DELETE FROM chat_messages m USING chat_threads t WHERE t.id = m.thread_id AND t.user_id = $1",
+  // Cascades to chat_attachments and chat_files.
+  "DELETE FROM chat_threads WHERE user_id = $1",
+  "DELETE FROM analyses a USING contracts c WHERE c.id = a.contract_id AND c.user_id = $1",
+  "DELETE FROM contract_files WHERE user_id = $1 OR contract_id IN (SELECT id FROM contracts WHERE user_id = $1)",
+  "DELETE FROM contracts WHERE user_id = $1",
+  "DELETE FROM context_documents d USING projects p WHERE p.id = d.project_id AND p.user_id = $1",
+  "DELETE FROM projects WHERE user_id = $1",
+  "DELETE FROM user_settings WHERE user_id = $1",
+  // Lease keys are `<kind>:<owner>:<uuid>`; strip the 37-character `:<uuid>` to compare exactly.
+  `DELETE FROM generation_operations
+   WHERE left(entity_key, length(entity_key) - 37) IN ('contract:' || $1, 'chat:' || $1)`,
+  "DELETE FROM auth_identities WHERE user_id = $1",
+  "DELETE FROM application_users WHERE id = $1",
+];
+
+/**
+ * Delete everything an owner has in one transaction. Stored objects are queued in the outbox and
+ * removed by storage cleanup, never inline. Repeating the call deletes whatever is left, so a retry
+ * after a partial failure finishes the job. Saved chat replay needs no scrubbing, because the
+ * threads go with the contracts they cite.
+ */
+export async function deleteAccountForUser(userId: string): Promise<void> {
+  await ensureSchema();
+  const { principal } = admissionLimits(userId);
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
+    for (const statement of DELETE_ACCOUNT_STATEMENTS) {
+      await client.query(statement, [userId]);
+    }
+    // Admission rows are keyed by the one-way hash of the owner ID.
+    await client.query("DELETE FROM chat_admissions WHERE principal = $1", [principal]);
+    await client.query("DELETE FROM chat_request_budgets WHERE bucket = $1", [principal]);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getUserSettingsByUserId(
   userId: string,
 ): Promise<UserSettingsRecord | null> {

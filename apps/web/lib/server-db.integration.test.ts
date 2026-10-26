@@ -44,6 +44,7 @@ import {
   deleteChatThreadForUser,
   createContractForUser,
   createProjectForUser,
+  deleteAccountForUser,
   deleteAnalysisForContract,
   deleteContractForUser,
   deleteProjectForUser,
@@ -63,7 +64,9 @@ import {
   listContractsByUserId,
   listContractsForChat,
   saveContractUploadForUser,
+  addContextDocumentToProject,
 } from "./server-db";
+import { resolveWorkOSUserId } from "./auth-identity";
 import { attachAnalysisSources, contractSourceRevision } from "./analysis-sources";
 import { citationForReport } from "./source-citations";
 import { buildAnalysisPrompt } from "./analysis";
@@ -2045,5 +2048,130 @@ describe.skipIf(!connectionString)("database integration", () => {
       for (const runner of runners) runner.release(true);
       await db.query("DROP SCHEMA IF EXISTS migration_race CASCADE");
     }
+  });
+
+  it("deletes every row an account owns and queues its stored objects, leaving other accounts intact", async () => {
+    async function seed() {
+      const userId = await resolveWorkOSUserId({ id: `user_${crypto.randomUUID()}` });
+      const { principal } = admissionLimits(userId);
+      const project = await createProjectForUser({ userId, title: "Lease" });
+      const contextKey = `account-context-${crypto.randomUUID()}`;
+      await addContextDocumentToProject({
+        userId, projectId: project.id, title: "Brief", documentType: "other", storageKey: contextKey,
+        bucket: "test", originalFilename: "brief.txt", contentType: "text/plain", sizeBytes: 5,
+        extractedText: "Brief", wordCount: 1,
+      });
+      const contracts = [
+        await createContractForUser({ userId, title: "In project", projectId: project.id }),
+        await createContractForUser({ userId, title: "Loose" }),
+      ];
+      const fileKeys: string[] = [];
+      for (const item of contracts) {
+        const storageKey = `account-file-${crypto.randomUUID()}`;
+        fileKeys.push(storageKey);
+        await saveContractUploadForUser({
+          userId, contractId: item.id, projectId: item.projectId, title: item.title,
+          fileName: "agreement.txt", storageKey, bucket: "test", contentType: "text/plain",
+          sizeBytes: 12, extractionMethod: null, extractionConfidence: null, text: "Clause text.",
+        });
+        const snapshot = await getContractWithLatestAnalysisForUser(userId, item.id);
+        await createAnalysisForContract({
+          userId, contractId: item.id, expectedRevision: snapshot!.revision, riskBadge: "LOW",
+          resultJson: result, llmProvider: "test", llmModel: "test",
+        });
+      }
+      // A legacy file row: no contract, and its object key in blob_path.
+      const legacyKey = `account-legacy-${crypto.randomUUID()}`;
+      await pool.current!.query(
+        "INSERT INTO contract_files(user_id, file_name, blob_path) VALUES ($1, 'old.pdf', $2)",
+        [userId, legacyKey],
+      );
+      const thread = await createChatThreadForUser({ userId });
+      await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
+        { role: "user", content: "Summarize" },
+        { role: "assistant", content: "Summary" },
+      ] });
+      const document = { id: crypto.randomUUID(), name: "notes.txt", mediaType: "text/plain", size: 5, text: "Notes" };
+      await saveChatFileForUser({ userId, threadId: thread.id, file: document, data: Buffer.from(document.text) });
+      await pool.current!.query(
+        "INSERT INTO chat_attachments(thread_id, image_data) VALUES ($1, $2)",
+        [thread.id, Buffer.from("png")],
+      );
+      await upsertUserSettings({ userId, personality: "bare-llm" });
+      expect(await claimGenerationOperation(userId, "contract", contracts[0]!.id, 60)).toBeTypeOf("function");
+      expect(await claimGenerationOperation(userId, "chat", thread.id, 60)).toBeTypeOf("function");
+      await pool.current!.query(
+        "INSERT INTO chat_admissions(token, principal, expires_at) VALUES ($1, $2, now() + interval '1 minute')",
+        [crypto.randomUUID(), principal],
+      );
+      await pool.current!.query(
+        "INSERT INTO chat_request_budgets(bucket, window_start, requests) VALUES ($1, date_trunc('hour', now()), 1)",
+        [principal],
+      );
+      return {
+        userId, principal, projectIds: [project.id], threadIds: [thread.id],
+        contractIds: contracts.map((item) => item.id), storageKeys: [contextKey, ...fileKeys, legacyKey],
+      };
+    }
+    type Account = Awaited<ReturnType<typeof seed>>;
+
+    async function count(table: string, where: string, values: unknown[]) {
+      const { rows } = await pool.current!.query<{ count: number }>(
+        `SELECT count(*)::integer AS count FROM ${table} WHERE ${where}`, values,
+      );
+      return rows[0]!.count;
+    }
+    const rowsOf = async (account: Account) => ({
+      projects: await count("projects", "user_id = $1", [account.userId]),
+      contracts: await count("contracts", "user_id = $1", [account.userId]),
+      contractsById: await count("contracts", "id = ANY($1::uuid[])", [account.contractIds]),
+      analyses: await count("analyses", "contract_id = ANY($1::uuid[])", [account.contractIds]),
+      contractFiles: await count("contract_files", "user_id = $1", [account.userId]),
+      contextDocuments: await count("context_documents", "project_id = ANY($1::uuid[])", [account.projectIds]),
+      threads: await count("chat_threads", "user_id = $1", [account.userId]),
+      messages: await count("chat_messages", "thread_id = ANY($1::uuid[])", [account.threadIds]),
+      attachments: await count("chat_attachments", "thread_id = ANY($1::uuid[])", [account.threadIds]),
+      chatFiles: await count("chat_files", "thread_id = ANY($1::uuid[])", [account.threadIds]),
+      settings: await count("user_settings", "user_id = $1", [account.userId]),
+      leases: await count("generation_operations", "entity_key LIKE '%:' || $1 || ':%'", [account.userId]),
+      admissions: await count("chat_admissions", "principal = $1", [account.principal]),
+      budgets: await count("chat_request_budgets", "bucket = $1", [account.principal]),
+      identities: await count("auth_identities", "user_id = $1", [account.userId]),
+      users: await count("application_users", "id = $1", [account.userId]),
+    });
+    const queued = async (account: Account) =>
+      (await pool.current!.query<{ storage_key: string }>(
+        "SELECT DISTINCT storage_key FROM storage_deletions WHERE storage_key = ANY($1)",
+        [account.storageKeys],
+      )).rows.map((row) => row.storage_key).sort();
+
+    const deleted = await seed();
+    const kept = await seed();
+    const keptBefore = await rowsOf(kept);
+    expect(Object.values(keptBefore).every((rows) => rows > 0)).toBe(true);
+    expect(await queued(deleted)).toEqual([]);
+
+    await deleteAccountForUser(deleted.userId);
+
+    const remaining = await rowsOf(deleted);
+    expect(remaining).toEqual(Object.fromEntries(Object.keys(remaining).map((key) => [key, 0])));
+    // No text column anywhere holds the owner ID any more.
+    const { rows: columns } = await pool.current!.query<{ table_name: string; column_name: string }>(
+      `SELECT c.table_name, c.column_name FROM information_schema.columns c
+       JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+       WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE' AND c.data_type IN ('text', 'character varying')`,
+    );
+    expect(columns.length).toBeGreaterThan(10);
+    for (const { table_name, column_name } of columns) {
+      expect(await count(`"${table_name}"`, `"${column_name}" = $1`, [deleted.userId]), `${table_name}.${column_name}`).toBe(0);
+    }
+    expect(await queued(deleted)).toEqual([...deleted.storageKeys].sort());
+
+    expect(await rowsOf(kept)).toEqual(keptBefore);
+    expect(await queued(kept)).toEqual([]);
+
+    // Idempotent: a repeat finds nothing left and succeeds.
+    await expect(deleteAccountForUser(deleted.userId)).resolves.toBeUndefined();
+    expect(await rowsOf(kept)).toEqual(keptBefore);
   });
 });
