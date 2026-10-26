@@ -35,6 +35,9 @@ test("the privacy policy is public", async ({ page, request }) => {
   const deletion = page.locator("p", { hasText: "To delete your account entirely" });
   await expect(deletion.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
   await expect(deletion).not.toContainText("GitHub");
+  // So is getting a copy of your data.
+  const copy = page.locator("p", { hasText: "To download everything in your account" });
+  await expect(copy.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
 });
 
 test("responses carry the security headers from next.config.js", async ({ request }) => {
@@ -60,7 +63,7 @@ for (const path of ["/dashboard", "/sign-in"]) {
   });
 }
 
-for (const path of ["/api/usage", "/api/contracts"]) {
+for (const path of ["/api/usage", "/api/contracts", "/api/account/export"]) {
   test(`unauthenticated GET ${path} returns a JSON 401`, async ({ request }) => {
     const response = await request.get(path, { maxRedirects: 0 });
     expect(response.status()).toBe(401);
