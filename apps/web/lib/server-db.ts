@@ -8,6 +8,8 @@ import {
   MAX_SOURCE_CATALOG_CHARACTERS,
 } from "@repo/chat-engine/chat-agent-history";
 import { runMigrations } from "../db/migrations.js";
+// Applies POSTGRES_LOCAL_PROXY (local PostgreSQL only) before the first query.
+import "@/lib/postgres-local-proxy";
 import { sql, type VercelPoolClient } from "@vercel/postgres";
 import { randomInt, randomUUID } from "node:crypto";
 import {
