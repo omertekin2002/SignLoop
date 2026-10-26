@@ -14,7 +14,7 @@ import {
   isProjectOwnedByUser,
   type DirectUploadTarget,
 } from "@/lib/server-db";
-import { DECLARABLE_UPLOAD_MIME_TYPES } from "@/lib/text-extraction";
+import { DECLARABLE_UPLOAD_MIME_TYPES } from "@/lib/file-types";
 import {
   DIRECT_UPLOAD_PATHNAME,
   MAX_DIRECT_UPLOAD_FILE_SIZE,

@@ -8,14 +8,15 @@ import {
 } from "@/lib/server-db";
 import {
   isDirectUploadRequest,
+  parseUpload,
   prepareDirectUpload,
   prepareUpload,
   storeUploadedFile,
 } from "@/lib/upload-pipeline";
 import { isUuid } from "@/lib/utils";
 
-// Image uploads run OCR, which budgets 60s for worker init plus 90s for recognition. The platform
-// default is well below that, so a scanned upload would be killed after the work was already done.
+// The parse-only function runs the parsers, but this route waits for it: image OCR budgets 60s for
+// worker init plus 90s for recognition, and the platform default is well below that.
 export const maxDuration = 180;
 
 export async function POST(
@@ -48,14 +49,8 @@ async function executePost(
   progress?.("uploading");
   // A JSON body finalizes a file the browser already uploaded to Blob; otherwise it is multipart.
   const prepared = await (isDirectUploadRequest(req)
-    ? prepareDirectUpload(
-        req,
-        { userId, target: { kind: "contract", id } },
-        progress,
-      )
-    : progress
-      ? prepareUpload(req, progress)
-      : prepareUpload(req));
+    ? prepareDirectUpload(req, { userId, target: { kind: "contract", id } })
+    : prepareUpload(req));
   if (!prepared.ok) {
     return NextResponse.json(
       { error: prepared.error },
@@ -63,26 +58,8 @@ async function executePost(
     );
   }
 
-  if (prepared.extractionError) {
-    console.error("Text extraction failed:", prepared.extractionError);
-    return NextResponse.json(
-      {
-        error:
-          "Text could not be extracted. Verify the file is valid and try again.",
-      },
-      { status: 422 },
-    );
-  }
-
-  if (!prepared.text.trim()) {
-    return NextResponse.json(
-      { error: "Could not extract any text from the file" },
-      { status: 400 },
-    );
-  }
-
-  prepared.signal.throwIfAborted();
-  progress?.("saving");
+  // Store before parsing: the parse-only function reads the file from storage. The cleanup intent
+  // is recorded before the write, so a file that fails to parse is left for the outbox to delete.
   let stored = prepared.stored;
   if (!stored) {
     try {
@@ -100,13 +77,44 @@ async function executePost(
     }
   }
 
+  const extracted = await (progress
+    ? parseUpload(req, prepared, stored, progress)
+    : parseUpload(req, prepared, stored));
+  if (!extracted.ok) {
+    return NextResponse.json(
+      { error: extracted.error },
+      { status: extracted.status },
+    );
+  }
+
+  if (extracted.extractionError) {
+    console.error("Text extraction failed:", extracted.extractionError);
+    return NextResponse.json(
+      {
+        error:
+          "Text could not be extracted. Verify the file is valid and try again.",
+      },
+      { status: 422 },
+    );
+  }
+
+  if (!extracted.text.trim()) {
+    return NextResponse.json(
+      { error: "Could not extract any text from the file" },
+      { status: 400 },
+    );
+  }
+
+  prepared.signal.throwIfAborted();
+  progress?.("saving");
+
   try {
     prepared.signal.throwIfAborted();
     const saved = await saveContractUploadForUser({
       userId,
       contractId: id,
-      text: prepared.text,
-      extractionWarning: prepared.extractionWarning,
+      text: extracted.text,
+      extractionWarning: extracted.extractionWarning,
       projectId: contract.projectId,
       title: contract.title,
       fileName: prepared.fileName,
@@ -115,8 +123,8 @@ async function executePost(
       bucket: stored.bucket,
       contentType: prepared.mimeType,
       sizeBytes: prepared.buffer.length,
-      extractionMethod: prepared.method,
-      extractionConfidence: prepared.confidence,
+      extractionMethod: extracted.method,
+      extractionConfidence: extracted.confidence,
     });
     if (!saved) {
       return NextResponse.json(
@@ -128,11 +136,11 @@ async function executePost(
     return NextResponse.json({
       success: true,
       message: "File uploaded and text extracted",
-      extractionMethod: prepared.method,
-      confidence: prepared.confidence,
-      textLength: prepared.text.length,
-      ...(prepared.extractionWarning
-        ? { warning: prepared.extractionWarning }
+      extractionMethod: extracted.method,
+      confidence: extracted.confidence,
+      textLength: extracted.text.length,
+      ...(extracted.extractionWarning
+        ? { warning: extracted.extractionWarning }
         : {}),
     });
   } catch (error: unknown) {

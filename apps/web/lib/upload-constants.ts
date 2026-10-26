@@ -18,3 +18,6 @@ export const MAX_DIRECT_UPLOAD_FILE_SIZE =
 // owner ID, entity ID, or filename.
 export const DIRECT_UPLOAD_PATHNAME =
   /^uploads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// The most extracted text an upload may store, enforced by the parsers and by their callers.
+export const MAX_EXTRACTED_TEXT_LENGTH = 2_000_000;

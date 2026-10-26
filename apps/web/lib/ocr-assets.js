@@ -2,8 +2,14 @@
 // lib/text-extraction.ts (startup checks) and scripts/check-ocr-trace.mjs (build verification).
 // Plain JavaScript so the Next.js config and the check script can import it without a compiler.
 
-/** Routes whose uploads can run image OCR. */
-export const OCR_ROUTES = Object.freeze([
+/** Routes that can run image OCR: the parse-only function, which parses every stored upload. */
+export const OCR_ROUTES = Object.freeze(["/api/internal/parse"]);
+
+/**
+ * Upload routes that hand their files to the parse-only function. They must not ship the OCR
+ * runtime, which would mean they still import the parsers.
+ */
+export const PARSE_CALLER_ROUTES = Object.freeze([
   "/api/contracts/[id]/upload",
   "/api/projects/[id]/context",
 ]);

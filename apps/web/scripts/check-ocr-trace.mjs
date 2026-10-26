@@ -1,9 +1,11 @@
 // Run after `next build` (`bun run check:ocr-trace`). Vercel deploys each route with exactly the
 // files in its .nft.json trace. Image OCR loads tesseract.js's worker thread, its WebAssembly core
 // and the English model at runtime with Node's require and fs, so a file missing from the trace
-// only fails once an image is uploaded. This check fails the build instead. It also rejects
-// build-machine paths (Turbopack's /ROOT/ prefix) in server output, which is how the OCR worker
-// location broke before tesseract.js was left unbundled.
+// only fails once an image is uploaded. This check fails the build instead. Parsing runs in the
+// parse-only function, so it also fails when the upload routes that call it trace any of those
+// files, which would mean they bundle the parsers again. And it rejects build-machine paths
+// (Turbopack's /ROOT/ prefix) in server output, which is how the OCR worker location broke before
+// tesseract.js was left unbundled.
 
 import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { createRequire, isBuiltin } from "node:module";
@@ -13,6 +15,7 @@ import {
   ENGLISH_MODEL_DIRECTORY,
   ENGLISH_MODEL_FILE,
   OCR_ROUTES,
+  PARSE_CALLER_ROUTES,
   TESSERACT_CORE_BUILDS,
 } from "../lib/ocr-assets.js";
 
@@ -112,6 +115,19 @@ for (const route of OCR_ROUTES) {
     .reduce((total, file) => total + statSync(file).size, 0);
   console.log(
     `${route}: ${required.size - missing.length}/${required.size} OCR runtime files traced (${(ocrBytes / 1e6).toFixed(1)} MB)`,
+  );
+}
+
+for (const route of PARSE_CALLER_ROUTES) {
+  const traced = readTrace(route);
+  const shipped = [...required].filter((file) => traced.has(file));
+  for (const file of shipped) {
+    failures.push(
+      `${route} traces ${path.relative(appDir, file)}; it should leave parsing to ${OCR_ROUTES.join(", ")}`,
+    );
+  }
+  console.log(
+    `${route}: ${shipped.length}/${required.size} OCR runtime files traced (expected none)`,
   );
 }
 
