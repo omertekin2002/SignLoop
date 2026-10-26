@@ -14,8 +14,8 @@ import {
 } from "@/lib/upload-constants";
 
 // Runs the parsers on a file whose MIME type and signature were already validated, and reports
-// the result as a ParseOutcome. The parse-only function uses it on stored uploads; chat
-// attachments still call it in their own request.
+// the result as a ParseOutcome. Only the parse-only function uses it: on stored uploads, and on
+// the bytes of chat attachments.
 
 const TIMED_OUT = "Upload processing timed out or was canceled.";
 const READ_FAILED = "The uploaded file could not be read. Please try again.";

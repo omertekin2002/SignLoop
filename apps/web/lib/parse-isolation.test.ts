@@ -51,7 +51,11 @@ function importGraph(entry: string): { modules: Set<string>; packages: Set<strin
 }
 
 describe("parser isolation", () => {
-  it.each(["app/api/contracts/[id]/upload/route.ts", "app/api/projects/[id]/context/route.ts"])(
+  it.each([
+    "app/api/contracts/[id]/upload/route.ts",
+    "app/api/projects/[id]/context/route.ts",
+    "app/api/chat/files/route.ts",
+  ])(
     "%s does not import the parsers",
     (route) => {
       const { modules, packages } = importGraph(route);
