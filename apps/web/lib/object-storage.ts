@@ -1,6 +1,7 @@
-import fs from "node:fs/promises";
+import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { del, put } from "@vercel/blob";
+import { Readable } from "node:stream";
+import { del, get, put } from "@vercel/blob";
 
 function getDefaultStorageRoot(): string {
   // Workspace scripts execute with apps/web as their cwd. Keeping the dynamic portion scoped to
@@ -124,6 +125,39 @@ export async function deleteObject(
   // fs.rm has no AbortSignal support; avoid starting another operation after expiry.
   signal?.throwIfAborted();
   await fs.rm(`${absolutePath}.meta.json`, { force: true });
+}
+
+/**
+ * Stream a stored object's bytes, or return null when it no longer exists. Like deleteObject, the
+ * backend follows the recorded key's shape: an HTTPS URL is a Blob, anything else a local key.
+ */
+export async function readObject(
+  storageKey: string,
+  signal?: AbortSignal,
+): Promise<ReadableStream<Uint8Array> | null> {
+  signal?.throwIfAborted();
+  if (isRemoteObjectUrl(storageKey)) {
+    const result = await get(storageKey.trim(), {
+      access: getBlobAccess(),
+      useCache: false,
+      abortSignal: AbortSignal.any([
+        AbortSignal.timeout(30_000),
+        ...(signal ? [signal] : []),
+      ]),
+    });
+    return result?.statusCode === 200 ? result.stream : null;
+  }
+
+  let handle: FileHandle;
+  try {
+    handle = await fs.open(toAbsolutePath(storageKey), "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  return Readable.toWeb(
+    handle.createReadStream({ signal }),
+  ) as ReadableStream<Uint8Array>;
 }
 
 export function getStorageBucketName(): string {

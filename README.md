@@ -65,7 +65,7 @@ bunx playwright install chromium   # once
 bun run test:e2e
 ```
 
-It starts `next start` on `127.0.0.1:3100` with placeholder WorkOS configuration from [playwright.config.ts](apps/web/playwright.config.ts), so it needs no `.env.local`, database, or model provider, and the browser blocks requests to other origins. It checks that `/` and `/privacy` render, that responses carry the security headers from `next.config.js`, that `/dashboard` and `/sign-in` redirect signed-out visitors to WorkOS, that `GET /api/usage`, `GET /api/contracts`, and `DELETE /api/account` answer them with a JSON 401, and that the privacy policy points account deletion to Settings. Signed-in flows are not covered.
+It starts `next start` on `127.0.0.1:3100` with placeholder WorkOS configuration from [playwright.config.ts](apps/web/playwright.config.ts), so it needs no `.env.local`, database, or model provider, and the browser blocks requests to other origins. It checks that `/` and `/privacy` render, that responses carry the security headers from `next.config.js`, that `/dashboard` and `/sign-in` redirect signed-out visitors to WorkOS, that `GET /api/usage`, `GET /api/contracts`, `GET /api/account/export`, and `DELETE /api/account` answer them with a JSON 401, and that the privacy policy points account deletion and data export to Settings. Signed-in flows are not covered.
 
 GitHub Actions ([ci.yml](.github/workflows/ci.yml)) runs on pull requests and pushes to `main`. One job installs dependencies with Vercel's hoisted linker, fails on any high or critical advisory reported by `bun audit --audit-level=high` (low and moderate ones are listed without failing), then runs lint, type checking, tests, and the build, builds the gateway's Vercel bundle, serves it with Node and probes `/healthz`, checks the OCR build traces, and runs the Playwright smoke suite against the build (uploading its report if the job fails); none of them needs secrets or environment files. A second job runs `bun run test:integration` against an empty `postgres:16` service container.
 
@@ -270,6 +270,25 @@ Settings has a **Delete account** section behind a confirmation dialog in which 
 4. expires the AuthKit session cookie (`WORKOS_COOKIE_NAME`, default `wos-session`, on `WORKOS_COOKIE_DOMAIN` if set) and returns `{ "deleted": true }`. The client then navigates to `/`.
 
 Data goes first so a WorkOS failure (`502`) leaves an empty, still signed-in workspace rather than data without a login; the mapping survives, so a retry resolves the same owner and tries again. Owner-rooted inserts (contracts, projects, settings, chat threads) share-lock the owner's `application_users` row and insert nothing without it, and every other owned row hangs off one of those. Deletion locks that row first, so writes already under way finish and are swept, and a request authenticated before the deletion cannot recreate data after it. Langfuse traces are not deleted.
+
+### Data export
+
+Settings has an **Export your data** section whose **Download my data** button fetches `GET /api/account/export` ([route](apps/web/app/api/account/export/route.ts)) and saves the result. A signed-out request gets a JSON `401`. Otherwise the route reads everything the owner has from one read-only snapshot ([`getAccountExportForUser`](apps/web/lib/server-db.ts)) and streams one ZIP, `signloop-export-<UTC date>.zip`, with `Cache-Control: no-store`:
+
+```text
+signloop-export/
+  contracts.json    contracts with their extracted text and uploaded-file records
+  analyses.json     every analysis of those contracts
+  projects.json     projects with their reference documents and extracted text
+  chats.json        saved chats with their messages, files and images
+  settings.json     model and personality settings, or null
+  files/contracts/<contract id>/<original file name>
+  files/projects/<project id>/<original file name>
+  files/chats/<chat id>/<file name> and <image id>.png
+  README.txt        the layout, the export time, and any files that could not be found
+```
+
+Each file record's `path` names its entry. Files are stored byte-for-byte (originals from object storage through `readObject` in [object-storage.ts](apps/web/lib/object-storage.ts), chat files and images from the database through their owner-scoped reads), and each is read only when the stream reaches it, so memory stays bounded. Entry names are sanitized (no separators, `..`, control or Windows-reserved characters, and at most 150 UTF-8 bytes, keeping the extension) and repeated names are numbered case-insensitively, as in `lease (2).pdf` ([export-archive.ts](apps/web/lib/export-archive.ts)). The archive leaves out storage keys, the internal owner ID, the model's private tool transcript in chat metadata, and operational rows: generation leases, admission slots and budgets, the deletion outbox, and the login mapping. The route sets `maxDuration` to 300 seconds; Vercel limits buffered function responses to 4.5 MB but not streamed ones, so the download is bounded by that duration rather than by size. The ZIP writer is [fflate](https://github.com/101arrowz/fflate), which does not write ZIP64, so a single file or archive over 4 GB is not supported (uploads are limited to 4 MB each).
 
 ## Deployment
 

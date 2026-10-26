@@ -137,6 +137,16 @@ export default function PrivacyPage() {
             , including the Limited Use requirements.
           </p>
 
+          <h2>Getting a copy of your data</h2>
+          <p>
+            To download everything in your account, sign in and choose{" "}
+            <strong>Download my data</strong> in <Link href="/settings" prefetch={false}>Settings</Link>.
+            You get one ZIP file with your contracts and their extracted text, analyses, projects,
+            reference documents, saved chats with their messages, and settings as JSON, plus the
+            original files you uploaded and the files and images in your saved chats, exactly as
+            they were stored. Temporary chats are not included, because SignLoop never stores them.
+          </p>
+
           <h2>Retention and deletion</h2>
           <p>
             Your workspace is kept until you delete it. You can delete contracts, analyses,

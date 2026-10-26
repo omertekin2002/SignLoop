@@ -1700,6 +1700,173 @@ export async function deleteAccountForUser(
   }
 }
 
+export type AccountExportContractFile = {
+  id: string;
+  contractId: string | null;
+  fileName: string;
+  contentType: string | null;
+  sizeBytes: number | null;
+  extractionMethod: string | null;
+  extractionConfidence: number | null;
+  createdAt: string;
+  /** Internal object location, for reading the bytes; never part of the archive. */
+  storageKey: string | null;
+};
+
+export type AccountExportContextDocument = {
+  id: string;
+  projectId: string;
+  title: string;
+  documentType: string;
+  originalFilename: string | null;
+  contentType: string | null;
+  sizeBytes: number | null;
+  wordCount: number | null;
+  extractedText: string | null;
+  extractionWarning: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Internal object location, for reading the bytes; never part of the archive. */
+  storageKey: string | null;
+};
+
+export type AccountExportData = {
+  contracts: Array<{
+    id: string;
+    projectId: string | null;
+    title: string;
+    status: string;
+    textContent: string | null;
+    extractionWarning: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  contractFiles: AccountExportContractFile[];
+  analyses: AnalysisRecord[];
+  projects: Array<{
+    id: string;
+    title: string;
+    description: string | null;
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  contextDocuments: AccountExportContextDocument[];
+  chatThreads: Array<{ id: string; title: string; createdAt: string; updatedAt: string }>;
+  chatMessages: Array<Omit<ChatMessageRecord, "agentMessages" | "contractEvidence">>;
+  chatFiles: Array<{
+    id: string;
+    threadId: string;
+    filename: string;
+    mediaType: string;
+    sizeBytes: number;
+    warning: string | null;
+    createdAt: string;
+  }>;
+  chatImages: Array<{ id: string; threadId: string; sizeBytes: number; createdAt: string }>;
+  settings: Omit<UserSettingsRecord, "userId"> | null;
+};
+
+// Every query is scoped to the owner, directly or through an owned parent, with the same reach as
+// DELETE_ACCOUNT_STATEMENTS. Operational rows (leases, admissions, budgets, the storage outbox and
+// the login mapping) are never read. Chat file and image bytes stay in the database; the archive
+// loads them one at a time with getChatFileForUser and getChatImageForUser.
+const ACCOUNT_EXPORT_QUERIES = {
+  contracts: `SELECT id, project_id AS "projectId", title, status, text_content AS "textContent",
+      extraction_warning AS "extractionWarning", created_at AS "createdAt", updated_at AS "updatedAt"
+    FROM contracts WHERE user_id = $1 ORDER BY created_at, id`,
+  contractFiles: `SELECT id, contract_id AS "contractId", file_name AS "fileName",
+      content_type AS "contentType", size_bytes AS "sizeBytes", extraction_method AS "extractionMethod",
+      extraction_confidence AS "extractionConfidence", created_at AS "createdAt",
+      coalesce(storage_key, blob_path) AS "storageKey"
+    FROM contract_files
+    WHERE user_id = $1 OR contract_id IN (SELECT id FROM contracts WHERE user_id = $1)
+    ORDER BY created_at, id`,
+  analyses: `SELECT a.id, a.contract_id AS "contractId", a.risk_badge AS "riskBadge",
+      a.result_json AS "resultJson", a.llm_provider AS "llmProvider", a.llm_model AS "llmModel",
+      a.llm_prompt_tokens AS "llmPromptTokens", a.llm_completion_tokens AS "llmCompletionTokens",
+      a.processing_time_ms AS "processingTimeMs", a.created_at AS "createdAt"
+    FROM analyses a JOIN contracts c ON c.id = a.contract_id
+    WHERE c.user_id = $1 ORDER BY a.created_at, a.id`,
+  projects: `SELECT id, title, description, status, created_at AS "createdAt", updated_at AS "updatedAt"
+    FROM projects WHERE user_id = $1 ORDER BY created_at, id`,
+  contextDocuments: `SELECT d.id, d.project_id AS "projectId", d.title, d.document_type AS "documentType",
+      d.original_filename AS "originalFilename", d.content_type AS "contentType",
+      d.size_bytes AS "sizeBytes", d.word_count AS "wordCount", d.extracted_text AS "extractedText",
+      d.extraction_warning AS "extractionWarning", d.created_at AS "createdAt",
+      d.updated_at AS "updatedAt", d.storage_key AS "storageKey"
+    FROM context_documents d JOIN projects p ON p.id = d.project_id
+    WHERE p.user_id = $1 ORDER BY d.created_at, d.id`,
+  chatThreads: `SELECT id, title, created_at AS "createdAt", updated_at AS "updatedAt"
+    FROM chat_threads WHERE user_id = $1 ORDER BY created_at, id`,
+  // The model's private tool transcript (agentMessages) is replay state, not conversation.
+  chatMessages: `SELECT m.id, m.thread_id AS "threadId", m.role, m.content, m.position,
+      m.created_at AS "createdAt", m.metadata_json - 'agentMessages' AS metadata
+    FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id
+    WHERE t.user_id = $1 ORDER BY m.thread_id, m.position, m.created_at`,
+  chatFiles: `SELECT f.id, f.thread_id AS "threadId", f.filename, f.media_type AS "mediaType",
+      octet_length(f.file_data) AS "sizeBytes", f.warning, f.created_at AS "createdAt"
+    FROM chat_files f JOIN chat_threads t ON t.id = f.thread_id
+    WHERE t.user_id = $1 ORDER BY f.created_at, f.id`,
+  chatImages: `SELECT a.id, a.thread_id AS "threadId", octet_length(a.image_data) AS "sizeBytes",
+      a.created_at AS "createdAt"
+    FROM chat_attachments a JOIN chat_threads t ON t.id = a.thread_id
+    WHERE t.user_id = $1 ORDER BY a.created_at, a.id`,
+  settings: `SELECT primary_model AS "primaryModel", personality, updated_at AS "updatedAt"
+    FROM user_settings WHERE user_id = $1`,
+} as const;
+
+/**
+ * Read everything an owner keeps in SignLoop for a data export, from one consistent snapshot.
+ * File bytes are not loaded here: stored objects are read by key and chat files and images by ID
+ * while the archive streams.
+ */
+export async function getAccountExportForUser(userId: string): Promise<AccountExportData> {
+  await ensureSchema();
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const read = async <T extends Record<string, unknown>>(query: string) =>
+      (await client.query<T>(query, [userId])).rows;
+    const data: AccountExportData = {
+      contracts: await read(ACCOUNT_EXPORT_QUERIES.contracts),
+      contractFiles: await read(ACCOUNT_EXPORT_QUERIES.contractFiles),
+      analyses: (await read<AnalysisRow>(ACCOUNT_EXPORT_QUERIES.analyses)).map(mapAnalysisRow),
+      projects: await read(ACCOUNT_EXPORT_QUERIES.projects),
+      contextDocuments: await read(ACCOUNT_EXPORT_QUERIES.contextDocuments),
+      chatThreads: await read(ACCOUNT_EXPORT_QUERIES.chatThreads),
+      chatMessages: (
+        await read<{
+          id: string;
+          threadId: string;
+          role: string;
+          content: string;
+          position: number;
+          createdAt: string;
+          metadata: unknown;
+        }>(ACCOUNT_EXPORT_QUERIES.chatMessages)
+      ).map((row) => {
+        const metadata = parseJsonObject(row.metadata);
+        const webSources = parseWebSources(metadata.webSources);
+        return {
+          ...mapChatMessageRow(row, "omit"),
+          ...(webSources?.length ? { webSources } : {}),
+        };
+      }),
+      chatFiles: await read(ACCOUNT_EXPORT_QUERIES.chatFiles),
+      chatImages: await read(ACCOUNT_EXPORT_QUERIES.chatImages),
+      settings: (await read<Omit<UserSettingsRecord, "userId">>(ACCOUNT_EXPORT_QUERIES.settings))[0] ?? null,
+    };
+    await client.query("COMMIT");
+    return data;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getUserSettingsByUserId(
   userId: string,
 ): Promise<UserSettingsRecord | null> {

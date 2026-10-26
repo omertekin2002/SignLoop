@@ -33,6 +33,7 @@ import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { useIsClient } from "@/components/theme-toggle";
 import { DeleteAccountCard } from "@/components/delete-account-card";
+import { ExportDataCard } from "@/components/export-data-card";
 
 const PERSONALITY_LABELS: Record<string, string> = {
   "bare-llm": "Bare LLM",
@@ -469,6 +470,8 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        <ExportDataCard />
 
         <DeleteAccountCard />
       </main>
