@@ -80,6 +80,15 @@ if (process.env.REQUIRE_DB_TESTS === "1" && !connectionString)
     "REQUIRE_DB_TESTS=1 but SIGNLOOP_TEST_DATABASE_URL is unset; refusing to skip the database suite",
   );
 
+const TEST_OWNERS = [
+  "another-user", "bounded-followup-owner", "chat-owner", "chat-pagination-owner",
+  "content-receipt-owner", "empty-lookup-intruder", "empty-lookup-owner", "file-owner",
+  "intruder", "late-reply-owner", "legacy-receipt-owner", "other", "owner", "OWNER",
+  "project-analysis-owner", "quota-owner", "replay-failure-owner", "replay-intruder",
+  "replay-owner", "replay-project-owner", "revision-chat-owner", "scope-user", "settings-owner",
+  "title-owner",
+];
+
 describe.skipIf(!connectionString)("database integration", () => {
   it("keeps chat uploads/downloads owner-scoped, transactional, and deleted with their thread", async () => {
     const thread = await createChatThreadForUser({ userId: "file-owner" });
@@ -129,6 +138,12 @@ describe.skipIf(!connectionString)("database integration", () => {
     try {
       await runMigrations(client);
       await runMigrations(client);
+      // Owner-rooted inserts require the owner's application_users row, as every signed-in
+      // owner has (see deleteAccountForUser).
+      await client.query(
+        "INSERT INTO application_users(id) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING",
+        [TEST_OWNERS],
+      );
     } finally {
       client.release();
     }
@@ -2151,7 +2166,34 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(Object.values(keptBefore).every((rows) => rows > 0)).toBe(true);
     expect(await queued(deleted)).toEqual([]);
 
-    await deleteAccountForUser(deleted.userId);
+    // Data first: the login mapping stays until WorkOS has deleted the user.
+    await deleteAccountForUser(deleted.userId, { keepLogin: true });
+    const { identities, users, ...data } = await rowsOf(deleted);
+    expect({ identities, users }).toEqual({ identities: 1, users: 1 });
+    expect(Object.values(data).every((rows) => rows === 0)).toBe(true);
+
+    // A write already under way when the final deletion starts is waited for and swept.
+    const late = await pool.current!.connect();
+    let lateContractId: string;
+    try {
+      await late.query("BEGIN");
+      await late.query("SELECT id FROM application_users WHERE id = $1 FOR SHARE", [deleted.userId]);
+      lateContractId = (await late.query<{ id: string }>(
+        "INSERT INTO contracts(user_id, title) VALUES ($1, 'Late') RETURNING id", [deleted.userId],
+      )).rows[0]!.id;
+      const deletion = deleteAccountForUser(deleted.userId);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await late.query("COMMIT");
+      await deletion;
+    } finally {
+      late.release();
+    }
+    expect(await count("contracts", "id = $1", [lateContractId])).toBe(0);
+    // A request that resolved the owner before the deletion cannot recreate data after it.
+    await expect(createContractForUser({ userId: deleted.userId, title: "After" })).rejects.toThrow();
+    await expect(createProjectForUser({ userId: deleted.userId, title: "After" })).rejects.toThrow();
+    await expect(createChatThreadForUser({ userId: deleted.userId })).rejects.toThrow();
+    await expect(upsertUserSettings({ userId: deleted.userId, personality: "bare-llm" })).rejects.toThrow();
 
     const remaining = await rowsOf(deleted);
     expect(remaining).toEqual(Object.fromEntries(Object.keys(remaining).map((key) => [key, 0])));

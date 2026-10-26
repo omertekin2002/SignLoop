@@ -264,11 +264,12 @@ Cleanup atomically claims due rows with expiring leases and processes four objec
 
 Settings has a **Delete account** section behind a confirmation dialog in which the user types `DELETE`. It calls `DELETE /api/account` ([route](apps/web/app/api/account/route.ts)), which answers a signed-out request with a JSON `401` and a body without `{"confirm":"DELETE"}` with `400`, deleting nothing. Otherwise it:
 
-1. deletes, in one transaction, every row the owner has ([`deleteAccountForUser`](apps/web/lib/server-db.ts)): contracts with their analyses and file records, projects with their context documents, chat threads with their messages, attachments and files, settings, generation leases, admission slots and hourly budgets (keyed by the owner hash), and the `auth_identities`/`application_users` mapping. Deleted file records queue their object keys in `storage_deletions`; the route flushes due items after responding and the daily cleanup cron removes the rest. Nothing is deleted from storage inline;
-2. deletes the WorkOS user with `userManagement.deleteUser`, treating a 404 as already deleted; and
-3. expires the AuthKit session cookie (`WORKOS_COOKIE_NAME`, default `wos-session`, on `WORKOS_COOKIE_DOMAIN` if set) and returns `{ "deleted": true }`. The client then navigates to `/`.
+1. deletes, in one transaction, every row the owner has ([`deleteAccountForUser`](apps/web/lib/server-db.ts)): contracts with their analyses and file records, projects with their context documents, chat threads with their messages, attachments and files, settings, generation leases, and admission slots and hourly budgets (keyed by the owner hash), keeping only the `auth_identities`/`application_users` mapping. Deleted file records queue their object keys in `storage_deletions`; the route flushes due items after responding and the daily cleanup cron removes the rest. Nothing is deleted from storage inline;
+2. deletes the WorkOS user with `userManagement.deleteUser`, treating a 404 as already deleted;
+3. runs the same deletion again, now also removing the owner mapping; and
+4. expires the AuthKit session cookie (`WORKOS_COOKIE_NAME`, default `wos-session`, on `WORKOS_COOKIE_DOMAIN` if set) and returns `{ "deleted": true }`. The client then navigates to `/`.
 
-Data goes first so a WorkOS failure (`502`) leaves an empty, still signed-in workspace rather than data without a login. A retry maps the session to a fresh, empty owner, deletes it, and tries WorkOS again. Langfuse traces are not deleted.
+Data goes first so a WorkOS failure (`502`) leaves an empty, still signed-in workspace rather than data without a login; the mapping survives, so a retry resolves the same owner and tries again. Owner-rooted inserts (contracts, projects, settings, chat threads) share-lock the owner's `application_users` row and insert nothing without it, and every other owned row hangs off one of those. Deletion locks that row first, so writes already under way finish and are swept, and a request authenticated before the deletion cannot recreate data after it. Langfuse traces are not deleted.
 
 ## Deployment
 

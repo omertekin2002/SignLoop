@@ -10,10 +10,11 @@ function isNotFound(error: unknown): boolean {
   return (error as { status?: unknown } | null)?.status === 404;
 }
 
-// Deletes the signed-in account: every owned row first, then the WorkOS user, then the session.
-// Data goes first so a WorkOS failure leaves an empty, signed-in workspace the user can retry
-// from, never data without a login. A retry maps the session to a fresh, empty owner, deletes it,
-// and tries WorkOS again; a user WorkOS no longer has counts as deleted.
+// Deletes the signed-in account: every owned row first, then the WorkOS user, then the owner
+// mapping (sweeping any write that landed meanwhile), then the session. Data goes first so a
+// WorkOS failure leaves an empty, signed-in workspace the user can retry from, never data without
+// a login. The mapping stays until WorkOS succeeds, so a retry resolves the same owner; a user
+// WorkOS no longer has counts as deleted.
 export async function DELETE(req: Request) {
   const identity = await authWithWorkOSUser();
   if (!identity) {
@@ -29,7 +30,7 @@ export async function DELETE(req: Request) {
   }
 
   try {
-    await deleteAccountForUser(identity.userId);
+    await deleteAccountForUser(identity.userId, { keepLogin: true });
   } catch (error) {
     console.error("Failed to delete account data:", error);
     return NextResponse.json({ error: "Failed to delete account" }, { status: 500 });
@@ -49,6 +50,13 @@ export async function DELETE(req: Request) {
         { status: 502 },
       );
     }
+  }
+
+  try {
+    await deleteAccountForUser(identity.userId);
+  } catch (error) {
+    console.error("Failed to delete account mapping:", error);
+    return NextResponse.json({ error: "Failed to delete account" }, { status: 500 });
   }
 
   // End the session the way AuthKit's signOut does: expire its cookie. The user no longer exists

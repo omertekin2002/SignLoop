@@ -42,8 +42,8 @@ const confirmed = () => deleteRequest({ confirm: "DELETE" });
 
 function signedIn() {
   authWithWorkOSUser.mockResolvedValue(identity);
-  deleteAccountForUser.mockImplementation(async () => {
-    calls.push("db");
+  deleteAccountForUser.mockImplementation(async (_userId: string, options?: { keepLogin?: boolean }) => {
+    calls.push(options?.keepLogin ? "data" : "login");
   });
   deleteUser.mockImplementation(async () => {
     calls.push("workos");
@@ -94,15 +94,15 @@ describe("DELETE /api/account", () => {
     expect(sessionCookie(response)).toBeUndefined();
   });
 
-  it("deletes the data, then the WorkOS user, then ends the session", async () => {
+  it("deletes the data, then the WorkOS user, then the owner mapping, then ends the session", async () => {
     signedIn();
 
     const response = await DELETE(confirmed());
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ deleted: true });
-    expect(calls).toEqual(["db", "workos"]);
-    expect(deleteAccountForUser).toHaveBeenCalledExactlyOnceWith("owner");
+    expect(calls).toEqual(["data", "workos", "login"]);
+    expect(deleteAccountForUser.mock.calls).toEqual([["owner", { keepLogin: true }], ["owner"]]);
     expect(deleteUser).toHaveBeenCalledExactlyOnceWith("user_workos");
     const cookie = sessionCookie(response);
     expect(cookie).toMatch(/^wos-session=;/);
@@ -143,7 +143,7 @@ describe("DELETE /api/account", () => {
     expect(sessionCookie(response)).toBeUndefined();
   });
 
-  it("keeps the committed data deletion and the session when WorkOS fails, and a retry succeeds", async () => {
+  it("keeps the committed data deletion, the owner mapping and the session when WorkOS fails, and a retry succeeds", async () => {
     signedIn();
     deleteUser.mockRejectedValueOnce(Object.assign(new Error("Server error"), { status: 500 }));
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -152,18 +152,31 @@ describe("DELETE /api/account", () => {
 
     expect(failed.status).toBe(502);
     expect((await failed.json()).error).toMatch(/data was deleted/);
-    expect(calls).toEqual(["db"]);
+    expect(calls).toEqual(["data"]);
     expect(sessionCookie(failed)).toBeUndefined();
 
-    // The session now resolves to a fresh, empty owner, which the retry deletes before WorkOS.
-    authWithWorkOSUser.mockResolvedValue({ ...identity, userId: "fresh-owner" });
+    // The mapping survived, so the retry sweeps the same owner before trying WorkOS again.
     const retried = await DELETE(confirmed());
 
     expect(retried.status).toBe(200);
-    expect(calls).toEqual(["db", "db", "workos"]);
-    expect(deleteAccountForUser).toHaveBeenLastCalledWith("fresh-owner");
+    expect(calls).toEqual(["data", "data", "workos", "login"]);
+    expect(deleteAccountForUser.mock.calls.every(([userId]) => userId === "owner")).toBe(true);
     expect(deleteUser).toHaveBeenLastCalledWith("user_workos");
     expect(sessionCookie(retried)).toMatch(/^wos-session=;/);
+  });
+
+  it("returns an error and keeps the session when the final mapping deletion fails", async () => {
+    signedIn();
+    deleteAccountForUser.mockImplementation(async (_userId: string, options?: { keepLogin?: boolean }) => {
+      if (!options?.keepLogin) throw new Error("database unavailable");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await DELETE(confirmed());
+
+    expect(response.status).toBe(500);
+    expect(deleteUser).toHaveBeenCalledOnce();
+    expect(sessionCookie(response)).toBeUndefined();
   });
 
   it("treats a WorkOS user that no longer exists as deleted", async () => {
