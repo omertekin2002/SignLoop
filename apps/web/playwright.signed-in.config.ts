@@ -36,7 +36,8 @@ export default defineConfig({
     {
       name: "sign-in",
       testMatch: "sign-in.setup.ts",
-      // The repository is public and so are its CI artifacts: never record the password step.
+      // The repository is public and so are its CI artifacts: never record the password step
+      // (the setup also enters credentials without creating report steps).
       use: { trace: "off", screenshot: "off", video: "off" },
     },
     {
