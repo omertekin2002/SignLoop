@@ -30,14 +30,17 @@ export default defineConfig({
   use: {
     ...devices["Desktop Chrome"],
     baseURL: SIGNED_IN_ORIGIN,
-    trace: "retain-on-failure",
+    // CI uploads failure reports as a public artifact, and a trace of a signed-in test records the
+    // session cookie on every request. Traces stay local; CI keeps screenshots, which show none.
+    trace: isCI ? "off" : "retain-on-failure",
+    screenshot: "only-on-failure",
   },
   projects: [
     {
       name: "sign-in",
       testMatch: "sign-in.setup.ts",
-      // The repository is public and so are its CI artifacts: never record the password step
-      // (the setup also enters credentials without creating report steps).
+      // Never record the password step, even locally (the setup also enters credentials without
+      // creating report steps).
       use: { trace: "off", screenshot: "off", video: "off" },
     },
     {
