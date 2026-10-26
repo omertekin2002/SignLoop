@@ -11,6 +11,7 @@
     { "category": "unilateral_termination", "required": false, "span": "Provider may suspend access if an invoice remains unpaid after Provider has sent a written reminder." }
   ],
   "absent": ["auto_renewal", "arbitration"],
+  "governing_law": { "jurisdiction": "State of Washington", "span": "This Order is governed by the laws of the State of Washington, and the parties submit to the courts located in King County, Washington." },
   "fields": {
     "summary.renewal.auto_renew": null,
     "summary.renewal.renewal_period": null,

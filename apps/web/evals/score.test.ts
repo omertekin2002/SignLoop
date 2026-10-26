@@ -570,3 +570,78 @@ describe("metric isolation", () => {
     );
   });
 });
+
+describe("jurisdiction proposals", () => {
+  const LAW = "6. This plan is governed by the laws of the State of Vermont.";
+  const LAW_SPAN = "This plan is governed by the laws of the State of Vermont.";
+  const governed = buildLoadedCase({
+    spec: {
+      ...spec,
+      id: "score-unit-governed",
+      governing_law: { jurisdiction: "State of Vermont", span: LAW_SPAN },
+    },
+    text: [...LINES, LAW].join("\n"),
+  });
+  const ungoverned = buildLoadedCase({
+    spec: { ...spec, id: "score-unit-ungoverned", governing_law: null },
+    text: LINES.join("\n"),
+  });
+  const proposing = (
+    jurisdiction: string,
+    quote: string,
+  ): AnalysisResult => ({
+    ...idealAnalysis(),
+    proposed_jurisdiction: {
+      jurisdiction,
+      evidence: { quote, segment: "full" },
+    },
+  });
+  const score = (target: LoadedCase, analysis: AnalysisResult) =>
+    scoreCase(target, runOf(analysis, target)).jurisdiction;
+
+  it("scores the stored proposal against the gold clause", () => {
+    expect(score(governed, proposing("State of Vermont", LAW_SPAN))).toEqual({
+      outcome: "correct",
+      unverified: 0,
+    });
+    expect(score(governed, proposing("Vermont, USA", LAW_SPAN))).toEqual({
+      outcome: "wrong",
+      unverified: 0,
+    });
+    // A verified quotation from another clause does not support the proposal.
+    expect(score(governed, proposing("State of Vermont", RENEWAL_SPAN))).toEqual(
+      { outcome: "wrong", unverified: 0 },
+    );
+    expect(score(governed, idealAnalysis())).toEqual({
+      outcome: "false_abstention",
+      unverified: 0,
+    });
+  });
+
+  it("separates verified fabrications from dropped ones without a clause", () => {
+    expect(score(ungoverned, idealAnalysis())).toEqual({
+      outcome: "correct_abstention",
+      unverified: 0,
+    });
+    // Quoting real text as a governing-law clause is stored and counts as fabricated.
+    expect(score(ungoverned, proposing("Springfield", "Disputes are heard in the courts of Springfield."))).toEqual({
+      outcome: "fabricated",
+      unverified: 0,
+    });
+    // An invented quotation is dropped by production; only the unverified count records it.
+    expect(
+      score(
+        ungoverned,
+        proposing("State of Vermont", "This plan is governed by Vermont law."),
+      ),
+    ).toEqual({ outcome: "correct_abstention", unverified: 1 });
+  });
+
+  it("does not score cases without governing-law gold", () => {
+    expect(score(renewing, proposing("State of Vermont", RENEWAL_SPAN))).toEqual({
+      outcome: null,
+      unverified: 0,
+    });
+    expect(metricsOf(idealAnalysis())).not.toHaveProperty("jurisdiction.proposal");
+  });
+});

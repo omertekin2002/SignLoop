@@ -69,6 +69,13 @@
         }
       }
     ],
+    "proposed_jurisdiction": {
+      "jurisdiction": "State of Delaware",
+      "evidence": {
+        "quote": "This Agreement is governed by the laws of the State of Delaware, without regard to its conflict of laws rules.",
+        "segment": "tail"
+      }
+    },
     "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [

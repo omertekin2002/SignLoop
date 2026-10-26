@@ -11,6 +11,7 @@
     { "category": "early_termination_fee", "required": true, "span": "Renter shall pay the rent for the remainder of the initial rental period" }
   ],
   "absent": ["arbitration"],
+  "governing_law": { "jurisdiction": "State of Colorado", "span": "This Agreement is governed by the laws of the State of Colorado." },
   "fields": {
     "summary.renewal.auto_renew": true,
     "summary.renewal.renewal_period": { "canon": [1, "month"] },

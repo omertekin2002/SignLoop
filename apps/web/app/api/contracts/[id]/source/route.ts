@@ -3,6 +3,7 @@ import { requireUserId } from "@/lib/api-auth";
 import { getAnalysisForUser, getContractSourceForUser } from "@/lib/server-db";
 import {
   citationForReport,
+  JURISDICTION_CITATION,
   SOURCE_PAGE_SIZE,
   SourceRevisionSchema,
 } from "@/lib/source-citations";
@@ -37,7 +38,8 @@ export async function GET(
     (revision !== null && !SourceRevisionSchema.safeParse(revision).success) ||
     (analysisId !== null && !isUuid(analysisId)) ||
     (analysisId === null) !== (flag === null) ||
-    (flag !== null && !/^\d{1,5}$/.test(flag))
+    // A red flag's index, or the governing-law quotation behind the jurisdiction proposal.
+    (flag !== null && flag !== JURISDICTION_CITATION && !/^\d{1,5}$/.test(flag))
   )
     return reply({ error: "Invalid source request" }, 400);
 
@@ -46,7 +48,11 @@ export async function GET(
   if (analysisId && flag !== null) {
     const analysis = await getAnalysisForUser(authed.userId, id, analysisId);
     if (!analysis) return reply({ error: "Analysis no longer available" }, 404);
-    citation = citationForReport(analysis.resultJson, id, Number(flag));
+    citation = citationForReport(
+      analysis.resultJson,
+      id,
+      flag === JURISDICTION_CITATION ? JURISDICTION_CITATION : Number(flag),
+    );
     if (!citation || citation.revision !== revision)
       return reply(
         { error: "Verified source quotation unavailable for this finding" },

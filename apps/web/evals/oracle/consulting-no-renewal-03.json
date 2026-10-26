@@ -47,6 +47,13 @@
         }
       }
     ],
+    "proposed_jurisdiction": {
+      "jurisdiction": "State of Oregon",
+      "evidence": {
+        "quote": "This Agreement is governed by the laws of the State of Oregon.",
+        "segment": "full"
+      }
+    },
     "normal_in_region": [],
     "next_actions": {
       "questions_to_ask": [

@@ -334,7 +334,13 @@ export type ContractSummaryRecord = {
   updatedAt: string;
 };
 
-export type ContractRecord = ContractSummaryRecord & {
+/** The jurisdiction the owner confirmed for a contract, which lets analyses include comparisons. */
+export type ContractJurisdictionRecord = {
+  confirmedJurisdiction: string | null;
+  jurisdictionConfirmedAt: string | null;
+};
+
+export type ContractRecord = ContractSummaryRecord & ContractJurisdictionRecord & {
   /** Quality warning for the current extracted text, recorded by its upload. */
   extractionWarning: string | null;
   analysesHasMore: boolean;
@@ -669,7 +675,8 @@ export async function getContractByIdForUser(
   // The warning belongs to the active text (saved with it by each upload), so the page can show
   // it before any analysis exists. The text itself stays out of this response.
   const { rows: contractRows } = await sql<
-    ContractSummaryRecord & { extractionWarning: string | null }
+    ContractSummaryRecord &
+      ContractJurisdictionRecord & { extractionWarning: string | null }
   >`
     select
       id,
@@ -678,6 +685,8 @@ export async function getContractByIdForUser(
       title,
       status,
       extraction_warning as "extractionWarning",
+      confirmed_jurisdiction as "confirmedJurisdiction",
+      jurisdiction_confirmed_at as "jurisdictionConfirmedAt",
       created_at as "createdAt",
       updated_at as "updatedAt"
     from contracts
@@ -900,6 +909,8 @@ export type ContractAnalysisGate = {
 export type ContractWithLatestAnalysisRecord = ContractSummaryRecord & {
   text: string | null;
   extractionWarning: string | null;
+  /** Passed to the analysis as its region; null keeps regional comparisons withheld. */
+  confirmedJurisdiction: string | null;
   revision: string;
   latestAnalysis: { id: string } | null;
 };
@@ -945,6 +956,7 @@ export async function getContractWithLatestAnalysisForUser(
     ContractSummaryRecord & {
       text: string | null;
       extractionWarning: string | null;
+      confirmedJurisdiction: string | null;
       revision: string;
       analysisId: string | null;
     }
@@ -957,6 +969,7 @@ export async function getContractWithLatestAnalysisForUser(
       c.status,
       c.text_content as "text",
       c.extraction_warning as "extractionWarning",
+      c.confirmed_jurisdiction as "confirmedJurisdiction",
       to_char(
         c.updated_at at time zone 'UTC',
         'YYYY-MM-DD"T"HH24:MI:SS.US'
@@ -990,11 +1003,39 @@ export async function getContractWithLatestAnalysisForUser(
     status: row.status,
     text: row.text,
     extractionWarning: row.extractionWarning,
+    confirmedJurisdiction: row.confirmedJurisdiction,
     revision: row.revision,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     latestAnalysis: row.analysisId ? { id: row.analysisId } : null,
   };
+}
+
+/**
+ * Confirm, change, or clear (null) the owner's jurisdiction for a contract; null when the contract
+ * is not theirs. It describes the contract rather than its text, so the analysis revision
+ * (updated_at) is left alone; each analysis records the jurisdiction it ran with instead.
+ */
+export async function setContractJurisdictionForUser(input: {
+  userId: string;
+  contractId: string;
+  jurisdiction: string | null;
+}): Promise<ContractJurisdictionRecord | null> {
+  await ensureSchema();
+
+  const { rows } = await sql<ContractJurisdictionRecord>`
+    update contracts
+    set confirmed_jurisdiction = ${input.jurisdiction}::text,
+      jurisdiction_confirmed_at = case
+        when ${input.jurisdiction}::text is null then null else now() end
+    where id = ${input.contractId}
+      and user_id = ${input.userId}
+    returning
+      confirmed_jurisdiction as "confirmedJurisdiction",
+      jurisdiction_confirmed_at as "jurisdictionConfirmedAt"
+  `;
+
+  return rows[0] ?? null;
 }
 
 export async function saveContractUploadForUser(
@@ -1738,6 +1779,8 @@ export type AccountExportData = {
     status: string;
     textContent: string | null;
     extractionWarning: string | null;
+    confirmedJurisdiction: string | null;
+    jurisdictionConfirmedAt: string | null;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -1773,7 +1816,9 @@ export type AccountExportData = {
 // loads them one at a time with getChatFileForUser and getChatImageForUser.
 const ACCOUNT_EXPORT_QUERIES = {
   contracts: `SELECT id, project_id AS "projectId", title, status, text_content AS "textContent",
-      extraction_warning AS "extractionWarning", created_at AS "createdAt", updated_at AS "updatedAt"
+      extraction_warning AS "extractionWarning", confirmed_jurisdiction AS "confirmedJurisdiction",
+      jurisdiction_confirmed_at AS "jurisdictionConfirmedAt", created_at AS "createdAt",
+      updated_at AS "updatedAt"
     FROM contracts WHERE user_id = $1 ORDER BY created_at, id`,
   contractFiles: `SELECT id, contract_id AS "contractId", file_name AS "fileName",
       content_type AS "contentType", size_bytes AS "sizeBytes", extraction_method AS "extractionMethod",

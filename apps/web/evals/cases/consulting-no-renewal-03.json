@@ -11,6 +11,7 @@
     { "category": "limitation_of_liability", "required": false, "span": "Each party's liability under this Agreement is limited to the total fees paid or payable under this Agreement, except for breaches of Section 6." }
   ],
   "absent": ["auto_renewal", "early_termination_fee", "arbitration"],
+  "governing_law": { "jurisdiction": "State of Oregon", "span": "This Agreement is governed by the laws of the State of Oregon." },
   "fields": {
     "summary.renewal.auto_renew": false,
     "summary.renewal.renewal_period": null,

@@ -12,6 +12,7 @@
     { "category": "ip_ownership", "required": false, "span": "Designer assigns copyright in the final Deliverables to Client upon receipt of full payment." }
   ],
   "absent": ["auto_renewal", "arbitration"],
+  "governing_law": { "jurisdiction": "England and Wales", "span": "This Agreement is governed by the laws of England and Wales." },
   "fields": {
     "summary.renewal.auto_renew": null,
     "summary.renewal.renewal_period": null,

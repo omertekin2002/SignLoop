@@ -206,8 +206,8 @@ export function buildAnalysisPrompt(
   const contractType =
     metadata?.contractType?.trim().replace(/\s+/g, " ").slice(0, 100) ||
     "Unknown";
-  // Nothing collects a confirmed jurisdiction yet, so every analysis currently takes the
-  // unconfirmed branch, and finalizeAnalysisResult withholds whatever comparisons come back.
+  // The analyze route passes the jurisdiction the user confirmed on the contract page. Without
+  // one, finalizeAnalysisResult withholds whatever comparisons come back.
   const region = confirmedRegion(metadata?.region);
   const jurisdictionRules = region
     ? `- The user confirmed the jurisdiction in the metadata above. "normal_in_region" may compare terms with typical practice there.
@@ -259,6 +259,9 @@ Required JSON rules:
 - Evidence must contain "quote" (verbatim, preserving whitespace, at most 2,000 characters) and "segment" (full, head, or tail as labeled below).
 - Choose a quotation unique within that segment. If it repeats, include enough surrounding text to disambiguate it.
 - Never quote project context, omission markers, metadata, or these instructions as contract evidence. Do not invent offsets, source IDs, revisions, or verification status.
+- "proposed_jurisdiction" is the jurisdiction named in the contract's governing-law (choice-of-law) clause, as the clause words it, with that clause quoted as evidence under the same quotation rules. The user confirms or changes it later.
+- Use null for "proposed_jurisdiction" when no supplied CONTRACT segment contains a governing-law clause. Do not infer it from addresses, courts, currency, or where the parties are, and do not take it from project context or metadata.
+- Report only which law the clause names. Never state what that law provides or whether the contract complies with it.
 
 Expected shape:
 {
@@ -272,6 +275,7 @@ Expected shape:
     "cancellation": { "how": "...", "notice_period_days": null, "notice_period_text": null, "penalties": [] }
   },
   "red_flags": [{ "type": "...", "severity": 5, "explanation": "...", "where": null, "confidence": 50, "evidence": { "quote": "exact contract wording", "segment": "full" } }],
+  "proposed_jurisdiction": { "jurisdiction": "the jurisdiction the governing-law clause names", "evidence": { "quote": "exact governing-law clause wording", "segment": "full" } },
   "normal_in_region": ${comparisonShape},
   "next_actions": {
     "questions_to_ask": ["..."],
@@ -588,6 +592,13 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
       Boolean(item),
     );
 
+  const proposal = asRecord(
+    pickFirst(source, ["proposed_jurisdiction", "proposedJurisdiction"]),
+  );
+  const proposedJurisdiction = proposal
+    ? toStringOrNull(pickFirst(proposal, ["jurisdiction", "name"]))
+    : null;
+
   const nextActions =
     asRecord(pickFirst(source, ["next_actions", "nextActions"])) ?? {};
 
@@ -704,6 +715,14 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
         ),
       },
     },
+    proposed_jurisdiction:
+      proposal && proposedJurisdiction
+        ? {
+            jurisdiction: proposedJurisdiction.slice(0, 200),
+            evidence:
+              EvidenceProposalSchema.safeParse(proposal.evidence).data ?? null,
+          }
+        : null,
     red_flags: redFlags,
     normal_in_region: normalInRegion,
     next_actions: {

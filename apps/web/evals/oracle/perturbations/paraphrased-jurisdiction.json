@@ -1,0 +1,9 @@
+{
+  "id": "paraphrased-jurisdiction",
+  "case": "consulting-no-renewal-03",
+  "description": "The jurisdiction is right but its governing-law quotation is paraphrased, so production cannot verify it and stores no proposal.",
+  "patch": [
+    { "path": "/proposed_jurisdiction/evidence/quote", "value": "The Agreement is governed by Oregon law." }
+  ],
+  "targets": ["jurisdiction.proposal", "negatives.unverified_jurisdiction"]
+}

@@ -92,16 +92,29 @@ export function verifyQuote(
   return { quote, start, end };
 }
 
+/** A cited passage in a stored report: a red flag by index, or the jurisdiction proposal. */
+export type CitationRef = number | "jurisdiction";
+export const JURISDICTION_CITATION = "jurisdiction";
+
 export function citationForReport(
   result: unknown,
   contractId: string,
-  index: number,
+  ref: CitationRef,
 ): SourceCitation | null {
   if (!result || typeof result !== "object") return null;
   const report = result as Record<string, unknown>;
   const source = SourceIdentitySchema.safeParse(report.source);
-  const flag = Array.isArray(report.red_flags) ? report.red_flags[index] : null;
-  const parsed = CitationSchema.safeParse(flag?.citation);
+  const cited =
+    ref === JURISDICTION_CITATION
+      ? report.proposed_jurisdiction
+      : Array.isArray(report.red_flags)
+        ? report.red_flags[ref]
+        : null;
+  const parsed = CitationSchema.safeParse(
+    cited && typeof cited === "object"
+      ? (cited as Record<string, unknown>).citation
+      : null,
+  );
   if (
     !source.success ||
     !parsed.success ||

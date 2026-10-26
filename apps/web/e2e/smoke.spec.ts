@@ -79,3 +79,12 @@ test("unauthenticated DELETE /api/account returns a JSON 401", async ({ request 
   expect(response.status()).toBe(401);
   expect(await response.json()).toEqual({ error: "Unauthorized" });
 });
+
+test("unauthenticated PATCH /api/contracts/:id returns a JSON 401", async ({ request }) => {
+  const response = await request.patch(
+    "/api/contracts/11e3e947-f71f-4ecd-a901-adbf24edbb8a",
+    { data: { jurisdiction: "Ontario" }, maxRedirects: 0 },
+  );
+  expect(response.status()).toBe(401);
+  expect(await response.json()).toEqual({ error: "Unauthorized" });
+});
