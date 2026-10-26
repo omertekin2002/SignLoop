@@ -32,6 +32,7 @@ import {
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { useIsClient } from "@/components/theme-toggle";
+import { DeleteAccountCard } from "@/components/delete-account-card";
 
 const PERSONALITY_LABELS: Record<string, string> = {
   "bare-llm": "Bare LLM",
@@ -468,6 +469,8 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        <DeleteAccountCard />
       </main>
     </div>
   );

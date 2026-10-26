@@ -113,16 +113,20 @@ describe.skipIf(!connectionString)(
     });
 
     it("keeps fresh accounts isolated and never links by email, external ID, or legacy owner text", async () => {
+      // Legacy rows predate application users, so they are written directly.
       const legacyOwner = `Legacy_${randomUUID()}`;
-      const legacyProject = await createProjectForUser({
-        userId: legacyOwner,
-        title: "Untouched legacy project",
-      });
-      const legacySettings = await upsertUserSettings({
-        userId: legacyOwner,
-        primaryModel: "legacy-model",
-        personality: "signloop-assistant",
-      });
+      const legacyProject = (
+        await pool.current!.query<{ id: string }>(
+          "INSERT INTO projects(user_id, title) VALUES ($1, 'Untouched legacy project') RETURNING id",
+          [legacyOwner],
+        )
+      ).rows[0]!;
+      await pool.current!.query(
+        "INSERT INTO user_settings(user_id, primary_model, personality) VALUES ($1, 'legacy-model', 'signloop-assistant')",
+        [legacyOwner],
+      );
+      const legacySettings = await getUserSettingsByUserId(legacyOwner);
+      expect(legacySettings).toMatchObject({ primaryModel: "legacy-model" });
       const first = {
         id: legacyOwner,
         externalId: legacyOwner,

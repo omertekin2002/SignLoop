@@ -8,7 +8,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@workos-inc/authkit-nextjs", () => ({ withAuth }));
 vi.mock("@/lib/auth-identity", () => ({ resolveWorkOSUserId }));
 
-import { auth } from "./auth";
+import { auth, authWithWorkOSUser } from "./auth";
 import { requireUserId } from "./api-auth";
 
 beforeEach(() => vi.resetAllMocks());
@@ -44,5 +44,20 @@ describe("application authentication", () => {
     withAuth.mockResolvedValue({ user: { id: "user_workos" } });
     resolveWorkOSUserId.mockRejectedValue(new Error("database unavailable"));
     await expect(auth()).rejects.toThrow("database unavailable");
+  });
+
+  it("returns the owner with the session's WorkOS user ID for account deletion", async () => {
+    withAuth.mockResolvedValue({ user: null });
+    expect(await authWithWorkOSUser()).toBeNull();
+    expect(resolveWorkOSUserId).not.toHaveBeenCalled();
+
+    const user = { id: "user_workos" };
+    withAuth.mockResolvedValue({ user });
+    resolveWorkOSUserId.mockResolvedValue("personal-owner");
+    expect(await authWithWorkOSUser()).toEqual({
+      userId: "personal-owner",
+      workosUserId: "user_workos",
+    });
+    expect(resolveWorkOSUserId).toHaveBeenCalledExactlyOnceWith(user);
   });
 });

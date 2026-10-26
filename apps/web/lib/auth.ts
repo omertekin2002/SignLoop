@@ -9,3 +9,13 @@ export async function auth(): Promise<{ userId: string | null }> {
   const { user } = await withAuth();
   return { userId: user ? await resolveWorkOSUserId(user) : null };
 }
+
+// Account deletion also needs the session's WorkOS user ID, to remove the login after the data.
+export async function authWithWorkOSUser(): Promise<{
+  userId: string;
+  workosUserId: string;
+} | null> {
+  const { user } = await withAuth();
+  if (!user) return null;
+  return { userId: await resolveWorkOSUserId(user), workosUserId: user.id };
+}

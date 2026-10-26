@@ -31,6 +31,10 @@ test("the privacy policy is public", async ({ page, request }) => {
   const response = await page.goto("/privacy");
   expect(response?.status()).toBe(200);
   await expect(page.getByRole("heading", { level: 1, name: "Privacy Policy" })).toBeVisible();
+  // Account deletion is self-serve in Settings, not a public GitHub issue.
+  const deletion = page.locator("p", { hasText: "To delete your account entirely" });
+  await expect(deletion.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+  await expect(deletion).not.toContainText("GitHub");
 });
 
 test("responses carry the security headers from next.config.js", async ({ request }) => {
@@ -63,3 +67,12 @@ for (const path of ["/api/usage", "/api/contracts"]) {
     expect(await response.json()).toEqual({ error: "Unauthorized" });
   });
 }
+
+test("unauthenticated DELETE /api/account returns a JSON 401", async ({ request }) => {
+  const response = await request.delete("/api/account", {
+    data: { confirm: "DELETE" },
+    maxRedirects: 0,
+  });
+  expect(response.status()).toBe(401);
+  expect(await response.json()).toEqual({ error: "Unauthorized" });
+});

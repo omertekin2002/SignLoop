@@ -631,6 +631,7 @@ export async function createContractForUser(input: {
     throw new ProjectNotFoundError();
   }
 
+  // Owner-rooted inserts share-lock the owner's application_users row; see deleteAccountForUser.
   const { rows } = await sql<ContractSummaryRecord>`
     insert into contracts (
       user_id,
@@ -638,12 +639,8 @@ export async function createContractForUser(input: {
       title,
       status
     )
-    values (
-      ${input.userId},
-      ${validatedProjectId},
-      ${input.title},
-      'DRAFT'
-    )
+    select id, ${validatedProjectId}::uuid, ${input.title}, 'DRAFT'
+    from application_users where id = ${input.userId} for share
     returning
       id,
       user_id as "userId",
@@ -1277,12 +1274,8 @@ export async function createProjectForUser(input: {
       description,
       status
     )
-    values (
-      ${input.userId},
-      ${input.title},
-      ${input.description ?? null},
-      'active'
-    )
+    select id, ${input.title}, ${input.description ?? null}::text, 'active'
+    from application_users where id = ${input.userId} for share
     returning
       id,
       user_id as "userId",
@@ -1647,6 +1640,66 @@ export async function deleteProjectForUser(input: {
   );
 }
 
+// Children go before their parents and are scoped through an owned parent, so legacy rows behind
+// foreign keys that migration 012 could not validate are removed too. Deleting contract files and
+// context documents queues their stored objects in the storage_deletions outbox (012's triggers).
+const DELETE_ACCOUNT_STATEMENTS = [
+  "DELETE FROM chat_messages m USING chat_threads t WHERE t.id = m.thread_id AND t.user_id = $1",
+  // Cascades to chat_attachments and chat_files.
+  "DELETE FROM chat_threads WHERE user_id = $1",
+  "DELETE FROM analyses a USING contracts c WHERE c.id = a.contract_id AND c.user_id = $1",
+  "DELETE FROM contract_files WHERE user_id = $1 OR contract_id IN (SELECT id FROM contracts WHERE user_id = $1)",
+  "DELETE FROM contracts WHERE user_id = $1",
+  "DELETE FROM context_documents d USING projects p WHERE p.id = d.project_id AND p.user_id = $1",
+  "DELETE FROM projects WHERE user_id = $1",
+  "DELETE FROM user_settings WHERE user_id = $1",
+  // Lease keys are `<kind>:<owner>:<uuid>`; strip the 37-character `:<uuid>` to compare exactly.
+  `DELETE FROM generation_operations
+   WHERE left(entity_key, length(entity_key) - 37) IN ('contract:' || $1, 'chat:' || $1)`,
+];
+
+/**
+ * Delete everything an owner has in one transaction. Stored objects are queued in the outbox and
+ * removed by storage cleanup, never inline. Repeating the call deletes whatever is left. Saved chat
+ * replay needs no scrubbing, because the threads go with the contracts they cite.
+ *
+ * Every owner-rooted insert (contracts, projects, settings, chat threads) share-locks the owner's
+ * application_users row, and every other owned row hangs off one of those. Locking that row first
+ * waits for writes already under way, so the deletes below see them, and blocks new ones until
+ * commit. Once the row is gone they insert nothing, so a request authenticated before the deletion
+ * cannot recreate data afterwards. `keepLogin` keeps the row and the WorkOS mapping, so that a
+ * retry after a failed WorkOS deletion resolves the session to the same owner and sweeps any late
+ * writes; the final call removes them.
+ */
+export async function deleteAccountForUser(
+  userId: string,
+  options: { keepLogin?: boolean } = {},
+): Promise<void> {
+  await ensureSchema();
+  const { principal } = admissionLimits(userId);
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT id FROM application_users WHERE id = $1 FOR UPDATE", [userId]);
+    for (const statement of DELETE_ACCOUNT_STATEMENTS) {
+      await client.query(statement, [userId]);
+    }
+    // Admission rows are keyed by the one-way hash of the owner ID.
+    await client.query("DELETE FROM chat_admissions WHERE principal = $1", [principal]);
+    await client.query("DELETE FROM chat_request_budgets WHERE bucket = $1", [principal]);
+    if (!options.keepLogin) {
+      await client.query("DELETE FROM auth_identities WHERE user_id = $1", [userId]);
+      await client.query("DELETE FROM application_users WHERE id = $1", [userId]);
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getUserSettingsByUserId(
   userId: string,
 ): Promise<UserSettingsRecord | null> {
@@ -1674,7 +1727,8 @@ export async function upsertUserSettings(input: {
   await ensureSchema();
   const { rows } = await sql<UserSettingsRecord>`
     INSERT INTO user_settings(user_id, primary_model, personality, updated_at)
-    VALUES (${input.userId}, ${input.primaryModel ?? null}, ${input.personality ?? null}, now())
+    SELECT id, ${input.primaryModel ?? null}::text, ${input.personality ?? null}::text, now()
+    FROM application_users WHERE id = ${input.userId} FOR SHARE
     ON CONFLICT (user_id) DO UPDATE SET
       primary_model = CASE WHEN ${input.primaryModel !== undefined} THEN excluded.primary_model ELSE user_settings.primary_model END,
       personality = CASE WHEN ${input.personality !== undefined} THEN excluded.personality ELSE user_settings.personality END,
@@ -1746,10 +1800,7 @@ export async function createChatThreadForUser(input: {
       user_id,
       title
     )
-    values (
-      ${input.userId},
-      ${title}
-    )
+    select id, ${title} from application_users where id = ${input.userId} for share
     returning
       id,
       user_id as "userId",

@@ -16,7 +16,7 @@ export default function PrivacyPage() {
         <div className="mx-auto max-w-3xl space-y-3 px-4 pb-6 pt-10 sm:px-6 lg:px-8">
           <p className="app-eyebrow">SignLoop</p>
           <h1 className="app-title">Privacy Policy</h1>
-          <p className="app-lede">Last updated October 17, 2026</p>
+          <p className="app-lede">Last updated October 26, 2026</p>
         </div>
       </header>
 
@@ -109,7 +109,8 @@ export default function PrivacyPage() {
               default. If the operator explicitly enables content recording, saved-chat prompts,
               replies, and tool inputs/results may be recorded in Langfuse. Temporary chats do
               not enable AI tracing. Trace retention is configured separately by the operator;
-              deleting a workspace item does not automatically delete previously collected traces.
+              deleting a workspace item or your account does not automatically delete
+              previously collected traces.
             </li>
             <li>
               <strong>Web search and page reading.</strong> When the assistant searches the web or
@@ -145,10 +146,13 @@ export default function PrivacyPage() {
             policies.
           </p>
           <p>
-            To delete your account entirely, open a request on{" "}
-            <a href={ISSUES_URL}>SignLoop’s GitHub issues</a>. GitHub issues are public, so do
-            not post your email address or other personal details there; you will be contacted
-            to verify the request privately.
+            To delete your account entirely, sign in and choose <strong>Delete account</strong>{" "}
+            in <Link href="/settings" prefetch={false}>Settings</Link>. This immediately and permanently deletes
+            your contracts, uploaded files, analyses, projects, reference documents, saved chats
+            with their images and files, settings, SignLoop’s internal account ID, and your WorkOS
+            sign-in account, and signs you out. Uploaded files are erased from storage by the
+            cleanup job, which runs daily, usually within a day. It cannot be undone. Temporary
+            chats stay in your browser until you clear them.
           </p>
 
           <h2>Security</h2>
