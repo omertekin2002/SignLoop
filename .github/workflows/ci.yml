@@ -92,9 +92,11 @@ jobs:
 
       # Headless Chromium against the build above, served by `next start` with the placeholder
       # WorkOS configuration in playwright.config.ts: public pages, security headers and auth gating.
+      # Only the headless shell, and no --with-deps: the runner image ships Google Chrome, so its
+      # system libraries are already present, and apt-get added minutes (extra fonts, upgrades).
       - name: Install Playwright Chromium
         working-directory: apps/web
-        run: bunx playwright install --with-deps --only-shell chromium
+        run: bunx playwright install --only-shell chromium
 
       - name: End-to-end smoke
         working-directory: apps/web
