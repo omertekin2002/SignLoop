@@ -48,7 +48,7 @@ test("a new account's workspace starts without contracts", async ({ page }) => {
   expect(pageErrors).toEqual([]);
 });
 
-test("a contract uploads through the multipart path, within its 4 MB limit", async ({ page }) => {
+test("a dropped contract uploads through the multipart path, within its 4 MB limit", async ({ page }) => {
   const pageErrors = collectPageErrors(page);
   const config = await page.request.get("/api/uploads");
   expect(config.status()).toBe(200);
@@ -69,16 +69,25 @@ test("a contract uploads through the multipart path, within its 4 MB limit", asy
     mimeType: "text/plain",
     buffer: Buffer.alloc(4 * 1024 * 1024 + 1, "a"),
   });
-  await dialog.getByRole("button", { name: "Upload Contract" }).click();
   await expect(page.getByText("File too large. Maximum size is 4 MB.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Upload Contract" })).toBeDisabled();
+  await expect(dialog.getByLabel("Contract Name")).toHaveValue("");
 
-  await fileInput.setInputFiles({
-    name: "e2e-lease.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from(
-      "This lease renews automatically each year unless either party gives sixty days written notice.",
-    ),
+  const droppedFile = await page.evaluateHandle(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(
+      ["This lease renews automatically each year unless either party gives sixty days written notice."],
+      "e2e-lease.txt",
+      { type: "text/plain" },
+    ));
+    return transfer;
   });
+  await dialog.dispatchEvent("dragenter", { dataTransfer: droppedFile });
+  await expect(dialog.getByText("Drop file here")).toBeVisible();
+  await dialog.dispatchEvent("drop", { dataTransfer: droppedFile });
+  await droppedFile.dispose();
+  await expect(dialog.getByLabel("Contract Name")).toHaveValue("e2e-lease");
+  await expect(dialog.getByRole("button", { name: /Change selected file: e2e-lease\.txt/ })).toBeVisible();
   await dialog.getByRole("button", { name: "Upload Contract" }).click();
   await expect(page.getByText("Contract uploaded successfully")).toBeVisible();
   await expect(dialog).toBeHidden();
