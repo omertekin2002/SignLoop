@@ -33,6 +33,11 @@ for (const theme of THEMES) {
       await notice.getByRole("button", { name: "I Understand and Accept" }).click();
       await expect(notice).toBeHidden();
       await expectNoA11yViolations(page, { theme });
+
+      // Signed out, the landing page is the workspace with a temporary chat, sidebar included.
+      await page.getByRole("button", { name: "Open sidebar" }).click();
+      await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeVisible();
+      await expectNoA11yViolations(page, { theme });
     });
 
     test("the privacy policy has no serious accessibility violations", async ({ page }) => {

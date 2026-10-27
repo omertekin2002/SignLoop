@@ -40,7 +40,8 @@ export async function expectNoA11yViolations(page: Page, { theme, exclude = [] }
   const { violations } = await builder.analyze();
 
   const failing = violations.filter((violation) => FAILING_IMPACTS.has(violation.impact ?? ""));
-  expect(
+  // Soft, so a test that scans several states reports every one of them in a single run.
+  expect.soft(
     failing.map(formatViolation).join("\n\n"),
     `axe found violations on ${page.url()} (${theme})`,
   ).toBe("");
@@ -53,7 +54,9 @@ function formatViolation(violation: Violation): string {
     const target = node.target.map(String).join(" ");
     // The summary carries the details, such as the measured contrast ratio and the required one.
     const summary = node.failureSummary?.replace(/\s*\n\s*/g, " ").trim();
-    return `  - ${target}${summary ? `\n    ${summary}` : ""}`;
+    // Class-based selectors can be hard to find in the code; the element's markup locates it.
+    const html = node.html.length > 200 ? `${node.html.slice(0, 200)}…` : node.html;
+    return [`  - ${target}`, `    ${html}`, ...(summary ? [`    ${summary}`] : [])].join("\n");
   });
   return [
     `[${violation.impact}] ${violation.id}: ${violation.help}`,

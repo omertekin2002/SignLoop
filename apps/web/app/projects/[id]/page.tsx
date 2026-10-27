@@ -455,16 +455,12 @@ const ProjectDetails = () => {
                       type="button"
                       className="w-full cursor-pointer rounded-card border border-dashed border-input p-5 text-center transition-colors hover:border-primary/60 hover:bg-foreground/[0.03]"
                       onClick={() => contractFileRef.current?.click()}
-                      aria-label={
-                        selectedContractFile
-                          ? `Change selected contract file: ${selectedContractFile.name}`
-                          : "Select a contract file"
-                      }
                     >
                       {selectedContractFile ? (
                         <div>
                           <File className="h-8 w-8 mx-auto text-primary mb-2" />
                           <p className="text-sm font-medium">
+                            <span className="sr-only">Change selected contract file: </span>
                             {selectedContractFile.name}
                           </p>
                           <p className="text-xs text-muted-foreground">
@@ -638,16 +634,12 @@ const ProjectDetails = () => {
                       type="button"
                       className="w-full cursor-pointer rounded-card border border-dashed border-input p-5 text-center transition-colors hover:border-primary/60 hover:bg-foreground/[0.03]"
                       onClick={() => contextFileRef.current?.click()}
-                      aria-label={
-                        selectedContextFile
-                          ? `Change selected context file: ${selectedContextFile.name}`
-                          : "Select a context file"
-                      }
                     >
                       {selectedContextFile ? (
                         <div>
                           <File className="h-8 w-8 mx-auto text-primary mb-2" />
                           <p className="text-sm font-medium">
+                            <span className="sr-only">Change selected context file: </span>
                             {selectedContextFile.name}
                           </p>
                         </div>

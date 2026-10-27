@@ -119,16 +119,14 @@ export function UploadDialog({ children }: UploadDialogProps) {
               type="button"
               className="flex w-full cursor-pointer flex-col items-center justify-center rounded-card border border-dashed border-input p-6 transition-colors hover:border-primary/60 hover:bg-foreground/[0.03]"
               onClick={() => fileInputRef.current?.click()}
-              aria-label={
-                file
-                  ? `Change selected file: ${file.name}`
-                  : "Select a contract file"
-              }
             >
               {file ? (
                 <div className="text-center">
                   <File className="h-8 w-8 mx-auto text-primary mb-2" />
-                  <p className="text-sm font-medium">{file.name}</p>
+                  <p className="text-sm font-medium">
+                    <span className="sr-only">Change selected file: </span>
+                    {file.name}
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     {formatFileSize(file.size)}
                   </p>
