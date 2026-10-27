@@ -8,15 +8,29 @@ function progressDeferred<T>() {
   return { promise, resolve, reject };
 }
 import { afterEach, describe, expect, it, vi } from "vitest";
-const { post, remove, postOperation } = vi.hoisted(() => ({
+const { post, remove, postOperation, blobUpload } = vi.hoisted(() => ({
   post: vi.fn(),
   remove: vi.fn(),
   postOperation: vi.fn(),
+  blobUpload: vi.fn(),
 }));
 vi.mock("./api-client", () => ({ apiClient: { post, delete: remove } }));
-vi.mock("./operation-progress-client", () => ({ postOperation }));
+vi.mock("./operation-progress-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./operation-progress-client")>()),
+  postOperation,
+}));
+vi.mock("@vercel/blob/client", () => ({ upload: blobUpload }));
 import { uploadContract } from "./upload-contract";
-import { MAX_UPLOAD_FILE_SIZE } from "./upload-constants";
+import {
+  MAX_DIRECT_UPLOAD_FILE_SIZE,
+  MAX_MULTIPART_UPLOAD_FILE_SIZE,
+} from "./upload-constants";
+import { MULTIPART_UPLOAD_CONFIG, type UploadConfig } from "./upload-client";
+const config = MULTIPART_UPLOAD_CONFIG;
+const directConfig: UploadConfig = {
+  directUpload: { access: "private" },
+  maxFileSizeBytes: MAX_DIRECT_UPLOAD_FILE_SIZE,
+};
 import { withAbort } from "@repo/chat-engine/bounded-response";
 afterEach(() => vi.resetAllMocks());
 const file = new File(["Agreement"], "agreement.txt", { type: "text/plain" });
@@ -35,6 +49,7 @@ describe("uploadContract progress", () => {
       title: "Agreement",
       signal: abort.signal,
       onStage,
+      config,
     }).catch((error: unknown) => error);
 
     abort.abort(new DOMException("Upload dialog closed", "AbortError"));
@@ -54,7 +69,7 @@ describe("uploadContract progress", () => {
     abort.abort();
     const onStage = vi.fn();
     await expect(
-      uploadContract({ file, title: "Agreement", signal: abort.signal, onStage }),
+      uploadContract({ file, title: "Agreement", signal: abort.signal, onStage, config }),
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(post).not.toHaveBeenCalled();
     expect(postOperation).not.toHaveBeenCalled();
@@ -74,6 +89,7 @@ describe("uploadContract progress", () => {
       projectId: "project",
       signal,
       onStage,
+      config,
     });
     expect(onStage).toHaveBeenCalledExactlyOnceWith("creating");
     expect(postOperation).not.toHaveBeenCalled();
@@ -95,7 +111,7 @@ describe("uploadContract progress", () => {
     const error = new Error("Useful extraction failure");
     postOperation.mockRejectedValue(error);
     remove.mockRejectedValue(new Error("cleanup failed"));
-    await expect(uploadContract({ file, title: "test" })).rejects.toBe(error);
+    await expect(uploadContract({ file, title: "test", config })).rejects.toBe(error);
     expect(remove).toHaveBeenCalledExactlyOnceWith("/contracts/new");
   });
   it("still cleans a known new contract if canceled after creation without starting upload", async () => {
@@ -106,16 +122,71 @@ describe("uploadContract progress", () => {
     });
     remove.mockResolvedValue({});
     await expect(
-      uploadContract({ file, title: "test", signal: abort.signal }),
+      uploadContract({ file, title: "test", signal: abort.signal, config }),
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(postOperation).not.toHaveBeenCalled();
     expect(remove).toHaveBeenCalledOnce();
   });
   it("rejects an oversize file before creating anything", async () => {
-    const oversized = { ...file, size: MAX_UPLOAD_FILE_SIZE + 1 } as File;
+    const oversized = { ...file, size: MAX_MULTIPART_UPLOAD_FILE_SIZE + 1 } as File;
     await expect(
-      uploadContract({ file: oversized, title: "test" }),
-    ).rejects.toThrow("File too large");
+      uploadContract({ file: oversized, title: "test", config }),
+    ).rejects.toMatchObject({
+      message: "File too large. Maximum size is 4 MB.",
+      response: { status: 413 },
+    });
     expect(post).not.toHaveBeenCalled();
+  });
+  it("refuses a file over the direct-upload limit before creating anything", async () => {
+    const oversized = { ...file, size: MAX_DIRECT_UPLOAD_FILE_SIZE + 1 } as File;
+    await expect(
+      uploadContract({ file: oversized, title: "test", config: directConfig }),
+    ).rejects.toThrow("Maximum size is 10 MB");
+    expect(post).not.toHaveBeenCalled();
+    expect(blobUpload).not.toHaveBeenCalled();
+  });
+  it("uploads to Blob under an opaque pathname, then finalizes it with JSON", async () => {
+    post.mockResolvedValue({ data: { id: "new" } });
+    blobUpload.mockResolvedValue({});
+    postOperation.mockResolvedValue({ success: true });
+    const large = { ...file, name: "scan.pdf", type: "application/pdf", size: 9 * 1024 * 1024 } as File;
+    const signal = new AbortController().signal;
+    const onStage = vi.fn();
+
+    expect(
+      await uploadContract({ file: large, title: "Scan", config: directConfig, signal, onStage }),
+    ).toEqual({ success: true });
+
+    const [pathname, body, options] = blobUpload.mock.calls[0]!;
+    expect(pathname).toMatch(/^uploads\/[0-9a-f-]{36}$/);
+    expect(body).toBe(large);
+    expect(options).toEqual({
+      access: "private",
+      handleUploadUrl: "/api/uploads",
+      clientPayload: JSON.stringify({ contractId: "new" }),
+      contentType: "application/pdf",
+      abortSignal: signal,
+    });
+    expect(postOperation).toHaveBeenCalledExactlyOnceWith("/contracts/new/upload", {
+      body: { pathname, fileName: "scan.pdf" },
+      signal,
+      onStage,
+      validate: expect.any(Function),
+    });
+    expect(remove).not.toHaveBeenCalled();
+  });
+  it("removes the new contract and reports a generic error when the Blob upload fails", async () => {
+    post.mockResolvedValue({ data: { id: "new" } });
+    blobUpload.mockRejectedValue(new Error("Vercel Blob: Failed to retrieve the client token"));
+    remove.mockResolvedValue({});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      uploadContract({ file, title: "test", config: directConfig }),
+    ).rejects.toMatchObject({
+      message: "The file could not be uploaded. Please try again.",
+    });
+    expect(postOperation).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledExactlyOnceWith("/contracts/new");
   });
 });

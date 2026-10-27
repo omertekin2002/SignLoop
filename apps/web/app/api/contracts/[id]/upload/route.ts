@@ -6,11 +6,17 @@ import {
   getContractMetaForUser,
   saveContractUploadForUser,
 } from "@/lib/server-db";
-import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
+import {
+  isDirectUploadRequest,
+  parseUpload,
+  prepareDirectUpload,
+  prepareUpload,
+  storeUploadedFile,
+} from "@/lib/upload-pipeline";
 import { isUuid } from "@/lib/utils";
 
-// Image uploads run OCR, which budgets 60s for worker init plus 90s for recognition. The platform
-// default is well below that, so a scanned upload would be killed after the work was already done.
+// The parse-only function runs the parsers, but this route waits for it: image OCR budgets 60s for
+// worker init plus 90s for recognition, and the platform default is well below that.
 export const maxDuration = 180;
 
 export async function POST(
@@ -41,8 +47,9 @@ async function executePost(
   }
 
   progress?.("uploading");
-  const prepared = await (progress
-    ? prepareUpload(req, progress)
+  // A JSON body finalizes a file the browser already uploaded to Blob; otherwise it is multipart.
+  const prepared = await (isDirectUploadRequest(req)
+    ? prepareDirectUpload(req, { userId, target: { kind: "contract", id } })
     : prepareUpload(req));
   if (!prepared.ok) {
     return NextResponse.json(
@@ -51,8 +58,37 @@ async function executePost(
     );
   }
 
-  if (prepared.extractionError) {
-    console.error("Text extraction failed:", prepared.extractionError);
+  // Store before parsing: the parse-only function reads the file from storage. The cleanup intent
+  // is recorded before the write, so a file that fails to parse is left for the outbox to delete.
+  let stored = prepared.stored;
+  if (!stored) {
+    try {
+      stored = await storeUploadedFile({
+        buffer: prepared.buffer,
+        signal: prepared.signal,
+        mimeType: prepared.mimeType,
+      });
+    } catch (error: unknown) {
+      console.error("Upload storage failed:", error);
+      return NextResponse.json(
+        { error: "Failed to store the uploaded file. Please try again." },
+        { status: 500 },
+      );
+    }
+  }
+
+  const extracted = await (progress
+    ? parseUpload(req, prepared, stored, progress)
+    : parseUpload(req, prepared, stored));
+  if (!extracted.ok) {
+    return NextResponse.json(
+      { error: extracted.error },
+      { status: extracted.status },
+    );
+  }
+
+  if (extracted.extractionError) {
+    console.error("Text extraction failed:", extracted.extractionError);
     return NextResponse.json(
       {
         error:
@@ -62,7 +98,7 @@ async function executePost(
     );
   }
 
-  if (!prepared.text.trim()) {
+  if (!extracted.text.trim()) {
     return NextResponse.json(
       { error: "Could not extract any text from the file" },
       { status: 400 },
@@ -71,38 +107,24 @@ async function executePost(
 
   prepared.signal.throwIfAborted();
   progress?.("saving");
-  let stored: Awaited<ReturnType<typeof storeUploadedFile>>;
-  try {
-    stored = await storeUploadedFile({
-      buffer: prepared.buffer,
-      signal: prepared.signal,
-      mimeType: prepared.mimeType,
-    });
-  } catch (error: unknown) {
-    console.error("Upload storage failed:", error);
-    return NextResponse.json(
-      { error: "Failed to store the uploaded file. Please try again." },
-      { status: 500 },
-    );
-  }
 
   try {
     prepared.signal.throwIfAborted();
     const saved = await saveContractUploadForUser({
       userId,
       contractId: id,
-      text: prepared.text,
-      extractionWarning: prepared.extractionWarning,
+      text: extracted.text,
+      extractionWarning: extracted.extractionWarning,
       projectId: contract.projectId,
       title: contract.title,
-      fileName: prepared.file.name,
+      fileName: prepared.fileName,
       storageKey: stored.storageKey,
       storageIntentId: stored.storageIntentId,
       bucket: stored.bucket,
       contentType: prepared.mimeType,
-      sizeBytes: prepared.file.size,
-      extractionMethod: prepared.method,
-      extractionConfidence: prepared.confidence,
+      sizeBytes: prepared.buffer.length,
+      extractionMethod: extracted.method,
+      extractionConfidence: extracted.confidence,
     });
     if (!saved) {
       return NextResponse.json(
@@ -114,11 +136,11 @@ async function executePost(
     return NextResponse.json({
       success: true,
       message: "File uploaded and text extracted",
-      extractionMethod: prepared.method,
-      confidence: prepared.confidence,
-      textLength: prepared.text.length,
-      ...(prepared.extractionWarning
-        ? { warning: prepared.extractionWarning }
+      extractionMethod: extracted.method,
+      confidence: extracted.confidence,
+      textLength: extracted.text.length,
+      ...(extracted.extractionWarning
+        ? { warning: extracted.extractionWarning }
         : {}),
     });
   } catch (error: unknown) {

@@ -6,7 +6,7 @@ import { OperationStatus } from "@/components/operation-status";
 import { uploadContract } from "@/lib/upload-contract";
 
 import { useState, useRef } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
@@ -22,10 +22,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/lib/api-client";
 import { formatFileSize } from "@/lib/utils";
-import {
-  MAX_UPLOAD_FILE_SIZE,
-  MAX_UPLOAD_FILE_SIZE_MB,
-} from "@/lib/upload-constants";
+import { formatUploadLimit, uploadConfigOptions } from "@/lib/upload-client";
 import { Upload, File, Loader2 } from "lucide-react";
 
 interface UploadDialogProps {
@@ -39,6 +36,10 @@ export function UploadDialog({ children }: UploadDialogProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const operation = useOperationProgress("upload-dialog");
   const queryClient = useQueryClient();
+  const { data: uploadConfig } = useQuery({
+    ...uploadConfigOptions(),
+    enabled: open,
+  });
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -50,7 +51,15 @@ export function UploadDialog({ children }: UploadDialogProps) {
   };
 
   const uploadMutation = useMutation({
-    mutationFn: () => operation.run("creating", (options) => uploadContract({ file, title: contractName, ...options })),
+    mutationFn: () =>
+      operation.run("creating", async (options) =>
+        uploadContract({
+          file,
+          title: contractName,
+          config: await queryClient.fetchQuery(uploadConfigOptions()),
+          ...options,
+        }),
+      ),
     onSuccess: (result) => {
       if (result.warning) {
         toast.warning(`Contract uploaded. ${result.warning}`);
@@ -71,10 +80,10 @@ export function UploadDialog({ children }: UploadDialogProps) {
 
   const handleUpload = () => {
     if (!file || !contractName.trim() || uploadMutation.isPending) return;
-    // Fail fast on oversize files before the two-step network flow creates an orphan contract.
-    if (file.size > MAX_UPLOAD_FILE_SIZE) {
+    // Fail fast on oversize files; uploadContract checks again if the limit was still loading.
+    if (uploadConfig && file.size > uploadConfig.maxFileSizeBytes) {
       toast.error(
-        `File too large. Maximum size is ${MAX_UPLOAD_FILE_SIZE_MB} MB.`,
+        `File too large. Maximum size is ${formatUploadLimit(uploadConfig)}.`,
       );
       return;
     }
@@ -110,16 +119,14 @@ export function UploadDialog({ children }: UploadDialogProps) {
               type="button"
               className="flex w-full cursor-pointer flex-col items-center justify-center rounded-card border border-dashed border-input p-6 transition-colors hover:border-primary/60 hover:bg-foreground/[0.03]"
               onClick={() => fileInputRef.current?.click()}
-              aria-label={
-                file
-                  ? `Change selected file: ${file.name}`
-                  : "Select a contract file"
-              }
             >
               {file ? (
                 <div className="text-center">
                   <File className="h-8 w-8 mx-auto text-primary mb-2" />
-                  <p className="text-sm font-medium">{file.name}</p>
+                  <p className="text-sm font-medium">
+                    <span className="sr-only">Change selected file: </span>
+                    {file.name}
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     {formatFileSize(file.size)}
                   </p>
@@ -129,8 +136,10 @@ export function UploadDialog({ children }: UploadDialogProps) {
                   <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                   <p className="text-sm font-medium">Click to select file</p>
                   <p className="text-xs text-muted-foreground">
-                    PDF, DOC, DOCX, TXT, or images up to{" "}
-                    {MAX_UPLOAD_FILE_SIZE_MB}MB
+                    PDF, DOC, DOCX, TXT, or images
+                    {uploadConfig
+                      ? ` up to ${formatUploadLimit(uploadConfig)}`
+                      : ""}
                   </p>
                 </div>
               )}

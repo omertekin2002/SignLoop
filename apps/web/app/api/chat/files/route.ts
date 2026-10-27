@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/api-auth";
-import { prepareUpload } from "@/lib/upload-pipeline";
+import { prepareExtractedUpload } from "@/lib/chat-upload";
 import {
   CHAT_FILE_TYPES,
   chatFileName,
@@ -28,7 +28,7 @@ export async function POST(req: Request) {
       { status: 404 },
     );
   try {
-    const upload = await prepareUpload(req, undefined, {
+    const upload = await prepareExtractedUpload(req, {
       allowedExtensions: ["pdf", "txt", "docx"],
       allowedMimeTypes: Object.values(CHAT_FILE_TYPES),
     });
@@ -65,7 +65,7 @@ export async function POST(req: Request) {
     upload.signal.throwIfAborted();
     const document: ChatDocument = {
       id: randomUUID(),
-      name: chatFileName(upload.file.name),
+      name: chatFileName(upload.fileName),
       mediaType: upload.mimeType,
       size: upload.buffer.length,
       text: upload.text,

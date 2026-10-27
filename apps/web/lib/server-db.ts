@@ -257,6 +257,76 @@ export async function createUploadCleanupIntent(storageKey: string) {
   return rows[0]!.id;
 }
 
+export type DirectUploadTarget =
+  | { kind: "contract"; id: string }
+  | { kind: "project"; id: string };
+
+/**
+ * Before issuing a client token for a direct-to-Blob upload, record its cleanup intent bound to
+ * the owner's contract or project, in one statement. Returns null when the target is not the
+ * owner's, or "conflict" when another token for this pathname is still unclaimed.
+ */
+export async function createDirectUploadIntent(input: {
+  userId: string;
+  pathname: string;
+  cleanupKey: string;
+  target: DirectUploadTarget;
+}): Promise<{ id: string } | "conflict" | null> {
+  await ensureSchema();
+  const contractId = input.target.kind === "contract" ? input.target.id : null;
+  const projectId = input.target.kind === "project" ? input.target.id : null;
+  try {
+    const { rows } = await sql<{ id: string }>`
+      WITH owned AS (
+        SELECT 1 FROM contracts WHERE id = ${contractId}::uuid AND user_id = ${input.userId}
+        UNION ALL
+        SELECT 1 FROM projects WHERE id = ${projectId}::uuid AND user_id = ${input.userId}
+      ), intent AS (
+        INSERT INTO storage_deletions(storage_key, available_at)
+        SELECT ${input.cleanupKey}, now() + interval '1 hour' WHERE EXISTS (SELECT 1 FROM owned)
+        RETURNING id
+      )
+      INSERT INTO direct_uploads(storage_deletion_id, pathname, contract_id, project_id)
+      SELECT id, ${input.pathname}, ${contractId}::uuid, ${projectId}::uuid FROM intent
+      RETURNING storage_deletion_id AS id`;
+    return rows[0] ?? null;
+  } catch (error) {
+    // The statement is atomic, so a pathname conflict leaves no intent behind either.
+    if ((error as { code?: unknown }).code === "23505") return "conflict";
+    throw error;
+  }
+}
+
+/**
+ * The unclaimed cleanup intent of a direct upload issued for this owner's contract or project,
+ * or null. Anything else (another owner's or target's pathname, an intent the outbox has started
+ * processing) must not be finalized.
+ */
+export async function findDirectUploadIntent(input: {
+  userId: string;
+  pathname: string;
+  target: DirectUploadTarget;
+}): Promise<string | null> {
+  await ensureSchema();
+  const { rows } =
+    input.target.kind === "contract"
+      ? await sql<{ id: string }>`
+        SELECT d.id FROM direct_uploads u
+        JOIN storage_deletions d ON d.id = u.storage_deletion_id
+        JOIN contracts c ON c.id = u.contract_id
+        WHERE u.pathname = ${input.pathname} AND u.contract_id = ${input.target.id}
+          AND c.user_id = ${input.userId}
+          AND d.lease_token IS NULL AND d.attempts = 0`
+      : await sql<{ id: string }>`
+        SELECT d.id FROM direct_uploads u
+        JOIN storage_deletions d ON d.id = u.storage_deletion_id
+        JOIN projects p ON p.id = u.project_id
+        WHERE u.pathname = ${input.pathname} AND u.project_id = ${input.target.id}
+          AND p.user_id = ${input.userId}
+          AND d.lease_token IS NULL AND d.attempts = 0`;
+  return rows[0]?.id ?? null;
+}
+
 export async function completeStorageDeletion(id: string, token: string) {
   await sql`DELETE FROM storage_deletions WHERE id = ${id} AND lease_token = ${token}`;
 }

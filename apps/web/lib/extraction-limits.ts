@@ -2,7 +2,7 @@ import { imageSize } from "image-size";
 import { constants as zlibConstants, createInflateRaw } from "node:zlib";
 import { fromBuffer } from "yauzl";
 
-export const MAX_EXTRACTED_TEXT_LENGTH = 2_000_000;
+export { MAX_EXTRACTED_TEXT_LENGTH } from "@/lib/upload-constants";
 const MAX_IMAGE_PIXELS = 25_000_000;
 const MAX_DOCX_EXPANDED_BYTES = 16 * 1024 * 1024;
 const MAX_PDF_INFLATED_BYTES = 64 * 1024 * 1024;

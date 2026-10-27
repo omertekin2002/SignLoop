@@ -48,6 +48,44 @@ test("a new account's workspace starts without contracts", async ({ page }) => {
   expect(pageErrors).toEqual([]);
 });
 
+test("a contract uploads through the multipart path, within its 4 MB limit", async ({ page }) => {
+  const pageErrors = collectPageErrors(page);
+  const config = await page.request.get("/api/uploads");
+  expect(config.status()).toBe(200);
+  expect(await config.json()).toEqual({
+    directUpload: null,
+    maxFileSizeBytes: 4 * 1024 * 1024,
+  });
+
+  await openDashboard(page);
+  await openSidebarSection(page, "Contracts");
+  await page.getByRole("button", { name: "New Contract" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Upload Contract" });
+  await expect(dialog.getByText("PDF, DOC, DOCX, TXT, or images up to 4 MB")).toBeVisible();
+  const fileInput = dialog.locator('input[type="file"]');
+
+  await fileInput.setInputFiles({
+    name: "e2e-oversize.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.alloc(4 * 1024 * 1024 + 1, "a"),
+  });
+  await dialog.getByRole("button", { name: "Upload Contract" }).click();
+  await expect(page.getByText("File too large. Maximum size is 4 MB.")).toBeVisible();
+
+  await fileInput.setInputFiles({
+    name: "e2e-lease.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      "This lease renews automatically each year unless either party gives sixty days written notice.",
+    ),
+  });
+  await dialog.getByRole("button", { name: "Upload Contract" }).click();
+  await expect(page.getByText("Contract uploaded successfully")).toBeVisible();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("e2e-lease").first()).toBeVisible();
+  expect(pageErrors).toEqual([]);
+});
+
 test("a created project is saved to the account", async ({ page }) => {
   const pageErrors = collectPageErrors(page);
   const title = `E2E project ${Date.now()}`;
@@ -56,6 +94,8 @@ test("a created project is saved to the account", async ({ page }) => {
   await openSidebarSection(page, "Projects");
   await page.getByRole("button", { name: "New Project" }).first().click();
   const dialog = page.getByRole("dialog", { name: "Create New Project" });
+  // The dialog moves focus to its first field when it opens, without an autoFocus prop.
+  await expect(dialog.getByLabel("Project Title *")).toBeFocused();
   await dialog.getByLabel("Project Title *").fill(title);
   await dialog.getByRole("button", { name: "Create Project" }).click();
 

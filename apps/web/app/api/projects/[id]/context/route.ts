@@ -7,12 +7,18 @@ import {
   listProjectContextDocumentsForUser,
   isProjectOwnedByUser,
 } from "@/lib/server-db";
-import { prepareUpload, storeUploadedFile } from "@/lib/upload-pipeline";
+import {
+  isDirectUploadRequest,
+  parseUpload,
+  prepareDirectUpload,
+  prepareUpload,
+  storeUploadedFile,
+} from "@/lib/upload-pipeline";
 import { ProjectNotFoundError } from "@/lib/errors";
 import { isUuid } from "@/lib/utils";
 
-// Image uploads run OCR, which budgets 60s for worker init plus 90s for recognition. The platform
-// default is well below that, so a scanned context document would be killed mid-extraction.
+// The parse-only function runs the parsers, but this route waits for it: image OCR budgets 60s for
+// worker init plus 90s for recognition, and the platform default is well below that.
 export const maxDuration = 180;
 
 export async function GET(
@@ -68,8 +74,9 @@ async function executePost(
   }
 
   progress?.("uploading");
-  const prepared = await (progress
-    ? prepareUpload(req, progress)
+  // A JSON body finalizes a file the browser already uploaded to Blob; otherwise it is multipart.
+  const prepared = await (isDirectUploadRequest(req)
+    ? prepareDirectUpload(req, { userId, target: { kind: "project", id } })
     : prepareUpload(req));
   if (!prepared.ok) {
     return NextResponse.json(
@@ -78,21 +85,44 @@ async function executePost(
     );
   }
 
-  const titleValue = prepared.formData.get("title");
-  const documentTypeValue = prepared.formData.get("documentType");
-  const title =
-    typeof titleValue === "string" && titleValue.trim()
-      ? titleValue.trim()
-      : prepared.file.name;
-  const documentType =
-    typeof documentTypeValue === "string" && documentTypeValue.trim()
-      ? documentTypeValue.trim()
-      : "other";
+  const titleValue = prepared.fields.title;
+  const documentTypeValue = prepared.fields.documentType;
+  const title = titleValue?.trim() || prepared.fileName;
+  const documentType = documentTypeValue?.trim() || "other";
 
-  // A context document is useful only when it can contribute text to analysis. Reject failed
-  // extraction before storage rather than retaining an unusable public object.
-  if (prepared.extractionError) {
-    console.error("Context text extraction failed:", prepared.extractionError);
+  // Store before parsing: the parse-only function reads the file from storage. The cleanup intent
+  // is recorded before the write, so a document that fails to parse is left for the outbox to
+  // delete.
+  let stored = prepared.stored;
+  if (!stored) {
+    try {
+      stored = await storeUploadedFile({
+        buffer: prepared.buffer,
+        signal: prepared.signal,
+        mimeType: prepared.mimeType,
+      });
+    } catch (error: unknown) {
+      console.error("Context upload storage failed:", error);
+      return NextResponse.json(
+        { error: "Failed to store the context document. Please try again." },
+        { status: 500 },
+      );
+    }
+  }
+
+  const extracted = await (progress
+    ? parseUpload(req, prepared, stored, progress)
+    : parseUpload(req, prepared, stored));
+  if (!extracted.ok) {
+    return NextResponse.json(
+      { error: extracted.error },
+      { status: extracted.status },
+    );
+  }
+
+  // A context document is useful only when it can contribute text to analysis.
+  if (extracted.extractionError) {
+    console.error("Context text extraction failed:", extracted.extractionError);
     return NextResponse.json(
       {
         error:
@@ -101,37 +131,23 @@ async function executePost(
       { status: 422 },
     );
   }
-  if (!prepared.text.trim()) {
+  if (!extracted.text.trim()) {
     return NextResponse.json(
       { error: "Could not extract any text from the context document" },
       { status: 422 },
     );
   }
 
-  const extractionMethod = prepared.method;
-  const extractionWarning = prepared.extractionWarning;
+  const extractionMethod = extracted.method;
+  const extractionWarning = extracted.extractionWarning;
 
   prepared.signal.throwIfAborted();
   progress?.("saving");
-  let stored: Awaited<ReturnType<typeof storeUploadedFile>>;
-  try {
-    stored = await storeUploadedFile({
-      buffer: prepared.buffer,
-      signal: prepared.signal,
-      mimeType: prepared.mimeType,
-    });
-  } catch (error: unknown) {
-    console.error("Context upload storage failed:", error);
-    return NextResponse.json(
-      { error: "Failed to store the context document. Please try again." },
-      { status: 500 },
-    );
-  }
 
   let created: { id: string };
   try {
     prepared.signal.throwIfAborted();
-    const wordCount = prepared.text.split(/\s+/).filter(Boolean).length;
+    const wordCount = extracted.text.split(/\s+/).filter(Boolean).length;
     created = await addContextDocumentToProject({
       userId,
       projectId: id,
@@ -140,11 +156,11 @@ async function executePost(
       storageKey: stored.storageKey,
       storageIntentId: stored.storageIntentId,
       bucket: stored.bucket,
-      originalFilename: prepared.file.name,
+      originalFilename: prepared.fileName,
       contentType: prepared.mimeType,
-      sizeBytes: prepared.file.size,
-      extractedText: prepared.text,
-      extractionWarning: prepared.extractionWarning,
+      sizeBytes: prepared.buffer.length,
+      extractedText: extracted.text,
+      extractionWarning: extracted.extractionWarning,
       wordCount,
     });
   } catch (error: unknown) {
@@ -163,7 +179,7 @@ async function executePost(
       message: "Context document uploaded successfully",
       documentId: created.id,
       extractionMethod,
-      extractionConfidence: prepared.confidence,
+      extractionConfidence: extracted.confidence,
       extractionFailed: false,
       ...(extractionWarning ? { warning: extractionWarning } : {}),
     },
