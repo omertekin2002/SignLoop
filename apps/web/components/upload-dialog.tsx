@@ -21,9 +21,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/lib/api-client";
-import { formatFileSize } from "@/lib/utils";
+import { cn, formatFileSize } from "@/lib/utils";
 import { formatUploadLimit, uploadConfigOptions } from "@/lib/upload-client";
 import { Upload, File, Loader2 } from "lucide-react";
+
+const ACCEPTED_FILE_TYPES = ".pdf,.txt,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.tif,.tiff";
 
 interface UploadDialogProps {
   children: React.ReactNode;
@@ -33,6 +35,8 @@ export function UploadDialog({ children }: UploadDialogProps) {
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [contractName, setContractName] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
+  const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const operation = useOperationProgress("upload-dialog");
   const queryClient = useQueryClient();
@@ -41,13 +45,9 @@ export function UploadDialog({ children }: UploadDialogProps) {
     enabled: open,
   });
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const selectedFile = e.target.files[0];
-      setFile(selectedFile);
-      // Default contract name to filename without extension
-      setContractName(selectedFile.name.replace(/\.[^/.]+$/, ""));
-    }
+  const resetDrag = () => {
+    dragDepth.current = 0;
+    setIsDragging(false);
   };
 
   const uploadMutation = useMutation({
@@ -67,6 +67,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
         toast.success("Contract uploaded successfully");
       }
       setOpen(false);
+      resetDrag();
       setFile(null);
       setContractName("");
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -77,6 +78,28 @@ export function UploadDialog({ children }: UploadDialogProps) {
       toast.error(getApiErrorMessage(error, "Upload failed"));
     },
   });
+
+  const selectFiles = (files: FileList | null) => {
+    if (uploadMutation.isPending || !files?.length) return;
+    if (files.length > 1) {
+      toast.error("Please select one contract file at a time.");
+      return;
+    }
+    const selectedFile = files[0];
+    if (!selectedFile) return;
+    const extension = selectedFile.name.slice(selectedFile.name.lastIndexOf(".")).toLowerCase();
+    if (!ACCEPTED_FILE_TYPES.split(",").includes(extension)) {
+      toast.error("Unsupported file type. Choose a PDF, DOC, DOCX, TXT, or supported image file.");
+      return;
+    }
+    if (uploadConfig && selectedFile.size > uploadConfig.maxFileSizeBytes) {
+      toast.error(`File too large. Maximum size is ${formatUploadLimit(uploadConfig)}.`);
+      return;
+    }
+    setFile(selectedFile);
+    // Default contract name to filename without extension.
+    setContractName(selectedFile.name.replace(/\.[^/.]+$/, ""));
+  };
 
   const handleUpload = () => {
     if (!file || !contractName.trim() || uploadMutation.isPending) return;
@@ -92,11 +115,39 @@ export function UploadDialog({ children }: UploadDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={(next) => {
-      if (!next) operation.cancel();
+      if (!next) {
+        operation.cancel();
+        resetDrag();
+      }
       setOpen(next);
     }}>
       <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent
+        className="sm:max-w-[425px]"
+        onDragEnter={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          dragDepth.current += 1;
+          if (!uploadMutation.isPending) setIsDragging(true);
+        }}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = uploadMutation.isPending ? "none" : "copy";
+        }}
+        onDragLeave={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setIsDragging(false);
+        }}
+        onDrop={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          event.stopPropagation();
+          resetDrag();
+          selectFiles(event.dataTransfer.files);
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Upload Contract</DialogTitle>
           <DialogDescription>
@@ -111,16 +162,23 @@ export function UploadDialog({ children }: UploadDialogProps) {
               value={contractName}
               onChange={(e) => setContractName(e.target.value)}
               placeholder="e.g. Employment Agreement"
+              disabled={uploadMutation.isPending}
             />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="file">Contract File</Label>
             <button
               type="button"
-              className="flex w-full cursor-pointer flex-col items-center justify-center rounded-card border border-dashed border-input p-6 transition-colors hover:border-primary/60 hover:bg-foreground/[0.03]"
+              className={cn(
+                "flex w-full cursor-pointer flex-col items-center justify-center rounded-card border border-dashed p-6 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                isDragging
+                  ? "border-primary bg-primary/10"
+                  : "border-input hover:border-primary/60 hover:bg-foreground/[0.03]",
+              )}
               onClick={() => fileInputRef.current?.click()}
+              disabled={uploadMutation.isPending}
             >
-              {file ? (
+              {file && !isDragging ? (
                 <div className="text-center">
                   <File className="h-8 w-8 mx-auto text-primary mb-2" />
                   <p className="text-sm font-medium">
@@ -134,7 +192,9 @@ export function UploadDialog({ children }: UploadDialogProps) {
               ) : (
                 <div className="text-center">
                   <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                  <p className="text-sm font-medium">Click to select file</p>
+                  <p className="text-sm font-medium">
+                    {isDragging ? "Drop file here" : "Drag and drop or click to select file"}
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     PDF, DOC, DOCX, TXT, or images
                     {uploadConfig
@@ -148,9 +208,13 @@ export function UploadDialog({ children }: UploadDialogProps) {
               ref={fileInputRef}
               id="file"
               type="file"
-              accept=".pdf,.txt,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.tif,.tiff"
+              accept={ACCEPTED_FILE_TYPES}
               className="hidden"
-              onChange={handleFileChange}
+              disabled={uploadMutation.isPending}
+              onChange={(event) => {
+                selectFiles(event.target.files);
+                event.target.value = "";
+              }}
             />
           </div>
         </div>
