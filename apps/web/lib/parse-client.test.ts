@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requestParse } from "./parse-client";
-import { parseRequestSchema, verifyParseRequest } from "./parse-protocol";
+import {
+  bytesMatchParseRequest,
+  decodeBytesParseHeader,
+  parseRequestSchema,
+  verifyBytesParseRequest,
+  verifyParseRequest,
+} from "./parse-protocol";
 
 const STORAGE_KEY = "uploads/0b6c3c1e-8d7a-4f2b-9c1d-2e3f4a5b6c7d";
 const UNAVAILABLE = {
@@ -53,6 +59,8 @@ describe("requestParse", () => {
     expect(String(url)).toBe("http://localhost:3000/api/internal/parse");
     expect(init).toMatchObject({ method: "POST", signal, redirect: "manual", cache: "no-store" });
     expect(new Headers(init.headers).has("x-vercel-protection-bypass")).toBe(false);
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
+    expect(new Headers(init.headers).has("x-signloop-parse")).toBe(false);
     const body = parseRequestSchema.parse(JSON.parse(init.body));
     expect(body).toMatchObject({ storageKey: STORAGE_KEY, mimeType: "application/pdf" });
     expect(verifyParseRequest(body)).toBe(true);
@@ -73,6 +81,33 @@ describe("requestParse", () => {
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(String(url)).toBe("https://signloop-abc123.vercel.app/api/internal/parse");
     expect(new Headers(init.headers).get("x-vercel-protection-bypass")).toBe("bypass-value");
+  });
+
+  it("sends bytes as the body, signed with their hash in a header", async () => {
+    vi.stubEnv("VERCEL_URL", "signloop-abc123.vercel.app");
+    vi.stubEnv("VERCEL_AUTOMATION_BYPASS_SECRET", "bypass-value");
+    fetchMock.mockResolvedValue(Response.json(parsed));
+    const buffer = Buffer.from("Payment is due in thirty days.");
+
+    expect(
+      await requestParse({
+        req: new Request("https://attacker.example/api/chat/files", { method: "POST" }),
+        buffer,
+        mimeType: "text/plain",
+        signal: new AbortController().signal,
+      }),
+    ).toEqual(parsed);
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("https://signloop-abc123.vercel.app/api/internal/parse");
+    const headers = new Headers(init.headers);
+    expect(headers.get("content-type")).toBe("application/octet-stream");
+    expect(headers.get("x-vercel-protection-bypass")).toBe("bypass-value");
+    expect(Buffer.from(init.body)).toEqual(buffer);
+    const signed = decodeBytesParseHeader(headers.get("x-signloop-parse"));
+    expect(signed).toMatchObject({ mimeType: "text/plain" });
+    expect(verifyBytesParseRequest(signed!)).toBe(true);
+    expect(bytesMatchParseRequest(signed!, buffer)).toBe(true);
   });
 
   it("passes typed parse errors through", async () => {

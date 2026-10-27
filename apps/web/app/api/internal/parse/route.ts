@@ -1,10 +1,21 @@
-import { parseStoredDocument } from "@/lib/document-parser";
-import { parseRequestSchema, verifyParseRequest } from "@/lib/parse-protocol";
+import { parseDocument, parseStoredDocument } from "@/lib/document-parser";
+import {
+  bytesMatchParseRequest,
+  decodeBytesParseHeader,
+  MAX_PARSE_BYTES,
+  PARSE_BYTES_CONTENT_TYPE,
+  PARSE_BYTES_HEADER,
+  parseRequestSchema,
+  verifyBytesParseRequest,
+  verifyParseRequest,
+  type ParseOutcome,
+} from "@/lib/parse-protocol";
 
 // The parse-only function. Upload routes store a file, then ask this route to read it back and run
-// the parsers, so a hostile or pathological document exhausts this function's memory and time
-// rather than the instance serving the user's other requests. It imports only the parsers, object
-// storage and the signing protocol: no database, session or model clients.
+// the parsers; chat attachments, which are never stored first, send their validated bytes instead.
+// Either way a hostile or pathological document exhausts this function's memory and time rather
+// than the instance serving the user's other requests. It imports only the parsers, object storage
+// and the signing protocol: no database, session or model clients.
 
 // Its own duration, below the upload routes' 180 s, also keeps Vercel from grouping it with them.
 // OCR budgets 60 s for worker start plus 90 s for recognition.
@@ -21,7 +32,12 @@ const notFound = () =>
     headers: { "Cache-Control": "no-store" },
   });
 
-async function readSmallBody(req: Request): Promise<string | null> {
+async function readBoundedBody(
+  req: Request,
+  maxBytes: number,
+): Promise<Buffer | null> {
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) return null;
   const reader = req.body?.getReader();
   if (!reader) return null;
   try {
@@ -31,10 +47,10 @@ async function readSmallBody(req: Request): Promise<string | null> {
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      if (bytes > MAX_REQUEST_BYTES) return null;
+      if (bytes > maxBytes) return null;
       chunks.push(value);
     }
-    return Buffer.concat(chunks, bytes).toString("utf8");
+    return Buffer.concat(chunks, bytes);
   } catch {
     return null;
   } finally {
@@ -43,28 +59,55 @@ async function readSmallBody(req: Request): Promise<string | null> {
   }
 }
 
-export async function POST(req: Request): Promise<Response> {
-  const body = await readSmallBody(req);
-  if (body === null) return notFound();
+const parseSignal = (req: Request) =>
+  AbortSignal.any([req.signal, AbortSignal.timeout(PARSE_DEADLINE_MS)]);
+
+/** A stored object named in a signed JSON body. Null when the call is refused. */
+async function parseStoredCall(req: Request): Promise<ParseOutcome | null> {
+  const body = await readBoundedBody(req, MAX_REQUEST_BYTES);
+  if (body === null) return null;
   let request;
   try {
-    const parsed = parseRequestSchema.safeParse(JSON.parse(body));
-    if (!parsed.success) return notFound();
+    const parsed = parseRequestSchema.safeParse(
+      JSON.parse(body.toString("utf8")),
+    );
+    if (!parsed.success) return null;
     request = parsed.data;
   } catch {
-    return notFound();
+    return null;
   }
-  if (!verifyParseRequest(request)) return notFound();
-
-  const signal = AbortSignal.any([
-    req.signal,
-    AbortSignal.timeout(PARSE_DEADLINE_MS),
-  ]);
-  const outcome = await parseStoredDocument(
+  if (!verifyParseRequest(request)) return null;
+  return parseStoredDocument(
     request.storageKey,
     request.mimeType,
-    signal,
+    parseSignal(req),
   );
+}
+
+/**
+ * Bytes sent as the body, signed in a header. The signature is checked before the body is read,
+ * and the body must be within the chat-attachment limit and hash to what was signed. Null when
+ * the call is refused.
+ */
+async function parseBytesCall(req: Request): Promise<ParseOutcome | null> {
+  const request = decodeBytesParseHeader(req.headers.get(PARSE_BYTES_HEADER));
+  if (!request || !verifyBytesParseRequest(request)) return null;
+  const body = await readBoundedBody(req, MAX_PARSE_BYTES);
+  if (body === null || !bytesMatchParseRequest(request, body)) return null;
+  return parseDocument(body, request.mimeType, parseSignal(req));
+}
+
+export async function POST(req: Request): Promise<Response> {
+  const contentType = req.headers
+    .get("content-type")
+    ?.split(";")[0]
+    ?.trim()
+    .toLowerCase();
+  const outcome =
+    contentType === PARSE_BYTES_CONTENT_TYPE
+      ? await parseBytesCall(req)
+      : await parseStoredCall(req);
+  if (outcome === null) return notFound();
 
   // Streamed, because extracted text can pass Vercel's 4.5 MB limit on buffered response bodies.
   const encoded = new TextEncoder().encode(JSON.stringify(outcome));

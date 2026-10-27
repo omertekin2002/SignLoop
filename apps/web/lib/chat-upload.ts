@@ -1,4 +1,4 @@
-import { parseDocument } from "@/lib/document-parser";
+import { requestParse } from "@/lib/parse-client";
 import {
   prepareUpload,
   toExtractedText,
@@ -8,8 +8,9 @@ import {
 } from "@/lib/upload-pipeline";
 
 /**
- * Receive, validate and extract a chat attachment within this request. Chat attachments are not
- * stored first, so they still parse in their own function rather than the parse-only one.
+ * Receive and validate a chat attachment, then have the parse-only function extract it. Chat
+ * attachments are never stored first (temporary chats keep nothing, saved chats keep the bytes in
+ * PostgreSQL), so the validated bytes go to the parse function as the request body.
  */
 export async function prepareExtractedUpload(
   req: Request,
@@ -18,7 +19,12 @@ export async function prepareExtractedUpload(
   const prepared = await prepareUpload(req, options);
   if (!prepared.ok) return prepared;
   const extracted = toExtractedText(
-    await parseDocument(prepared.buffer, prepared.mimeType, prepared.signal),
+    await requestParse({
+      req,
+      buffer: prepared.buffer,
+      mimeType: prepared.mimeType,
+      signal: prepared.signal,
+    }),
     prepared.signal,
   );
   return extracted.ok ? { ...prepared, ...extracted } : extracted;

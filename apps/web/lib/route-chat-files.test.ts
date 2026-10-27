@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   auth,
@@ -18,6 +18,7 @@ vi.mock("@/lib/server-db", () => ({
   getChatFileForUser,
 }));
 import { POST } from "@/app/api/chat/files/route";
+import { POST as parse } from "@/app/api/internal/parse/route";
 import { GET } from "@/app/api/chat/threads/[id]/files/[fileId]/route";
 import { generateChatFile } from "./chat-file-generation";
 import { savedChatFile } from "./chat-files-shared";
@@ -37,19 +38,34 @@ function request(
     { method: "POST", body: form },
   );
 }
-afterEach(() => vi.resetAllMocks());
+// The parse call reaches the parse-only function's real handler in-process, as `next start` would.
+const parseCall = vi.fn((url: string | URL, init?: RequestInit) =>
+  parse(new Request(url, init)),
+);
+beforeEach(() => {
+  vi.stubEnv("WORKOS_COOKIE_PASSWORD", "a-test-cookie-password-of-32-chars!!");
+  vi.stubEnv("VERCEL_URL", "");
+  vi.stubGlobal("fetch", parseCall);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  vi.resetAllMocks();
+});
 
 describe("chat file upload", () => {
   it("requires authentication before extraction or storage", async () => {
     auth.mockResolvedValue({ userId: null });
     expect((await POST(request())).status).toBe(401);
     expect(saveChatFileForUser).not.toHaveBeenCalled();
+    expect(parseCall).not.toHaveBeenCalled();
   });
   it("rejects a foreign thread before reading the upload", async () => {
     auth.mockResolvedValue({ userId: "intruder" });
     isChatThreadOwnedByUser.mockResolvedValue(false);
     expect((await POST(request(undefined, true))).status).toBe(404);
     expect(saveChatFileForUser).not.toHaveBeenCalled();
+    expect(parseCall).not.toHaveBeenCalled();
   });
   it("extracts temporary text without storing the file", async () => {
     auth.mockResolvedValue({ userId: "owner" });
@@ -61,6 +77,9 @@ describe("chat file upload", () => {
       mediaType: "text/plain",
     });
     expect(saveChatFileForUser).not.toHaveBeenCalled();
+    expect(String(parseCall.mock.calls[0]![0])).toBe(
+      "http://localhost/api/internal/parse",
+    );
   });
   it.each(["pdf", "docx"] as const)(
     "accepts a real %s and saves the original bytes under the owner",
@@ -109,6 +128,34 @@ describe("chat file upload", () => {
   ])("rejects invalid or oversized content ($name)", async (file) => {
     auth.mockResolvedValue({ userId: "owner" });
     expect((await POST(request(file))).status).toBeGreaterThanOrEqual(400);
+    expect(saveChatFileForUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("chat file extraction in the parse function", () => {
+  it("keeps the no-readable-text message for a file without text", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    const response = await POST(
+      request(new File([" \n\t "], "blank.txt", { type: "text/plain" })),
+    );
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error:
+        "No readable text was found. For scanned PDFs, attach a version with a text layer.",
+    });
+    expect(parseCall).toHaveBeenCalledOnce();
+  });
+  it("answers 503 without saving when the parse function is unreachable", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    isChatThreadOwnedByUser.mockResolvedValue(true);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    parseCall.mockRejectedValueOnce(new TypeError("fetch failed"));
+    const response = await POST(request(undefined, true));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error:
+        "Text extraction is unavailable right now. Please try again shortly.",
+    });
     expect(saveChatFileForUser).not.toHaveBeenCalled();
   });
 });
