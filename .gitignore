@@ -45,6 +45,7 @@ bun-debug.log*
 .DS_Store
 *.pem
 .env*.local
+/error.log
 tmp/
 
 # Local object-storage fallback (including generated *.meta.json sidecars)
@@ -56,3 +57,4 @@ graphify-out/
 
 # Claude Code local settings and launch configs
 .claude/
+.env*
