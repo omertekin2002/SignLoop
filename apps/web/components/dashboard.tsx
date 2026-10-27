@@ -609,7 +609,7 @@ const Dashboard = ({
                       selectTemporaryChat();
                     }
                   }}
-                  aria-label="Open chat"
+                  aria-label="SignLoop, open chat"
                 >
                   <SignLoopWordmark className="text-lg" />
                 </button>
@@ -689,7 +689,7 @@ const Dashboard = ({
                           <p className="truncate font-medium">
                             {contract.title}
                           </p>
-                          <p className="mt-0.5 text-[10px] opacity-70">
+                          <p className="mt-0.5 text-[10px]">
                             {contract.status || "DRAFT"}
                           </p>
                         </Link>
@@ -759,7 +759,7 @@ const Dashboard = ({
                           <p className="truncate font-medium">
                             {project.title}
                           </p>
-                          <p className="mt-0.5 text-[10px] opacity-70">
+                          <p className="mt-0.5 text-[10px]">
                             {project.contractCount || 0} contract
                             {project.contractCount === 1 ? "" : "s"}
                           </p>
@@ -837,7 +837,7 @@ const Dashboard = ({
                         <Clock className="h-3 w-3 shrink-0" />
                         <span>Temporary chat</span>
                       </p>
-                      <p className="mt-0.5 text-[10px] opacity-70">Not saved</p>
+                      <p className="mt-0.5 text-[10px]">Not saved</p>
                     </button>
                     {!canUseSavedWorkspace ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">
@@ -882,7 +882,7 @@ const Dashboard = ({
                             <p className="truncate font-medium">
                               {thread.title}
                             </p>
-                            <p className="mt-0.5 text-[10px] opacity-70">
+                            <p className="mt-0.5 text-[10px]">
                               {thread.messageCount} msg
                               {thread.messageCount !== 1 ? "s" : ""}
                             </p>
