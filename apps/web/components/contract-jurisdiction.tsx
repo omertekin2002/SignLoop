@@ -130,6 +130,9 @@ export function ContractJurisdiction({
                 id={inputId}
                 value={draft}
                 maxLength={MAX_JURISDICTION_LENGTH}
+                // The form replaces the button the user just pressed to open it, so focus moves to
+                // its field instead of falling back to the page; it never autofocuses on load.
+                // eslint-disable-next-line jsx-a11y/no-autofocus
                 autoFocus
                 placeholder="For example: England and Wales"
                 onChange={(event) => setDraft(event.target.value)}

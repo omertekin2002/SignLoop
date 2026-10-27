@@ -1,6 +1,7 @@
 import { globalIgnores } from "eslint/config";
 import pluginReactHooks from "eslint-plugin-react-hooks";
 import pluginReact from "eslint-plugin-react";
+import pluginJsxA11y from "eslint-plugin-jsx-a11y";
 import globals from "globals";
 import pluginNext from "@next/eslint-plugin-next";
 import { config as baseConfig } from "./base.js";
@@ -50,5 +51,12 @@ export const nextJsConfig = [
       // TypeScript validates component props in this workspace.
       "react/prop-types": "off",
     },
+  },
+  {
+    // Static accessibility checks for every component, including states the Playwright axe scans
+    // never open. The recommended rules are errors; only-warn reports them as warnings, which
+    // `--max-warnings 0` still rejects.
+    ...pluginJsxA11y.flatConfigs.recommended,
+    files: ["**/*.{jsx,tsx}"],
   },
 ];

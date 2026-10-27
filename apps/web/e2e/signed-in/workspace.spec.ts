@@ -94,6 +94,8 @@ test("a created project is saved to the account", async ({ page }) => {
   await openSidebarSection(page, "Projects");
   await page.getByRole("button", { name: "New Project" }).first().click();
   const dialog = page.getByRole("dialog", { name: "Create New Project" });
+  // The dialog moves focus to its first field when it opens, without an autoFocus prop.
+  await expect(dialog.getByLabel("Project Title *")).toBeFocused();
   await dialog.getByLabel("Project Title *").fill(title);
   await dialog.getByRole("button", { name: "Create Project" }).click();
 

@@ -92,7 +92,6 @@ export function NewProjectDialog({ children }: NewProjectDialogProps) {
                                 placeholder="e.g., SaaS Vendor Review Q1 2025"
                                 value={title}
                                 onChange={(e) => setTitle(e.target.value)}
-                                autoFocus
                             />
                         </div>
                         <div className="grid gap-2">

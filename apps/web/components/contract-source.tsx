@@ -219,6 +219,9 @@ export function ContractSourceProvider({
                     </Button>
                   </nav>
                   <div
+                    // The passage scrolls, so keyboard users must be able to focus it to scroll it
+                    // (axe's scrollable-region-focusable); a labelled region is not a widget.
+                    // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
                     tabIndex={0}
                     role="region"
                     aria-label="Source passage"
