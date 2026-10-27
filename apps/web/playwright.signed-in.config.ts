@@ -45,7 +45,8 @@ export default defineConfig({
     },
     {
       name: "workspace",
-      testMatch: "workspace.spec.ts",
+      // Files run in name order, so the accessibility scans see the still-empty account first.
+      testMatch: ["a11y.spec.ts", "workspace.spec.ts"],
       dependencies: ["sign-in"],
       use: { storageState: AUTH_STATE_PATH },
     },
