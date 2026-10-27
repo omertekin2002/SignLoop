@@ -193,7 +193,7 @@ export function loadServiceConfig(
   );
   const primaryModel = parseProviderModel(
     "PRIMARY_LLM_MODEL",
-    configuredPrimaryModel ?? "gpt-6.1-sol",
+    configuredPrimaryModel ?? "gpt-6.1-terra",
   );
 
   if (
