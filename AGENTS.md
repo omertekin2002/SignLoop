@@ -23,7 +23,7 @@ From the repository root:
 
 From `apps/web`:
 
-- `bun run test` runs Vitest directly. Pass a file to focus a run, e.g. `bun run test lib/contract-tools.test.ts`.
+- `bun run test` runs Vitest directly. Pass a file to focus a run, e.g. `bun run test lib/contract-tools.test.ts` or `bun run test components/upload-dialog.test.tsx`. `vitest.config.ts` has two projects: `node` runs `lib/**/*.test.ts` and `evals/**/*.test.ts` in Node, and `components` runs `components/**/*.test.tsx` in jsdom with Testing Library (`vitest.setup.ts` adds the jest-dom matchers and cleanup). Component tests mock network modules (`@/lib/upload-contract`, the `/uploads` config query) and `sonner`; render with a `QueryClientProvider` when a component uses React Query.
 - `bun run test:integration` creates a disposable local PostgreSQL database, applies migrations, runs database regressions, and removes it. Set `POSTGRES_BIN` if PostgreSQL binaries are not in `/opt/homebrew/opt/postgresql@16/bin`.
 - Database integration tests skip in ordinary test runs unless `SIGNLOOP_TEST_DATABASE_URL` is set. The disposable-database script sets this itself, or uses an already-set URL for an empty `localhost` `signloop_test` database (as CI does), and does not use `POSTGRES_URL`.
 - `bun run storage:cleanup` processes the real storage-deletion outbox using configured database/storage credentials.
@@ -59,7 +59,7 @@ This is a Turborepo with workspaces in `apps/*` and `packages/*`:
 - `packages/eslint-config`: shared ESLint presets.
 - `packages/typescript-config`: shared TypeScript configurations.
 
-`@/` resolves to `apps/web`. Tests live alongside libraries as `lib/**/*.test.ts` in the web app and `src/**/*.test.ts` in the chat engine; gateway tests live in `apps/gateway/tests`. See the root README for setup and current behavior; package manifests and implementation files are the source of truth for commands and limits.
+`@/` resolves to `apps/web`. Web app tests live alongside the code they cover as `lib/**/*.test.ts` and `components/**/*.test.tsx`, and chat engine tests as `src/**/*.test.ts`; gateway tests live in `apps/gateway/tests`. See the root README for setup and current behavior; package manifests and implementation files are the source of truth for commands and limits.
 
 ## Chat Engine
 

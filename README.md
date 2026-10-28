@@ -46,7 +46,7 @@ Turbo may return cached results. Use `bun run build --force` for a fresh build. 
 
 From `apps/web`, `apps/gateway`, or `packages/chat-engine`, `bun run test` invokes that workspace's Vitest suite directly; a path narrows the run, for example `bun run test lib/contract-tools.test.ts` in `apps/web`, `bun run test tests/contract.test.ts` in `apps/gateway`, or `bun run test src/chat.test.ts` in the package. The gateway and the package also have their own `lint` and `check-types` scripts, which the root commands include. Run the gateway itself with `bun run dev` from `apps/gateway`; see its [README](apps/gateway/README.md).
 
-Tests include the [contract analysis evaluations](apps/web/evals/README.md), which replay hand-written model outputs through the production analysis path. They make no provider calls.
+Tests include the [contract analysis evaluations](apps/web/evals/README.md), which replay hand-written model outputs through the production analysis path. They make no provider calls. The web suite also renders React components (`apps/web/components/**/*.test.tsx`) with Testing Library in jsdom, with network modules mocked; `bun run test components/upload-dialog.test.tsx` in `apps/web` runs one file.
 
 Database tests skip unless `SIGNLOOP_TEST_DATABASE_URL` is supplied. The supported disposable-database workflow is:
 
