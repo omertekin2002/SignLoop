@@ -298,6 +298,8 @@ describe("quote diagnosis", () => {
     "Head clause: fees renew yearly.",
     filler("x", 9800),
     "Middle clause: renewal is automatic.",
+    filler("x", 3000),
+    "Unsent clause: copies may be signed electronically.",
     filler("y", 5300),
     "Tail clause: disputes go to court.",
     filler("z", 100),
@@ -324,9 +326,17 @@ describe("quote diagnosis", () => {
       { quote: "Tail clause: disputes go to court.", segment: "head" },
     ],
     [
-      "omitted_middle",
+      "wrong_segment",
       long,
       { quote: "Middle clause: renewal is automatic.", segment: "head" },
+    ],
+    [
+      "omitted_middle",
+      long,
+      {
+        quote: "Unsent clause: copies may be signed electronically.",
+        segment: "middle-1",
+      },
     ],
     [
       "omission_marker",

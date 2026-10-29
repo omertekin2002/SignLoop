@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildAnalysisPrompt, parseStrictJson } from "./analysis";
+import {
+  CONTRACT_HEAD_LENGTH,
+  CONTRACT_TAIL_LENGTH,
+  contractAnalysisSegments,
+} from "./source-citations";
 import type { AnalysisResult } from "./schemas";
 
 const validPayload: AnalysisResult = {
@@ -315,7 +320,68 @@ describe("buildAnalysisPrompt", () => {
       /characters omitted from the middle of the contract/i,
     );
     expect(prompt).toContain("BEGIN UNTRUSTED CONTRACT");
-    expect(coverageNotices[0]).toMatch(/bounded head-and-tail excerpt/i);
+    expect(coverageNotices[0]).toBe(
+      `Contract analysis used a bounded excerpt of the head, the tail and 0 selected middle passages; ${Array.from(contract).length - CONTRACT_HEAD_LENGTH - CONTRACT_TAIL_LENGTH} middle characters were omitted.`,
+    );
+  });
+
+  it("sends every selected middle passage, none of the unsent text, and the true omitted total", () => {
+    const clause = (number: number, body: string) =>
+      `${number}. ${body} Section ${number} of this agreement applies to both parties.\n`;
+    const boilerplate = (number: number) =>
+      clause(number, "Records. Each party keeps its own records.");
+    const lines = [
+      ...Array.from({ length: 150 }, (_, index) => boilerplate(index + 1)),
+      clause(151, "Renewal. This agreement renews automatically for one year."),
+      boilerplate(152),
+      clause(153, "Notice. Notice of non-renewal is due sixty (60) days before renewal."),
+      clause(154, "Notice. Written notice may be sent by email."),
+      ...Array.from({ length: 100 }, (_, index) => boilerplate(index + 155)),
+    ];
+    const contract = lines.join("");
+    const segments = contractAnalysisSegments(contract);
+    const { prompt, coverageNotices } = buildAnalysisPrompt(contract);
+
+    expect(segments.map((part) => part.label)).toEqual([
+      "head",
+      "middle-1",
+      "middle-2",
+      "middle-3",
+      "tail",
+    ]);
+    expect(segments.slice(1, 4).map((part) => part.text)).toEqual([
+      lines[150],
+      lines[152],
+      lines[153],
+    ]);
+    for (const part of segments) {
+      expect(prompt).toContain(
+        `Contract segment: ${part.label} (Unicode code points ${part.start}–${part.end}, end exclusive)\n${part.text}`,
+      );
+    }
+    const sent = segments.reduce((sum, part) => sum + part.end - part.start, 0);
+    const gaps = segments
+      .slice(1)
+      .map((part, index) => part.start - segments[index]!.end);
+    // middle-2 and middle-3 are adjacent, so no marker separates them.
+    expect(gaps.map((gap) => gap > 0)).toEqual([true, true, false, true]);
+    for (const gap of gaps.filter((gap) => gap > 0))
+      expect(prompt).toContain(
+        `[${gap} characters omitted from the middle of the contract]`,
+      );
+    expect(
+      prompt.match(/characters omitted from the middle of the contract/g),
+    ).toHaveLength(3);
+    const unsent = lines.filter(
+      (line) => !segments.some((part) => part.text.includes(line)),
+    );
+    expect(unsent).toContain(lines[151]);
+    for (const line of unsent) expect(prompt).not.toContain(line);
+    expect(prompt).toContain("full, head, middle-1 to middle-4, or tail");
+    expect(coverageNotices).toEqual([
+      `Contract analysis used a bounded excerpt of the head, the tail and 3 selected middle passages; ${contract.length - sent} middle characters were omitted.`,
+    ]);
+    expect(contract.length - sent).toBe(gaps.reduce((sum, gap) => sum + gap, 0));
   });
 
   it("delimits and bounds project context as untrusted evidence", () => {

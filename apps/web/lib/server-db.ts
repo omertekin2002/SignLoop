@@ -1,4 +1,4 @@
-import { CONTRACT_ANALYSIS_LIMIT, CONTRACT_HEAD_LENGTH, CONTRACT_TAIL_LENGTH, MAX_EVIDENCE_QUOTE, SOURCE_PAGE_SIZE, type SourceCitation } from "@/lib/source-citations";
+import { MAX_EVIDENCE_QUOTE, SOURCE_PAGE_SIZE, type SourceCitation } from "@/lib/source-citations";
 import { parseContractEvidence, validateContractReplay, STALE_CONTRACT_REPLY, type ContractEvidence, type CurrentContractRevision } from "@/lib/contract-evidence";
 import {
   compactAgentMessages,
@@ -923,7 +923,15 @@ export async function getContractWindowForUser(
   return rows[0] ?? null;
 }
 
-/** One owner-scoped snapshot; a changed revision never returns replacement text. */
+/**
+ * One owner-scoped snapshot; a changed revision never returns replacement text.
+ *
+ * A highlight needs the analysed revision and an exact quote at the citation's offsets, which bind
+ * it to this contract's text. It is deliberately not limited to the segments sent for analysis:
+ * citations only come from stored reports, where verifyQuote already checked them against those
+ * segments, and the segment layout has changed (head and tail, then selected middle passages), so
+ * a window check would drop highlights from older reports.
+ */
 export async function getContractSourceForUser(input: {
   userId: string;
   contractId: string;
@@ -961,7 +969,6 @@ export async function getContractSourceForUser(input: {
         ELSE NULL END AS text,
       coalesce(revision = $3 AND $5::integer >= 0 AND $6::integer > $5
         AND $6 <= total AND $6 - $5 <= ${MAX_EVIDENCE_QUOTE}
-        AND (total <= ${CONTRACT_ANALYSIS_LIMIT} OR $6 <= ${CONTRACT_HEAD_LENGTH} OR $5 >= total - ${CONTRACT_TAIL_LENGTH})
         AND substring(text_content FROM $5::integer + 1 FOR $6::integer - $5::integer) = $7,
         false) AS "highlightMatches"
     FROM source`, [
