@@ -1,5 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PHASE_DEVELOPMENT_SERVER } from "next/constants.js";
+import { contentSecurityPolicy } from "./lib/content-security-policy.js";
 import {
   ENGLISH_MODEL_DIRECTORY,
   ENGLISH_MODEL_FILE,
@@ -50,8 +52,11 @@ const ocrRouteKeys = OCR_ROUTES.map(
   (route) => `${route.replace(/[[\]]/g, "\\$&")}/route`,
 );
 
-/** @type {import('next').NextConfig} */
-const nextConfig = {
+/**
+ * @param {string} phase
+ * @returns {import('next').NextConfig}
+ */
+const nextConfig = (phase) => ({
   // Workspace packages ship TypeScript source; Next compiles them with the app.
   transpilePackages: ["@repo/chat-engine"],
   // Loaded with Node's require at runtime, so the paths these packages derive from __dirname are
@@ -87,10 +92,17 @@ const nextConfig = {
             key: "Permissions-Policy",
             value: "camera=(), geolocation=(), microphone=()",
           },
+          // Report-only until production reports are clean; lib/content-security-policy.js.
+          {
+            key: "Content-Security-Policy-Report-Only",
+            value: contentSecurityPolicy({
+              dev: phase === PHASE_DEVELOPMENT_SERVER,
+            }),
+          },
         ],
       },
     ];
   },
-};
+});
 
 export default nextConfig;

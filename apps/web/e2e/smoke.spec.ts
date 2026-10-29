@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { expectNoCspViolations, recordCspViolations } from "./csp";
 import { E2E_ORIGIN, E2E_REDIRECT_URI, E2E_WORKOS_CLIENT_ID } from "./placeholder-env";
 
 // Keep the browser on the local server: a regression that redirects a public page to WorkOS, or
@@ -48,6 +49,69 @@ test("responses carry the security headers from next.config.js", async ({ reques
   expect(headers["x-frame-options"]).toBe("DENY");
   expect(headers["referrer-policy"]).toBe("strict-origin-when-cross-origin");
   expect(headers["permissions-policy"]).toBe("camera=(), geolocation=(), microphone=()");
+  // Report-only until production reports are clean; nothing enforces a policy yet.
+  const policy = headers["content-security-policy-report-only"] ?? "";
+  for (const directive of [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline';",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "report-uri /api/csp-report",
+  ])
+    expect(policy).toContain(directive);
+  // A production build never allows eval().
+  expect(policy).not.toContain("'unsafe-eval'");
+  expect(headers).not.toHaveProperty("content-security-policy");
+});
+
+test("the landing page raises no CSP violations, through the whole 3D scroll", async ({ page }) => {
+  const violations = await recordCspViolations(page);
+  await page.goto("/");
+  await expect(page.locator('h1 span[aria-hidden="true"]').first()).toContainText("Not guesswork.");
+  const notice = page.getByRole("alertdialog", { name: "SignLoop Privacy Notice" });
+  await notice.getByRole("button", { name: "I Understand and Accept" }).click();
+  await expect(notice).toBeHidden();
+  // The constellation morphs through its shapes as the landing page scrolls.
+  for (let step = 0; step < 12; step++) {
+    await page.mouse.wheel(0, 800);
+    await page.waitForTimeout(100);
+  }
+  await page.getByRole("button", { name: "Open sidebar" }).click();
+  await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  expectNoCspViolations(violations, "/");
+});
+
+test("the privacy policy raises no CSP violations", async ({ page }) => {
+  const violations = await recordCspViolations(page);
+  await page.goto("/privacy");
+  await expect(page.getByRole("heading", { level: 1, name: "Privacy Policy" })).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  expectNoCspViolations(violations, "/privacy");
+});
+
+// Proves the two tests above can fail: a blocked source is recorded and reported to the endpoint.
+test("a CSP violation is recorded and reported to /api/csp-report", async ({ page }) => {
+  const violations = await recordCspViolations(page);
+  await page.goto("/privacy");
+  await expect(page.getByRole("heading", { level: 1, name: "Privacy Policy" })).toBeVisible();
+
+  const reported = page.waitForResponse(
+    (response) => response.url() === `${E2E_ORIGIN}/api/csp-report`,
+  );
+  await page.evaluate(() => {
+    const image = new Image();
+    image.src = "https://csp-test.invalid/pixel.png?private=1";
+  });
+  const response = await reported;
+  expect(response.status()).toBe(204);
+  expect(response.request().headers()["content-type"]).toBe("application/csp-report");
+  expect(violations).toEqual([
+    expect.objectContaining({
+      directive: "img-src",
+      blocked: "https://csp-test.invalid/pixel.png?private=1",
+    }),
+  ]);
 });
 
 for (const path of ["/dashboard", "/sign-in"]) {
