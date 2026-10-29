@@ -455,14 +455,33 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(await getAnalysisForUser("owner", item.id, saved.id)).toBeNull();
   });
 
-  it("rechecks report existence and rejects mismatched or omitted-middle spans", async () => {
+  it("rechecks report existence, highlights middle-passage quotes, and rejects mismatched spans", async () => {
     const item = await contract();
-    const text = "x".repeat(10000) + "MIDDLE" + "x".repeat(10000) + "END";
+    const renewal =
+      "9.2 Renewal. This Agreement renews automatically unless notice is given 60 days before renewal.\n";
+    const text = "x".repeat(10000) + "\n" + renewal + "x".repeat(10000) + "END";
     await pool.current!.query(
       "UPDATE contracts SET text_content = $1 WHERE id = $2",
       [text, item.id],
     );
-    const saved = await analyse(item.id);
+    const snapshot = await getContractWithLatestAnalysisForUser("owner", item.id);
+    const saved = await createAnalysisForContract({
+      userId: "owner",
+      contractId: item.id,
+      expectedRevision: snapshot!.revision,
+      riskBadge: "LOW",
+      resultJson: attachAnalysisSources(
+        {
+          red_flags: [
+            { evidence: { quote: "renews automatically", segment: "middle-1" } },
+          ],
+        },
+        item.id,
+        text,
+      ),
+      llmProvider: "test",
+      llmModel: "test",
+    });
     const revision = contractSourceRevision(text);
     const base = {
       userId: "owner",
@@ -471,23 +490,20 @@ describe.skipIf(!connectionString)("database integration", () => {
       offset: 0,
       revision,
     };
-    const citation = {
-      contract_id: item.id,
-      revision,
-      index_unit: "unicode-code-points" as const,
-      status: "verified" as const,
-      quote: "MIDDLE",
-      start: 10000,
-      end: 10006,
-    };
+    const stored = await getAnalysisForUser("owner", item.id, saved.id);
+    const citation = citationForReport(stored?.resultJson, item.id, 0)!;
+    expect(citation).toMatchObject({
+      quote: "renews automatically",
+      start: text.indexOf("renews automatically"),
+    });
     expect(
       (await getContractSourceForUser({ ...base, citation }))?.highlightMatches,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       (
         await getContractSourceForUser({
           ...base,
-          citation: { ...citation, start: 0, end: 6 },
+          citation: { ...citation, quote: "renews annually....." },
         })
       )?.highlightMatches,
     ).toBe(false);
@@ -495,7 +511,20 @@ describe.skipIf(!connectionString)("database integration", () => {
       (
         await getContractSourceForUser({
           ...base,
-          citation: { ...citation, quote: "END", start: 20006, end: 20009 },
+          citation: { ...citation, start: 0, end: citation.end - citation.start },
+        })
+      )?.highlightMatches,
+    ).toBe(false);
+    expect(
+      (
+        await getContractSourceForUser({
+          ...base,
+          citation: {
+            ...citation,
+            quote: "END",
+            start: text.length - 3,
+            end: text.length,
+          },
         })
       )?.highlightMatches,
     ).toBe(true);
