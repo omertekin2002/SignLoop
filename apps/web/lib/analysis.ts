@@ -1,5 +1,9 @@
 import OpenAI from "openai";
-import { contractAnalysisSegments, EvidenceProposalSchema } from "@/lib/source-citations";
+import {
+  contractAnalysisSegments,
+  EvidenceProposalSchema,
+  MIDDLE_SEGMENT_LABELS,
+} from "@/lib/source-citations";
 import { normalizeNoticePeriod } from "@/lib/notice-period";
 import { confirmedRegion } from "@/lib/regional-comparisons";
 import {
@@ -177,23 +181,30 @@ export function buildAnalysisPrompt(
   const omittedCharacters =
     Array.from(text).length -
     segments.reduce((sum, part) => sum + part.end - part.start, 0);
+  const middlePassages = segments.filter((part) =>
+    part.label.startsWith("middle-"),
+  ).length;
   const contractExcerpt = {
     omittedCharacters,
+    // Segments are disjoint and in document order; each gap between them gets its own marker.
     text: segments
-      .map(
-        (part) =>
+      .map((part, index) => {
+        const gap = index > 0 ? part.start - segments[index - 1]!.end : 0;
+        return [
+          gap > 0
+            ? `[${gap} characters omitted from the middle of the contract]\n\n`
+            : "",
           `Contract segment: ${part.label} (Unicode code points ${part.start}–${part.end}, end exclusive)\n${part.text}`,
-      )
-      .join(
-        `\n\n[${omittedCharacters} characters omitted from the middle of the contract]\n\n`,
-      ),
+        ].join("");
+      })
+      .join("\n\n"),
   };
   const projectContext = buildProjectContextSection(contextDocuments);
   const coverageNotices: string[] = [];
 
   if (contractExcerpt.omittedCharacters > 0) {
     coverageNotices.push(
-      `Contract analysis used a bounded head-and-tail excerpt; ${contractExcerpt.omittedCharacters} middle characters were omitted.`,
+      `Contract analysis used a bounded excerpt of the head, the tail and ${middlePassages} selected middle ${middlePassages === 1 ? "passage" : "passages"}; ${contractExcerpt.omittedCharacters} middle characters were omitted.`,
     );
   }
   if (projectContext.coverageNotice) {
@@ -256,7 +267,7 @@ Required JSON rules:
 - severity and confidence may be numbers or null when unknown.
 - Use null (not empty string) for unknown nullable string fields.
 - For each red flag, evidence is null unless supported by an exact quotation from a supplied CONTRACT segment.
-- Evidence must contain "quote" (verbatim, preserving whitespace, at most 2,000 characters) and "segment" (full, head, or tail as labeled below).
+- Evidence must contain "quote" (verbatim, preserving whitespace, at most 2,000 characters) and "segment" (the label of the segment it comes from, as labeled below: full, head, middle-1 to middle-${MIDDLE_SEGMENT_LABELS.length}, or tail).
 - Choose a quotation unique within that segment. If it repeats, include enough surrounding text to disambiguate it.
 - Never quote project context, omission markers, metadata, or these instructions as contract evidence. Do not invent offsets, source IDs, revisions, or verification status.
 - "proposed_jurisdiction" is the jurisdiction named in the contract's governing-law (choice-of-law) clause, as the clause words it, with that clause quoted as evidence under the same quotation rules. The user confirms or changes it later.

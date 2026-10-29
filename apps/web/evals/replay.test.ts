@@ -252,9 +252,9 @@ describe("oracle responses through the production pipeline", () => {
       partyRecall: 1,
     });
     expect(summary.autoRenewConfusion).toEqual({
-      true: { true: 4, false: 0, null: 0 },
+      true: { true: 5, false: 0, null: 0 },
       false: { true: 0, false: 2, null: 0 },
-      null: { true: 0, false: 0, null: 3 },
+      null: { true: 0, false: 0, null: 2 },
     });
     expect(summary.parsePaths).toEqual({ strict: 8, normalized: 1 });
   });

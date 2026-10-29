@@ -235,7 +235,7 @@ function scoreField(
 // --- Quotations ------------------------------------------------------------------------------
 
 const OMISSION_MARKER =
-  /characters omitted from the middle of the contract|Contract segment: (?:full|head|tail) \(Unicode code points/;
+  /characters omitted from the middle of the contract|Contract segment: (?:full|head|middle-\d+|tail) \(Unicode code points/;
 
 function occurrences(haystack: string, needle: string): number {
   let count = 0;
