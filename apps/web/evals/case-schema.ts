@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { MAX_EVIDENCE_QUOTE } from "@/lib/source-citations";
+import {
+  MAX_EVIDENCE_QUOTE,
+  MIDDLE_SEGMENT_LABELS,
+} from "@/lib/source-citations";
 import { CLAUSE_CATEGORIES } from "./taxonomy";
 
 export const DURATION_UNITS = [
@@ -48,8 +51,13 @@ const GoldClauseSchema = z.strictObject({
   /** Required clauses count toward recall; optional ones are acceptable citations only. */
   required: z.boolean(),
   span: GoldSpanSchema,
-  /** Asserted when present. "omitted" spans sit in the unsent middle of a long contract. */
-  segment: z.enum(["full", "head", "tail", "omitted"]).optional(),
+  /**
+   * Asserted when present. "middle-N" spans sit in a selected middle passage of a long contract,
+   * "omitted" spans in its unsent middle.
+   */
+  segment: z
+    .enum(["full", "head", ...MIDDLE_SEGMENT_LABELS, "tail", "omitted"])
+    .optional(),
 });
 
 export const EvalCaseSchema = z

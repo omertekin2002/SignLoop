@@ -51,9 +51,16 @@ export default defineConfig({
       use: { storageState: AUTH_STATE_PATH },
     },
     {
+      // After the workspace checks, which expect an account without contracts.
+      name: "csp",
+      testMatch: "csp.spec.ts",
+      dependencies: ["workspace"],
+      use: { storageState: AUTH_STATE_PATH },
+    },
+    {
       name: "sign-out",
       testMatch: "sign-out.spec.ts",
-      dependencies: ["workspace"],
+      dependencies: ["csp"],
       use: { storageState: AUTH_STATE_PATH },
     },
   ],

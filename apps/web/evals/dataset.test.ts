@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { contractSourceRevision } from "@/lib/analysis-sources";
-import { SourceIdentitySchema } from "@/lib/source-citations";
+import {
+  CONTRACT_HEAD_LENGTH,
+  SourceIdentitySchema,
+} from "@/lib/source-citations";
 import {
   applyPatch,
   evalContractId,
@@ -53,16 +56,35 @@ describe("evaluation cases", () => {
     );
     expect(omitted.length).toBeGreaterThan(0);
     for (const { loaded, clause } of omitted) {
-      const [head, tail] = loaded.segments;
-      expect(loaded.segments.map((segment) => segment.label)).toEqual([
-        "head",
-        "tail",
-      ]);
-      expect(clause.start).toBeGreaterThanOrEqual(head!.end);
-      expect(clause.end).toBeLessThanOrEqual(tail!.start);
+      const head = loaded.segments[0]!;
+      const tail = loaded.segments.at(-1)!;
+      expect([head.label, tail.label]).toEqual(["head", "tail"]);
+      expect(clause.start).toBeGreaterThanOrEqual(head.end);
+      expect(clause.end).toBeLessThanOrEqual(tail.start);
+      for (const segment of loaded.segments)
+        expect(
+          clause.end <= segment.start || clause.start >= segment.end,
+        ).toBe(true);
       expect(loaded.expectedCoverageNotices.join(" ")).toMatch(
         /middle characters were omitted/,
       );
+    }
+  });
+
+  it("include required gold spans from selected middle passages", () => {
+    const middle = cases.flatMap((loaded) =>
+      loaded.clauses
+        .filter((clause) => clause.location.startsWith("middle-"))
+        .map((clause) => ({ loaded, clause })),
+    );
+    expect(middle.some(({ clause }) => clause.required)).toBe(true);
+    for (const { loaded, clause } of middle) {
+      const segment = loaded.segments.find(
+        (candidate) => candidate.label === clause.location,
+      )!;
+      expect(clause.start).toBeGreaterThanOrEqual(CONTRACT_HEAD_LENGTH);
+      expect(clause.start).toBeGreaterThanOrEqual(segment.start);
+      expect(clause.end).toBeLessThanOrEqual(segment.end);
     }
   });
 
@@ -71,7 +93,9 @@ describe("evaluation cases", () => {
       loaded.clauses.filter((clause) => clause.location === "tail"),
     );
     expect(tail.length).toBeGreaterThan(0);
-    expect(tail.every((clause) => clause.start > 9750)).toBe(true);
+    expect(tail.every((clause) => clause.start > CONTRACT_HEAD_LENGTH)).toBe(
+      true,
+    );
   });
 
   it("derive distinct contract IDs that production source receipts accept", () => {
@@ -114,7 +138,7 @@ describe("evaluation cases", () => {
 describe("gold span location", () => {
   const filler = (length: number) => "x".repeat(length);
   const long = [
-    filler(9740),
+    filler(CONTRACT_HEAD_LENGTH - 10),
     "BOUNDARY CLAUSE",
     filler(3000),
     "MIDDLE CLAUSE",
