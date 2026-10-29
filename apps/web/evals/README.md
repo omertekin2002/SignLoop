@@ -29,7 +29,7 @@ A refused or unused recording fails the run rather than being scored. ESLint blo
 | `taxonomy.ts`                                          | Clause categories and the aliases that map free-text flag types onto them.                                                            |
 | `dataset.ts`, `transport.ts`, `harness.ts`, `score.ts` | Loading, replay, pipeline execution, and pure scorers.                                                                                |
 
-Each gold span must occur exactly once in the contract, inside the segment production sends (`full`, or `head` and `tail` beyond 15,000 code points). Spans marked `"segment": "omitted"` must lie wholly in the unsent middle.
+Each gold span must occur exactly once in the contract, inside one segment production sends: `full`, or beyond 15,000 code points `head`, `tail`, or a selected middle passage `middle-1` to `middle-4` (`contractAnalysisSegments` in `lib/source-citations.ts`). A declared `segment` must name that segment. Spans marked `"segment": "omitted"` must lie wholly in the unsent middle, outside every selected passage, and cannot be required.
 
 ## Metrics
 
