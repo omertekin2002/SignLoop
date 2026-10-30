@@ -455,7 +455,7 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(await getAnalysisForUser("owner", item.id, saved.id)).toBeNull();
   });
 
-  it("rechecks report existence, highlights middle-passage quotes, and rejects mismatched spans", async () => {
+  it("rechecks report existence, highlights quotes from a section of a long contract, and rejects mismatched spans", async () => {
     const item = await contract();
     const renewal =
       "9.2 Renewal. This Agreement renews automatically unless notice is given 60 days before renewal.\n";
@@ -473,7 +473,7 @@ describe.skipIf(!connectionString)("database integration", () => {
       resultJson: attachAnalysisSources(
         {
           red_flags: [
-            { evidence: { quote: "renews automatically", segment: "middle-1" } },
+            { evidence: { quote: "renews automatically", segment: "section-2" } },
           ],
         },
         item.id,

@@ -6,11 +6,7 @@ import {
 import {
   citationForReport,
   CONTRACT_ANALYSIS_LIMIT,
-  CONTRACT_HEAD_LENGTH,
-  CONTRACT_TAIL_LENGTH,
   contractAnalysisSegments,
-  MIDDLE_PASSAGE_MAX_LENGTH,
-  MIDDLE_SEGMENT_LABELS,
   verifyQuote,
 } from "./source-citations";
 import { buildAnalysisPrompt, parseStrictJson } from "./analysis";
@@ -106,6 +102,9 @@ describe("exact contract quote matching", () => {
     { quote: 3 },
     { quote: "fee", segment: "project" },
     { quote: "fee", segment: "head" },
+    { quote: "fee", segment: "section-1" },
+    { quote: "fee", segment: "section-0" },
+    { quote: "fee", segment: "section-01" },
     { quote: " ", segment: "full" },
     { quote: "x".repeat(2001), segment: "full" },
   ])("rejects unsupported evidence %j", (proposal) => {
@@ -133,63 +132,38 @@ describe("exact contract quote matching", () => {
       end: 12,
     });
   });
-  it("accepts only a continuous span within the supplied head or tail and disambiguates across segments", () => {
-    const text =
-      "fee " +
-      "h".repeat(CONTRACT_HEAD_LENGTH - 4) +
-      "OMITTED ONLY" +
-      "m".repeat(6000) +
-      "t".repeat(CONTRACT_TAIL_LENGTH - 4) +
-      " fee";
-    const segments = contractAnalysisSegments(text);
-    expect(segments.map((p) => p.end - p.start)).toEqual([
-      CONTRACT_HEAD_LENGTH,
-      CONTRACT_TAIL_LENGTH,
-    ]);
-    expect(verify(text, "fee", "head")?.start).toBe(0);
-    expect(verify(text, "fee", "tail")?.start).toBe(
-      Array.from(text).length - 3,
-    );
-    expect(verify(text, "OMITTED ONLY", "head")).toBeNull();
-    expect(verify(text, "OMITTED ONLY", "tail")).toBeNull();
-    expect(verify(text, "hhhttt", "head")).toBeNull();
-    expect(
-      verify(text, "characters omitted from the middle", "tail"),
-    ).toBeNull();
-    expect(verify(text, "fee", "full")).toBeNull();
-  });
-  it("rejects quotes crossing an omitted gap even when only one code point was omitted", () => {
-    // The capped renewal passage ends at "A"; its one-code-point remainder "G" scores nothing.
-    const text =
-      "h".repeat(CONTRACT_HEAD_LENGTH) +
-      "x".repeat(3000) +
-      "\n\nrenewal " +
-      "m".repeat(MIDDLE_PASSAGE_MAX_LENGTH - 9) +
-      "A" +
-      "G" +
-      "B" +
-      "t".repeat(CONTRACT_TAIL_LENGTH - 1);
+  it("accepts only a continuous span within one section and disambiguates across sections", () => {
+    const text = "fee " + "x".repeat(CONTRACT_ANALYSIS_LIMIT * 2) + " fee";
     const segments = contractAnalysisSegments(text);
     expect(segments.map((part) => part.label)).toEqual([
-      "head",
-      "middle-1",
-      "tail",
+      "section-1",
+      "section-2",
+      "section-3",
     ]);
-    expect(segments[2]!.start - segments[1]!.end).toBe(1);
-    expect(verify(text, "A", "middle-1")?.end).toBe(segments[1]!.end);
-    for (const label of ["head", "middle-1", "tail"])
-      expect(verify(text, "AGB", label)).toBeNull();
-    expect(contractAnalysisSegments("😀".repeat(15000))).toHaveLength(1);
+    expect(verify(text, "fee", "section-1")?.start).toBe(0);
+    expect(verify(text, "fee", "section-3")?.start).toBe(
+      Array.from(text).length - 3,
+    );
+    expect(verify(text, "fee", "section-2")).toBeNull();
+    expect(verify(text, "fee", "full")).toBeNull();
+    // A quotation may not run from one section into the next.
+    const boundary = segments[1]!.start;
+    const across = Array.from(text)
+      .slice(boundary - 3, boundary + 3)
+      .join("");
+    for (const label of ["section-1", "section-2"])
+      expect(verify(text, across, label)).toBeNull();
   });
-  it("preserves code point offsets when truncation straddles emoji", () => {
+  it("preserves code point offsets when a section boundary falls among emoji", () => {
     const text = "😀".repeat(16000) + "TAIL";
     const parts = contractAnalysisSegments(text);
-    expect(Array.from(parts[0]!.text)).toHaveLength(CONTRACT_HEAD_LENGTH);
-    expect(verify(text, "TAIL", "tail")).toEqual({
+    expect(Array.from(parts[0]!.text)).toHaveLength(CONTRACT_ANALYSIS_LIMIT);
+    expect(verify(text, "TAIL", "section-2")).toEqual({
       quote: "TAIL",
       start: 16000,
       end: 16004,
     });
+    expect(contractAnalysisSegments("😀".repeat(15000))).toHaveLength(1);
   });
   it("never searches project context for a contract quotation", () => {
     const { prompt } = buildAnalysisPrompt("contract only", undefined, [
@@ -259,18 +233,31 @@ describe("exact contract quote matching", () => {
   );
 });
 
-// Numbered boilerplate clauses of about 100 code points, without any selection keyword. The emoji
-// make code point and UTF-16 offsets differ.
+// Numbered boilerplate clauses of about 100 code points. The emoji make code point and UTF-16
+// offsets differ.
 const boilerplate = (number: number) =>
   `${number}. Records. Each party will keep accurate records of its own work under this section 😀.\n`;
 const RENEWAL_CLAUSE =
-  "9.2 Renewal. This Agreement renews automatically for one (1) year unless either party gives sixty (60) days' written notice of non-renewal.\n";
-const longContract = (middle: string) =>
-  [
-    ...Array.from({ length: 100 }, (_, index) => boilerplate(index + 1)),
-    middle,
-    ...Array.from({ length: 100 }, (_, index) => boilerplate(index + 400)),
-  ].join("");
+  "350.2 Renewal. This Agreement renews automatically for one (1) year unless either party gives sixty (60) days' written notice of non-renewal.\n";
+const contractOf = (clauses: number) =>
+  Array.from({ length: clauses }, (_, index) => boilerplate(index + 1));
+
+function expectCoveringSections(text: string) {
+  const chars = Array.from(text);
+  const segments = contractAnalysisSegments(text);
+  expect(segments.map((part) => part.label)).toEqual(
+    segments.map((_, index) => `section-${index + 1}`),
+  );
+  expect(segments[0]!.start).toBe(0);
+  expect(segments.at(-1)!.end).toBe(chars.length);
+  for (const [index, part] of segments.entries()) {
+    expect(part.end - part.start).toBeGreaterThan(0);
+    expect(part.end - part.start).toBeLessThanOrEqual(CONTRACT_ANALYSIS_LIMIT);
+    expect(chars.slice(part.start, part.end).join("")).toBe(part.text);
+    if (index > 0) expect(part.start).toBe(segments[index - 1]!.end);
+  }
+  return segments;
+}
 
 describe("contract analysis segments", () => {
   it("sends a contract at or under the limit as one full segment", () => {
@@ -280,135 +267,60 @@ describe("contract analysis segments", () => {
     ]);
   });
 
-  it("sends disjoint, ordered segments within the budget, at exact code point offsets", () => {
-    const text = longContract(
-      [
-        boilerplate(300),
-        RENEWAL_CLAUSE,
-        boilerplate(301),
-        "12.3 Liability. Each party's liability for late payment interest is capped at the fees paid.\n",
-        boilerplate(302),
-      ].join(""),
+  it("covers a longer contract with consecutive sections that split at numbered clauses", () => {
+    const lines = contractOf(400);
+    const text = lines.join("");
+    expect(Array.from(text).length).toBeGreaterThan(
+      CONTRACT_ANALYSIS_LIMIT * 2,
     );
-    const chars = Array.from(text);
-    expect(chars.length).toBeGreaterThan(CONTRACT_ANALYSIS_LIMIT);
-    const segments = contractAnalysisSegments(text);
+    const segments = expectCoveringSections(text);
 
-    expect(segments.map((part) => part.label)).toEqual([
-      "head",
-      "middle-1",
-      "middle-2",
-      "tail",
-    ]);
-    expect(segments[0]!.start).toBe(0);
-    expect(segments.at(-1)!.end).toBe(chars.length);
-    for (const [index, part] of segments.entries()) {
-      expect(chars.slice(part.start, part.end).join("")).toBe(part.text);
-      if (index > 0)
-        expect(part.start).toBeGreaterThanOrEqual(segments[index - 1]!.end);
+    expect(segments).toHaveLength(3);
+    // Every section is made of whole clauses, so none starts or ends mid-clause.
+    for (const part of segments) {
+      expect(part.text).toMatch(/^\d+\. Records\./);
+      expect(part.text.endsWith("😀.\n")).toBe(true);
     }
-    expect(
-      segments.reduce((sum, part) => sum + part.end - part.start, 0),
-    ).toBeLessThanOrEqual(CONTRACT_ANALYSIS_LIMIT);
-    expect(segments[1]!.text).toBe(RENEWAL_CLAUSE);
     expect(contractAnalysisSegments(text)).toEqual(segments);
   });
 
-  it("selects a renewal or notice clause ahead of keyword-free boilerplate", () => {
-    const text = longContract(
-      [
-        ...Array.from({ length: 30 }, (_, index) => boilerplate(index + 200)),
-        RENEWAL_CLAUSE,
-        ...Array.from({ length: 30 }, (_, index) => boilerplate(index + 230)),
-      ].join(""),
-    );
-    const middle = contractAnalysisSegments(text).filter((part) =>
-      part.label.startsWith("middle-"),
-    );
-    expect(middle.map((part) => part.text)).toEqual([RENEWAL_CLAUSE]);
-    expect(verify(text, "renews automatically", "middle-1")).toEqual({
-      quote: "renews automatically",
-      start: Array.from(text.slice(0, text.indexOf("renews automatically")))
-        .length,
-      end:
-        Array.from(text.slice(0, text.indexOf("renews automatically"))).length +
-        "renews automatically".length,
-    });
+  it("starts sections after blank lines, including CRLF ones, and joins a heading to its clause", () => {
+    const paragraph = (index: number) =>
+      `Paragraph ${index}. Each party keeps its own records at its own offices, in good order and for seven years.\r\n\r\n`;
+    const text = `9. TERM AND RENEWAL\n\n${Array.from({ length: 300 }, (_, index) => paragraph(index)).join("")}`;
+    const segments = expectCoveringSections(text);
+
+    expect(
+      segments[0]!.text.startsWith("9. TERM AND RENEWAL\n\nParagraph 0."),
+    ).toBe(true);
+    for (const part of segments.slice(1))
+      expect(part.text).toMatch(/^Paragraph \d+\./);
   });
 
-  it("joins a section heading to its first clause and caps long passages", () => {
-    const longClause = `9.3 Notice. ${"Notices go to the addresses above. ".repeat(60)}\n`;
-    const text = longContract(
-      `\n9. TERM AND RENEWAL\n\n${RENEWAL_CLAUSE}${boilerplate(300)}${longClause}${boilerplate(301)}`,
+  it("cuts unbroken prose at a space, never inside a word, and covers the 2,000,000-character extraction limit", () => {
+    const text = "word ".repeat(400_000);
+    const segments = expectCoveringSections(text);
+
+    expect(segments).toHaveLength(
+      Math.ceil(text.length / CONTRACT_ANALYSIS_LIMIT),
     );
-    const middle = contractAnalysisSegments(text).filter((part) =>
-      part.label.startsWith("middle-"),
-    );
-    expect(middle[0]!.text).toBe(`9. TERM AND RENEWAL\n\n${RENEWAL_CLAUSE}`);
-    for (const part of middle)
-      expect(part.end - part.start).toBeLessThanOrEqual(
-        MIDDLE_PASSAGE_MAX_LENGTH,
-      );
-    expect(middle[1]!.text.startsWith("9.3 Notice. ")).toBe(true);
-    // Cut after a space, never inside a word.
-    expect(middle[1]!.text.endsWith(" ")).toBe(true);
+    for (const part of segments) expect(part.text.endsWith(" ")).toBe(true);
   });
 
-  it("starts unnumbered passages after blank lines, including CRLF ones", () => {
-    const paragraph =
-      "Renewal. This agreement renews automatically each year, unless notice is given in writing.\r\n";
-    const text = longContract(
-      `\r\n${paragraph}\r\nRecords are kept for seven years by each party at its own offices, in good order.\r\n`,
-    );
-    const middle = contractAnalysisSegments(text).filter((part) =>
-      part.label.startsWith("middle-"),
-    );
-    expect(middle.map((part) => part.text)).toEqual([`${paragraph}\r\n`]);
-  });
-
-  it("breaks score ties in favour of the earlier passage and caps the passage count", () => {
-    const clause = (number: number) =>
-      `${number}.1 Fees. ${"Fees are payable as stated. ".repeat(30)}\n`;
-    const text = longContract(
-      Array.from({ length: 4 }, (_, index) => clause(index + 100)).join(""),
-    );
-    const middle = contractAnalysisSegments(text).filter((part) =>
-      part.label.startsWith("middle-"),
-    );
-    // Each clause is about 870 code points, so only the first two fit the middle budget.
-    expect(middle.map((part) => part.text)).toEqual([clause(100), clause(101)]);
-
-    const short = (number: number) =>
-      `${number}.1 Fees. The fees are listed in the order form for this site, as agreed by both parties.\n`;
-    const many = longContract(
-      Array.from({ length: 10 }, (_, index) => short(index + 100)).join(""),
-    );
-    const selected = contractAnalysisSegments(many).filter((part) =>
-      part.label.startsWith("middle-"),
-    );
-    expect(selected.map((part) => part.label)).toEqual([
-      ...MIDDLE_SEGMENT_LABELS,
-    ]);
-    expect(selected.map((part) => part.text)).toEqual(
-      [100, 101, 102, 103].map(short),
-    );
-  });
-
-  it("verifies middle quotes to whole-document offsets and keeps matching exact", () => {
-    const notice =
-      "9.3 Notice. Notice of non-renewal is due sixty (60) days before renewal, and the notice must be signed.\n";
-    const text = longContract(`${RENEWAL_CLAUSE}${notice}`);
-    const segments = contractAnalysisSegments(text);
-    expect(segments.map((part) => part.label)).toEqual([
-      "head",
-      "middle-1",
-      "middle-2",
-      "tail",
-    ]);
-    expect(segments[1]!.end).toBe(segments[2]!.start);
-    const quote = "sixty (60) days before renewal";
+  it("verifies a quotation deep in a 60,000+ code point contract to whole-document offsets", () => {
+    const lines = contractOf(700);
+    lines.splice(349, 0, RENEWAL_CLAUSE);
+    const text = lines.join("");
+    expect(Array.from(text).length).toBeGreaterThan(60_000);
+    const segments = expectCoveringSections(text);
+    const quote = "sixty (60) days' written notice of non-renewal";
     const start = Array.from(text.slice(0, text.indexOf(quote))).length;
-    expect(verify(text, quote, "middle-2")).toEqual({
+    const containing = segments.find(
+      (part) => part.start <= start && start + quote.length <= part.end,
+    )!;
+
+    expect(containing.label).not.toBe("section-1");
+    expect(verify(text, quote, containing.label)).toEqual({
       quote,
       start,
       end: start + quote.length,
@@ -418,12 +330,8 @@ describe("contract analysis segments", () => {
         .slice(start, start + quote.length)
         .join(""),
     ).toBe(quote);
-    expect(verify(text, quote, "middle-1")).toBeNull();
-    expect(verify(text, quote, "middle-99")).toBeNull();
-    expect(verify(text, quote, "middle-3")).toBeNull();
-    // Adjacent segments are still separate: a quote may not run from one into the next.
-    expect(verify(text, "non-renewal.\n9.3 Notice.", "middle-1")).toBeNull();
-    expect(verify(text, "non-renewal.\n9.3 Notice.", "middle-2")).toBeNull();
-    expect(verify(text, "Notice", "middle-2")).toBeNull();
+    for (const part of segments.filter((part) => part !== containing))
+      expect(verify(text, quote, part.label)).toBeNull();
+    expect(verify(text, quote, `section-${segments.length + 1}`)).toBeNull();
   });
 });

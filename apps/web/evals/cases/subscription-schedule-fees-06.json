@@ -4,12 +4,12 @@
   "provenance": "synthetic/hand-written",
   "contract": "contracts/subscription-schedule-fees-06.txt",
   "context": [],
-  "notes": "Renewal terms sit in the head segment; the fee escalator and early termination fee sit in Schedule C, inside the tail segment, so tail offsets are absolute.",
+  "notes": "The contract is just longer than one request, so it is analysed in two sections and merged. Renewal terms sit in section-1; the fee escalator and early termination fee sit in Schedule C, which is section-2, so section-2 offsets are absolute.",
   "clauses": [
-    { "category": "auto_renewal", "required": true, "segment": "head", "span": "This Agreement renews automatically for successive twelve (12) month periods" },
-    { "category": "cancellation_notice", "required": true, "segment": "head", "span": "unless either party gives written notice of non-renewal at least 60 days before the end of the then-current term" },
-    { "category": "price_increase", "required": true, "segment": "tail", "span": "the Subscription Fees increase by five percent (5%) on each anniversary of the Effective Date" },
-    { "category": "early_termination_fee", "required": true, "segment": "tail", "span": "Customer shall pay an early termination fee equal to all Subscription Fees remaining for the then-current term" }
+    { "category": "auto_renewal", "required": true, "segment": "section-1", "span": "This Agreement renews automatically for successive twelve (12) month periods" },
+    { "category": "cancellation_notice", "required": true, "segment": "section-1", "span": "unless either party gives written notice of non-renewal at least 60 days before the end of the then-current term" },
+    { "category": "price_increase", "required": true, "segment": "section-2", "span": "the Subscription Fees increase by five percent (5%) on each anniversary of the Effective Date" },
+    { "category": "early_termination_fee", "required": true, "segment": "section-2", "span": "Customer shall pay an early termination fee equal to all Subscription Fees remaining for the then-current term" }
   ],
   "absent": ["arbitration"],
   "governing_law": { "jurisdiction": "State of Texas", "span": "This Agreement is governed by the laws of the State of Texas, and the courts of Travis County, Texas have exclusive jurisdiction." },

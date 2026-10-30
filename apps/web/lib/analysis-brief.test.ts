@@ -49,7 +49,7 @@ const FULL_RESULT: AnalysisResult = {
   comparison_jurisdiction: "England and Wales",
   proposed_jurisdiction: {
     jurisdiction: "England and Wales",
-    evidence: { quote: "governed by the laws of England and Wales", segment: "tail" },
+    evidence: { quote: "governed by the laws of England and Wales", segment: "section-3" },
     citation: citation("governed by the laws of England and Wales", 900),
   },
   risk_badge: "HIGH",
@@ -71,7 +71,7 @@ const FULL_RESULT: AnalysisResult = {
   },
   red_flags: [
     flag({
-      evidence: { quote: "shall renew automatically", segment: "middle-1" },
+      evidence: { quote: "shall renew automatically", segment: "section-2" },
       citation: citation("shall renew automatically"),
     }),
     flag({
@@ -80,7 +80,7 @@ const FULL_RESULT: AnalysisResult = {
       confidence: null,
       where: null,
       explanation: "Fees may rise once a year.",
-      evidence: { quote: "may increase fees annually", segment: "head" },
+      evidence: { quote: "may increase fees annually", segment: "section-1" },
     }),
     flag({ type: "Liability", explanation: "Liability is capped at one month's fees." }),
   ],
@@ -309,7 +309,7 @@ describe("renderAnalysisBriefMarkdown", () => {
         normal_in_region: [],
         proposed_jurisdiction: {
           jurisdiction: "Scotland",
-          evidence: { quote: "the laws of Scotland", segment: "tail" },
+          evidence: { quote: "the laws of Scotland", segment: "section-3" },
           citation: null,
         },
       }).markdown,
