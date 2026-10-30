@@ -4,7 +4,7 @@ Measures how well contract analysis finds risky clauses, quotes them verifiably,
 
 ## Tiers
 
-**Deterministic replay (this tier).** Runs with `bun run test`, so it runs in CI. It makes no provider calls and costs nothing. Each case's hand-written ideal model output (`oracle/`) is replayed through the production path: `buildAnalysisPrompt`, the OpenAI SDK client, provider fallback, JSON salvage and validation in `analyzeText`, then `finalizeAnalysisResult`, the same post-processing the analyze route stores. Every oracle must reach its documented ideal. Seven deliberately bad responses (`oracle/perturbations/`) must each move exactly the metrics they declare. This tier tests the pipeline and the scorers, not a model.
+**Deterministic replay (this tier).** Runs with `bun run test`, so it runs in CI. It makes no provider calls and costs nothing. Each case's hand-written ideal model output (`oracle/`) is replayed through the production path: `buildAnalysisPrompt`, the OpenAI SDK client, provider fallback, JSON salvage and validation in `analyzeText`, then `finalizeAnalysisResult`, the same post-processing the analyze route stores. A contract longer than 15,000 code points is analysed per section and merged, so its oracle is replayed as one answer per section, holding the red flags and jurisdiction proposal that cite that section, then a merge answer that keeps every flag by ID (`oracleInteractions` in `harness.ts`). Every oracle must reach its documented ideal. Seven deliberately bad responses (`oracle/perturbations/`) must each move exactly the metrics they declare. This tier tests the pipeline and the scorers, not a model.
 
 **Live recording (later, not built).** It will run only when `SIGNLOOP_EVAL_LIVE=1` is set, with hard caps on calls and cost, from a `workflow_dispatch`-only GitHub workflow. It will record real provider exchanges in the replay format, with `expect.fingerprint` set (see `transport.ts`), so recordings replay deterministically and are rejected once the prompt or request changes.
 
@@ -29,7 +29,7 @@ A refused or unused recording fails the run rather than being scored. ESLint blo
 | `taxonomy.ts`                                          | Clause categories and the aliases that map free-text flag types onto them.                                                            |
 | `dataset.ts`, `transport.ts`, `harness.ts`, `score.ts` | Loading, replay, pipeline execution, and pure scorers.                                                                                |
 
-Each gold span must occur exactly once in the contract, inside one segment production sends: `full`, or beyond 15,000 code points `head`, `tail`, or a selected middle passage `middle-1` to `middle-4` (`contractAnalysisSegments` in `lib/source-citations.ts`). A declared `segment` must name that segment. Spans marked `"segment": "omitted"` must lie wholly in the unsent middle, outside every selected passage, and cannot be required.
+Each gold span must occur exactly once in the contract, inside one segment production sends: `full`, or beyond 15,000 code points one of the sections `section-1` to `section-N` (`contractAnalysisSegments` in `lib/source-citations.ts`). A declared `segment` must name that segment. A span across a section boundary cannot be quoted and is rejected.
 
 ## Metrics
 
