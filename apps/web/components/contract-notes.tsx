@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useId, useState, type FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useId, type FormEvent } from "react";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleCheck, Loader2, NotebookPen, RefreshCw } from "lucide-react";
 import { ApiRequestError } from "@/lib/api-client";
 import {
@@ -45,6 +45,7 @@ const FIELDS = [
 
 const notesKey = (contractId: string) => ["contract-notes", contractId] as const;
 const unsavedKey = (contractId: string) => ["contract-notes", contractId, "unsaved"] as const;
+const saveKey = (contractId: string) => ["contract-notes", contractId, "save"] as const;
 
 function toStored(value: StoredNotes): StoredNotes {
   return {
@@ -125,44 +126,50 @@ export function ContractNotes({ contractId }: { contractId: string }) {
     refetchOnWindowFocus: false,
   });
 
-  // The contract page remounts its content when the analysis on screen changes, so unsaved edits
-  // are parked in this identity's query cache and restored here instead of being dropped.
-  const [editorState, setEditorState] = useState<Editor | null>(
-    () => queryClient.getQueryData<Editor>(unsavedKey(contractId)) ?? null,
-  );
+  // The contract page remounts its content when the analysis on screen changes. The editor state
+  // therefore lives in this identity's query cache rather than in the component, so a remount keeps
+  // unsaved text and a save that finishes after one still updates it. Null means "no edits": the
+  // editor is then the stored notes.
+  const editorKey = unsavedKey(contractId);
+  const editorEntry = useQuery({
+    queryKey: editorKey,
+    queryFn: () => null as Editor | null,
+    enabled: false,
+    staleTime: Infinity,
+    // Nothing refetches this entry, and it must outlive the default five-minute collection.
+    gcTime: Infinity,
+  });
   const editor: Editor | null =
-    editorState ?? (notes.data ? fresh(notes.data) : null);
+    editorEntry.data ?? (notes.data ? fresh(notes.data) : null);
   const dirty = editor ? !sameText(editor.draft, editor.base) : false;
+  // Counts a save started before a remount too.
+  const saving = useIsMutating({ mutationKey: saveKey(contractId) }) > 0;
 
-  useEffect(() => {
-    if (editorState && (editorState.conflict || !sameText(editorState.draft, editorState.base))) {
-      // Nothing observes this entry, so the default five-minute garbage collection would drop a
-      // draft left open that long. It is removed explicitly once saved or discarded.
-      queryClient.setQueryDefaults(unsavedKey(contractId), { gcTime: Infinity });
-      queryClient.setQueryData(unsavedKey(contractId), editorState);
-    } else {
-      queryClient.removeQueries({ queryKey: unsavedKey(contractId), exact: true });
-    }
-  }, [queryClient, contractId, editorState]);
-
-  const updateEditor = (update: (current: Editor) => Editor) => {
-    setEditorState((previous) => {
-      const current = previous ?? editor;
-      return current ? update(current) : previous;
+  const updateEditor = (update: (current: Editor) => Editor, { keep = false } = {}) => {
+    queryClient.setQueryData<Editor | null>(editorKey, (previous) => {
+      const stored = queryClient.getQueryData<StoredNotes>(notesKey(contractId));
+      const current = previous ?? (stored ? fresh(stored) : null);
+      if (!current) return previous;
+      const next = update(current);
+      // Clean edits collapse back to the stored notes, except while a save is in flight: its
+      // result must land on the text the user sees now, not on what it submitted.
+      return keep || next.conflict || !sameText(next.draft, next.base) ? next : null;
     });
   };
 
   const save = useMutation({
+    mutationKey: saveKey(contractId),
     mutationFn: ({ draft, expectedUpdatedAt }: { draft: ContractNotesText; expectedUpdatedAt: string | null }) =>
       putNotes(contractId, draft, expectedUpdatedAt),
     onSuccess: (result) => {
-      queryClient.setQueryData(notesKey(contractId), result.notes);
+      // The editor first, so a collapsed one is rebuilt from the notes the user was looking at.
       updateEditor((current) =>
         // Text typed while the save was in flight stays in the draft.
         result.status === "saved" || sameText(result.notes, current.draft)
           ? { base: result.notes, draft: current.draft, conflict: null }
           : { ...current, conflict: result.notes },
       );
+      queryClient.setQueryData(notesKey(contractId), result.notes);
     },
   });
 
@@ -176,7 +183,7 @@ export function ContractNotes({ contractId }: { contractId: string }) {
     ? Object.values(lengths).some((length) => length > CONTRACT_NOTE_MAX_CHARACTERS)
     : false;
   const conflict = editor?.conflict ?? null;
-  const canSave = Boolean(editor) && dirty && !tooLong && !conflict && !save.isPending;
+  const canSave = Boolean(editor) && dirty && !tooLong && !conflict && !saving;
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -184,19 +191,19 @@ export function ContractNotes({ contractId }: { contractId: string }) {
     save.mutate({ draft: editor.draft, expectedUpdatedAt: editor.base.updatedAt });
   };
   const takeStoredVersion = () => {
-    if (!conflict || save.isPending) return;
+    if (!conflict || saving) return;
     save.reset();
     updateEditor(() => fresh(conflict));
   };
   const keepMyVersion = () => {
-    if (!editor || !conflict || tooLong) return;
+    if (!editor || !conflict || tooLong || saving) return;
     save.mutate({ draft: editor.draft, expectedUpdatedAt: conflict.updatedAt });
   };
 
   let status: { text: string; tone: "muted" | "error" | "success" } | null = null;
   if (notes.isError && !editor) status = { text: LOAD_ERROR, tone: "error" };
   else if (!editor) status = { text: "Loading your notes…", tone: "muted" };
-  else if (save.isPending) status = { text: "Saving…", tone: "muted" };
+  else if (saving) status = { text: "Saving…", tone: "muted" };
   else if (conflict) status = { text: "Not saved: these notes were changed elsewhere.", tone: "error" };
   else if (save.isError) {
     // A network failure is a TypeError with the browser's wording; show ours instead.
@@ -262,10 +269,13 @@ export function ContractNotes({ contractId }: { contractId: string }) {
                       aria-describedby={showCount ? `${id}-count` : undefined}
                       onChange={(event) => {
                         const value = event.target.value;
-                        updateEditor((current) => ({
-                          ...current,
-                          draft: { ...current.draft, [key]: value },
-                        }));
+                        updateEditor(
+                          (current) => ({
+                            ...current,
+                            draft: { ...current.draft, [key]: value },
+                          }),
+                          { keep: saving },
+                        );
                       }}
                     />
                     {showCount ? (
@@ -315,7 +325,7 @@ export function ContractNotes({ contractId }: { contractId: string }) {
                     type="button"
                     variant="outline"
                     onClick={takeStoredVersion}
-                    disabled={save.isPending}
+                    disabled={saving}
                   >
                     Use the saved version
                   </Button>
@@ -323,7 +333,7 @@ export function ContractNotes({ contractId }: { contractId: string }) {
                     type="button"
                     variant="outline"
                     onClick={keepMyVersion}
-                    disabled={save.isPending || tooLong}
+                    disabled={saving || tooLong}
                   >
                     Replace it with mine
                   </Button>
@@ -331,7 +341,7 @@ export function ContractNotes({ contractId }: { contractId: string }) {
               </div>
             ) : (
               <Button type="submit" variant="outline" disabled={!canSave}>
-                {save.isPending ? (
+                {saving ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
                 ) : null}
                 Save notes

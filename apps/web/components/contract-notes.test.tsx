@@ -277,6 +277,34 @@ describe("ContractNotes", () => {
     }
   });
 
+  it("keeps text reverted during a save when the card remounts before the save finishes", async () => {
+    let finishSave: (response: Response) => void = () => {};
+    fetchMock
+      .mockResolvedValueOnce(json(stored({ acceptanceReasons: "Before", updatedAt: FIRST_SAVE })))
+      .mockReturnValueOnce(new Promise<Response>((done) => (finishSave = done)));
+    const queryClient = newClient();
+    const first = renderNotes(queryClient);
+    await waitFor(() => expect(acceptField()).toHaveValue("Before"));
+
+    await first.user.type(acceptField(), " and after");
+    await first.user.click(saveButton());
+    await waitFor(() => expect(status()).toHaveTextContent("Saving…"));
+    // Back to the stored text while the save is still in flight.
+    await first.user.clear(acceptField());
+    await first.user.type(acceptField(), "Before");
+
+    first.unmount();
+    renderNotes(queryClient);
+    expect(acceptField()).toHaveValue("Before");
+    expect(status()).toHaveTextContent("Saving…");
+    expect(saveButton()).toBeDisabled();
+
+    finishSave(json(stored({ acceptanceReasons: "Before and after", updatedAt: SECOND_SAVE })));
+    await waitFor(() => expect(status()).toHaveTextContent("Unsaved changes"));
+    expect(acceptField()).toHaveValue("Before");
+    expect(saveButton()).toBeEnabled();
+  });
+
   it("shows the character count near the limit and refuses to save over it", async () => {
     const nearLimit = "a".repeat(CONTRACT_NOTE_MAX_CHARACTERS - 1);
     fetchMock.mockResolvedValueOnce(json(stored({ acceptanceReasons: nearLimit, updatedAt: FIRST_SAVE })));
