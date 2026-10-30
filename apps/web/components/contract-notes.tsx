@@ -136,6 +136,9 @@ export function ContractNotes({ contractId }: { contractId: string }) {
 
   useEffect(() => {
     if (editorState && (editorState.conflict || !sameText(editorState.draft, editorState.base))) {
+      // Nothing observes this entry, so the default five-minute garbage collection would drop a
+      // draft left open that long. It is removed explicitly once saved or discarded.
+      queryClient.setQueryDefaults(unsavedKey(contractId), { gcTime: Infinity });
       queryClient.setQueryData(unsavedKey(contractId), editorState);
     } else {
       queryClient.removeQueries({ queryKey: unsavedKey(contractId), exact: true });

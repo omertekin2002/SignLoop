@@ -248,17 +248,28 @@ describe("ContractNotes", () => {
   });
 
   it("keeps unsaved text when the contract page remounts the card", async () => {
-    fetchMock.mockResolvedValueOnce(json(stored({ updatedAt: FIRST_SAVE })));
-    const queryClient = newClient();
-    const first = renderNotes(queryClient);
-    await waitFor(() => expect(acceptField()).toBeEnabled());
-    await first.user.type(acceptField(), "Half-written thought");
+    // The stored notes are collected after five minutes too, so the remount reads them again.
+    fetchMock.mockImplementation(async () => json(stored({ updatedAt: FIRST_SAVE })));
+    // Fake from the start, so the cache schedules its garbage collection on them.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const queryClient = newClient();
+      const first = renderNotes(queryClient);
+      await waitFor(() => expect(acceptField()).toBeEnabled());
+      await first.user.type(acceptField(), "Half-written thought");
 
-    first.unmount();
-    renderNotes(queryClient);
-    expect(acceptField()).toHaveValue("Half-written thought");
-    expect(status()).toHaveTextContent("Unsaved changes");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+      // Longer than the query cache's default garbage-collection time.
+      first.unmount();
+      vi.advanceTimersByTime(10 * 60_000);
+
+      renderNotes(queryClient);
+      expect(acceptField()).toHaveValue("Half-written thought");
+      expect(status()).toHaveTextContent("Unsaved changes");
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      expect(acceptField()).toHaveValue("Half-written thought");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows the character count near the limit and refuses to save over it", async () => {
