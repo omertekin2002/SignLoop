@@ -3,7 +3,7 @@ set -euo pipefail
 # Homebrew Postgres aborts at startup when no locale is set; the database encoding is pinned by initdb.
 export LC_ALL=C
 cd "$(dirname "$0")/.."
-suites=(lib/server-db.integration.test.ts lib/auth-identity.integration.test.ts)
+suites=(lib/server-db.integration.test.ts lib/auth-identity.integration.test.ts lib/contract-notes.integration.test.ts)
 # A caller-provided empty database (CI's PostgreSQL service container) replaces the temporary
 # cluster. The suites still refuse anything but localhost/signloop_test and apply the migrations.
 if [[ -n "${SIGNLOOP_TEST_DATABASE_URL:-}" ]]; then

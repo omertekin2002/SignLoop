@@ -18,7 +18,8 @@ function readme(exportedAt: Date, missing: string[], unlinked: string[]): string
     "SignLoop data export",
     `Exported: ${exportedAt.toISOString()}`,
     "",
-    "contracts.json   Your contracts with their extracted text and uploaded files.",
+    "contracts.json   Your contracts with their extracted text, uploaded files and your notes",
+    "                 (null if you never wrote any).",
     "analyses.json    Every analysis of those contracts, by contractId.",
     "projects.json    Your projects with their reference documents and extracted text.",
     "chats.json       Your saved chats with their messages, files and images.",
@@ -94,6 +95,10 @@ export function createAccountExport(input: {
     filesByContract.set(file.contractId, files);
   }
 
+  const notesByContract = new Map(
+    data.contractNotes.map(({ contractId, ...notes }) => [contractId, notes]),
+  );
+
   const documentsByProject = new Map<string, unknown[]>();
   for (const { storageKey, projectId, ...document } of data.contextDocuments) {
     const path = storageKey
@@ -136,6 +141,7 @@ export function createAccountExport(input: {
         ...contract,
         text: textContent,
         files: filesByContract.get(contract.id) ?? [],
+        notes: notesByContract.get(contract.id) ?? null,
       })),
       "analyses.json": data.analyses,
       "projects.json": data.projects.map((project) => ({
