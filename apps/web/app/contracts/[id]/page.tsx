@@ -60,6 +60,7 @@ import {
 import { toast } from "sonner";
 import { ContractSourceProvider, FindingSource, OpenContractSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
+import { DownloadBriefButton } from "@/components/download-brief-button";
 import { ContractJurisdiction } from "@/components/contract-jurisdiction";
 import type { AnalysisResult } from "@/lib/schemas";
 import {
@@ -483,6 +484,11 @@ const ContractDetails = () => {
 
             <div className="flex flex-wrap items-center gap-2">
               <OpenContractSource />
+              <DownloadBriefButton
+                contract={{ ...contract, id }}
+                analysis={analysis}
+                historical={isViewingHistoricalAnalysis}
+              />
               {analysis && (
                 <Button
                   onClick={() => analyzeMutation.mutate({ force: true })}
