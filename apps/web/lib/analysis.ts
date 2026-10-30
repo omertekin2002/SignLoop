@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import {
   contractAnalysisSegments,
   EvidenceProposalSchema,
+  verifyQuote,
   type ContractSegment,
 } from "@/lib/source-citations";
 import { normalizeNoticePeriod } from "@/lib/notice-period";
@@ -1041,6 +1042,46 @@ export function parseStrictJson<T>(content: string): T {
   throw new Error(`LLM response failed validation: ${firstIssue}`);
 }
 
+/**
+ * Validates one section's answer. A section is only part of the contract, so it may say nothing
+ * about renewal or cancellation, as a definitions section or a fee schedule does not. Omitted or
+ * unusable renewal and cancellation values are read as unknown (null, "Not specified") instead of
+ * failing the section; the merge prefers a value another section states. Everything else, including
+ * the need for at least one substantive observation, is validated as for a whole contract.
+ */
+function parseSectionAnalysis(content: string): AnalysisResult {
+  const source = asRecord(parseModelJson(content));
+  if (!source) return parseStrictJson<AnalysisResult>(content);
+  const summary = asRecord(pickFirst(source, ["summary"])) ?? {};
+  const renewal = asRecord(pickFirst(summary, ["renewal"])) ?? {};
+  const cancellation = asRecord(pickFirst(summary, ["cancellation"])) ?? {};
+  const autoRenew = pickFirst(renewal, ["auto_renew", "autoRenew"]);
+  return parseStrictJson<AnalysisResult>(
+    JSON.stringify({
+      ...source,
+      summary: {
+        ...summary,
+        renewal: {
+          ...renewal,
+          auto_renew:
+            autoRenew === null || isBooleanLike(autoRenew) ? autoRenew : null,
+          autoRenew: undefined,
+        },
+        cancellation: {
+          ...cancellation,
+          how:
+            toStringOrNull(
+              pickFirst(cancellation, ["how", "method", "process"]),
+            ) ?? "Not specified",
+          ...(normalizeCancellationNotice(cancellation)
+            ? {}
+            : { notice_period_days: null, notice_period_text: null }),
+        },
+      },
+    }),
+  );
+}
+
 type AnalysisAnswer = {
   result: AnalysisResult;
   provider: LlmProvider;
@@ -1059,8 +1100,13 @@ function firstAnalysisSection(text: string): AnalysisSection {
 }
 
 // Section calls run at most this many at a time. It limits load on the provider, not the number
-// of calls: every section of a long contract is analysed, however many there are.
+// of calls; MAX_ANALYSED_SECTIONS limits that.
 export const SECTION_CONCURRENCY = 4;
+// One analysis is admitted and charged as one request, so it makes at most this many section calls
+// plus one merge call however long the contract is (a 2,000,000-character upload would otherwise
+// be over 130 sections). At SECTION_CONCURRENCY calls at a time this is about what the section
+// deadline leaves room for. Later sections are named in a coverage notice.
+export const MAX_ANALYSED_SECTIONS = 16;
 // Overall budget for a sectioned analysis when the caller sets no deadline.
 const SECTIONED_ANALYSIS_BUDGET_MS = 250_000;
 // Section calls stop this long before the deadline, so the merge call still has time to run.
@@ -1092,7 +1138,8 @@ function deadlineSignal(deadline: number, signal?: AbortSignal) {
 type SectionOutcome =
   | { status: "analysed"; answer: AnalysisAnswer }
   | { status: "failed"; error: unknown }
-  | { status: "unanalysed" };
+  | { status: "unanalysed" }
+  | { status: "over_limit" };
 
 /**
  * Coverage notices for sections that are not reflected in the result, one per run of consecutive
@@ -1115,7 +1162,9 @@ function missingSectionNotices(
       const reason =
         status === "failed"
           ? "could not be analysed because the model call failed"
-          : "could not be analysed before the analysis deadline";
+          : status === "over_limit"
+            ? `could not be analysed because one analysis covers at most ${MAX_ANALYSED_SECTIONS} sections`
+            : "could not be analysed before the analysis deadline";
       notices.push(
         `${range} (Unicode code points ${segments[first]!.start}–${segments[last]!.end}, end exclusive) ${reason}; terms in that text are not reflected in this analysis.`,
       );
@@ -1165,11 +1214,21 @@ function uniqueRedFlags(
 
 const RISK_ORDER = ["LOW", "MEDIUM", "HIGH"] as const;
 
-/** The first section's governing-law proposal that carries evidence, unchanged. */
-function sectionJurisdictionProposal(results: readonly AnalysisResult[]) {
+type AnalysedSection = { segment: ContractSegment; result: AnalysisResult };
+
+/**
+ * The first section's governing-law proposal whose quotation is found in that section, unchanged.
+ * Stored reports keep a proposal only with a verified quotation (attachAnalysisSources), so one
+ * that would fail there must not hide a later section's verifiable one.
+ */
+function sectionJurisdictionProposal(sections: readonly AnalysedSection[]) {
   return (
-    results.find((result) => result.proposed_jurisdiction?.evidence)
-      ?.proposed_jurisdiction ?? null
+    sections.find(
+      ({ segment, result: { proposed_jurisdiction: proposal } }) =>
+        proposal &&
+        confirmedRegion(proposal.jurisdiction) &&
+        verifyQuote(proposal.evidence, [segment]),
+    )?.result.proposed_jurisdiction ?? null
   );
 }
 
@@ -1179,8 +1238,9 @@ function sectionJurisdictionProposal(results: readonly AnalysisResult[]) {
  * that states it. Used when the merge call fails or no time is left for it.
  */
 export function mergeSectionResults(
-  results: readonly AnalysisResult[],
+  sections: readonly AnalysedSection[],
 ): AnalysisResult {
+  const results = sections.map((section) => section.result);
   const first = results[0]!;
   const stated = <T>(pick: (result: AnalysisResult) => T | null) =>
     results.map(pick).find((value) => value !== null) ?? null;
@@ -1201,7 +1261,7 @@ export function mergeSectionResults(
 
   return {
     ...(coverageNotices.length ? { coverage_notices: coverageNotices } : {}),
-    proposed_jurisdiction: sectionJurisdictionProposal(results),
+    proposed_jurisdiction: sectionJurisdictionProposal(sections),
     risk_badge:
       RISK_ORDER[
         Math.max(
@@ -1264,8 +1324,6 @@ export function mergeSectionResults(
     disclaimer: first.disclaimer,
   };
 }
-
-type AnalysedSection = { segment: ContractSegment; result: AnalysisResult };
 
 /** 1-based, from the "section-N" label. */
 const sectionNumber = (segment: ContractSegment) =>
@@ -1367,8 +1425,9 @@ ${JSON.stringify(analyses, null, 2)}
 
 /**
  * Validates the merge call's answer. Red flags are the section flags it names by ID, de-duplicated;
- * if it names none although the sections found some, all of them are kept rather than lost. The
- * jurisdiction proposal is the sections' own, so its quotation is never the merge model's.
+ * if it names none, or an ID that cannot be read, although the sections found some, all of them are
+ * kept rather than lost. The jurisdiction proposal is the sections' own, so its quotation is never
+ * the merge model's.
  */
 function parseMergedAnalysis(
   content: string,
@@ -1389,9 +1448,19 @@ function parseMergedAnalysis(
       ),
     ),
   );
-  const chosen = toStringArray(parsed.red_flag_ids)
-    .map((id) => flagsById.get(id.trim().toUpperCase()))
-    .filter((flag) => flag !== undefined);
+  // Read "S3 F2" or "s4-f01" as S3-F2 and S4-F1. An ID that still cannot be read leaves the
+  // choice unknown, so every flag is kept, as when none is chosen; a readable ID that names no
+  // flag ("S99-F1") is ignored.
+  const ids = toStringArray(parsed.red_flag_ids).map((id) =>
+    id.trim().match(/^S\s*(\d+)\s*[-_.:]?\s*F\s*(\d+)$/i),
+  );
+  const chosen = ids.every((id): id is RegExpMatchArray => id !== null)
+    ? ids
+        .map(([, section, flag]) =>
+          flagsById.get(sectionFlagId(Number(section), Number(flag) - 1)),
+        )
+        .filter((flag) => flag !== undefined)
+    : [];
   const {
     red_flag_ids: _ids,
     red_flags: _modelFlags,
@@ -1403,7 +1472,7 @@ function parseMergedAnalysis(
     JSON.stringify({
       ...rest,
       red_flags: chosen.length ? chosen : [...flagsById.values()],
-      proposed_jurisdiction: sectionJurisdictionProposal(sectionResults),
+      proposed_jurisdiction: sectionJurisdictionProposal(sections),
     }),
   );
   const coverageNotices = uniqueText(
@@ -1424,10 +1493,11 @@ function parseMergedAnalysis(
 }
 
 /**
- * Analyses a contract longer than CONTRACT_ANALYSIS_LIMIT: one call per section, at most
- * SECTION_CONCURRENCY at a time, then one merge call. Everything must finish by `deadline`.
- * A section that fails or is not reached in time is named in a coverage notice instead of being
- * dropped silently; if no section succeeds, the analysis fails.
+ * Analyses a contract longer than CONTRACT_ANALYSIS_LIMIT: one call for each of the first
+ * MAX_ANALYSED_SECTIONS sections, at most SECTION_CONCURRENCY at a time, then one merge call.
+ * Everything must finish by `deadline`. A section that fails, is not reached in time, or is past
+ * the section limit is named in a coverage notice instead of being dropped silently; if no section
+ * succeeds, the analysis fails.
  */
 async function analyzeSections(
   text: string,
@@ -1441,10 +1511,13 @@ async function analyzeSections(
     options.deadline - MERGE_RESERVE_MS,
     options.signal,
   );
-  const outcomes: SectionOutcome[] = [];
+  const analysable = Math.min(segments.length, MAX_ANALYSED_SECTIONS);
+  const outcomes: SectionOutcome[] = segments.map((_, index) =>
+    index < analysable ? { status: "unanalysed" } : { status: "over_limit" },
+  );
   let next = 0;
   const worker = async () => {
-    while (next < segments.length) {
+    while (next < analysable) {
       const index = next++;
       if (sectionDeadline.signal.aborted) {
         options.signal?.throwIfAborted();
@@ -1458,7 +1531,7 @@ async function analyzeSections(
       try {
         outcomes[index] = {
           status: "analysed",
-          answer: await run(prompt, parseStrictJson<AnalysisResult>, {
+          answer: await run(prompt, parseSectionAnalysis, {
             signal: sectionDeadline.signal,
             timeoutMs: ANALYSIS_REQUEST_TIMEOUT_MS,
           }),
@@ -1480,10 +1553,7 @@ async function analyzeSections(
   };
   try {
     await Promise.all(
-      Array.from(
-        { length: Math.min(SECTION_CONCURRENCY, segments.length) },
-        worker,
-      ),
+      Array.from({ length: Math.min(SECTION_CONCURRENCY, analysable) }, worker),
     );
   } finally {
     sectionDeadline.clear();
@@ -1540,7 +1610,7 @@ async function analyzeSections(
     }
   }
   return {
-    result: mergeSectionResults(analysed.map((section) => section.result)),
+    result: mergeSectionResults(analysed),
     provider: analysed[0]!.provider,
     model: analysed[0]!.model,
     coverageNotices,

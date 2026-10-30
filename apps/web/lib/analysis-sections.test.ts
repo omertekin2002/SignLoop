@@ -526,6 +526,139 @@ describe("analysis of contracts longer than one request", () => {
     expect(answer.result.summary.renewal.auto_renew).toBe(true);
   });
 
+  it("accepts a section that states no renewal or cancellation terms and keeps its parties and fees", async () => {
+    const text = contractOf(320);
+    const segments = contractAnalysisSegments(text);
+    expect(segments).toHaveLength(2);
+    const double = provider(segments, (call) => {
+      if (call.section === "merge") return failure();
+      const output = sectionOutput(double.segment(call));
+      if (call.section === 1) return completed(output);
+      // A fee schedule: no renewal facts and no cancellation method.
+      return completed({
+        ...output,
+        summary: {
+          ...output.summary,
+          payments: { amount: null, frequency: null, fees: ["Setup fee"] },
+          renewal: undefined,
+          cancellation: { how: null, penalties: [] },
+        },
+        parties: ["Payment processor"],
+      });
+    });
+    const { analyzeText } = await import("./analysis");
+
+    const answer = await analyzeText(text);
+    expect(answer.result.coverage_notices).toBeUndefined();
+    expect(answer.result.summary.payments.fees).toEqual(["Setup fee"]);
+    expect(answer.result.parties).toContain("Payment processor");
+    expect(answer.result.summary.renewal.auto_renew).toBeNull();
+  });
+
+  it("analyses at most the section limit and names the remaining sections in one notice", async () => {
+    const { analyzeText, MAX_ANALYSED_SECTIONS } = await import("./analysis");
+    const text = contractOf(175 * (MAX_ANALYSED_SECTIONS + 2));
+    const segments = contractAnalysisSegments(text);
+    expect(segments.length).toBeGreaterThan(MAX_ANALYSED_SECTIONS);
+    const double = provider(segments, (call) =>
+      call.section === "merge"
+        ? completed(mergeOutput())
+        : completed(sectionOutput(double.segment(call))),
+    );
+
+    const answer = await analyzeText(text);
+    expect(
+      double
+        .sectionCalls()
+        .map((call) => call.section)
+        .sort((a, b) => +a - +b),
+    ).toEqual(
+      segments.slice(0, MAX_ANALYSED_SECTIONS).map((_, index) => index + 1),
+    );
+    expect(double.mergeCalls()).toHaveLength(1);
+    expect(answer.result.coverage_notices).toEqual([
+      `Contract sections ${MAX_ANALYSED_SECTIONS + 1}–${segments.length} of ${segments.length} (Unicode code points ${segments[MAX_ANALYSED_SECTIONS]!.start}–${segments.at(-1)!.end}, end exclusive) could not be analysed because one analysis covers at most ${MAX_ANALYSED_SECTIONS} sections; terms in that text are not reflected in this analysis.`,
+    ]);
+  });
+
+  it("reads loosely formatted red flag IDs and keeps every flag when one cannot be read", async () => {
+    const text = contractOf(400);
+    const segments = contractAnalysisSegments(text);
+    expect(segments).toHaveLength(3);
+    const run = async (ids: string[]) => {
+      const double = provider(segments, (call) =>
+        call.section === "merge"
+          ? completed(mergeOutput({ red_flag_ids: ids }))
+          : completed(
+              sectionOutput(double.segment(call), {
+                flags: [
+                  { type: `Risk ${call.section}a`, explanation: "First." },
+                  { type: `Risk ${call.section}b`, explanation: "Second." },
+                ],
+              }),
+            ),
+      );
+      const { analyzeText } = await import("./analysis");
+      return (await analyzeText(text)).result.red_flags.map(
+        (flag) => flag.type,
+      );
+    };
+
+    expect(await run(["S1-F1", "S3 F2", "s2-f01", "S99-F1"])).toEqual([
+      "Risk 1a",
+      "Risk 3b",
+      "Risk 2a",
+    ]);
+    expect(await run(["S1-F1", "the renewal flag"])).toEqual([
+      "Risk 1a",
+      "Risk 1b",
+      "Risk 2a",
+      "Risk 2b",
+      "Risk 3a",
+      "Risk 3b",
+    ]);
+  });
+
+  it("uses a later section's governing-law proposal when an earlier one's quotation is not in its section", async () => {
+    const law =
+      "390.1 Governing law. This Agreement is governed by the laws of the State of Delaware.\n";
+    const text = contractOf(400, { 390: law });
+    const segments = contractAnalysisSegments(text);
+    const last = segments.find((part) => part.text.includes(law))!;
+    expect(last.label).not.toBe("section-1");
+    const lawQuote = "governed by the laws of the State of Delaware";
+    for (const mergeFails of [false, true]) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return mergeFails ? failure() : completed(mergeOutput());
+        const segment = double.segment(call);
+        return completed(
+          sectionOutput(segment, {
+            jurisdiction:
+              segment === last
+                ? lawQuote
+                : call.section === 1
+                  ? "governed by the laws of Delaware"
+                  : undefined,
+          }),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      expect(answer.result.proposed_jurisdiction).toEqual({
+        jurisdiction: "State of Delaware",
+        evidence: { quote: lawQuote, segment: last.label },
+      });
+      const stored = finalizeAnalysisResult(answer.result, {
+        id: CONTRACT_ID,
+        text,
+      });
+      expect(stored.proposed_jurisdiction?.citation?.quote).toBe(lawQuote);
+    }
+  });
+
   it("uses a single surviving section as the result without a merge call", async () => {
     const text = contractOf(175);
     const segments = contractAnalysisSegments(text);
