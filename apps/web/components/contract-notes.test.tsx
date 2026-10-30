@@ -210,18 +210,23 @@ describe("ContractNotes", () => {
 
   it("replaces newer notes with the user's text only when they choose to", async () => {
     const newer = stored({ acceptanceReasons: "Theirs", updatedAt: SECOND_SAVE });
+    let finishReplace: (response: Response) => void = () => {};
     fetchMock
       .mockResolvedValueOnce(json(stored({ updatedAt: FIRST_SAVE })))
       .mockResolvedValueOnce(json({ error: "conflict", notes: newer }, 409))
-      .mockResolvedValueOnce(
-        json(stored({ acceptanceReasons: "Mine", updatedAt: "2026-10-30T12:00:00.000Z" })),
-      );
+      .mockReturnValueOnce(new Promise<Response>((done) => (finishReplace = done)));
     const { user } = renderNotes();
     await waitFor(() => expect(acceptField()).toBeEnabled());
 
     await user.type(acceptField(), "Mine");
     await user.click(saveButton());
     await user.click(await screen.findByRole("button", { name: "Replace it with mine" }));
+
+    // Neither choice can be made again while the replacement is saving.
+    await waitFor(() => expect(status()).toHaveTextContent("Saving…"));
+    expect(screen.getByRole("button", { name: "Use the saved version" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Replace it with mine" })).toBeDisabled();
+    finishReplace(json(stored({ acceptanceReasons: "Mine", updatedAt: "2026-10-30T12:00:00.000Z" })));
 
     await waitFor(() => expect(status()).toHaveTextContent(/^Saved /));
     expect(acceptField()).toHaveValue("Mine");

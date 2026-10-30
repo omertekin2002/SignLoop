@@ -184,7 +184,7 @@ export function ContractNotes({ contractId }: { contractId: string }) {
     save.mutate({ draft: editor.draft, expectedUpdatedAt: editor.base.updatedAt });
   };
   const takeStoredVersion = () => {
-    if (!conflict) return;
+    if (!conflict || save.isPending) return;
     save.reset();
     updateEditor(() => fresh(conflict));
   };
@@ -309,7 +309,14 @@ export function ContractNotes({ contractId }: { contractId: string }) {
                   ))}
                 </dl>
                 <div className="flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" onClick={takeStoredVersion}>
+                  {/* Both choices wait for a replacement save, which would otherwise land under a
+                      draft that no longer shows the text it stored. */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={takeStoredVersion}
+                    disabled={save.isPending}
+                  >
                     Use the saved version
                   </Button>
                   <Button
