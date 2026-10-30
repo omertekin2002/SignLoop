@@ -52,8 +52,8 @@ export type QuoteDiagnosis =
   | "too_long"
   | "ambiguous"
   | "wrong_segment"
-  | "omitted_middle"
-  | "omission_marker"
+  | "cross_section"
+  | "segment_marker"
   | "quoted_context"
   | "quoted_prompt"
   | "whitespace_drift"
@@ -234,8 +234,8 @@ function scoreField(
 
 // --- Quotations ------------------------------------------------------------------------------
 
-const OMISSION_MARKER =
-  /characters omitted from the middle of the contract|Contract segment: (?:full|head|middle-\d+|tail) \(Unicode code points/;
+const SEGMENT_MARKER =
+  /Contract segment: (?:full|section-\d+) \(Unicode code points/;
 
 function occurrences(haystack: string, needle: string): number {
   let count = 0;
@@ -334,9 +334,9 @@ export function diagnoseQuote(
   if (source.segments.some((segment) => occurrences(segment.text, quote) > 1)) {
     return "ambiguous";
   }
-  // Contract text, but not inside any segment the model was sent.
-  if (source.text.includes(quote)) return "omitted_middle";
-  if (OMISSION_MARKER.test(quote)) return "omission_marker";
+  // Contract text, but not inside any one segment: it runs across a section boundary.
+  if (source.text.includes(quote)) return "cross_section";
+  if (SEGMENT_MARKER.test(quote)) return "segment_marker";
   if (source.contextTexts.some((text) => text.includes(quote)))
     return "quoted_context";
   if (source.prompt?.includes(quote)) return "quoted_prompt";
@@ -363,7 +363,6 @@ export type CaseScore = {
     recall: number | null;
     labelled: number;
     labelRecall: number | null;
-    unreachable: number;
     byCategory: Partial<
       Record<ClauseCategory, { required: number; found: number }>
     >;
@@ -497,8 +496,7 @@ export function scoreCase(loaded: LoadedCase, run: RunOutput): CaseScore {
     resolveCategories(typeof flag.type === "string" ? flag.type : ""),
   );
 
-  const reachable = loaded.clauses.filter((clause) => clause.reachable);
-  const required = reachable.filter((clause) => clause.required);
+  const required = loaded.clauses.filter((clause) => clause.required);
   const byCategory: CaseScore["clauses"]["byCategory"] = {};
   let found = 0;
   let labelled = 0;
@@ -521,7 +519,7 @@ export function scoreCase(loaded: LoadedCase, run: RunOutput): CaseScore {
     }
   }
 
-  const gold = mergeIntervals(reachable);
+  const gold = mergeIntervals(loaded.clauses);
   const quoted = verified.reduce(
     (sum, citation) => sum + citation.end - citation.start,
     0,
@@ -649,7 +647,6 @@ export function scoreCase(loaded: LoadedCase, run: RunOutput): CaseScore {
       recall: ratio(found, required.length),
       labelled,
       labelRecall: ratio(labelled, required.length),
-      unreachable: loaded.clauses.length - reachable.length,
       byCategory,
     },
     spans: { quoted, inside, precision: ratio(inside, quoted) },

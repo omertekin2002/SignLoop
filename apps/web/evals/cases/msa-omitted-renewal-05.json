@@ -1,17 +1,17 @@
 {
   "id": "msa-omitted-renewal-05",
-  "title": "Long services agreement whose renewal clause sits in the middle, between the head and the tail",
+  "title": "Long services agreement whose renewal clause sits in the middle, far from its head and tail",
   "provenance": "synthetic/hand-written",
   "contract": "contracts/msa-omitted-renewal-05.txt",
   "context": [],
-  "notes": "Section 9 renews automatically. It lies between the head and the tail, so it reaches the model only as selected middle passages (9.2 is middle-2). Renewal and notice must be answered from it, and the coverage notice must be kept. Section 10.1 stays in the unsent middle.",
+  "notes": "Section 9 renews automatically. The contract is longer than one request, so it is analysed in two sections and merged: Section 9.2 and the other cited clauses are in section-1, and the governing-law clause is in section-2. Renewal and notice must be answered from Section 9.2, and the jurisdiction proposal must survive the merge with its section-2 citation.",
   "clauses": [
-    { "category": "price_increase", "required": true, "segment": "head", "span": "Provider may increase the Fees with effect from the start of each Contract Year by up to seven percent (7%) over the Fees for the preceding Contract Year" },
-    { "category": "late_payment", "required": false, "segment": "head", "span": "Undisputed amounts that are not paid when due accrue interest at the lower of one percent (1%) per month and the highest rate permitted by Applicable Law." },
-    { "category": "auto_renewal", "required": true, "segment": "middle-2", "span": "Upon expiry of the Initial Term, this Agreement shall renew automatically for successive one (1) year renewal terms" },
-    { "category": "cancellation_notice", "required": true, "segment": "middle-2", "span": "unless either party gives the other at least ninety (90) days' written notice of non-renewal before the end of the then-current Term" },
-    { "category": "ip_ownership", "required": false, "segment": "omitted", "span": "Provider and its licensors own the Platform, the Documentation, and all improvements to them." },
-    { "category": "limitation_of_liability", "required": true, "segment": "tail", "span": "each party's aggregate liability arising out of or relating to this Agreement shall not exceed the Fees paid or payable by Customer in the twelve (12) months before the event giving rise to the claim" }
+    { "category": "price_increase", "required": true, "segment": "section-1", "span": "Provider may increase the Fees with effect from the start of each Contract Year by up to seven percent (7%) over the Fees for the preceding Contract Year" },
+    { "category": "late_payment", "required": false, "segment": "section-1", "span": "Undisputed amounts that are not paid when due accrue interest at the lower of one percent (1%) per month and the highest rate permitted by Applicable Law." },
+    { "category": "auto_renewal", "required": true, "segment": "section-1", "span": "Upon expiry of the Initial Term, this Agreement shall renew automatically for successive one (1) year renewal terms" },
+    { "category": "cancellation_notice", "required": true, "segment": "section-1", "span": "unless either party gives the other at least ninety (90) days' written notice of non-renewal before the end of the then-current Term" },
+    { "category": "ip_ownership", "required": false, "segment": "section-1", "span": "Provider and its licensors own the Platform, the Documentation, and all improvements to them." },
+    { "category": "limitation_of_liability", "required": true, "segment": "section-1", "span": "each party's aggregate liability arising out of or relating to this Agreement shall not exceed the Fees paid or payable by Customer in the twelve (12) months before the event giving rise to the claim" }
   ],
   "absent": ["arbitration"],
   "governing_law": { "jurisdiction": "State of Delaware", "span": "This Agreement is governed by the laws of the State of Delaware, without regard to its conflict of laws rules." },

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { finalizeAnalysisResult } from "@/lib/analysis-sources";
 import type { AnalysisResult } from "@/lib/schemas";
-import { contractAnalysisSegments } from "@/lib/source-citations";
+import {
+  CONTRACT_ANALYSIS_LIMIT,
+  contractAnalysisSegments,
+} from "@/lib/source-citations";
 import type { EvalCaseInput } from "./case-schema";
 import { buildLoadedCase, type LoadedCase } from "./dataset";
 import {
@@ -294,16 +297,16 @@ describe("clause recall and span precision", () => {
 describe("quote diagnosis", () => {
   const filler = (character: string, length: number) =>
     character.repeat(length);
+  // No space to cut at in the second half of the first window, so section-1 ends exactly at the
+  // limit, between "Boundary" and " clause".
   const longText = [
-    "Head clause: fees renew yearly.",
-    filler("x", 9800),
-    "Middle clause: renewal is automatic.",
-    filler("x", 3000),
-    "Unsent clause: copies may be signed electronically.",
-    filler("y", 5300),
-    "Tail clause: disputes go to court.",
+    "Head clause: fees renew yearly. ",
+    filler("x", CONTRACT_ANALYSIS_LIMIT - 40),
+    "Boundary clause runs across sections.",
+    filler("y", 3000),
+    " Tail clause: disputes go to court. ",
     filler("z", 100),
-  ].join(" ");
+  ].join("");
   const short = {
     text: renewing.text,
     segments: renewing.segments,
@@ -319,31 +322,31 @@ describe("quote diagnosis", () => {
   it.each([
     ["too_long", short, { quote: "a".repeat(2001), segment: "full" }],
     ["ambiguous", short, { quote: "are non-refundable", segment: "full" }],
-    ["wrong_segment", short, { quote: RENEWAL_SPAN, segment: "head" }],
+    ["wrong_segment", short, { quote: RENEWAL_SPAN, segment: "section-1" }],
     [
       "wrong_segment",
       long,
-      { quote: "Tail clause: disputes go to court.", segment: "head" },
+      { quote: "Tail clause: disputes go to court.", segment: "section-1" },
     ],
     [
       "wrong_segment",
       long,
-      { quote: "Middle clause: renewal is automatic.", segment: "head" },
+      { quote: "Head clause: fees renew yearly.", segment: "section-2" },
     ],
     [
-      "omitted_middle",
+      "cross_section",
       long,
       {
-        quote: "Unsent clause: copies may be signed electronically.",
-        segment: "middle-1",
+        quote: "Boundary clause runs across sections.",
+        segment: "section-1",
       },
     ],
     [
-      "omission_marker",
+      "segment_marker",
       long,
       {
-        quote: "[5300 characters omitted from the middle of the contract]",
-        segment: "head",
+        quote: `Contract segment: section-1 (Unicode code points 0–${CONTRACT_ANALYSIS_LIMIT}, end exclusive)`,
+        segment: "section-1",
       },
     ],
     [
@@ -508,7 +511,7 @@ describe("metric isolation", () => {
       change: (analysis: AnalysisResult) => {
         analysis.red_flags[1]!.evidence = {
           quote: NOTICE_SPAN,
-          segment: "tail",
+          segment: "section-1",
         };
       },
       moved: [

@@ -580,6 +580,9 @@ describe("POST /api/contracts/[id]/analyze", () => {
         {
           primaryModel: "gpt-5",
           signal: expect.any(AbortSignal),
+          // Section and merge calls of a long contract stop 10 seconds before the 270-second
+          // operation deadline, leaving the persistence reserve intact.
+          deadline: Date.parse("2026-10-01T10:00:00.000Z") + 260_000,
           contextDocuments: [],
         },
       );
@@ -597,6 +600,60 @@ describe("POST /api/contracts/[id]/analyze", () => {
         processingTimeMs: 2500,
       });
       expect(release).toHaveBeenCalledOnce();
+    });
+
+    it("stores one analysis of a long contract, citing a deep section and naming the section that failed", async () => {
+      const { contractAnalysisSegments } = await import("./source-citations");
+      const clause = (number: number) =>
+        `${number}. Records. Each party keeps accurate records of its own work under this agreement.\n`;
+      const lines = Array.from({ length: 700 }, (_, index) =>
+        clause(index + 1),
+      );
+      lines.splice(
+        400,
+        0,
+        "401.5 Renewal. This agreement renews automatically every year.\n",
+      );
+      const text = lines.join("");
+      const segments = contractAnalysisSegments(text);
+      const quote = "This agreement renews automatically every year.";
+      const start = text.indexOf(quote);
+      const deep = segments.find(
+        (part) => part.start <= start && start < part.end,
+      )!;
+      const failed = segments[1]!;
+      const notice = `Contract section 2 of ${segments.length} (Unicode code points ${failed.start}–${failed.end}, end exclusive) could not be analysed because the model call failed; terms in that text are not reflected in this analysis.`;
+      arrangeRunnableContract(contractRecord({ text }));
+      analyzeText.mockResolvedValue(
+        analysisOutput({
+          result: {
+            risk_badge: "HIGH",
+            coverage_notices: [notice],
+            red_flags: [
+              {
+                type: "Automatic renewal",
+                explanation: "Renews every year.",
+                evidence: { quote, segment: deep.label },
+              },
+            ],
+          },
+        }),
+      );
+
+      expect((await POST(postRequest(), params(CONTRACT_ID))).status).toBe(200);
+      expect(text.length).toBeGreaterThan(60_000);
+      expect(deep.label).not.toBe("section-1");
+      expect(admitAnalysis).toHaveBeenCalledOnce();
+      expect(analyzeText).toHaveBeenCalledOnce();
+      expect(createAnalysisForContract).toHaveBeenCalledOnce();
+      const stored = createAnalysisForContract.mock.calls[0]![0].resultJson;
+      expect(stored.coverage_notices).toEqual([notice]);
+      expect(stored.red_flags[0].citation).toMatchObject({
+        quote,
+        start,
+        end: start + quote.length,
+        contract_id: CONTRACT_ID,
+      });
     });
 
     it("replaces forged verification with server-derived receipts without an extra inference call", async () => {

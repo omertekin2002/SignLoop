@@ -929,8 +929,8 @@ export async function getContractWindowForUser(
  * A highlight needs the analysed revision and an exact quote at the citation's offsets, which bind
  * it to this contract's text. It is deliberately not limited to the segments sent for analysis:
  * citations only come from stored reports, where verifyQuote already checked them against those
- * segments, and the segment layout has changed (head and tail, then selected middle passages), so
- * a window check would drop highlights from older reports.
+ * segments, and the segment layout has changed (head and tail, then selected middle passages, then
+ * consecutive sections), so a window check would drop highlights from older reports.
  */
 export async function getContractSourceForUser(input: {
   userId: string;

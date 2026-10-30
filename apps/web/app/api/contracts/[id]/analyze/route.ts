@@ -28,6 +28,10 @@ import {
 
 // Reserve 30 seconds of the route budget for persistence and response completion.
 export const maxDuration = 300;
+const OPERATION_TIMEOUT_MS = 270_000;
+// A long contract's section and merge calls stop this long before the operation deadline, so its
+// partial result, with coverage notices for the sections that missed it, can still be stored.
+const ANALYSIS_DEADLINE_MARGIN_MS = 10_000;
 
 const ADMISSION_REJECTIONS: Record<AdmissionReason, string> = {
   busy: "Analysis is waiting for other requests to finish. Please try again shortly.",
@@ -103,11 +107,11 @@ async function executePost(
         { error: "Analysis is already running for this contract." },
         { status: 409 },
       );
+    const startedAt = Date.now();
     operationSignal = AbortSignal.any([
       req.signal,
-      AbortSignal.timeout(270_000),
+      AbortSignal.timeout(OPERATION_TIMEOUT_MS),
     ]);
-    const startedAt = Date.now();
     let releaseAdmission: (() => Promise<void>) | undefined;
     let quota: AccountQuota | undefined;
     try {
@@ -197,6 +201,8 @@ async function executePost(
             analyzeText(contractText, region ? { region } : undefined, {
               primaryModel: selectedPrimaryModel,
               signal: operationSignal,
+              deadline:
+                startedAt + OPERATION_TIMEOUT_MS - ANALYSIS_DEADLINE_MARGIN_MS,
               contextDocuments: contextDocuments.map((document) => ({
                 title: document.title,
                 documentType: document.documentType,
