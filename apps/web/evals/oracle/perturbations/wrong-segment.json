@@ -1,8 +1,8 @@
 {
   "id": "wrong-segment",
   "case": "subscription-schedule-fees-06",
-  "description": "The early termination fee is quoted exactly but labelled as the head segment, although Schedule C was sent in the tail.",
-  "patch": [{ "path": "/red_flags/3/evidence/segment", "value": "head" }],
+  "description": "The early termination fee is quoted exactly but labelled as section-1, although Schedule C was sent as section-2.",
+  "patch": [{ "path": "/red_flags/3/evidence/segment", "value": "section-1" }],
   "targets": [
     "clauses.category.early_termination_fee",
     "clauses.recall",

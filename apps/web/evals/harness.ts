@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 import { AnalysisResultSchema, type AnalysisResult } from "@/lib/schemas";
+import type { ContractSegment } from "@/lib/source-citations";
 import type { LoadedCase } from "./dataset";
 import type { ParsePath, RunOutput } from "./score";
 import {
@@ -33,12 +34,80 @@ export type EvalRun = RunOutput & {
   provider: string | null;
 };
 
-/** A single completed JSON-mode response carrying a hand-written model output. */
-export function oracleInteractions(output: unknown): ReplayInteraction[] {
+type OracleOutput = Record<string, unknown>;
+
+const evidenceSegment = (item: unknown) => {
+  const evidence = (item as { evidence?: { segment?: unknown } } | null)
+    ?.evidence;
+  return typeof evidence?.segment === "string" ? evidence.segment : null;
+};
+
+/**
+ * Completed JSON-mode responses carrying a hand-written model output. A contract within one
+ * request gets the output as its single response. A longer one is analysed per section and then
+ * merged, so each section answers with the output's red flags and jurisdiction proposal that cite
+ * it (flags citing no section go to the first), and the merge keeps every flag by ID, in the
+ * output's order, with the output's other fields.
+ */
+export function oracleInteractions(
+  output: OracleOutput,
+  segments: readonly Pick<ContractSegment, "label">[] = [{ label: "full" }],
+): ReplayInteraction[] {
+  if (segments.length === 1) {
+    return [
+      {
+        expect: { model: REPLAY_MODEL, json_mode: true },
+        response: { output },
+      },
+    ];
+  }
+  const { red_flags: flags, proposed_jurisdiction: proposal, ...rest } = output;
+  const labels = segments.map((segment) => segment.label);
+  const sectionOf = (item: unknown) =>
+    Math.max(
+      0,
+      labels.indexOf(evidenceSegment(item) as ContractSegment["label"]),
+    );
+  const sectionFlags = labels.map((): unknown[] => []);
+  const flagIds = (Array.isArray(flags) ? flags : []).map((flag) => {
+    const section = sectionOf(flag);
+    sectionFlags[section]!.push(flag);
+    return `S${section + 1}-F${sectionFlags[section]!.length}`;
+  });
   return [
-    { expect: { model: REPLAY_MODEL, json_mode: true }, response: { output } },
+    ...labels.map((label, index) => ({
+      expect: {
+        model: REPLAY_MODEL,
+        json_mode: true,
+        input_includes: `This request contains section ${index + 1} of ${labels.length} only.`,
+      },
+      response: {
+        output: {
+          ...rest,
+          red_flags: sectionFlags[index],
+          proposed_jurisdiction:
+            proposal && sectionOf(proposal) === index ? proposal : null,
+        },
+      },
+    })),
+    {
+      expect: {
+        model: REPLAY_MODEL,
+        json_mode: true,
+        input_includes: "--- BEGIN UNTRUSTED SECTION ANALYSES ---",
+      },
+      response: { output: { ...rest, red_flag_ids: flagIds } },
+    },
   ];
 }
+
+// When section answers took different paths, the run reports the least clean one.
+const PARSE_PATH_SEVERITY: ParsePath[] = [
+  "normalized",
+  "unobserved",
+  "partial",
+  "strict",
+];
 
 function acceptedPath(raw: string | null, normalized: boolean): ParsePath {
   if (normalized) return "normalized";
@@ -110,7 +179,24 @@ export async function runReplay(
     }
 
     const served = transport.calls.filter((call) => call.servedText !== null);
-    const input = transport.calls[0]?.body?.input;
+    // A long contract's section answers carry the analysis; the merge answer only selects from it.
+    const analysed =
+      loaded.segments.length > 1
+        ? served.slice(0, loaded.segments.length)
+        : served.slice(-1);
+    const normalized = warnings.some(
+      (args) => args[0] === NORMALIZATION_WARNING,
+    );
+    const paths = analysed.map((call) =>
+      acceptedPath(call.servedText, normalized),
+    );
+    const prompts = Array.from(
+      new Set(
+        transport.calls
+          .map((call) => call.body?.input)
+          .filter((input): input is string => typeof input === "string"),
+      ),
+    );
     const rejected =
       failure instanceof Error && failure.name === "LlmResponseValidationError";
     return {
@@ -121,11 +207,9 @@ export async function runReplay(
         ? rejected
           ? "rejected"
           : "failed"
-        : acceptedPath(
-            served.at(-1)?.servedText ?? null,
-            warnings.some((args) => args[0] === NORMALIZATION_WARNING),
-          ),
-      prompt: typeof input === "string" ? input : null,
+        : (PARSE_PATH_SEVERITY.find((path) => paths.includes(path)) ??
+          "unobserved"),
+      prompt: prompts.length ? prompts.join("\n") : null,
       error: failure
         ? failure instanceof Error
           ? failure.message

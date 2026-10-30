@@ -141,7 +141,7 @@ function dateParts(
 }
 
 // Safely format a date-ish value, returning `fallback` when the value is missing or invalid.
-// Supports the token subset the app uses (yyyy, MMMM, MMM, d, HH, mm) — a tiny, dependency-free
+// Supports the token subset the app uses (yyyy, MMMM, MMM, MM, dd, d, HH, mm) — a tiny, dependency-free
 // replacement for date-fns `format`. Timestamps render in local time, or in `timeZone` (an IANA
 // name) when given; ISO date-only strings render as the written calendar date in every zone.
 export function formatDate(
@@ -158,13 +158,15 @@ export function formatDate(
     yyyy: () => String(year),
     MMMM: () => MONTHS_LONG[month - 1] ?? "",
     MMM: () => MONTHS_SHORT[month - 1] ?? "",
+    MM: () => pad2(month),
     HH: () => pad2(hour),
     mm: () => pad2(minute),
+    dd: () => pad2(day),
     d: () => String(day),
   };
 
   return formatStr.replace(
-    /yyyy|MMMM|MMM|HH|mm|d/g,
+    /yyyy|MMMM|MMM|MM|HH|mm|dd|d/g,
     (token) => replacements[token]?.() ?? token,
   );
 }

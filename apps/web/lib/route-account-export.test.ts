@@ -22,6 +22,7 @@ const at = "2026-10-01T09:00:00.000Z";
 const empty: AccountExportData = {
   contracts: [],
   contractFiles: [],
+  contractNotes: [],
   analyses: [],
   projects: [],
   contextDocuments: [],
@@ -51,6 +52,9 @@ const workspace: AccountExportData = {
     { id: "f1", contractId: "c1", fileName: "lease.pdf", contentType: "application/pdf", sizeBytes: contractPdf.length, extractionMethod: "pdf_text", extractionConfidence: null, createdAt: at, storageKey: "https://store.private.blob.vercel-storage.com/contracts/c1/lease.pdf" },
     { id: "f2", contractId: "c1", fileName: "../lease.pdf", contentType: "application/pdf", sizeBytes: 1, extractionMethod: null, extractionConfidence: null, createdAt: at, storageKey: "https://store.private.blob.vercel-storage.com/contracts/c1/lease-2.pdf" },
     { id: "f3", contractId: null, fileName: "old.pdf", contentType: null, sizeBytes: null, extractionMethod: null, extractionConfidence: null, createdAt: at, storageKey: "legacy/old.pdf" },
+  ],
+  contractNotes: [
+    { contractId: "c1", acceptanceReasons: "Rent is fixed for two years.", openQuestions: "Who repairs the boiler?", createdAt: at, updatedAt: at },
   ],
   analyses: [
     { id: "a1", contractId: "c1", riskBadge: "LOW", resultJson: { summary: "Fine" }, llmProvider: "openrouter", llmModel: "model", llmPromptTokens: 10, llmCompletionTokens: 5, processingTimeMs: 100, createdAt: at },
@@ -149,6 +153,7 @@ describe("GET /api/account/export", () => {
           { id: "f1", fileName: "lease.pdf", contentType: "application/pdf", sizeBytes: contractPdf.length, extractionMethod: "pdf_text", extractionConfidence: null, uploadedAt: at, path: "files/contracts/c1/lease.pdf" },
           { id: "f2", fileName: "../lease.pdf", contentType: "application/pdf", sizeBytes: 1, extractionMethod: null, extractionConfidence: null, uploadedAt: at, path: "files/contracts/c1/_lease.pdf" },
         ],
+        notes: { acceptanceReasons: "Rent is fixed for two years.", openQuestions: "Who repairs the boiler?", createdAt: at, updatedAt: at },
       },
     ]);
     expect(json(entries, `${root}/analyses.json`)).toEqual(workspace.analyses);

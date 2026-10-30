@@ -40,6 +40,7 @@ describe("formatDate", () => {
     );
     expect(formatDate("2026-12", "MMM d, yyyy", "", zone)).toBe("Dec 1, 2026");
     expect(formatDate("2026", "MMM d, yyyy", "", zone)).toBe("Jan 1, 2026");
+    expect(formatDate("2026-03-07", "yyyy-MM-dd", "", zone)).toBe("2026-03-07");
   });
 
   it("converts timestamps to the requested zone", () => {

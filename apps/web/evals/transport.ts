@@ -24,7 +24,13 @@ export type ReplayResponse =
   | { http: { status: number; body: unknown } };
 
 export type ReplayInteraction = {
-  expect?: { model?: string; json_mode?: boolean; fingerprint?: string };
+  expect?: {
+    model?: string;
+    json_mode?: boolean;
+    fingerprint?: string;
+    /** Text the prompt must contain, e.g. which section of a long contract it sends. */
+    input_includes?: string;
+  };
   response: ReplayResponse;
 };
 
@@ -167,6 +173,14 @@ export function createReplayTransport(
       (body?.text !== undefined) !== expect.json_mode
     ) {
       refuse(`Call ${calls.length} JSON mode differs from the recording`);
+    }
+    if (
+      expect?.input_includes !== undefined &&
+      !String(body?.input ?? "").includes(expect.input_includes)
+    ) {
+      refuse(
+        `Call ${calls.length} prompt lacks "${expect.input_includes}"; calls arrived out of order`,
+      );
     }
     if (
       expect?.fingerprint !== undefined &&

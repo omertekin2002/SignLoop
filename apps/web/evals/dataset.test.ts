@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { contractSourceRevision } from "@/lib/analysis-sources";
 import {
-  CONTRACT_HEAD_LENGTH,
+  CONTRACT_ANALYSIS_LIMIT,
   SourceIdentitySchema,
 } from "@/lib/source-citations";
 import {
@@ -48,54 +48,26 @@ describe("evaluation cases", () => {
     expect(cases.some((loaded) => loaded.governingLaw === null)).toBe(true);
   });
 
-  it("place omitted spans wholly in the unsent middle of a long contract", () => {
-    const omitted = cases.flatMap((loaded) =>
+  it("include required gold spans from every section of a long contract, with absolute offsets", () => {
+    const long = cases.filter((loaded) => loaded.segments.length > 1);
+    expect(long.length).toBeGreaterThan(0);
+    const sections = long.flatMap((loaded) =>
       loaded.clauses
-        .filter((clause) => clause.location === "omitted")
+        .filter((clause) => clause.required && clause.location !== "section-1")
         .map((clause) => ({ loaded, clause })),
     );
-    expect(omitted.length).toBeGreaterThan(0);
-    for (const { loaded, clause } of omitted) {
-      const head = loaded.segments[0]!;
-      const tail = loaded.segments.at(-1)!;
-      expect([head.label, tail.label]).toEqual(["head", "tail"]);
-      expect(clause.start).toBeGreaterThanOrEqual(head.end);
-      expect(clause.end).toBeLessThanOrEqual(tail.start);
-      for (const segment of loaded.segments)
-        expect(
-          clause.end <= segment.start || clause.start >= segment.end,
-        ).toBe(true);
-      expect(loaded.expectedCoverageNotices.join(" ")).toMatch(
-        /middle characters were omitted/,
-      );
-    }
-  });
-
-  it("include required gold spans from selected middle passages", () => {
-    const middle = cases.flatMap((loaded) =>
-      loaded.clauses
-        .filter((clause) => clause.location.startsWith("middle-"))
-        .map((clause) => ({ loaded, clause })),
-    );
-    expect(middle.some(({ clause }) => clause.required)).toBe(true);
-    for (const { loaded, clause } of middle) {
+    expect(sections.length).toBeGreaterThan(0);
+    for (const { loaded, clause } of sections) {
       const segment = loaded.segments.find(
         (candidate) => candidate.label === clause.location,
       )!;
-      expect(clause.start).toBeGreaterThanOrEqual(CONTRACT_HEAD_LENGTH);
       expect(clause.start).toBeGreaterThanOrEqual(segment.start);
       expect(clause.end).toBeLessThanOrEqual(segment.end);
+      expect(segment.start).toBeGreaterThan(0);
     }
-  });
-
-  it("include tail-segment gold spans with absolute offsets", () => {
-    const tail = cases.flatMap((loaded) =>
-      loaded.clauses.filter((clause) => clause.location === "tail"),
-    );
-    expect(tail.length).toBeGreaterThan(0);
-    expect(tail.every((clause) => clause.start > CONTRACT_HEAD_LENGTH)).toBe(
-      true,
-    );
+    // A long contract is sent whole, so production reports no coverage gap for it.
+    for (const loaded of long)
+      expect(loaded.expectedCoverageNotices).toEqual([]);
   });
 
   it("derive distinct contract IDs that production source receipts accept", () => {
@@ -137,13 +109,12 @@ describe("evaluation cases", () => {
 
 describe("gold span location", () => {
   const filler = (length: number) => "x".repeat(length);
+  // One unbroken line, so sections are cut at exactly CONTRACT_ANALYSIS_LIMIT code points.
   const long = [
-    filler(CONTRACT_HEAD_LENGTH - 10),
+    filler(CONTRACT_ANALYSIS_LIMIT - 7),
     "BOUNDARY CLAUSE",
     filler(3000),
-    "MIDDLE CLAUSE",
-    filler(6000),
-    "TAIL CLAUSE",
+    "SECOND CLAUSE",
   ].join("");
   const short =
     "Fees renew yearly. Fees renew yearly. Notice must be in writing.";
@@ -159,8 +130,8 @@ describe("gold span location", () => {
     });
   });
 
-  it("rejects spans outside their declared or any sent segment", () => {
-    expect(locateGoldSpan(short, "Notice must be", "head")).toMatchObject({
+  it("rejects spans outside their declared section or across a section boundary", () => {
+    expect(locateGoldSpan(short, "Notice must be", "section-1")).toMatchObject({
       ok: false,
       problem: "out_of_segment",
     });
@@ -168,32 +139,20 @@ describe("gold span location", () => {
       ok: false,
       problem: "out_of_segment",
     });
-    expect(locateGoldSpan(long, "MIDDLE CLAUSE")).toMatchObject({
-      ok: false,
-      problem: "out_of_segment",
-    });
-    expect(locateGoldSpan(long, "TAIL CLAUSE", "head")).toMatchObject({
+    expect(locateGoldSpan(long, "SECOND CLAUSE", "section-1")).toMatchObject({
       ok: false,
       problem: "out_of_segment",
     });
   });
 
-  it("asserts that omitted spans are unreachable", () => {
-    expect(locateGoldSpan(long, "MIDDLE CLAUSE", "omitted")).toMatchObject({
+  it("locates spans in the section that contains them", () => {
+    expect(locateGoldSpan(short, "Notice must be")).toMatchObject({
       ok: true,
-      location: "omitted",
+      location: "full",
     });
-    expect(locateGoldSpan(short, "Notice must be", "omitted")).toMatchObject({
-      ok: false,
-      problem: "reachable",
-    });
-    expect(locateGoldSpan(long, "BOUNDARY CLAUSE", "omitted")).toMatchObject({
-      ok: false,
-      problem: "reachable",
-    });
-    expect(locateGoldSpan(long, "TAIL CLAUSE")).toMatchObject({
+    expect(locateGoldSpan(long, "SECOND CLAUSE")).toMatchObject({
       ok: true,
-      location: "tail",
+      location: "section-2",
     });
   });
 

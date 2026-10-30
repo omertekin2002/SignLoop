@@ -24,6 +24,7 @@ import type { PrimaryModel } from "@/lib/model-settings";
 import type { PersonalityMode } from "@/lib/personality-settings";
 import { parseChatFileInfos, savedChatFile, type ChatDocument, type ChatFileInfo } from "@/lib/chat-files-shared";
 import type { GeneratedChatFile } from "@/lib/chat-file-generation";
+import type { ContractNotes } from "@/lib/contract-notes";
 import {
   ChatThreadNotFoundError,
   ContractRevisionChangedError,
@@ -929,8 +930,8 @@ export async function getContractWindowForUser(
  * A highlight needs the analysed revision and an exact quote at the citation's offsets, which bind
  * it to this contract's text. It is deliberately not limited to the segments sent for analysis:
  * citations only come from stored reports, where verifyQuote already checked them against those
- * segments, and the segment layout has changed (head and tail, then selected middle passages), so
- * a window check would drop highlights from older reports.
+ * segments, and the segment layout has changed (head and tail, then selected middle passages, then
+ * consecutive sections), so a window check would drop highlights from older reports.
  */
 export async function getContractSourceForUser(input: {
   userId: string;
@@ -1115,6 +1116,99 @@ export async function setContractJurisdictionForUser(input: {
   `;
 
   return rows[0] ?? null;
+}
+
+/** A contract's notes; empty with null timestamps until the owner first saves them. */
+export type ContractNotesRecord = ContractNotes & {
+  contractId: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type SaveContractNotesResult =
+  | { status: "saved"; notes: ContractNotesRecord }
+  /** Another save landed after expectedUpdatedAt; `notes` is what is stored now. */
+  | { status: "conflict"; notes: ContractNotesRecord }
+  | { status: "not_found" };
+
+const CONTRACT_NOTES_COLUMNS = `contract_id AS "contractId", acceptance_reasons AS "acceptanceReasons",
+  open_questions AS "openQuestions", created_at AS "createdAt", updated_at AS "updatedAt"`;
+
+async function readContractNotes(
+  client: Pick<VercelPoolClient, "query">,
+  userId: string,
+  contractId: string,
+): Promise<ContractNotesRecord | null> {
+  const { rows } = await client.query<ContractNotesRecord>(
+    `SELECT c.id AS "contractId", coalesce(n.acceptance_reasons, '') AS "acceptanceReasons",
+       coalesce(n.open_questions, '') AS "openQuestions", n.created_at AS "createdAt",
+       n.updated_at AS "updatedAt"
+     FROM contracts c LEFT JOIN contract_notes n ON n.contract_id = c.id
+     WHERE c.id = $1 AND c.user_id = $2`,
+    [contractId, userId],
+  );
+  return rows[0] ?? null;
+}
+
+/** The owner's notes for a contract, or null when the contract is not theirs. */
+export async function getContractNotesForUser(
+  userId: string,
+  contractId: string,
+): Promise<ContractNotesRecord | null> {
+  await ensureSchema();
+  return readContractNotes(sql, userId, contractId);
+}
+
+/**
+ * Save the owner's notes for a contract when `expectedUpdatedAt` is still the stored revision
+ * (null: no notes saved yet), so a save from a stale tab cannot overwrite a newer one. A mismatch
+ * changes nothing and returns the stored notes as a conflict.
+ */
+export async function saveContractNotesForUser(
+  userId: string,
+  contractId: string,
+  notes: ContractNotes,
+  expectedUpdatedAt: string | null,
+): Promise<SaveContractNotesResult> {
+  await ensureSchema();
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
+    // The first save is an owner-rooted insert: it share-locks the owner's application_users row
+    // (see deleteAccountForUser) and takes its owner from the contract itself.
+    const { rows } =
+      expectedUpdatedAt === null
+        ? await client.query<ContractNotesRecord>(
+            `INSERT INTO contract_notes(contract_id, user_id, acceptance_reasons, open_questions)
+             SELECT c.id, c.user_id, $3, $4
+             FROM contracts c JOIN application_users u ON u.id = c.user_id
+             WHERE c.id = $1 AND c.user_id = $2
+             FOR SHARE OF u
+             ON CONFLICT (contract_id) DO NOTHING
+             RETURNING ${CONTRACT_NOTES_COLUMNS}`,
+            [contractId, userId, notes.acceptanceReasons, notes.openQuestions],
+          )
+        : await client.query<ContractNotesRecord>(
+            `UPDATE contract_notes
+             SET acceptance_reasons = $3, open_questions = $4,
+               updated_at = greatest(date_trunc('milliseconds', now()), updated_at + interval '1 millisecond')
+             WHERE contract_id = $1 AND user_id = $2 AND updated_at = $5::timestamptz
+             RETURNING ${CONTRACT_NOTES_COLUMNS}`,
+            [contractId, userId, notes.acceptanceReasons, notes.openQuestions, expectedUpdatedAt],
+          );
+    const saved = rows[0];
+    const current = saved ? null : await readContractNotes(client, userId, contractId);
+    await client.query("COMMIT");
+    if (saved) return { status: "saved", notes: saved };
+    return current ? { status: "conflict", notes: current } : { status: "not_found" };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    // The contract was deleted between the ownership check and the insert's foreign-key check.
+    if ((error as { code?: string }).code === "23503") return { status: "not_found" };
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function saveContractUploadForUser(
@@ -1769,6 +1863,7 @@ const DELETE_ACCOUNT_STATEMENTS = [
   "DELETE FROM chat_threads WHERE user_id = $1",
   "DELETE FROM analyses a USING contracts c WHERE c.id = a.contract_id AND c.user_id = $1",
   "DELETE FROM contract_files WHERE user_id = $1 OR contract_id IN (SELECT id FROM contracts WHERE user_id = $1)",
+  "DELETE FROM contract_notes WHERE user_id = $1",
   "DELETE FROM contracts WHERE user_id = $1",
   "DELETE FROM context_documents d USING projects p WHERE p.id = d.project_id AND p.user_id = $1",
   "DELETE FROM projects WHERE user_id = $1",
@@ -1783,11 +1878,11 @@ const DELETE_ACCOUNT_STATEMENTS = [
  * removed by storage cleanup, never inline. Repeating the call deletes whatever is left. Saved chat
  * replay needs no scrubbing, because the threads go with the contracts they cite.
  *
- * Every owner-rooted insert (contracts, projects, settings, chat threads) share-locks the owner's
- * application_users row, and every other owned row hangs off one of those. Locking that row first
- * waits for writes already under way, so the deletes below see them, and blocks new ones until
- * commit. Once the row is gone they insert nothing, so a request authenticated before the deletion
- * cannot recreate data afterwards. `keepLogin` keeps the row and the WorkOS mapping, so that a
+ * Every owner-rooted insert (contracts, projects, settings, chat threads, contract notes)
+ * share-locks the owner's application_users row, and every other owned row hangs off one of those.
+ * Locking that row first waits for writes already under way, so the deletes below see them, and
+ * blocks new ones until commit. Once the row is gone they insert nothing, so a request
+ * authenticated before the deletion cannot recreate data afterwards. `keepLogin` keeps the row and the WorkOS mapping, so that a
  * retry after a failed WorkOS deletion resolves the session to the same owner and sweeps any late
  * writes; the final call removes them and retains a hashed subject revocation so stale sessions
  * cannot provision a new owner.
@@ -1872,6 +1967,7 @@ export type AccountExportData = {
     updatedAt: string;
   }>;
   contractFiles: AccountExportContractFile[];
+  contractNotes: Array<ContractNotes & { contractId: string; createdAt: string; updatedAt: string }>;
   analyses: AnalysisRecord[];
   projects: Array<{
     id: string;
@@ -1914,6 +2010,8 @@ const ACCOUNT_EXPORT_QUERIES = {
     FROM contract_files
     WHERE user_id = $1 OR contract_id IN (SELECT id FROM contracts WHERE user_id = $1)
     ORDER BY created_at, id`,
+  contractNotes: `SELECT ${CONTRACT_NOTES_COLUMNS}
+    FROM contract_notes WHERE user_id = $1 ORDER BY created_at, contract_id`,
   analyses: `SELECT a.id, a.contract_id AS "contractId", a.risk_badge AS "riskBadge",
       a.result_json AS "resultJson", a.llm_provider AS "llmProvider", a.llm_model AS "llmModel",
       a.llm_prompt_tokens AS "llmPromptTokens", a.llm_completion_tokens AS "llmCompletionTokens",
@@ -1963,6 +2061,7 @@ export async function getAccountExportForUser(userId: string): Promise<AccountEx
     const data: AccountExportData = {
       contracts: await read(ACCOUNT_EXPORT_QUERIES.contracts),
       contractFiles: await read(ACCOUNT_EXPORT_QUERIES.contractFiles),
+      contractNotes: await read(ACCOUNT_EXPORT_QUERIES.contractNotes),
       analyses: (await read<AnalysisRow>(ACCOUNT_EXPORT_QUERIES.analyses)).map(mapAnalysisRow),
       projects: await read(ACCOUNT_EXPORT_QUERIES.projects),
       contextDocuments: await read(ACCOUNT_EXPORT_QUERIES.contextDocuments),

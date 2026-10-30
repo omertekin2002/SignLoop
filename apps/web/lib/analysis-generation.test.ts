@@ -62,8 +62,18 @@ describe("analysis response completion", () => {
 
   it("merges provider and input-coverage notices without losing or repeating either", async () => {
     const { analyzeText, buildAnalysisPrompt } = await import("./analysis");
-    const contract = "Contract clause. ".repeat(2000);
-    const { coverageNotices } = buildAnalysisPrompt(contract);
+    const contract = "Monthly payment agreement";
+    // More context documents than the prompt takes, so the input itself carries a notice.
+    const contextDocuments = Array.from({ length: 9 }, (_, index) => ({
+      title: `Policy ${index + 1}`,
+      text: `Context document ${index + 1}`,
+    }));
+    const { coverageNotices } = buildAnalysisPrompt(
+      contract,
+      undefined,
+      contextDocuments,
+    );
+    expect(coverageNotices).toHaveLength(1);
     const fetchMock = vi.fn().mockResolvedValue(
       providerResponse(
         "completed",
@@ -75,7 +85,7 @@ describe("analysis response completion", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const answer = await analyzeText(contract);
+    const answer = await analyzeText(contract, undefined, { contextDocuments });
     expect(answer.result.coverage_notices).toEqual([
       ...coverageNotices,
       "No region was provided.",

@@ -36,6 +36,7 @@ import {
   findDirectUploadIntent,
   getContractWindowForUser,
   getContractSourceForUser,
+  saveContractNotesForUser,
   getAnalysisForUser,
   upsertUserSettings,
   getUserSettingsByUserId,
@@ -455,7 +456,7 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(await getAnalysisForUser("owner", item.id, saved.id)).toBeNull();
   });
 
-  it("rechecks report existence, highlights middle-passage quotes, and rejects mismatched spans", async () => {
+  it("rechecks report existence, highlights quotes from a section of a long contract, and rejects mismatched spans", async () => {
     const item = await contract();
     const renewal =
       "9.2 Renewal. This Agreement renews automatically unless notice is given 60 days before renewal.\n";
@@ -473,7 +474,7 @@ describe.skipIf(!connectionString)("database integration", () => {
       resultJson: attachAnalysisSources(
         {
           red_flags: [
-            { evidence: { quote: "renews automatically", segment: "middle-1" } },
+            { evidence: { quote: "renews automatically", segment: "section-2" } },
           ],
         },
         item.id,
@@ -2261,6 +2262,8 @@ describe.skipIf(!connectionString)("database integration", () => {
           userId, contractId: item.id, expectedRevision: snapshot!.revision, riskBadge: "LOW",
           resultJson: result, llmProvider: "test", llmModel: "test",
         });
+        expect(await saveContractNotesForUser(userId, item.id, { acceptanceReasons: "Fair", openQuestions: "Deposit?" }, null))
+          .toMatchObject({ status: "saved" });
       }
       // A legacy file row: no contract, and its object key in blob_path.
       const legacyKey = `account-legacy-${crypto.randomUUID()}`;
@@ -2309,6 +2312,7 @@ describe.skipIf(!connectionString)("database integration", () => {
       contractsById: await count("contracts", "id = ANY($1::uuid[])", [account.contractIds]),
       analyses: await count("analyses", "contract_id = ANY($1::uuid[])", [account.contractIds]),
       contractFiles: await count("contract_files", "user_id = $1", [account.userId]),
+      contractNotes: await count("contract_notes", "contract_id = ANY($1::uuid[])", [account.contractIds]),
       contextDocuments: await count("context_documents", "project_id = ANY($1::uuid[])", [account.projectIds]),
       threads: await count("chat_threads", "user_id = $1", [account.userId]),
       messages: await count("chat_messages", "thread_id = ANY($1::uuid[])", [account.threadIds]),
@@ -2423,6 +2427,10 @@ describe.skipIf(!connectionString)("database integration", () => {
         userId, contractId: contract.id, expectedRevision: snapshot!.revision, riskBadge: "LOW",
         resultJson: { summary: `Analysis ${tag}` }, llmProvider: "test", llmModel: "test",
       });
+      const notes = { acceptanceReasons: `Accept ${tag}`, openQuestions: `Ask ${tag}` };
+      expect(await saveContractNotesForUser(userId, contract.id, notes, null)).toMatchObject({ status: "saved" });
+      // A contract without notes exports null.
+      const unnoted = await createContractForUser({ userId, title: "Unnoted" });
       const thread = await createChatThreadForUser({ userId, title: "Questions" });
       const webSources = [{ number: 1, title: "Source", url: "https://source.test" }];
       await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
@@ -2442,7 +2450,7 @@ describe.skipIf(!connectionString)("database integration", () => {
         "INSERT INTO chat_admissions(token, principal, expires_at) VALUES ($1, $2, now() + interval '1 minute')",
         [crypto.randomUUID(), principal],
       );
-      return { userId, principal, tag, project, contextDocument, contextBytes, contract, uploads, thread, chatFile, chatBytes, webSources };
+      return { userId, principal, tag, project, contextDocument, contextBytes, contract, unnoted, notes, uploads, thread, chatFile, chatBytes, webSources };
     }
 
     try {
@@ -2452,10 +2460,16 @@ describe.skipIf(!connectionString)("database integration", () => {
 
       expect(data.projects.map((row) => row.id)).toEqual([owner.project.id]);
       expect(data.contextDocuments.map((row) => row.id)).toEqual([owner.contextDocument.id]);
-      expect(data.contracts.map((row) => [row.id, row.textContent])).toEqual([[owner.contract.id, "Second lease."]]);
+      expect(data.contracts.map((row) => [row.id, row.textContent])).toEqual([
+        [owner.contract.id, "Second lease."],
+        [owner.unnoted.id, null],
+      ]);
       expect(data.contracts[0]).toMatchObject({ confirmedJurisdiction: `Ontario ${owner.tag}` });
       expect(data.contracts[0]!.jurisdictionConfirmedAt).toBeTruthy();
       expect(data.contractFiles.map((row) => row.contractId)).toEqual([owner.contract.id, owner.contract.id]);
+      expect(data.contractNotes).toEqual([
+        { contractId: owner.contract.id, ...owner.notes, createdAt: expect.any(Date), updatedAt: expect.any(Date) },
+      ]);
       expect(data.analyses.map((row) => [row.contractId, row.resultJson])).toEqual([
         [owner.contract.id, { summary: `Analysis ${owner.tag}` }],
       ]);
@@ -2468,7 +2482,7 @@ describe.skipIf(!connectionString)("database integration", () => {
       expect(data.settings).toMatchObject({ personality: "bare-llm", primaryModel: null });
 
       const exportedText = JSON.stringify(data);
-      for (const id of [other.userId, other.tag, other.project.id, other.contract.id, other.thread.id, other.chatFile.id]) {
+      for (const id of [other.userId, other.tag, other.project.id, other.contract.id, other.unnoted.id, other.thread.id, other.chatFile.id]) {
         expect(exportedText).not.toContain(id);
       }
       // Leases, admissions and the login mapping are never read.
@@ -2479,7 +2493,15 @@ describe.skipIf(!connectionString)("database integration", () => {
       // The archive built from it holds every original file byte-for-byte, and no storage keys.
       const entries = await unzip(createAccountExport({ userId: owner.userId, data, exportedAt: new Date() }));
       const root = "signloop-export";
-      const contractsJson = json(entries, `${root}/contracts.json`) as Array<{ files: Array<{ path: string }> }>;
+      const contractsJson = json(entries, `${root}/contracts.json`) as Array<{
+        id: string;
+        files: Array<{ path: string }>;
+        notes: Record<string, unknown> | null;
+      }>;
+      expect(contractsJson.map((row) => [row.id, row.notes])).toEqual([
+        [owner.contract.id, { ...owner.notes, createdAt: expect.any(String), updatedAt: expect.any(String) }],
+        [owner.unnoted.id, null],
+      ]);
       expect(contractsJson[0]!.files.map((file) => file.path)).toEqual([
         `files/contracts/${owner.contract.id}/lease.txt`,
         `files/contracts/${owner.contract.id}/lease (2).txt`,
@@ -2499,7 +2521,7 @@ describe.skipIf(!connectionString)("database integration", () => {
       // An account with nothing in it exports empty collections.
       const empty = await getAccountExportForUser(await resolveWorkOSUserId({ id: `user_${crypto.randomUUID()}` }));
       expect(empty).toEqual({
-        contracts: [], contractFiles: [], analyses: [], projects: [], contextDocuments: [],
+        contracts: [], contractFiles: [], contractNotes: [], analyses: [], projects: [], contextDocuments: [],
         chatThreads: [], chatMessages: [], chatFiles: [], chatImages: [], settings: null,
       });
     } finally {

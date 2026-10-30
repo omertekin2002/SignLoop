@@ -1,56 +1,21 @@
 import { z } from "zod";
 
-export const CONTRACT_ANALYSIS_LIMIT = 15000;
-// A longer contract is sent as a head, up to MIDDLE_SEGMENT_LABELS.length passages selected from
-// the middle, and a tail, within the same budget. The head keeps the parties, definitions and
-// commercial terms that open most contracts; the tail keeps governing law, signatures and fee
-// schedules. The rest (2,200 code points, a few typical clauses) goes to the middle passages
-// that score highest on MIDDLE_PASSAGE_KEYWORDS, where term, renewal and notice clauses often sit.
-export const CONTRACT_HEAD_LENGTH = 8000;
-export const CONTRACT_TAIL_LENGTH = 4800;
-export const CONTRACT_MIDDLE_BUDGET =
-  CONTRACT_ANALYSIS_LIMIT - CONTRACT_HEAD_LENGTH - CONTRACT_TAIL_LENGTH;
-export const MIDDLE_SEGMENT_LABELS = [
-  "middle-1",
-  "middle-2",
-  "middle-3",
-  "middle-4",
-] as const;
-/** Longer clauses are split, so one clause cannot take the whole middle budget. */
-export const MIDDLE_PASSAGE_MAX_LENGTH = 1000;
-/** Shorter passages, such as a section heading, join the passage that follows them. */
-const MIDDLE_PASSAGE_MIN_LENGTH = 80;
 /**
- * Lower-case stems of the clause types the analysis reports. A passage scores one point per stem
- * it contains, so a long passage cannot win by repeating one word.
+ * Code points one analysis call reads. A longer contract is split into consecutive sections of at
+ * most this length that together cover the whole text; each is analysed separately and the
+ * results are merged (analyzeText in lib/analysis.ts).
  */
-export const MIDDLE_PASSAGE_KEYWORDS = [
-  "renew",
-  "term",
-  "terminat",
-  "cancel",
-  "notice",
-  "fee",
-  "price",
-  "increase",
-  "payment",
-  "late",
-  "interest",
-  "penalt",
-  "liabil",
-  "indemn",
-  "governing law",
-  "jurisdiction",
-  "arbitration",
-  "exclusiv",
-  "auto",
-] as const;
-const SEGMENT_LABELS = [
-  "full",
-  "head",
-  ...MIDDLE_SEGMENT_LABELS,
-  "tail",
-] as const;
+export const CONTRACT_ANALYSIS_LIMIT = 15000;
+/** Shorter passages, such as a section heading, join the passage that follows them. */
+const PASSAGE_MIN_LENGTH = 80;
+/** "full" for a contract within CONTRACT_ANALYSIS_LIMIT, otherwise "section-1" to "section-N". */
+export type SegmentLabel = "full" | `section-${number}`;
+export const SegmentLabelSchema = z.custom<SegmentLabel>(
+  (value) =>
+    typeof value === "string" && /^(?:full|section-[1-9]\d*)$/.test(value),
+);
+export const sectionLabel = (index: number): SegmentLabel =>
+  `section-${index + 1}`;
 export const SOURCE_PAGE_SIZE = 6000;
 export const MAX_EVIDENCE_QUOTE = 2000;
 export const SourceRevisionSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -82,10 +47,10 @@ export const EvidenceProposalSchema = z.object({
     .string()
     .min(1)
     .max(MAX_EVIDENCE_QUOTE * 2),
-  segment: z.enum(SEGMENT_LABELS),
+  segment: SegmentLabelSchema,
 });
 export type ContractSegment = {
-  label: (typeof SEGMENT_LABELS)[number];
+  label: SegmentLabel;
   start: number;
   end: number;
   text: string;
@@ -96,25 +61,20 @@ export function contractAnalysisSegments(text: string): ContractSegment[] {
   const chars = Array.from(text);
   if (chars.length <= CONTRACT_ANALYSIS_LIMIT)
     return [{ label: "full", start: 0, end: chars.length, text }];
-  const tailStart = chars.length - CONTRACT_TAIL_LENGTH;
-  const segment = (
-    label: ContractSegment["label"],
-    start: number,
-    end: number,
-  ): ContractSegment => ({
-    label,
+  // Each passage fits the limit, so packing whole passages greedily covers the text with no gaps.
+  const sections: Passage[] = [];
+  for (const passage of splitPassages(chars, CONTRACT_ANALYSIS_LIMIT)) {
+    const current = sections.at(-1);
+    if (current && passage.end - current.start <= CONTRACT_ANALYSIS_LIMIT)
+      current.end = passage.end;
+    else sections.push({ ...passage });
+  }
+  return sections.map(({ start, end }, index) => ({
+    label: sectionLabel(index),
     start,
     end,
     text: chars.slice(start, end).join(""),
-  });
-  return [
-    segment("head", 0, CONTRACT_HEAD_LENGTH),
-    ...selectMiddlePassages(chars, CONTRACT_HEAD_LENGTH, tailStart).map(
-      (passage, index) =>
-        segment(MIDDLE_SEGMENT_LABELS[index]!, passage.start, passage.end),
-    ),
-    segment("tail", tailStart, chars.length),
-  ];
+  }));
 }
 
 type Passage = { start: number; end: number };
@@ -122,24 +82,21 @@ type Passage = { start: number; end: number };
 const NUMBERED_CLAUSE = /^[ \t]*\d{1,3}(?:\.\d{1,3})*\.?[ \t]/;
 
 /**
- * Splits chars[from, to) into consecutive passages that together cover it. A passage starts at a
- * line that opens a numbered clause ("9.", "9.1") or follows a blank line. A passage shorter than
- * MIDDLE_PASSAGE_MIN_LENGTH joins the next one, and one longer than MIDDLE_PASSAGE_MAX_LENGTH is cut.
+ * Splits chars into consecutive passages that together cover it. A passage starts at a line that
+ * opens a numbered clause ("9.", "9.1") or follows a blank line. A passage shorter than
+ * PASSAGE_MIN_LENGTH joins the next one, and one longer than maxLength is cut.
  */
-function splitMiddlePassages(
-  chars: readonly string[],
-  from: number,
-  to: number,
-): Passage[] {
-  const starts = [from];
+function splitPassages(chars: readonly string[], maxLength: number): Passage[] {
+  const to = chars.length;
+  const starts = [0];
   let previousBlank = false;
-  for (let lineStart = from; lineStart < to;) {
+  for (let lineStart = 0; lineStart < to;) {
     const newline = chars.indexOf("\n", lineStart);
-    const lineEnd = newline < 0 || newline >= to ? to : newline + 1;
+    const lineEnd = newline < 0 ? to : newline + 1;
     const line = chars.slice(lineStart, lineEnd).join("");
     const blank = !line.trim();
     if (
-      lineStart > from &&
+      lineStart > 0 &&
       !blank &&
       (previousBlank || NUMBERED_CLAUSE.test(line))
     )
@@ -157,23 +114,26 @@ function splitMiddlePassages(
     const current: Passage = pending
       ? { start: pending.start, end: block.end }
       : block;
-    pending =
-      current.end - current.start < MIDDLE_PASSAGE_MIN_LENGTH ? current : null;
+    pending = current.end - current.start < PASSAGE_MIN_LENGTH ? current : null;
     if (!pending) merged.push(current);
   }
   if (pending) merged.push(pending);
-  return merged.flatMap((passage) => capPassage(chars, passage));
+  return merged.flatMap((passage) => capPassage(chars, passage, maxLength));
 }
 
 /** Cuts an over-long passage at its last line break, else last space, before the cap. */
-function capPassage(chars: readonly string[], passage: Passage): Passage[] {
+function capPassage(
+  chars: readonly string[],
+  passage: Passage,
+  maxLength: number,
+): Passage[] {
   const pieces: Passage[] = [];
   let { start } = passage;
-  while (passage.end - start > MIDDLE_PASSAGE_MAX_LENGTH) {
-    const limit = start + MIDDLE_PASSAGE_MAX_LENGTH;
+  while (passage.end - start > maxLength) {
+    const limit = start + maxLength;
     const window = chars.slice(start, limit);
     const breakAt = [window.lastIndexOf("\n"), window.lastIndexOf(" ")].find(
-      (at) => at >= MIDDLE_PASSAGE_MAX_LENGTH / 2,
+      (at) => at >= maxLength / 2,
     );
     const end = breakAt === undefined ? limit : start + breakAt + 1;
     pieces.push({ start, end });
@@ -181,45 +141,6 @@ function capPassage(chars: readonly string[], passage: Passage): Passage[] {
   }
   pieces.push({ start, end: passage.end });
   return pieces;
-}
-
-function scoreMiddlePassage(text: string): number {
-  const normalized = text.toLowerCase().replace(/\s+/g, " ");
-  return MIDDLE_PASSAGE_KEYWORDS.filter((keyword) =>
-    normalized.includes(keyword),
-  ).length;
-}
-
-/**
- * The highest-scoring passages of chars[from, to) that fit CONTRACT_MIDDLE_BUDGET, in document
- * order. Passages without a keyword are never sent, and ties go to the earlier passage, so the
- * same text always yields the same selection.
- */
-function selectMiddlePassages(
-  chars: readonly string[],
-  from: number,
-  to: number,
-): Passage[] {
-  const ranked = splitMiddlePassages(chars, from, to)
-    .map((passage, index) => ({
-      ...passage,
-      index,
-      score: scoreMiddlePassage(
-        chars.slice(passage.start, passage.end).join(""),
-      ),
-    }))
-    .filter((passage) => passage.score > 0)
-    .sort((a, b) => b.score - a.score || a.index - b.index);
-  const selected: Passage[] = [];
-  let remaining = CONTRACT_MIDDLE_BUDGET;
-  for (const passage of ranked) {
-    if (selected.length === MIDDLE_SEGMENT_LABELS.length) break;
-    const length = passage.end - passage.start;
-    if (length > remaining) continue;
-    selected.push({ start: passage.start, end: passage.end });
-    remaining -= length;
-  }
-  return selected.sort((a, b) => a.start - b.start);
 }
 
 export function verifyQuote(

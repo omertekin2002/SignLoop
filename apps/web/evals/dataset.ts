@@ -28,15 +28,13 @@ export const EVALS_DIR = path.dirname(fileURLToPath(import.meta.url));
 // harness bypasses. Fixtures stay within that bound so the prompt matches production.
 const MAX_CONTEXT_FIXTURE_CHARACTERS = 3_000;
 
-type SegmentLabel = ContractSegment["label"];
-export type GoldLocation = SegmentLabel | "omitted";
+export type GoldLocation = ContractSegment["label"];
 
 export type LocatedClause = EvalCase["clauses"][number] & {
   /** Unicode code points, end exclusive, like production citations. */
   start: number;
   end: number;
   location: GoldLocation;
-  reachable: boolean;
 };
 
 export type LoadedCase = {
@@ -56,7 +54,7 @@ export type SpanLocation =
   | { ok: true; start: number; end: number; location: GoldLocation }
   | {
       ok: false;
-      problem: "missing" | "repeated" | "out_of_segment" | "reachable";
+      problem: "missing" | "repeated" | "out_of_segment";
       detail: string;
     };
 
@@ -70,9 +68,9 @@ export function evalContractId(caseId: string): string {
 }
 
 /**
- * A gold span must occur exactly once in the contract and lie wholly inside the segment that
+ * A gold span must occur exactly once in the contract and lie wholly inside one segment that
  * production sends (and, when declared, the declared one). Production verification must agree on
- * its offsets. Spans declared "omitted" must be invisible to the model.
+ * its offsets. A span across a section boundary cannot be quoted, so it is rejected.
  */
 export function locateGoldSpan(
   text: string,
@@ -97,20 +95,6 @@ export function locateGoldSpan(
   const start = Array.from(text.slice(0, at)).length;
   const end = start + Array.from(span).length;
   const segments = contractAnalysisSegments(text);
-
-  if (declared === "omitted") {
-    const visible = segments.filter(
-      (segment) => start < segment.end && end > segment.start,
-    );
-    return visible.length
-      ? {
-          ok: false,
-          problem: "reachable",
-          detail: `declared omitted but overlaps the ${visible.map((segment) => segment.label).join("/")} segment`,
-        }
-      : { ok: true, start, end, location: "omitted" };
-  }
-
   const containing = segments.find(
     (segment) => segment.start <= start && end <= segment.end,
   );
@@ -178,7 +162,6 @@ export function buildLoadedCase(input: {
       start: location.start,
       end: location.end,
       location: location.location,
-      reachable: location.location !== "omitted",
     });
   }
 

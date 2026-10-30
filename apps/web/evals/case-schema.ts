@@ -1,8 +1,5 @@
 import { z } from "zod";
-import {
-  MAX_EVIDENCE_QUOTE,
-  MIDDLE_SEGMENT_LABELS,
-} from "@/lib/source-citations";
+import { MAX_EVIDENCE_QUOTE, SegmentLabelSchema } from "@/lib/source-citations";
 import { CLAUSE_CATEGORIES } from "./taxonomy";
 
 export const DURATION_UNITS = [
@@ -51,13 +48,8 @@ const GoldClauseSchema = z.strictObject({
   /** Required clauses count toward recall; optional ones are acceptable citations only. */
   required: z.boolean(),
   span: GoldSpanSchema,
-  /**
-   * Asserted when present. "middle-N" spans sit in a selected middle passage of a long contract,
-   * "omitted" spans in its unsent middle.
-   */
-  segment: z
-    .enum(["full", "head", ...MIDDLE_SEGMENT_LABELS, "tail", "omitted"])
-    .optional(),
+  /** Asserted when present: "full", or the "section-N" of a long contract the span lies in. */
+  segment: SegmentLabelSchema.optional(),
 });
 
 export const EvalCaseSchema = z
@@ -111,19 +103,12 @@ export const EvalCaseSchema = z
       .default([]),
   })
   .superRefine((value, context) => {
-    for (const [index, clause] of value.clauses.entries()) {
+    for (const clause of value.clauses) {
       if (value.absent.includes(clause.category)) {
         context.addIssue({
           code: "custom",
           path: ["absent"],
           message: `${clause.category} is both a gold clause and an absent category`,
-        });
-      }
-      if (clause.segment === "omitted" && clause.required) {
-        context.addIssue({
-          code: "custom",
-          path: ["clauses", index, "required"],
-          message: "Clauses in the omitted middle cannot be required",
         });
       }
     }

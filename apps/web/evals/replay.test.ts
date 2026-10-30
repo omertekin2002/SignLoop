@@ -197,7 +197,10 @@ describe("oracle responses through the production pipeline", () => {
       const oracle = oracles.get(loaded.spec.id)!;
       runs.set(
         loaded.spec.id,
-        await runReplay(loaded, oracleInteractions(oracle.output)),
+        await runReplay(
+          loaded,
+          oracleInteractions(oracle.output, loaded.segments),
+        ),
       );
     }
   });
@@ -207,23 +210,21 @@ describe("oracle responses through the production pipeline", () => {
     (id, loaded) => {
       const run = runs.get(id)!;
       expect(run.error).toBeNull();
-      expect(run.calls).toHaveLength(1);
-      expect(run.calls[0]!.body).toMatchObject({
-        model: REPLAY_MODEL,
-        max_output_tokens: 8192,
-        text: { format: { type: "json_object" } },
-      });
-      // The real prompt builder ran: every sent segment and context document is present, and
-      // nothing from the omitted middle is.
+      // One call for a contract within the limit; one per section plus a merge beyond it.
+      expect(run.calls).toHaveLength(
+        loaded.segments.length === 1 ? 1 : loaded.segments.length + 1,
+      );
+      for (const call of run.calls)
+        expect(call.body).toMatchObject({
+          model: REPLAY_MODEL,
+          max_output_tokens: 8192,
+          text: { format: { type: "json_object" } },
+        });
+      // The real prompt builder ran: every segment and context document was sent.
       for (const segment of loaded.segments)
         expect(run.prompt).toContain(segment.text);
       for (const document of loaded.context)
         expect(run.prompt).toContain(document.text);
-      for (const clause of loaded.clauses.filter(
-        (candidate) => !candidate.reachable,
-      )) {
-        expect(run.prompt).not.toContain(clause.span);
-      }
       expect(imperfections(caseMetrics(scoreCase(loaded, run)))).toEqual(
         oracles.get(id)!.ideal,
       );
@@ -268,7 +269,10 @@ describe("oracle responses through the production pipeline", () => {
     const oracle = oracles.get(perturbation.case)!;
     const bad = await runReplay(
       loaded,
-      oracleInteractions(applyPatch(oracle.output, perturbation.patch)),
+      oracleInteractions(
+        applyPatch(oracle.output, perturbation.patch),
+        loaded.segments,
+      ),
     );
     const before = caseMetrics(scoreCase(loaded, runs.get(perturbation.case)!));
     const after = caseMetrics(scoreCase(loaded, bad));

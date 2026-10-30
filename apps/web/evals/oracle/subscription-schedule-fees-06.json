@@ -1,10 +1,9 @@
 {
   "case": "subscription-schedule-fees-06",
-  "note": "Ideal answer: renewal findings cite the head segment and Schedule C findings cite the tail segment, so citations carry absolute tail offsets.",
+  "note": "Ideal answer: renewal findings and the governing-law proposal cite section-1 and Schedule C findings cite section-2, so citations carry absolute section-2 offsets.",
   "output": {
     "risk_badge": "MEDIUM",
     "key_points": [
-      "Coverage is incomplete: part of the middle of the agreement was not reviewed.",
       "The subscription renews automatically for twelve-month periods unless notice of non-renewal is given at least 60 days before the term ends.",
       "Schedule C raises the Subscription Fees by 5% on each anniversary and charges all remaining fees on early termination."
     ],
@@ -46,7 +45,7 @@
         "confidence": 95,
         "evidence": {
           "quote": "This Agreement renews automatically for successive twelve (12) month periods",
-          "segment": "head"
+          "segment": "section-1"
         }
       },
       {
@@ -57,7 +56,7 @@
         "confidence": 90,
         "evidence": {
           "quote": "unless either party gives written notice of non-renewal at least 60 days before the end of the then-current term",
-          "segment": "head"
+          "segment": "section-1"
         }
       },
       {
@@ -68,7 +67,7 @@
         "confidence": 90,
         "evidence": {
           "quote": "the Subscription Fees increase by five percent (5%) on each anniversary of the Effective Date",
-          "segment": "tail"
+          "segment": "section-2"
         }
       },
       {
@@ -79,7 +78,7 @@
         "confidence": 90,
         "evidence": {
           "quote": "Customer shall pay an early termination fee equal to all Subscription Fees remaining for the then-current term",
-          "segment": "tail"
+          "segment": "section-2"
         }
       }
     ],
@@ -87,7 +86,7 @@
       "jurisdiction": "State of Texas",
       "evidence": {
         "quote": "This Agreement is governed by the laws of the State of Texas, and the courts of Travis County, Texas have exclusive jurisdiction.",
-        "segment": "tail"
+        "segment": "section-1"
       }
     },
     "normal_in_region": [],

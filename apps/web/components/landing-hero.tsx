@@ -583,8 +583,8 @@ export function LandingHero({ backdrop }: { backdrop: HTMLElement | null }) {
             <p className="app-lede mt-8">
               Structured analysis rates each contract low, medium, or high risk,
               then shows its working. The clauses that matter rise to the top.
-              Long documents are analyzed using bounded excerpts, with coverage
-              notices in the result.
+              Long documents are analyzed section by section and merged, with
+              coverage notices for any section that could not be read.
             </p>
           </Reveal>
           <Reveal delay={160}>
