@@ -61,6 +61,7 @@ import { toast } from "sonner";
 import { ContractSourceProvider, FindingSource, OpenContractSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
 import { DownloadBriefButton } from "@/components/download-brief-button";
+import { ContractNotes } from "@/components/contract-notes";
 import { ContractJurisdiction } from "@/components/contract-jurisdiction";
 import type { AnalysisResult } from "@/lib/schemas";
 import {
@@ -1064,6 +1065,9 @@ const ContractDetails = () => {
         />
 
         {resultJson && <AnalysisDetails result={resultJson} />}
+
+        {/* The owner's own writing, after everything generated, so it never reads as analysis. */}
+        <ContractNotes contractId={id} />
 
         {/* Analysis History */}
         {(olderAnalyses.length > 0 || contract.analysesHasMore) && (

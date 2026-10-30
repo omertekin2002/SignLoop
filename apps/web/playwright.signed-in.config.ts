@@ -58,9 +58,16 @@ export default defineConfig({
       use: { storageState: AUTH_STATE_PATH },
     },
     {
+      // Also after the workspace checks: it adds contracts with notes.
+      name: "contract-notes",
+      testMatch: "contract-notes.spec.ts",
+      dependencies: ["workspace"],
+      use: { storageState: AUTH_STATE_PATH },
+    },
+    {
       name: "sign-out",
       testMatch: "sign-out.spec.ts",
-      dependencies: ["csp"],
+      dependencies: ["csp", "contract-notes"],
       use: { storageState: AUTH_STATE_PATH },
     },
   ],
