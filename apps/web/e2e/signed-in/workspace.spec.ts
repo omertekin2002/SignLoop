@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { THEMES, expectNoA11yViolations, startInTheme } from "../axe";
 import { openDashboard, openSidebar } from "./dashboard";
 import { SIGNED_IN_ORIGIN } from "./env";
 
@@ -118,6 +119,59 @@ test("a created project is saved to the account", async ({ page }) => {
   await expect(page.getByText(title).first()).toBeVisible();
   expect(pageErrors).toEqual([]);
 });
+
+// After the upload above, so the standalone list has a contract the search must hide.
+for (const theme of THEMES) {
+  test(`a title search finds a contract inside a project and clears back to the list (${theme} theme)`, async ({
+    page,
+  }) => {
+    const pageErrors = collectPageErrors(page);
+    await startInTheme(page, theme);
+    const stamp = `${theme} ${Date.now()}`;
+    const projectTitle = `E2E search project ${stamp}`;
+    const project = await page.request.post("/api/projects", { data: { title: projectTitle } });
+    expect(project.status()).toBe(201);
+    const { id: projectId } = (await project.json()) as { id: string };
+    const title = `E2E searchable lease ${stamp}`;
+    const created = await page.request.post("/api/contracts", { data: { title, projectId } });
+    expect(created.status()).toBe(201);
+
+    // The API searches every contract, ignores standalone=true, and names the project.
+    const found = await page.request.get(
+      `/api/contracts?standalone=true&q=${encodeURIComponent(`  SEARCHABLE lease ${stamp} `)}`,
+    );
+    expect(found.status()).toBe(200);
+    expect(await found.json()).toMatchObject({
+      total: 1,
+      data: [{ title, projectId, projectTitle }],
+    });
+    expect((await page.request.get(`/api/contracts?q=${"a".repeat(201)}`)).status()).toBe(400);
+
+    await openDashboard(page);
+    await openSidebarSection(page, "Contracts");
+    const search = page.getByRole("searchbox", { name: "Search contracts" });
+    await expect(page.getByRole("link", { name: new RegExp(title) })).toHaveCount(0);
+
+    await search.fill(`searchable lease ${stamp}`);
+    await expect(page.getByRole("link", { name: new RegExp(title) })).toBeVisible();
+    await expect(page.getByText(projectTitle)).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "1 contract matches" })).toBeVisible();
+    await expectNoA11yViolations(page, { theme });
+
+    await search.fill(`no such contract ${stamp}`);
+    const noMatch = page.getByRole("heading", { name: `No contracts match “no such contract ${stamp}”` });
+    await expect(noMatch).toBeVisible();
+    await expect(page.getByRole("heading", { name: "No contracts found" })).toHaveCount(0);
+    await expectNoA11yViolations(page, { theme });
+
+    await page.getByRole("button", { name: "Clear search" }).last().click();
+    await expect(search).toHaveValue("");
+    await expect(noMatch).toHaveCount(0);
+    await expect(page.getByRole("link", { name: new RegExp(title) })).toHaveCount(0);
+    await expect(page.getByText("e2e-lease").first()).toBeVisible();
+    expect(pageErrors).toEqual([]);
+  });
+}
 
 test("the usage API reports the account's unused hourly quota", async ({ page }) => {
   const response = await page.request.get("/api/usage");

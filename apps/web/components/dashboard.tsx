@@ -62,6 +62,11 @@ import {
 import { UploadDialog } from "@/components/upload-dialog";
 import { NewProjectDialog } from "@/components/new-project-dialog";
 import { ChatPanel } from "@/components/chat-panel";
+import {
+  ContractSearchField,
+  ContractSearchResults,
+  useContractSearch,
+} from "@/components/contract-search";
 
 type DashboardTab = "contracts" | "projects" | "chat";
 
@@ -71,7 +76,9 @@ interface Contract {
   status: string;
   createdAt: string;
   updatedAt: string;
-  projectId?: string;
+  projectId?: string | null;
+  /** Set on title-search results that live in a project. */
+  projectTitle?: string | null;
 }
 
 interface Project {
@@ -283,6 +290,7 @@ const Dashboard = ({
   const [isRefreshingModels, setIsRefreshingModels] = useState(false);
   const modelRefreshPromiseRef = useRef<Promise<boolean> | null>(null);
 
+  const contractSearch = useContractSearch();
   const contractList = useWorkspaceList<Contract>(
     "contracts",
     "/contracts?standalone=true",
@@ -575,6 +583,62 @@ const Dashboard = ({
       setContractToDelete(null);
     },
   });
+
+  const renderContractGrid = (items: Contract[]) => (
+    <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      {items.map((contract) => (
+        <Card
+          key={contract.id}
+          className="group relative h-full overflow-hidden transition-colors hover:border-input hover:bg-foreground/[0.03]"
+        >
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute right-4 top-4 z-10 h-8 w-8 text-muted-foreground opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+            title="Delete contract"
+            aria-label={`Delete ${contract.title}`}
+            onClick={() => setContractToDelete(contract)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+          <Link
+            href={`/contracts/${contract.id}`}
+            {...navigationIntent({ kind: "contract", id: contract.id })}
+            className="block h-full"
+          >
+            <CardHeader className="space-y-0 pb-4 pr-12">
+              <CardTitle className="line-clamp-2">
+                {contract.title}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {contract.projectTitle ? (
+                <div className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    <span className="sr-only">Project: </span>
+                    {contract.projectTitle}
+                  </span>
+                </div>
+              ) : null}
+              <div className="mb-4 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Calendar className="h-3.5 w-3.5" />
+                {formatDate(contract.createdAt, "MMMM d, yyyy")}
+              </div>
+              <div className="flex items-end justify-between">
+                <Badge variant="secondary">
+                  {contract.status || "DRAFT"}
+                </Badge>
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+                  <ChevronRight className="h-4 w-4" />
+                </div>
+              </div>
+            </CardContent>
+          </Link>
+        </Card>
+      ))}
+    </div>
+  );
 
   // The request already asks for ?standalone=true, which the server answers with
   // `project_id is null` -- re-filtering here only risked drifting from that predicate.
@@ -1097,9 +1161,25 @@ const Dashboard = ({
             </div>
           )}
 
+          {activeTab === "contracts" && canUseSavedWorkspace ? (
+            <ContractSearchField
+              value={contractSearch.input}
+              onChange={contractSearch.setInput}
+              onClear={contractSearch.clear}
+            />
+          ) : null}
+
           {activeTab === "contracts" ? (
             !canUseSavedWorkspace ? (
               renderLoginRequired("contracts")
+            ) : contractSearch.search ? (
+              <ContractSearchResults<Contract>
+                search={contractSearch.search}
+                enabled
+                onClear={contractSearch.clear}
+                renderContracts={renderContractGrid}
+                renderLoadError={(retry) => renderLoadError("contracts", retry)}
+              />
             ) : contractsFailed ? (
               renderLoadError("contracts", () => void refetchContracts())
             ) : loadingContracts ? (
@@ -1137,50 +1217,7 @@ const Dashboard = ({
                 </div>
               </div>
             ) : (
-              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                {standaloneContracts.map((contract) => (
-                  <Card
-                    key={contract.id}
-                    className="group relative h-full overflow-hidden transition-colors hover:border-input hover:bg-foreground/[0.03]"
-                  >
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-4 top-4 z-10 h-8 w-8 text-muted-foreground opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
-                      title="Delete contract"
-                      aria-label={`Delete ${contract.title}`}
-                      onClick={() => setContractToDelete(contract)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                    <Link
-                      href={`/contracts/${contract.id}`}
-                      {...navigationIntent({ kind: "contract", id: contract.id })}
-                      className="block h-full"
-                    >
-                      <CardHeader className="space-y-0 pb-4 pr-12">
-                        <CardTitle className="line-clamp-2">
-                          {contract.title}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="mb-4 flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <Calendar className="h-3.5 w-3.5" />
-                          {formatDate(contract.createdAt, "MMMM d, yyyy")}
-                        </div>
-                        <div className="flex items-end justify-between">
-                          <Badge variant="secondary">
-                            {contract.status || "DRAFT"}
-                          </Badge>
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
-                            <ChevronRight className="h-4 w-4" />
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Link>
-                  </Card>
-                ))}
-              </div>
+              renderContractGrid(standaloneContracts)
             )
           ) : null}
 
@@ -1299,7 +1336,9 @@ const Dashboard = ({
             )}
           </div>
         </div>
-        {activeTab === "contracts" && renderLoadMore(contractList)}
+        {activeTab === "contracts" &&
+          !contractSearch.search &&
+          renderLoadMore(contractList)}
         {activeTab === "projects" && renderLoadMore(projectList)}
       </main>
 

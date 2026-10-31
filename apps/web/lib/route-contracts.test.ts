@@ -151,7 +151,9 @@ describe("GET /api/contracts", () => {
     listContractsByUserId.mockResolvedValue(page);
 
     const response = await GET(
-      new Request(`${contractsUrl}?standalone=true&q=%20%20Lease%20&limit=50&offset=50`),
+      new Request(
+        `${contractsUrl}?standalone=true&q=%20%20Lease%20&limit=50&offset=50`,
+      ),
     );
 
     expect(response.status).toBe(200);
