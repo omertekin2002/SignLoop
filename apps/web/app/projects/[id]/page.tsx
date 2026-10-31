@@ -178,6 +178,8 @@ const ProjectDetails = () => {
       if (contractFileRef.current) contractFileRef.current.value = "";
       queryClient.invalidateQueries({ queryKey: ["project", id] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
+      // Dashboard title searches include contracts in projects.
+      queryClient.invalidateQueries({ queryKey: ["contracts"] });
     },
     onError: (error: unknown) => {
       if (isOperationCanceled(error)) return;
