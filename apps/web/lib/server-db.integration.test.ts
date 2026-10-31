@@ -95,8 +95,8 @@ const TEST_OWNERS = [
   "content-receipt-owner", "empty-lookup-intruder", "empty-lookup-owner", "file-owner",
   "intruder", "late-reply-owner", "legacy-receipt-owner", "other", "owner", "OWNER",
   "project-analysis-owner", "quota-owner", "replay-failure-owner", "replay-intruder",
-  "replay-owner", "replay-project-owner", "revision-chat-owner", "scope-user", "settings-owner",
-  "title-owner",
+  "replay-owner", "replay-project-owner", "revision-chat-owner", "scope-user", "search-intruder",
+  "search-owner", "search-paging-owner", "settings-owner", "title-owner",
 ];
 
 describe.skipIf(!connectionString)("database integration", () => {
@@ -1641,6 +1641,70 @@ describe.skipIf(!connectionString)("database integration", () => {
       (await listContractsByUserId("scope-user", { limit: 1 }, true)).data[0]
         ?.id,
     ).toBe(standalone.id);
+  });
+
+  it("searches every owned contract by title, case-insensitively and with wildcards taken literally", async () => {
+    const owner = "search-owner";
+    const project = await createProjectForUser({ userId: owner, title: "Property" });
+    const standalone = await createContractForUser({ userId: owner, title: "Office LEASE" });
+    const inProject = await createContractForUser({
+      userId: owner,
+      title: "Warehouse lease",
+      projectId: project.id,
+    });
+    await createContractForUser({ userId: owner, title: "Employment agreement" });
+    await createContractForUser({ userId: "search-intruder", title: "Intruder lease" });
+    const percent = await createContractForUser({ userId: owner, title: "50% discount" });
+    await createContractForUser({ userId: owner, title: "500 discount" });
+    const underscore = await createContractForUser({ userId: owner, title: "plan_b" });
+    await createContractForUser({ userId: owner, title: "planxb" });
+    const backslash = await createContractForUser({ userId: owner, title: "C:\\terms" });
+    await createContractForUser({ userId: owner, title: "C:terms" });
+
+    // A search ignores the standalone filter, names each result's project, and counts what it matched.
+    const leases = await listContractsByUserId(owner, {}, true, "lease");
+    expect(leases.total).toBe(2);
+    expect(leases.data.map((row) => [row.id, row.projectTitle])).toEqual([
+      [inProject.id, "Property"],
+      [standalone.id, null],
+    ]);
+    expect(leases.data.every((row) => row.userId === owner)).toBe(true);
+    expect((await listContractsByUserId("search-intruder", {}, false, "lease")).data.map((row) => row.title))
+      .toEqual(["Intruder lease"]);
+
+    const only = async (term: string) => {
+      const page = await listContractsByUserId(owner, {}, false, term);
+      return [page.total, page.data.map((row) => row.id)];
+    };
+    expect(await only("50%")).toEqual([1, [percent.id]]);
+    expect(await only("n_b")).toEqual([1, [underscore.id]]);
+    expect(await only("C:\\t")).toEqual([1, [backslash.id]]);
+    expect(await only("no such title")).toEqual([0, []]);
+
+    // Without a search the standalone list is unchanged apart from the null project title.
+    const standaloneList = await listContractsByUserId(owner, {}, true);
+    expect(standaloneList.data.map((row) => row.id)).not.toContain(inProject.id);
+    expect(standaloneList.data.every((row) => row.projectTitle === null)).toBe(true);
+    expect(standaloneList.total).toBe(8);
+  });
+
+  it("pages through more than one page of title search results with the filtered total", async () => {
+    const owner = "search-paging-owner";
+    await pool.current!.query(
+      `insert into contracts (user_id, title, status, created_at)
+       select $1, case when n % 2 = 0 then 'Paged lease ' || n else 'Unrelated ' || n end, 'DRAFT',
+              now() - n * interval '1 minute'
+       from generate_series(1, 110) as n`,
+      [owner],
+    );
+
+    const first = await listContractsByUserId(owner, { offset: 0 }, true, "PAGED");
+    const second = await listContractsByUserId(owner, { offset: 50 }, true, "PAGED");
+    expect([first.total, first.data.length, second.total, second.data.length]).toEqual([55, 50, 55, 5]);
+    const titles = [...first.data, ...second.data].map((row) => row.title);
+    expect(new Set(titles).size).toBe(55);
+    expect(titles[0]).toBe("Paged lease 2");
+    expect(titles.at(-1)).toBe("Paged lease 110");
   });
 
   it("exposes contract text to chat tools for the owner only", async () => {
