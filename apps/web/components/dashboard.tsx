@@ -571,12 +571,17 @@ const Dashboard = ({
   });
 
   const deleteContractMutation = useMutation({
-    mutationFn: async (contractId: string) => {
-      await apiClient.delete(`/contracts/${contractId}`);
+    mutationFn: async (contract: Contract) => {
+      await apiClient.delete(`/contracts/${contract.id}`);
     },
-    onSuccess: () => {
+    onSuccess: (_data, contract) => {
       setContractToDelete(null);
       queryClient.invalidateQueries({ queryKey: ["contracts"] });
+      // Search results include contracts in projects, whose page and list counts also change.
+      if (contract.projectId) {
+        queryClient.invalidateQueries({ queryKey: ["project", contract.projectId] });
+        queryClient.invalidateQueries({ queryKey: ["projects"] });
+      }
     },
     onError: (error: unknown) => {
       toast.error(getApiErrorMessage(error, "Failed to delete contract"));
@@ -1382,7 +1387,7 @@ const Dashboard = ({
               disabled={deleteContractMutation.isPending || !contractToDelete}
               onClick={() => {
                 if (!contractToDelete) return;
-                deleteContractMutation.mutate(contractToDelete.id);
+                deleteContractMutation.mutate(contractToDelete);
               }}
             >
               {deleteContractMutation.isPending
