@@ -25,6 +25,7 @@ import type { PersonalityMode } from "@/lib/personality-settings";
 import { parseChatFileInfos, savedChatFile, type ChatDocument, type ChatFileInfo } from "@/lib/chat-files-shared";
 import type { GeneratedChatFile } from "@/lib/chat-file-generation";
 import type { ContractNotes } from "@/lib/contract-notes";
+import { escapeLikePattern } from "@/lib/contract-search";
 import {
   ChatThreadNotFoundError,
   ContractRevisionChangedError,
@@ -658,36 +659,49 @@ function mapAnalysisRow(row: AnalysisRow): AnalysisRecord {
   };
 }
 
+/** A list row; `projectTitle` names the contract's project, or is null for a standalone contract. */
+export type ContractListItemRecord = ContractSummaryRecord & {
+  projectTitle: string | null;
+};
+
 export async function listContractsByUserId(
   userId: string,
   pagination?: PaginationOptions,
   standalone = false,
-): Promise<PaginatedResult<ContractSummaryRecord>> {
+  search: string | null = null,
+): Promise<PaginatedResult<ContractListItemRecord>> {
   await ensureSchema();
 
   const { limit, offset } = clampPagination(pagination);
+  // A title search covers every contract the owner has, so it ignores the standalone filter.
+  const pattern = search ? `%${escapeLikePattern(search)}%` : null;
+  const standaloneOnly = standalone && pattern === null;
 
   const [{ rows }, { rows: countRows }] = await Promise.all([
-    sql<ContractSummaryRecord>`
+    sql<ContractListItemRecord>`
       select
-        id,
-        user_id as "userId",
-        project_id as "projectId",
-        title,
-        status,
-        created_at as "createdAt",
-        updated_at as "updatedAt"
-      from contracts
-      where user_id = ${userId}
-        and (${standalone} = false or project_id is null)
-      order by created_at desc, id desc
+        c.id,
+        c.user_id as "userId",
+        c.project_id as "projectId",
+        c.title,
+        c.status,
+        c.created_at as "createdAt",
+        c.updated_at as "updatedAt",
+        p.title as "projectTitle"
+      from contracts c
+      left join projects p on p.id = c.project_id and p.user_id = ${userId}
+      where c.user_id = ${userId}
+        and (${standaloneOnly} = false or c.project_id is null)
+        and (${pattern}::text is null or c.title ilike ${pattern}::text escape '\\')
+      order by c.created_at desc, c.id desc
       limit ${limit} offset ${offset}
     `,
     sql<{ count: number }>`
       select count(*)::integer as count
-      from contracts
-      where user_id = ${userId}
-        and (${standalone} = false or project_id is null)
+      from contracts c
+      where c.user_id = ${userId}
+        and (${standaloneOnly} = false or c.project_id is null)
+        and (${pattern}::text is null or c.title ilike ${pattern}::text escape '\\')
     `,
   ]);
 
