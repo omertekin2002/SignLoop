@@ -73,3 +73,50 @@ describe("workspace list head refresh", () => {
     }
   });
 });
+
+describe("workspace list search", () => {
+  it("keys a search under the list's prefix and sends it, encoded, with each page", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const get = vi.spyOn(apiClient, "get").mockImplementation(async (url) => {
+      const offset = Number(
+        new URL(String(url), "https://app.test").searchParams.get("offset"),
+      );
+      return {
+        data: {
+          data: [{ id: `contract-${offset}` }],
+          offset,
+          limit: 50,
+          total: 60,
+        },
+      };
+    });
+    const options = workspaceListOptions<{ id: string }>(
+      "contracts",
+      "/contracts?standalone=true",
+      "50% & lease",
+    );
+    expect(options.queryKey).toEqual(["contracts", { q: "50% & lease" }]);
+    expect(
+      workspaceListOptions("contracts", "/contracts?standalone=true").queryKey,
+    ).toEqual(["contracts"]);
+    const observer = new InfiniteQueryObserver(client, options);
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      await observer.refetch();
+      await observer.fetchNextPage();
+      expect(get.mock.calls.map(([url]) => url)).toEqual([
+        "/contracts?standalone=true&q=50%25%20%26%20lease&limit=50&offset=0",
+        "/contracts?standalone=true&q=50%25%20%26%20lease&limit=50&offset=50",
+      ]);
+      expect(observer.getCurrentResult().hasNextPage).toBe(false);
+      // Uploads and deletions invalidate the ["contracts"] prefix, which must reach searches.
+      await client.invalidateQueries({ queryKey: ["contracts"] });
+      expect(get).toHaveBeenCalledTimes(4);
+    } finally {
+      unsubscribe();
+      client.clear();
+    }
+  });
+});

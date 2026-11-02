@@ -70,6 +70,7 @@ describe("GET /api/contracts", () => {
       "owner",
       { limit: undefined, offset: undefined },
       false,
+      null,
     );
   });
 
@@ -90,6 +91,7 @@ describe("GET /api/contracts", () => {
       "owner",
       { limit: 5, offset: 10 },
       false,
+      null,
     );
   });
 
@@ -104,6 +106,7 @@ describe("GET /api/contracts", () => {
       "owner",
       { limit: undefined, offset: undefined },
       true,
+      null,
     );
   });
 
@@ -119,6 +122,7 @@ describe("GET /api/contracts", () => {
         "owner",
         expect.any(Object),
         false,
+        null,
       );
     },
   );
@@ -133,7 +137,114 @@ describe("GET /api/contracts", () => {
       "owner",
       expect.any(Object),
       false,
+      null,
     );
+  });
+
+  it("passes a trimmed title search through with the standalone flag and paging", async () => {
+    const page = {
+      ...emptyPage,
+      data: [{ ...contractSummary, title: "Office Lease", projectTitle: "HQ" }],
+      total: 1,
+    };
+    auth.mockResolvedValue({ userId: "owner" });
+    listContractsByUserId.mockResolvedValue(page);
+
+    const response = await GET(
+      new Request(
+        `${contractsUrl}?standalone=true&q=%20%20Lease%20&limit=50&offset=50`,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(page);
+    expect(listContractsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      { limit: 50, offset: 50 },
+      true,
+      "Lease",
+    );
+  });
+
+  it("passes LIKE wildcards and backslashes through unchanged for the data layer to escape", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    listContractsByUserId.mockResolvedValue(emptyPage);
+
+    await GET(
+      new Request(`${contractsUrl}?q=${encodeURIComponent("50%_off\\v2")}`),
+    );
+
+    expect(listContractsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      expect.any(Object),
+      false,
+      "50%_off\\v2",
+    );
+  });
+
+  it.each(["", "   ", "%20%09%0A"])(
+    "treats q=%j as no search",
+    async (value) => {
+      auth.mockResolvedValue({ userId: "owner" });
+      listContractsByUserId.mockResolvedValue(emptyPage);
+
+      const response = await GET(
+        new Request(`${contractsUrl}?standalone=true&q=${value}`),
+      );
+
+      expect(response.status).toBe(200);
+      expect(listContractsByUserId).toHaveBeenCalledExactlyOnceWith(
+        "owner",
+        expect.any(Object),
+        true,
+        null,
+      );
+    },
+  );
+
+  it("accepts a 200-character search and measures it after trimming", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    listContractsByUserId.mockResolvedValue(emptyPage);
+    const term = "a".repeat(200);
+
+    const response = await GET(
+      new Request(`${contractsUrl}?q=${encodeURIComponent(`  ${term}  `)}`),
+    );
+
+    expect(response.status).toBe(200);
+    expect(listContractsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      expect.any(Object),
+      false,
+      term,
+    );
+  });
+
+  it("counts characters rather than UTF-16 code units", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    listContractsByUserId.mockResolvedValue(emptyPage);
+    const term = "📄".repeat(200);
+
+    const response = await GET(
+      new Request(`${contractsUrl}?q=${encodeURIComponent(term)}`),
+    );
+
+    expect(response.status).toBe(200);
+    expect(listContractsByUserId).toHaveBeenCalledOnce();
+  });
+
+  it("returns 400 without touching the database for a 201-character search", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+
+    const response = await GET(
+      new Request(`${contractsUrl}?q=${"a".repeat(201)}`),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Search must be at most 200 characters",
+    });
+    expect(listContractsByUserId).not.toHaveBeenCalled();
   });
 
   it("does not swallow a data-layer failure", async () => {
