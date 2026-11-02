@@ -120,7 +120,7 @@ test("a created project is saved to the account", async ({ page }) => {
   expect(pageErrors).toEqual([]);
 });
 
-// After the upload above, so the standalone list has a contract the search must hide.
+// Each theme creates its own linked and standalone contracts, so it can run in isolation.
 for (const theme of THEMES) {
   test(`a title search finds a contract inside a project and clears back to the list (${theme} theme)`, async ({
     page,
@@ -135,6 +135,9 @@ for (const theme of THEMES) {
     const title = `E2E searchable lease ${stamp}`;
     const created = await page.request.post("/api/contracts", { data: { title, projectId } });
     expect(created.status()).toBe(201);
+    const standaloneTitle = `E2E standalone lease ${stamp}`;
+    const standalone = await page.request.post("/api/contracts", { data: { title: standaloneTitle } });
+    expect(standalone.status()).toBe(201);
 
     // The API searches every contract, ignores standalone=true, and names the project.
     const found = await page.request.get(
@@ -151,9 +154,11 @@ for (const theme of THEMES) {
     await openSidebarSection(page, "Contracts");
     const search = page.getByRole("searchbox", { name: "Search contracts" });
     await expect(page.getByRole("link", { name: new RegExp(title) })).toHaveCount(0);
+    await expect(page.getByText(standaloneTitle, { exact: true })).toBeVisible();
 
     await search.fill(`searchable lease ${stamp}`);
     await expect(page.getByRole("link", { name: new RegExp(title) })).toBeVisible();
+    await expect(page.getByText(standaloneTitle, { exact: true })).toHaveCount(0);
     await expect(page.getByText(projectTitle)).toBeVisible();
     await expect(page.getByRole("status").filter({ hasText: "1 contract matches" })).toBeVisible();
     await expectNoA11yViolations(page, { theme });
@@ -168,7 +173,7 @@ for (const theme of THEMES) {
     await expect(search).toHaveValue("");
     await expect(noMatch).toHaveCount(0);
     await expect(page.getByRole("link", { name: new RegExp(title) })).toHaveCount(0);
-    await expect(page.getByText("e2e-lease").first()).toBeVisible();
+    await expect(page.getByText(standaloneTitle, { exact: true })).toBeVisible();
     expect(pageErrors).toEqual([]);
   });
 }
