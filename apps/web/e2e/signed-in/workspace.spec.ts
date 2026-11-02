@@ -153,12 +153,13 @@ for (const theme of THEMES) {
     await openDashboard(page);
     await openSidebarSection(page, "Contracts");
     const search = page.getByRole("searchbox", { name: "Search contracts" });
+    const standaloneCardTitle = page.getByRole("main").getByRole("heading", { name: standaloneTitle, exact: true });
     await expect(page.getByRole("link", { name: new RegExp(title) })).toHaveCount(0);
-    await expect(page.getByText(standaloneTitle, { exact: true })).toBeVisible();
+    await expect(standaloneCardTitle).toBeVisible();
 
     await search.fill(`searchable lease ${stamp}`);
     await expect(page.getByRole("link", { name: new RegExp(title) })).toBeVisible();
-    await expect(page.getByText(standaloneTitle, { exact: true })).toHaveCount(0);
+    await expect(standaloneCardTitle).toHaveCount(0);
     await expect(page.getByText(projectTitle)).toBeVisible();
     await expect(page.getByRole("status").filter({ hasText: "1 contract matches" })).toBeVisible();
     await expectNoA11yViolations(page, { theme });
@@ -173,7 +174,7 @@ for (const theme of THEMES) {
     await expect(search).toHaveValue("");
     await expect(noMatch).toHaveCount(0);
     await expect(page.getByRole("link", { name: new RegExp(title) })).toHaveCount(0);
-    await expect(page.getByText(standaloneTitle, { exact: true })).toBeVisible();
+    await expect(standaloneCardTitle).toBeVisible();
     expect(pageErrors).toEqual([]);
   });
 }
