@@ -7,6 +7,7 @@ vi.mock("ai", () => {
 it("loads the chat helpers the browser imports without the ai package", async () => {
   const shared = await import("@repo/chat-engine/chat-history-shared");
   const bounds = await import("./chat-history-bounds");
+  await import("./chat-message-client");
 
   expect(
     shared.parseWebSources([{ title: "Source", url: "https://source.test/" }]),

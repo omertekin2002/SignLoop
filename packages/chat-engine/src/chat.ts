@@ -36,6 +36,7 @@ import {
 } from "./chat-source-catalog";
 import {
   createRoutedModel,
+  IMAGE_INPUT_UNAVAILABLE,
   type ChatProviderCandidate,
   type ProviderMilestone,
 } from "./routing";
@@ -90,6 +91,8 @@ export type ChatRole = "system" | "user" | "assistant";
 export type ChatMessage = {
   role: ChatRole;
   content: string;
+  /** Optional visual inputs supplied by a caller; only user messages accept them. */
+  images?: Array<{ data: string; mediaType: string }>;
   /** Compacted tool exchanges from an earlier reply, replayed before its content. */
   agentMessages?: ModelMessage[];
   contractEvidence?: ContractEvidence[];
@@ -295,7 +298,12 @@ export async function* generateChatReplyStream<TTool extends string = string>(
     ...(options.signal ? [options.signal] : []),
   ]);
   signal.throwIfAborted();
-  const routed = createRoutedModel(options.providers, {
+  const hasImages = messages.some((message) => message.role === "user" && message.images?.length);
+  const providers = hasImages
+    ? options.providers.filter((provider) => provider.supportsImageInput === true)
+    : options.providers;
+  if (hasImages && !providers.length) throw new Error(IMAGE_INPUT_UNAVAILABLE);
+  const routed = createRoutedModel(providers, {
     firstChunkTimeoutMs: options.firstChunkTimeoutMs,
     streamIdleTimeoutMs: options.streamIdleTimeoutMs,
     onTiming: options.onTiming,
@@ -559,7 +567,19 @@ export async function* generateChatReplyStream<TTool extends string = string>(
           ...(message.role === "assistant" && message.agentMessages?.length
             ? (compactAgentMessages(message.agentMessages) ?? [])
             : []),
-          { role: message.role, content: message.content },
+          message.role === "user" && message.images?.length
+            ? {
+                role: "user",
+                content: [
+                  { type: "text", text: message.content },
+                  ...message.images.map((image) => ({
+                    type: "file" as const,
+                    data: image.data,
+                    mediaType: image.mediaType,
+                  })),
+                ],
+              }
+            : { role: message.role, content: message.content },
         ]),
       abortSignal: signal,
     };

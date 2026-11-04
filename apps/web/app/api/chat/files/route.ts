@@ -4,9 +4,12 @@ import { requireUserId } from "@/lib/api-auth";
 import { prepareExtractedUpload } from "@/lib/chat-upload";
 import {
   CHAT_FILE_TYPES,
+  CHAT_IMAGE_TYPES,
+  isChatImage,
   chatFileName,
   MAX_CHAT_FILE_TEXT,
-  type ChatDocument,
+  type ChatUpload,
+  chatImageSchema,
 } from "@/lib/chat-files-shared";
 import { isChatThreadOwnedByUser, saveChatFileForUser } from "@/lib/server-db";
 import { isUuid } from "@/lib/utils";
@@ -29,8 +32,12 @@ export async function POST(req: Request) {
     );
   try {
     const upload = await prepareExtractedUpload(req, {
-      allowedExtensions: ["pdf", "txt", "docx"],
-      allowedMimeTypes: Object.values(CHAT_FILE_TYPES),
+      allowedExtensions: ["pdf", "txt", "docx", "png", "jpg", "jpeg", "webp"],
+      allowedMimeTypes: [
+        ...Object.values(CHAT_FILE_TYPES),
+        ...CHAT_IMAGE_TYPES,
+      ],
+      unsupportedTypeError: "Attach a PDF, TXT, DOCX, PNG, JPEG, or WebP file.",
     });
     if (!upload.ok)
       return NextResponse.json(
@@ -38,15 +45,19 @@ export async function POST(req: Request) {
         { status: upload.status },
       );
     if (
+      !isChatImage(upload.mimeType) &&
       !Object.values(CHAT_FILE_TYPES).includes(
         upload.mimeType as (typeof CHAT_FILE_TYPES)[keyof typeof CHAT_FILE_TYPES],
       )
     )
       return NextResponse.json(
-        { error: "Attach a PDF, TXT, or DOCX file." },
+        { error: "Attach a PDF, TXT, DOCX, PNG, JPEG, or WebP file." },
         { status: 400 },
       );
-    if (upload.extractionError || !upload.text.trim())
+    if (
+      !isChatImage(upload.mimeType) &&
+      (upload.extractionError || !upload.text.trim())
+    )
       return NextResponse.json(
         {
           error:
@@ -63,16 +74,21 @@ export async function POST(req: Request) {
         { status: 413 },
       );
     upload.signal.throwIfAborted();
-    const document: ChatDocument = {
+    const info = {
       id: randomUUID(),
       name: chatFileName(upload.fileName),
       mediaType: upload.mimeType,
       size: upload.buffer.length,
-      text: upload.text,
       ...(upload.extractionWarning
         ? { warning: upload.extractionWarning }
         : {}),
     };
+    const document: ChatUpload = isChatImage(upload.mimeType)
+      ? chatImageSchema.parse({
+          ...info,
+          data: upload.buffer.toString("base64"),
+        })
+      : { ...info, text: upload.text };
     if (!threadId)
       return NextResponse.json(
         { file: document },

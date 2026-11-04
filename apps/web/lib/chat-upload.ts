@@ -6,6 +6,8 @@ import {
   type PreparedUpload,
   type UploadValidationError,
 } from "@/lib/upload-pipeline";
+import { isChatImage } from "@/lib/chat-files-shared";
+import { validateChatImage } from "@/lib/chat-images";
 
 /**
  * Receive and validate a chat attachment, then have the parse-only function extract it. Chat
@@ -18,6 +20,14 @@ export async function prepareExtractedUpload(
 ): Promise<(PreparedUpload & ExtractedText) | UploadValidationError> {
   const prepared = await prepareUpload(req, options);
   if (!prepared.ok) return prepared;
+  if (isChatImage(prepared.mimeType)) {
+    try {
+      validateChatImage(prepared.buffer, prepared.mimeType);
+      return { ...prepared, text: "", method: null, confidence: null, extractionError: null, extractionWarning: null };
+    } catch (error) {
+      return { ok: false, status: 422, error: error instanceof Error ? error.message : "Invalid image." };
+    }
+  }
   const extracted = toExtractedText(
     await requestParse({
       req,

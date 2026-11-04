@@ -9,9 +9,11 @@ import { withAbort } from "@repo/chat-engine/bounded-response";
 import { z } from "zod";
 import {
   chatDocumentSchema,
+  chatImageSchema,
   MAX_CHAT_DOCUMENT_CONTEXT,
   MAX_CHAT_FILES_PER_MESSAGE,
 } from "@/lib/chat-files-shared";
+import { validateInlineChatImage } from "@/lib/chat-images";
 import {
   MAX_CHAT_MESSAGE_LENGTH,
   MAX_CHAT_MESSAGES,
@@ -161,8 +163,19 @@ export function parseClientChatMessages(payload: unknown): ParsedChatMessages {
             .max(MAX_CHAT_FILES_PER_MESSAGE)
             .safeParse(item.documents)
         : null;
+    const images = item.images === undefined ? null
+      : z.array(chatImageSchema).max(MAX_CHAT_FILES_PER_MESSAGE).safeParse(item.images);
+    if (images && (!images.success || role !== "user"))
+      return { ok: false, error: "Invalid chat images.", status: 400 };
     if (documents && !documents.success)
       return { ok: false, error: "Invalid chat files.", status: 400 };
+    if ((documents?.data?.length ?? 0) + (images?.data?.length ?? 0) > MAX_CHAT_FILES_PER_MESSAGE)
+      return { ok: false, error: "Attach at most four files per message.", status: 400 };
+    try {
+      for (const image of images?.data ?? []) validateInlineChatImage(image);
+    } catch {
+      return { ok: false, error: "Invalid chat image content.", status: 400 };
+    }
     if (documents?.success)
       documentCharacters += documents.data.reduce(
         (total, file) => total + file.text.length,
@@ -189,6 +202,7 @@ export function parseClientChatMessages(payload: unknown): ParsedChatMessages {
       ...(agentMessages ? { agentMessages } : {}),
       ...(webSources ? { webSources } : {}),
       ...(documents?.success ? { documents: documents.data } : {}),
+      ...(images?.success ? { images: images.data } : {}),
     });
   }
 

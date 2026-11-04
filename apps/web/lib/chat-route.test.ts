@@ -12,6 +12,7 @@ const {
   generateChatTitle,
   generateChatReply,
   generateChatReplyStream,
+  hasImageInputProvider,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   claimGenerationOperation: vi.fn(),
@@ -24,6 +25,7 @@ const {
   generateChatTitle: vi.fn(),
   generateChatReply: vi.fn(),
   generateChatReplyStream: vi.fn(),
+  hasImageInputProvider: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth }));
@@ -35,7 +37,7 @@ vi.mock("@/lib/server-db", () => ({
   getChatDocumentsForUser,
 }));
 vi.mock("@/lib/chat-title", () => ({ generateChatTitle }));
-vi.mock("@/lib/chat", () => ({ generateChatReply, generateChatReplyStream }));
+vi.mock("@/lib/chat", () => ({ generateChatReply, generateChatReplyStream, hasImageInputProvider }));
 vi.mock("@/lib/model-settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./model-settings")>()),
   getModelAvailabilitySnapshot,
@@ -50,6 +52,8 @@ vi.mock("@/lib/telemetry", () => ({
 }));
 
 import { POST } from "@/app/api/chat/route";
+import { chatImage } from "./fixtures/chat-image";
+import { savedChatFile } from "./chat-files-shared";
 import { validateContractReplay } from "@/lib/contract-evidence";
 import {
   MAX_CHAT_REQUEST_BODY_BYTES,
@@ -344,8 +348,10 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
     });
     getModelAvailabilitySnapshot.mockResolvedValue({
       availablePrimaryModels: ["other-model", "selected-model"],
+      availableImageInputModels: ["selected-model"],
       imageGenerationAvailable: false,
     });
+    hasImageInputProvider.mockReturnValue(true);
     getRecentChatMessagesForThreadForUser.mockResolvedValue([]);
     generateChatTitle.mockResolvedValue("Lease Renewal Terms");
     generateChatReply.mockResolvedValue(reply);
@@ -396,6 +402,73 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
     expect(written.messages[0].metadata.files[0]).toMatchObject({ id: file.id, url: expect.stringContaining(`/threads/${threadId}/files/`) });
     expect(JSON.stringify(written)).not.toContain("fabricated");
     expect(JSON.stringify(written)).not.toContain("Private terms");
+  });
+
+  it("loads saved images from the owner-scoped database rather than client bytes", async () => {
+    getChatDocumentsForUser.mockResolvedValue([chatImage]);
+    const result = await completion(await POST(request({ messages: [{ role: "user", content: "What is in this image?", fileIds: [chatImage.id], images: [{ ...chatImage, data: "fabricated" }] }] })));
+    expect(result.persisted).toBe(true);
+    expect(stream ? generateChatReplyStream : generateChatReply).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ role: "user", images: [chatImage] })]),
+      expect.objectContaining({ documents: [] }),
+    );
+    expect(appendChatMessagesToThread.mock.calls[0]![0].messages[0].metadata.files).toEqual([savedChatFile(chatImage, threadId)]);
+    expect(JSON.stringify(appendChatMessagesToThread.mock.calls)).not.toContain(chatImage.data);
+  });
+
+  it("rejects an image turn before generation when no vision candidate is configured", async () => {
+    hasImageInputProvider.mockReturnValue(false);
+    const response = await POST(request({ temporary: true, messages: [{ role: "user", content: "Describe", images: [chatImage] }] }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain("vision-capable model");
+    expect(generateChatReply).not.toHaveBeenCalled();
+    expect(generateChatReplyStream).not.toHaveBeenCalled();
+    expect(generateChatTitle).not.toHaveBeenCalled();
+    expect(appendChatMessagesToThread).not.toHaveBeenCalled();
+  });
+
+  it("sends temporary images to the model without writing history", async () => {
+    await completion(await POST(request({ temporary: true, messages: [{ role: "user", content: "Describe this image", images: [chatImage] }] })));
+    expect(stream ? generateChatReplyStream : generateChatReply).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ role: "user", images: [chatImage] })]),
+      expect.objectContaining({ documents: [] }),
+    );
+    expect(appendChatMessagesToThread).not.toHaveBeenCalled();
+  });
+
+  it("requires authentication for image attachments before admission", async () => {
+    auth.mockResolvedValue({ userId: null });
+    const response = await POST(request({ temporary: true, messages: [{ role: "user", content: "Describe", images: [chatImage] }] }));
+    expect(response.status).toBe(401);
+    expect(admitChat).not.toHaveBeenCalled();
+  });
+
+  it("reloads recent images for a saved follow-up", async () => {
+    getRecentChatMessagesForThreadForUser.mockResolvedValue([
+      { role: "user", content: "Describe this", files: [savedChatFile(chatImage, threadId)] },
+      { role: "assistant", content: "A screenshot." },
+    ]);
+    getChatDocumentsForUser.mockResolvedValue([chatImage]);
+    await completion(await POST(request()));
+    expect(getChatDocumentsForUser).toHaveBeenCalledWith("owner", threadId, [chatImage.id]);
+    expect(stream ? generateChatReplyStream : generateChatReply).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ content: "Describe this", images: [chatImage] })]), expect.any(Object),
+    );
+  });
+
+  it("loads only four newest saved images, and attaches a reused image only once", async () => {
+    const uploads = Array.from({ length: 6 }, (_, index) => ({ ...chatImage, id: `abcdef01-2345-4678-9abc-def01234567${index}` }));
+    getRecentChatMessagesForThreadForUser.mockResolvedValue([
+      ...uploads.map((image) => ({ role: "user", content: "Describe", files: [savedChatFile(image, threadId)] })),
+      { role: "user", content: "Reused image", files: [savedChatFile(uploads[5]!, threadId)] },
+    ]);
+    getChatDocumentsForUser.mockResolvedValue(uploads.slice(-4));
+    await completion(await POST(request()));
+    expect(getChatDocumentsForUser.mock.calls[0]![2]).toEqual(expect.arrayContaining(uploads.slice(-4).map((image) => image.id)));
+    expect(getChatDocumentsForUser.mock.calls[0]![2]).not.toContain(uploads[0]!.id);
+    const messages = (stream ? generateChatReplyStream : generateChatReply).mock.calls[0]![0];
+    expect(messages.flatMap((message: { images?: unknown[] }) => message.images ?? [])).toHaveLength(4);
+    expect(messages.find((message: { content: string }) => message.content === "Reused image").images).toEqual([uploads[5]]);
   });
 
   it("rejects a foreign attachment without charging quota", async () => {

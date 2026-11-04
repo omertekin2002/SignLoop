@@ -9,6 +9,7 @@ import {
 import { Download, FileText, X } from "lucide-react";
 import {
   parseChatDownloads,
+  isChatImage,
   type ChatDownloadFile,
 } from "@/lib/chat-files-shared";
 import { Button } from "@/components/ui/button";
@@ -27,9 +28,22 @@ function useBlobUrl(blob?: Blob) {
 
 /** Display a staged attachment with its accessible removal control. */
 export function ComposerFile() {
+  const attachment = useAttachment();
+  const imageUrl = useBlobUrl(
+    isChatImage(attachment.contentType ?? "") ? attachment.file : undefined,
+  );
   return (
     <AttachmentPrimitive.Root className="flex max-w-full items-center gap-2 rounded-button border border-input px-3 py-1 text-sm">
-      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+      {imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={imageUrl}
+          alt={attachment.name}
+          className="h-12 w-12 shrink-0 rounded-md object-cover"
+        />
+      ) : (
+        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+      )}
       <span className="truncate">
         <AttachmentPrimitive.Name />
       </span>
@@ -60,15 +74,27 @@ export function UploadedFile() {
     )
       ? remoteUrl.text
       : undefined;
+  const url = savedUrl ?? localUrl;
+  const image = isChatImage(attachment.contentType ?? "");
   return (
     <AttachmentPrimitive.Root className="flex max-w-full items-center gap-2 text-sm">
-      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+      {!image && (
+        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+      )}
       {localUrl || savedUrl ? (
         <a
-          href={savedUrl ?? localUrl}
+          href={url}
           download={attachment.name}
           className="truncate text-foreground underline underline-offset-4"
         >
+          {image && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={url}
+              alt={attachment.name}
+              className="mb-1 max-h-60 max-w-full rounded-md object-contain"
+            />
+          )}
           {attachment.name}
         </a>
       ) : (

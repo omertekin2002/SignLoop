@@ -4,12 +4,20 @@ import type { AttachmentAdapter } from "@assistant-ui/react";
 import { toast } from "sonner";
 import {
   CHAT_FILE_ACCEPT,
-  chatDocumentSchema,
+  chatUploadSchema,
+  isChatImage,
   parseChatFileInfos,
-  type ChatDocument,
+  type ChatUpload,
   type ChatFileInfo,
 } from "@/lib/chat-files-shared";
 import { MAX_MULTIPART_UPLOAD_FILE_SIZE } from "@/lib/upload-constants";
+
+const IMAGE_CONTENT_TYPES: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+};
 
 /** Stage up to four supported files in the composer; uploading waits for message submission. */
 export function chatAttachmentAdapter(): AttachmentAdapter {
@@ -23,21 +31,24 @@ export function chatAttachmentAdapter(): AttachmentAdapter {
         throw new Error("Attach at most four files per message.");
       }
       if (
-        !/\.(pdf|txt|docx)$/i.test(file.name) ||
+        !/\.(pdf|txt|docx|png|jpe?g|webp)$/i.test(file.name) ||
         !file.size ||
         file.size > MAX_MULTIPART_UPLOAD_FILE_SIZE
       ) {
-        const message = "Attach a non-empty PDF, TXT, or DOCX up to 4 MB.";
+        const message =
+          "Attach a non-empty PDF, TXT, DOCX, PNG, JPEG, or WebP up to 4 MB.";
         toast.error(message);
         throw new Error(message);
       }
       const id = crypto.randomUUID();
+      const imageType =
+        IMAGE_CONTENT_TYPES[file.name.split(".").at(-1)?.toLowerCase() ?? ""];
       pending.add(id);
       return {
         id,
         name: file.name,
-        type: "document",
-        contentType: file.type,
+        type: imageType ? "image" : "document",
+        contentType: file.type || imageType || "application/octet-stream",
         file,
         status: { type: "requires-action", reason: "composer-send" },
       };
@@ -59,7 +70,12 @@ export async function uploadChatFile(
   file: File,
   threadId: string | null,
   signal: AbortSignal,
-): Promise<ChatDocument | ChatFileInfo> {
+): Promise<ChatUpload | ChatFileInfo> {
+  if (isChatImage(file.type) || /\.(png|jpe?g|webp)$/i.test(file.name)) {
+    const { prepareChatImage } = await import("@/lib/chat-image-client");
+    file = await prepareChatImage(file);
+    signal.throwIfAborted();
+  }
   const form = new FormData();
   form.append("file", file);
   const response = await fetch(
@@ -73,7 +89,7 @@ export async function uploadChatFile(
     );
   const parsed = threadId
     ? parseChatFileInfos([payload.file])[0]
-    : chatDocumentSchema.parse(payload.file);
+    : chatUploadSchema.parse(payload.file);
   if (!parsed)
     throw new Error("The upload response did not include a valid file.");
   if (parsed.warning) toast.warning(parsed.warning);

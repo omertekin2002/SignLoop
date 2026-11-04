@@ -25,7 +25,7 @@ import {
   type DocumentToolName,
 } from "@/lib/chat-document-tools";
 import type { GeneratedChatFile } from "@/lib/chat-file-generation";
-import type { ChatDocument } from "@/lib/chat-files-shared";
+import type { ChatDocument, ChatImage } from "@/lib/chat-files-shared";
 import { fenceUntrusted } from "@repo/chat-engine/chat-tools";
 
 // SignLoop's binding of the shared chat engine (@repo/chat-engine): provider routing, tool
@@ -34,7 +34,8 @@ import { fenceUntrusted } from "@repo/chat-engine/chat-tools";
 
 export { CHAT_MAX_OUTPUT_TOKENS } from "@repo/chat-engine/chat";
 export type { ChatRole } from "@repo/chat-engine/chat";
-export type ChatMessage = EngineChatMessage & {
+export type ChatMessage = Omit<EngineChatMessage, "images"> & {
+  images?: ChatImage[];
   fileIds?: string[];
   documents?: ChatDocument[];
 };
@@ -49,6 +50,7 @@ export type ChatReplyStreamChunk =
   | { type: "done"; reply: ChatReply };
 
 type ChatGenerationOptions = {
+  primaryImageInputSupported?: boolean;
   enableDocuments?: boolean;
   documents?: ChatDocument[];
   primaryModel?: string | null;
@@ -70,6 +72,11 @@ type ChatGenerationOptions = {
   /** Content-free lifecycle hooks; no per-token telemetry. */
   onTiming?: (event: GenerationMilestone) => void;
 };
+
+/** Preflight image requests before starting the stream or optional title generation. */
+export function hasImageInputProvider(primaryModel: string | null, primaryImageInputSupported: boolean): boolean {
+  return chatProviderCandidates(primaryModel, primaryImageInputSupported).some((candidate) => candidate.supportsImageInput);
+}
 
 /** Bind app tools to the shared engine and attach generated files only to its final reply. */
 export async function* generateChatReplyStream(
@@ -94,6 +101,7 @@ export async function* generateChatReplyStream(
     {
       providers: chatProviderCandidates(
         resolvePrimaryModel(options?.primaryModel),
+        options?.primaryImageInputSupported,
       ),
       signal: options?.signal,
       maxOutputTokens: options?.maxOutputTokens,

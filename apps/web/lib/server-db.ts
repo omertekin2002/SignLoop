@@ -22,7 +22,7 @@ import {
 } from "@/lib/inference-policy";
 import type { PrimaryModel } from "@/lib/model-settings";
 import type { PersonalityMode } from "@/lib/personality-settings";
-import { parseChatFileInfos, savedChatFile, type ChatDocument, type ChatFileInfo } from "@/lib/chat-files-shared";
+import { parseChatFileInfos, savedChatFile, type ChatUpload, type ChatFileInfo } from "@/lib/chat-files-shared";
 import type { GeneratedChatFile } from "@/lib/chat-file-generation";
 import type { ContractNotes } from "@/lib/contract-notes";
 import { escapeLikePattern } from "@/lib/contract-search";
@@ -2612,7 +2612,7 @@ export async function isChatThreadOwnedByUser(userId: string, threadId: string):
 
 /** Store an upload under an owner-scoped lock, enforcing the thread's 100-file cap atomically. */
 export async function saveChatFileForUser(input: {
-  userId: string; threadId: string; file: ChatDocument; data: Buffer;
+  userId: string; threadId: string; file: ChatUpload; data: Buffer;
 }): Promise<ChatFileInfo | null> {
   await ensureSchema();
   const client = await sql.connect();
@@ -2624,7 +2624,7 @@ export async function saveChatFileForUser(input: {
     if (count.rows[0]!.count >= 100) throw new Error("This chat has reached its 100-file limit. Start a new chat.");
     const file = input.file;
     await client.query("INSERT INTO chat_files(id, thread_id, filename, media_type, file_data, text_content, warning) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-      [file.id, input.threadId, file.name, file.mediaType, input.data, file.text, file.warning ?? null]);
+      [file.id, input.threadId, file.name, file.mediaType, input.data, "text" in file ? file.text : "", file.warning ?? null]);
     await client.query("COMMIT");
     return savedChatFile(file, input.threadId);
   } catch (error) {
@@ -2633,15 +2633,18 @@ export async function saveChatFileForUser(input: {
   } finally { client.release(); }
 }
 
-/** Load extracted text only for requested files in the caller's own thread. */
-export async function getChatDocumentsForUser(userId: string, threadId: string, ids: readonly string[]): Promise<ChatDocument[]> {
+/** Load document text or visual input bytes only for requested files in the caller's own thread. */
+export async function getChatDocumentsForUser(userId: string, threadId: string, ids: readonly string[]): Promise<ChatUpload[]> {
   if (!ids.length) return [];
   await ensureSchema();
-  const { rows } = await sql.query<ChatDocument>(
-    `SELECT f.id, f.filename AS name, f.media_type AS "mediaType", octet_length(f.file_data) AS size, f.text_content AS text, f.warning
+  const { rows } = await sql.query<ChatUpload & { text: string; data: string | null }>(
+    `SELECT f.id, f.filename AS name, f.media_type AS "mediaType", octet_length(f.file_data) AS size, f.text_content AS text, f.warning,
+       CASE WHEN f.media_type LIKE 'image/%' THEN encode(f.file_data, 'base64') END AS data
      FROM chat_files f JOIN chat_threads t ON t.id = f.thread_id
      WHERE t.user_id = $1 AND t.id = $2 AND f.id = ANY($3::uuid[])`, [userId, threadId, [...new Set(ids)]]);
-  return rows.map(({ warning, ...file }) => ({ ...file, ...(warning ? { warning } : {}) }));
+  return rows.map(({ warning, text, data, ...file }) => ({
+    ...file, ...(data !== null ? { data: data.replace(/\n/g, "") } : { text }), ...(warning ? { warning } : {}),
+  }) as ChatUpload);
 }
 
 /** Fetch original download bytes with ownership and thread membership checked in SQL. */

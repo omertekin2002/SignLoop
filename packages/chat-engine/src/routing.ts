@@ -37,6 +37,8 @@ export type ChatProviderCandidate = {
   /** Label reported as `ChatReply.provider` and in failure logs, e.g. "openrouter". */
   provider: string;
   model: string;
+  /** Image-bearing turns use only candidates explicitly declared to support image input. */
+  supportsImageInput?: boolean;
   /** Opening deadline for this candidate; defaults to the request-level deadline. */
   firstChunkTimeoutMs?: number;
   /** Stall limit for this candidate once it is streaming; defaults to the request-level limit. */
@@ -63,6 +65,9 @@ export type ChatProviderCandidate = {
       languageModel: ChatLanguageModel;
     }
 );
+
+export const IMAGE_INPUT_UNAVAILABLE =
+  "No configured model supports image attachments. Select a vision-capable model and try again.";
 
 export type ChatRoutingOptions = {
   firstChunkTimeoutMs?: number;
