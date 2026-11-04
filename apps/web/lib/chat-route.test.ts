@@ -12,6 +12,7 @@ const {
   generateChatTitle,
   generateChatReply,
   generateChatReplyStream,
+  hasImageInputProvider,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   claimGenerationOperation: vi.fn(),
@@ -24,6 +25,7 @@ const {
   generateChatTitle: vi.fn(),
   generateChatReply: vi.fn(),
   generateChatReplyStream: vi.fn(),
+  hasImageInputProvider: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth }));
@@ -35,7 +37,7 @@ vi.mock("@/lib/server-db", () => ({
   getChatDocumentsForUser,
 }));
 vi.mock("@/lib/chat-title", () => ({ generateChatTitle }));
-vi.mock("@/lib/chat", () => ({ generateChatReply, generateChatReplyStream }));
+vi.mock("@/lib/chat", () => ({ generateChatReply, generateChatReplyStream, hasImageInputProvider }));
 vi.mock("@/lib/model-settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./model-settings")>()),
   getModelAvailabilitySnapshot,
@@ -346,8 +348,10 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
     });
     getModelAvailabilitySnapshot.mockResolvedValue({
       availablePrimaryModels: ["other-model", "selected-model"],
+      availableImageInputModels: ["selected-model"],
       imageGenerationAvailable: false,
     });
+    hasImageInputProvider.mockReturnValue(true);
     getRecentChatMessagesForThreadForUser.mockResolvedValue([]);
     generateChatTitle.mockResolvedValue("Lease Renewal Terms");
     generateChatReply.mockResolvedValue(reply);
@@ -410,6 +414,17 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
     );
     expect(appendChatMessagesToThread.mock.calls[0]![0].messages[0].metadata.files).toEqual([savedChatFile(chatImage, threadId)]);
     expect(JSON.stringify(appendChatMessagesToThread.mock.calls)).not.toContain(chatImage.data);
+  });
+
+  it("rejects an image turn before generation when no vision candidate is configured", async () => {
+    hasImageInputProvider.mockReturnValue(false);
+    const response = await POST(request({ temporary: true, messages: [{ role: "user", content: "Describe", images: [chatImage] }] }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain("vision-capable model");
+    expect(generateChatReply).not.toHaveBeenCalled();
+    expect(generateChatReplyStream).not.toHaveBeenCalled();
+    expect(generateChatTitle).not.toHaveBeenCalled();
+    expect(appendChatMessagesToThread).not.toHaveBeenCalled();
   });
 
   it("sends temporary images to the model without writing history", async () => {

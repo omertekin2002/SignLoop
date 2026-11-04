@@ -77,7 +77,7 @@ describe("chat file upload", () => {
 
   it.each([
     new File(["not an image"], "fake.png", { type: "image/png" }),
-    new File([new Uint8Array(384 * 1024 + 1)], "large.png", { type: "image/png" }),
+    new File([Buffer.concat([Buffer.from(chatImageFormats[0]!.data, "base64"), Buffer.alloc(384 * 1024)])], "large.png", { type: "image/png" }),
     new File(["<svg/>"], "image.svg", { type: "image/svg+xml" }),
   ])("rejects invalid, oversized, or unsupported images ($name)", async (file) => {
     auth.mockResolvedValue({ userId: "owner" });

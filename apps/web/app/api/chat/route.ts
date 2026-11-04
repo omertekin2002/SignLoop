@@ -9,9 +9,11 @@ import { auth } from "@/lib/auth";
 import {
   generateChatReply,
   generateChatReplyStream,
+  hasImageInputProvider,
   type ChatMessage,
   type ChatReply,
 } from "@/lib/chat";
+import { IMAGE_INPUT_UNAVAILABLE } from "@repo/chat-engine/routing";
 import { GeminiWebSearchError } from "@repo/chat-engine/gemini-search";
 import { WebSearchError } from "@repo/chat-engine/web-search";
 import {
@@ -455,6 +457,7 @@ export async function POST(req: Request) {
           )
         : Promise.resolve({
             availablePrimaryModels: [],
+            availableImageInputModels: [],
             imageGenerationAvailable: false,
           }),
     ]);
@@ -465,6 +468,8 @@ export async function POST(req: Request) {
           modelSnapshot.availablePrimaryModels,
         )
       : undefined;
+    const primaryImageInputSupported = Boolean(selectedPrimaryModel &&
+      modelSnapshot.availableImageInputModels?.includes(selectedPrimaryModel));
 
     if (!isTemporaryChat) {
       const canonicalMessages = boundCanonicalChatHistory(
@@ -558,6 +563,9 @@ export async function POST(req: Request) {
         return { ...message, ...(selected.length ? { images: selected } : {}) };
       }).reverse();
 
+    if (images.length && !hasImageInputProvider(selectedPrimaryModel ?? null, primaryImageInputSupported))
+      return NextResponse.json({ error: IMAGE_INPUT_UNAVAILABLE }, { status: 400 });
+
     const personality =
       settings?.personality && isAllowedPersonalityMode(settings.personality)
         ? settings.personality
@@ -604,6 +612,7 @@ export async function POST(req: Request) {
           try {
             for await (const chunk of generateChatReplyStream(promptMessages, {
               primaryModel: selectedPrimaryModel,
+              primaryImageInputSupported,
               signal: operationSignal,
               enableWebSearch,
               enableDocuments: Boolean(userId),
@@ -777,6 +786,7 @@ export async function POST(req: Request) {
       files,
     } = await generateChatReply(promptMessages, {
       primaryModel: selectedPrimaryModel,
+      primaryImageInputSupported,
       signal: operationSignal,
       enableWebSearch,
       enableDocuments: Boolean(userId),

@@ -29,6 +29,7 @@ function providers(): ChatProviderCandidate[] {
       kind: "openai-responses",
       provider: "primary-openai-compatible",
       model: "primary",
+      supportsImageInput: true,
       baseURL: "https://primary.test/v1",
       apiKey: "test",
     },
@@ -36,6 +37,7 @@ function providers(): ChatProviderCandidate[] {
       kind: "openai-responses",
       provider: "openrouter",
       model: "fallback",
+      supportsImageInput: true,
       baseURL: "https://fallback.test/v1",
       apiKey: "test",
     },
@@ -233,6 +235,30 @@ afterEach(() => {
 const messages = [{ role: "user" as const, content: "Wazzup" }];
 
 describe("agentic chat", () => {
+  it("skips text-only and unknown candidates throughout an image request's fallback chain", async () => {
+    const primary = new MockLanguageModelV4({ doStream: async () => { throw new Error("Primary unavailable"); } });
+    const fallback = scriptedModel();
+    mocks.responses.mockReturnValueOnce(primary).mockReturnValueOnce(fallback);
+    const configured = providers();
+    const reply = await engine.generateChatReply([
+      { role: "user", content: "Describe", images: [{ mediaType: "image/png", data: "aW1hZ2U=" }] },
+    ], { providers: [
+      { ...configured[0]!, model: "unknown", supportsImageInput: undefined },
+      configured[0]!,
+      { ...configured[0]!, model: "gpt-oss-120b", supportsImageInput: false },
+      configured[1]!,
+    ] });
+    expect(mocks.responses.mock.calls.map(([model]) => model)).toEqual(["primary", "fallback"]);
+    expect(reply.model).toBe("fallback");
+  });
+
+  it("rejects image requests without a declared vision candidate before any provider call", async () => {
+    await expect(engine.generateChatReply([
+      { role: "user", content: "Describe", images: [{ mediaType: "image/png", data: "aW1hZ2U=" }] },
+    ], { providers: providers().map((provider) => ({ ...provider, supportsImageInput: false })) })).rejects.toThrow("vision-capable model");
+    expect(mocks.responses).not.toHaveBeenCalled();
+  });
+
   it("passes user images as visual model input and keeps bytes out of replay", async () => {
     const model = scriptedModel();
     mocks.responses.mockReturnValue(model);

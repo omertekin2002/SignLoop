@@ -69,6 +69,7 @@ describe("chatProviderCandidates", () => {
       kind: "openai-responses",
       provider: "primary-openai-compatible",
       model: "my-model",
+      supportsImageInput: false,
       baseURL: "https://primary.test/v1",
       apiKey: "primary-key",
       headers: { "HTTP-Referer": "https://signloop.test", "X-Title": "SignLoop" },
@@ -89,6 +90,14 @@ describe("chatProviderCandidates", () => {
     expect(chain(chatProviderCandidates(null))[0]).toBe(
       "openrouter:google/gemma-4-31b-it:free",
     );
+  });
+
+  it("declares image support per candidate, including all fallback candidates", async () => {
+    const { chatProviderCandidates } = await load(provider);
+    expect(chatProviderCandidates("gpt-5").map(({ supportsImageInput }) => supportsImageInput)).toEqual([true, true, false, true]);
+    expect(chatProviderCandidates("gpt-5", false)[0]?.supportsImageInput).toBe(false);
+    expect(chatProviderCandidates("private-alias", true)[0]?.supportsImageInput).toBe(true);
+    expect(chatProviderCandidates("private-alias")[0]?.supportsImageInput).toBe(false);
   });
 
   it("leaves out providers that are not configured", async () => {

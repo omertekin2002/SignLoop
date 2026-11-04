@@ -58,8 +58,25 @@ describe("getModelAvailabilitySnapshot", () => {
 
     expect(snapshot).toEqual({
       availablePrimaryModels: ["model-a"],
+      availableImageInputModels: [],
       imageGenerationAvailable: true,
     });
+  });
+
+  it("retains input modalities with the cached model snapshot and honors explicit text-only metadata", async () => {
+    vi.stubEnv("PRIMARY_LLM_BASE_URL", "https://provider.example/v1");
+    const fetch = vi.fn().mockResolvedValue(Response.json({ data: [
+      { id: "gpt-5", architecture: { input_modalities: ["text"] } },
+      { id: "private-vision", input_modalities: ["text", "image"] },
+      { id: "gemini-3-flash" },
+      { id: "unknown" },
+    ] }));
+    vi.stubGlobal("fetch", fetch);
+    const { getModelAvailabilitySnapshot } = await import("./model-settings");
+    const snapshot = await getModelAvailabilitySnapshot();
+    expect(snapshot.availableImageInputModels).toEqual(["private-vision", "gemini-3-flash"]);
+    expect(await getModelAvailabilitySnapshot()).toEqual(snapshot);
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("bypasses a successful snapshot when a fresh list is requested", async () => {
@@ -176,6 +193,7 @@ describe("generation discovery grace", () => {
     expect(results).toEqual(
       Array(2).fill({
         availablePrimaryModels: ["model-a"],
+        availableImageInputModels: [],
         imageGenerationAvailable: true,
       }),
     );
@@ -188,6 +206,7 @@ describe("generation discovery grace", () => {
     await Promise.all(background);
     expect(await snapshot(generation)).toEqual({
       availablePrimaryModels: ["model-b"],
+      availableImageInputModels: [],
       imageGenerationAvailable: false,
     });
     expect(onSource).toHaveBeenLastCalledWith("cache");
@@ -274,10 +293,12 @@ describe("generation discovery grace", () => {
     fetchMock.mockRejectedValueOnce(new Error("offline"));
     expect(await snapshot({ ...generation, forceRefresh: true })).toEqual({
       availablePrimaryModels: [],
+      availableImageInputModels: [],
       imageGenerationAvailable: false,
     });
     expect(await snapshot()).toEqual({
       availablePrimaryModels: [],
+      availableImageInputModels: [],
       imageGenerationAvailable: false,
     });
     expect(deferRefresh).not.toHaveBeenCalled();
@@ -326,11 +347,13 @@ describe("generation discovery grace", () => {
     fetchMock.mockRejectedValueOnce(new Error("offline"));
     expect(await snapshot(generation)).toEqual({
       availablePrimaryModels: [],
+      availableImageInputModels: [],
       imageGenerationAvailable: false,
     });
     await Promise.all(background);
     expect(await snapshot(generation)).toEqual({
       availablePrimaryModels: [],
+      availableImageInputModels: [],
       imageGenerationAvailable: false,
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);

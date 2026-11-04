@@ -50,6 +50,7 @@ export type ChatReplyStreamChunk =
   | { type: "done"; reply: ChatReply };
 
 type ChatGenerationOptions = {
+  primaryImageInputSupported?: boolean;
   enableDocuments?: boolean;
   documents?: ChatDocument[];
   primaryModel?: string | null;
@@ -71,6 +72,11 @@ type ChatGenerationOptions = {
   /** Content-free lifecycle hooks; no per-token telemetry. */
   onTiming?: (event: GenerationMilestone) => void;
 };
+
+/** Preflight image requests before starting the stream or optional title generation. */
+export function hasImageInputProvider(primaryModel: string | null, primaryImageInputSupported: boolean): boolean {
+  return chatProviderCandidates(primaryModel, primaryImageInputSupported).some((candidate) => candidate.supportsImageInput);
+}
 
 /** Bind app tools to the shared engine and attach generated files only to its final reply. */
 export async function* generateChatReplyStream(
@@ -95,6 +101,7 @@ export async function* generateChatReplyStream(
     {
       providers: chatProviderCandidates(
         resolvePrimaryModel(options?.primaryModel),
+        options?.primaryImageInputSupported,
       ),
       signal: options?.signal,
       maxOutputTokens: options?.maxOutputTokens,

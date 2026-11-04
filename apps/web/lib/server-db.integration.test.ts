@@ -742,6 +742,11 @@ describe.skipIf(!connectionString)("database integration", () => {
     );
     expect(constraints.rows).toHaveLength(5);
     expect(constraints.rows.every((row) => row.convalidated)).toBe(true);
+    const chatChecks = await pool.current!.query(
+      "SELECT convalidated FROM pg_constraint WHERE conrelid = 'chat_files'::regclass AND conname IN ('chat_files_media_type_check', 'chat_files_content_check')",
+    );
+    expect(chatChecks.rows).toHaveLength(2);
+    expect(chatChecks.rows.every((row) => row.convalidated)).toBe(true);
   });
 
   it("answers an analysis cache check without the contract text or result body", async () => {

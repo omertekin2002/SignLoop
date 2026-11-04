@@ -16,6 +16,7 @@ import {
   IMAGE_GENERATION_MODEL,
   orderOpenRouterModels,
 } from "@/lib/model-settings";
+import { knownImageInputModel } from "@/lib/model-image-input";
 
 // The chat engine never reads the environment. These builders map this deployment's variables
 // to its explicit configuration. Tool settings are read on every call, as the engine modules used
@@ -50,6 +51,7 @@ export function httpFetchConfig(): HttpFetchConfig {
  */
 export function chatProviderCandidates(
   primaryModel: string | null,
+  primaryImageInputSupported?: boolean,
 ): ChatProviderCandidate[] {
   const pinnedFallback = isOpenRouterModel(primaryModel);
   const headers = { "HTTP-Referer": SITE_URL, "X-Title": APP_NAME };
@@ -60,6 +62,8 @@ export function chatProviderCandidates(
             kind: "openai-responses" as const,
             provider: "primary-openai-compatible",
             model: primaryModel,
+            supportsImageInput:
+              primaryImageInputSupported ?? knownImageInputModel(primaryModel),
             baseURL: PRIMARY_LLM_BASE_URL,
             apiKey: PRIMARY_LLM_API_KEY,
             headers,
@@ -71,6 +75,7 @@ export function chatProviderCandidates(
           kind: "openai-responses" as const,
           provider: "openrouter",
           model,
+          supportsImageInput: knownImageInputModel(model),
           baseURL: OPENROUTER_BASE_URL,
           apiKey: OPENROUTER_API_KEY,
           headers,

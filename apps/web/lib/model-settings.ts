@@ -1,7 +1,9 @@
 import { readBoundedJson } from "@repo/chat-engine/bounded-response";
 import { getErrorMessage, isRecord } from "@/lib/utils";
+import { modelSupportsImageInput } from "@/lib/model-image-input";
 
 export type PrimaryModel = string;
+type DiscoveredModel = { id: string; imageInput: boolean };
 
 export const IMAGE_GENERATION_MODEL = "gpt-image-2.5-sunburst";
 
@@ -45,13 +47,13 @@ const MODELS_GENERATION_GRACE_MS = 60_000;
 // picked up quickly.
 const MODELS_NEGATIVE_CACHE_TTL_MS = 10_000;
 
-let modelsSnapshotCache: { value: PrimaryModel[]; expiresAt: number } | null =
+let modelsSnapshotCache: { value: DiscoveredModel[]; expiresAt: number } | null =
   null;
 let lastSuccessfulSnapshot: {
-  value: PrimaryModel[];
+  value: DiscoveredModel[];
   staleUntil: number;
 } | null = null;
-let modelsSnapshotPromise: Promise<PrimaryModel[]> | null = null;
+let modelsSnapshotPromise: Promise<DiscoveredModel[]> | null = null;
 
 export type ModelDiscoverySource =
   | "cache"
@@ -63,13 +65,16 @@ export type ModelDiscoverySource =
 
 export type ModelAvailabilitySnapshot = {
   availablePrimaryModels: PrimaryModel[];
+  availableImageInputModels: PrimaryModel[];
   imageGenerationAvailable: boolean;
 };
 
 function toModelAvailabilitySnapshot(
-  remoteModelIds: readonly string[],
+  remoteModels: readonly DiscoveredModel[],
 ): ModelAvailabilitySnapshot {
+  const remoteModelIds = remoteModels.map((model) => model.id);
   return {
+    availableImageInputModels: remoteModels.filter((model) => model.imageInput).map((model) => model.id),
     // Image-only models cannot satisfy the Responses API calls used by chat and analysis.
     availablePrimaryModels: remoteModelIds.filter(
       (model) =>
@@ -79,7 +84,7 @@ function toModelAvailabilitySnapshot(
   };
 }
 
-async function listRemoteModelIds(): Promise<string[]> {
+async function listRemoteModels(): Promise<DiscoveredModel[]> {
   if (!PRIMARY_LLM_BASE_URL) {
     throw new Error("Primary LLM endpoint must be configured");
   }
@@ -118,17 +123,18 @@ async function listRemoteModelIds(): Promise<string[]> {
       data?: unknown;
     };
     const rawModels = Array.isArray(payload.data) ? payload.data : [];
-    const modelIds = rawModels
+    const models = rawModels
       .map((entry) => {
         if (!isRecord(entry) || typeof entry.id !== "string") {
           return null;
         }
 
-        return entry.id.trim() || null;
+        const id = entry.id.trim();
+        return id ? { id, imageInput: modelSupportsImageInput(id, entry) } : null;
       })
-      .filter((model): model is string => model !== null);
+      .filter((model): model is DiscoveredModel => model !== null);
 
-    return Array.from(new Set(modelIds));
+    return Array.from(new Map(models.map((model) => [model.id, model])).values());
   } catch (error) {
     throw new Error(
       `Failed to load available primary models: ${getErrorMessage(error)}`,
@@ -138,19 +144,19 @@ async function listRemoteModelIds(): Promise<string[]> {
   }
 }
 
-async function refreshModelIds(): Promise<PrimaryModel[]> {
+async function refreshModelSnapshot(): Promise<DiscoveredModel[]> {
   try {
-    const remoteModelIds = await listRemoteModelIds();
+    const remoteModels = await listRemoteModels();
     const expiresAt = Date.now() + MODELS_CACHE_TTL_MS;
     modelsSnapshotCache = {
-      value: remoteModelIds,
+      value: remoteModels,
       expiresAt,
     };
     lastSuccessfulSnapshot = {
-      value: remoteModelIds,
+      value: remoteModels,
       staleUntil: expiresAt + MODELS_GENERATION_GRACE_MS,
     };
-    return remoteModelIds;
+    return remoteModels;
   } catch (error) {
     // The primary /models endpoint is unreachable — treat it as unavailable so the UI honestly
     // shows the OpenRouter fallback rather than advertising an unreachable model. Negative-cache the
@@ -167,8 +173,8 @@ async function refreshModelIds(): Promise<PrimaryModel[]> {
   }
 }
 
-function refreshModels(): Promise<PrimaryModel[]> {
-  return (modelsSnapshotPromise ??= refreshModelIds().finally(() => {
+function refreshModels(): Promise<DiscoveredModel[]> {
+  return (modelsSnapshotPromise ??= refreshModelSnapshot().finally(() => {
     modelsSnapshotPromise = null;
   }));
 }
