@@ -174,6 +174,7 @@ function uploadSignal(req: Request): AbortSignal {
 type UploadFormatOptions = {
   allowedExtensions: readonly string[];
   allowedMimeTypes?: readonly string[];
+  unsupportedTypeError?: string;
 };
 
 /** The validation both upload paths share: size, MIME type and signature checks. */
@@ -187,7 +188,7 @@ function validateUploadedFile(input: {
 }): { ok: true; mimeType: string } | UploadValidationError {
   const { options, buffer, fileName } = input;
   if (options && !options.allowedExtensions.includes(fileName.split(".").at(-1)?.toLowerCase() ?? "")) {
-    return { ok: false, status: 400, error: "Attach a PDF, TXT, or DOCX file." };
+    return { ok: false, status: 400, error: options.unsupportedTypeError ?? "Attach a PDF, TXT, or DOCX file." };
   }
 
   if (buffer.length === 0) {
@@ -215,7 +216,7 @@ function validateUploadedFile(input: {
   }
 
   if (options?.allowedMimeTypes && !options.allowedMimeTypes.includes(mimeType))
-    return { ok: false, status: 400, error: "Attach a PDF, TXT, or DOCX file." };
+    return { ok: false, status: 400, error: options.unsupportedTypeError ?? "Attach a PDF, TXT, or DOCX file." };
   try {
     validateFileSignature(buffer, mimeType);
   } catch (error: unknown) {

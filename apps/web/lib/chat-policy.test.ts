@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { chatImage } from "./fixtures/chat-image";
 import {
   boundCanonicalChatHistory,
   compactInlineImageDataUris,
@@ -39,6 +40,26 @@ it("uses the larger browser transport budget only when document text is present"
 });
 
 describe("parseClientChatMessages", () => {
+  it("accepts visual inputs, rejects disguised image bytes, and keeps the four-file combined cap", () => {
+    const payload = (images: unknown[], documents?: unknown[]) => ({ messages: [{ role: "user", content: "Describe these", images, ...(documents ? { documents } : {}) }] });
+    expect(parseClientChatMessages(payload([chatImage]))).toMatchObject({ ok: true, messages: [{ images: [chatImage] }] });
+    expect(parseClientChatMessages(payload([{ ...chatImage, data: "https://private.test/image.png" }]))).toMatchObject({ ok: false });
+    expect(parseClientChatMessages(payload([{ ...chatImage, size: 4, data: "bm9wZQ==" }]))).toMatchObject({ ok: false });
+    const huge = Buffer.from(chatImage.data, "base64");
+    huge.writeUInt32BE(100_000, 16);
+    huge.writeUInt32BE(100_000, 20);
+    expect(parseClientChatMessages(payload([{ ...chatImage, data: huge.toString("base64") }]))).toMatchObject({ ok: false });
+    expect(parseClientChatMessages(payload(Array(4).fill(chatImage), [{ id: chatImage.id, name: "notes.txt", mediaType: "text/plain", size: 5, text: "Hello" }]))).toMatchObject({ ok: false });
+  });
+
+  it("retains newest images for follow-ups without exceeding the temporary request limit", () => {
+    const history = Array.from({ length: 7 }, (_, index) => ({ role: "user" as const, content: `Image ${index}`, images: [{ ...chatImage, id: `abcdef01-2345-4678-9abc-def01234567${index}` }] }));
+    const bounded = boundTemporaryChatHistory(history);
+    expect(bounded.flatMap((message) => message.images ?? [])).toEqual(history.slice(-4).flatMap((message) => message.images));
+    expect(bounded.at(-1)?.images).toEqual(history.at(-1)?.images);
+    expect(JSON.stringify(bounded).length).toBeLessThan(MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES);
+  });
+
   it("accepts and trims a conversation that ends with a user message", () => {
     expect(
       parseClientChatMessages({

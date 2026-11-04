@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import { STALE_CONTRACT_REPLY, type ContractEvidence } from "./contract-evidence";
 import { runMigrations } from "../db/migrations.js";
+import { chatImage } from "./fixtures/chat-image";
 
 // Opt in only against the disposable database created by db/test-integration.sh.
 const connectionString = process.env.SIGNLOOP_TEST_DATABASE_URL;
@@ -100,6 +101,28 @@ const TEST_OWNERS = [
 ];
 
 describe.skipIf(!connectionString)("database integration", () => {
+  it("persists visual inputs privately, restores them for follow-ups, and deletes their bytes with the chat", async () => {
+    const thread = await createChatThreadForUser({ userId: "file-owner" });
+    const image = { ...chatImage, id: crypto.randomUUID() };
+    const data = Buffer.from(image.data, "base64");
+    const saved = await saveChatFileForUser({ userId: "file-owner", threadId: thread.id, file: image, data });
+    expect(saved).not.toHaveProperty("data");
+    expect(await getChatDocumentsForUser("file-owner", thread.id, [image.id])).toEqual([image]);
+    expect(await getChatDocumentsForUser("other", thread.id, [image.id])).toEqual([]);
+    expect(await getChatFileForUser("other", thread.id, image.id)).toBeNull();
+    await appendChatMessagesToThread({ userId: "file-owner", threadId: thread.id, messages: [
+      { role: "user", content: "Describe", metadata: { files: [saved] } },
+      { role: "assistant", content: "An image" },
+    ] });
+    expect((await getChatThreadByIdForUser("file-owner", thread.id))?.messages[0]?.files).toEqual([saved]);
+    expect((await getRecentChatMessagesForThreadForUser("file-owner", thread.id, 10))?.[0]?.files).toEqual([saved]);
+    expect((await getChatFileForUser("file-owner", thread.id, image.id))?.data).toEqual(data);
+    const exported = await getAccountExportForUser("file-owner");
+    expect(exported.chatFiles).toEqual(expect.arrayContaining([expect.objectContaining({ id: image.id, mediaType: "image/png" })]));
+    await deleteChatThreadForUser({ userId: "file-owner", threadId: thread.id });
+    expect(await getChatFileForUser("file-owner", thread.id, image.id)).toBeNull();
+  });
+
   it("keeps chat uploads/downloads owner-scoped, transactional, and deleted with their thread", async () => {
     const thread = await createChatThreadForUser({ userId: "file-owner" });
     const document = { id: crypto.randomUUID(), name: "terms.txt", mediaType: "text/plain", size: 12, text: "Private text" };

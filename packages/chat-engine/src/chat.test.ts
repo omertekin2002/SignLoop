@@ -233,6 +233,19 @@ afterEach(() => {
 const messages = [{ role: "user" as const, content: "Wazzup" }];
 
 describe("agentic chat", () => {
+  it("passes user images as visual model input and keeps bytes out of replay", async () => {
+    const model = scriptedModel();
+    mocks.responses.mockReturnValue(model);
+    const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4AWJiYGD4DwAAAP//cGajQwAAAAZJREFUAwABDgEC81VxbAAAAABJRU5ErkJggg==";
+    const reply = await generateChatReply([{ role: "user", content: "Describe the screenshot", images: [{ data, mediaType: "image/png" }] }]);
+    const user = model.doStreamCalls[0]?.prompt.find((message) => message.role === "user");
+    expect(user?.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "text", text: "Describe the screenshot" }),
+      expect.objectContaining({ type: "file", mediaType: "image/png", data: { type: "data", data } }),
+    ]));
+    expect(JSON.stringify(reply)).not.toContain(data);
+  });
+
   it("lets the model answer a greeting without any search or classifier call", async () => {
     const model = scriptedModel();
     mocks.responses.mockReturnValue(model);

@@ -42,8 +42,12 @@ import {
 } from "@/lib/server-db";
 import {
   MAX_CHAT_DOCUMENT_CONTEXT,
+  MAX_CHAT_IMAGE_CONTEXT,
+  isChatImage,
   savedChatFile,
   type ChatDocument,
+  type ChatImage,
+  type ChatUpload,
   type ChatFileInfo,
 } from "@/lib/chat-files-shared";
 import { isRecord, isUuid } from "@/lib/utils";
@@ -352,14 +356,16 @@ export async function POST(req: Request) {
     const latestUserMessage = conversationMessages.at(-1)!;
     if (
       !userId &&
-      conversationMessages.some((message) => message.documents?.length)
+      conversationMessages.some(
+        (message) => message.documents?.length || message.images?.length,
+      )
     )
       return NextResponse.json(
         { error: "Sign in to attach files." },
         { status: 401 },
       );
     let inputFiles: ChatFileInfo[] = [];
-    let currentDocuments: ChatDocument[] = [];
+    let currentDocuments: ChatUpload[] = [];
     let persistedMessages: ChatMessageRecord[] = [];
 
     if (userId && !isTemporaryChat) {
@@ -403,7 +409,9 @@ export async function POST(req: Request) {
     }
 
     if (
-      currentDocuments.reduce((total, file) => total + file.text.length, 0) >
+      currentDocuments.reduce(
+        (total, file) => total + ("text" in file ? file.text.length : 0), 0,
+      ) >
       MAX_CHAT_DOCUMENT_CONTEXT
     )
       return NextResponse.json(
@@ -483,10 +491,29 @@ export async function POST(req: Request) {
     const requestedFileIds = conversationMessages.flatMap(
       (message) => message.fileIds ?? [],
     );
+    // Load at most four recent images, rather than base64-encoding every image in the thread.
+    const fileInfos = new Map(
+      [...persistedMessages.flatMap((message) => message.files ?? []), ...inputFiles]
+        .map((file) => [file.id, file]),
+    );
+    const imageIds = new Set<string>();
+    for (const message of [...conversationMessages].reverse()) {
+      if (message.role !== "user") continue;
+      for (const id of message.fileIds ?? [])
+        if (
+          isChatImage(fileInfos.get(id)?.mediaType ?? "") &&
+          imageIds.size < MAX_CHAT_IMAGE_CONTEXT
+        ) imageIds.add(id);
+    }
     const currentIds = new Set(currentDocuments.map((file) => file.id));
-    const priorFileIds = requestedFileIds.filter((id) => !currentIds.has(id));
+    const priorFileIds = requestedFileIds.filter(
+      (id) => !currentIds.has(id) &&
+        (!isChatImage(fileInfos.get(id)?.mediaType ?? "") || imageIds.has(id)),
+    );
     const allDocuments = isTemporaryChat
-      ? conversationMessages.flatMap((message) => message.documents ?? [])
+      ? conversationMessages.flatMap((message): ChatUpload[] => [
+          ...(message.documents ?? []), ...(message.images ?? []),
+        ])
       : [
           ...currentDocuments,
           ...(priorFileIds.length
@@ -495,12 +522,21 @@ export async function POST(req: Request) {
         ];
     let documentCharacters = 0;
     const documents: ChatDocument[] = [];
+    const images: ChatImage[] = [];
     const documentById = new Map(allDocuments.map((file) => [file.id, file]));
     for (const message of [...conversationMessages].reverse()) {
-      for (const id of message.fileIds ??
-        message.documents?.map((file) => file.id) ??
-        []) {
+      const fileIds = message.fileIds ?? [
+        ...(message.documents ?? []), ...(message.images ?? []),
+      ].map((file) => file.id);
+      for (const id of fileIds) {
         const file = documentById.get(id);
+        if (file && "data" in file) {
+          if (
+            message.role === "user" && images.length < MAX_CHAT_IMAGE_CONTEXT &&
+            !images.some((image) => image.id === id)
+          ) images.push(file);
+          continue;
+        }
         if (
           !file ||
           documents.some((item) => item.id === id) ||
@@ -511,6 +547,16 @@ export async function POST(req: Request) {
         documentCharacters += file.text.length;
       }
     }
+    const remainingImageIds = new Set(images.map((image) => image.id));
+    conversationMessages = [...conversationMessages].reverse()
+      .map(({ images: attachedImages, ...message }) => {
+        const ids = message.fileIds ?? attachedImages?.map((file) => file.id) ?? [];
+        const selected = message.role === "user"
+          ? images.filter((image) => remainingImageIds.has(image.id) && ids.includes(image.id))
+          : [];
+        for (const image of selected) remainingImageIds.delete(image.id);
+        return { ...message, ...(selected.length ? { images: selected } : {}) };
+      }).reverse();
 
     const personality =
       settings?.personality && isAllowedPersonalityMode(settings.personality)

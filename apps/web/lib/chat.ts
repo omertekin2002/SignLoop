@@ -25,7 +25,7 @@ import {
   type DocumentToolName,
 } from "@/lib/chat-document-tools";
 import type { GeneratedChatFile } from "@/lib/chat-file-generation";
-import type { ChatDocument } from "@/lib/chat-files-shared";
+import type { ChatDocument, ChatImage } from "@/lib/chat-files-shared";
 import { fenceUntrusted } from "@repo/chat-engine/chat-tools";
 
 // SignLoop's binding of the shared chat engine (@repo/chat-engine): provider routing, tool
@@ -34,7 +34,8 @@ import { fenceUntrusted } from "@repo/chat-engine/chat-tools";
 
 export { CHAT_MAX_OUTPUT_TOKENS } from "@repo/chat-engine/chat";
 export type { ChatRole } from "@repo/chat-engine/chat";
-export type ChatMessage = EngineChatMessage & {
+export type ChatMessage = Omit<EngineChatMessage, "images"> & {
+  images?: ChatImage[];
   fileIds?: string[];
   documents?: ChatDocument[];
 };

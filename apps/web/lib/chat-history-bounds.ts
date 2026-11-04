@@ -1,6 +1,7 @@
 // Imported by the chat client, so it must not pull runtime values from "ai" into the browser bundle.
 import type { ChatMessage } from "@/lib/chat";
 import { isPlainAssistantReplay } from "@repo/chat-engine/chat-history-shared";
+import { MAX_CHAT_IMAGE_CONTEXT } from "@/lib/chat-files-shared";
 
 export const MAX_CHAT_MESSAGES = 30;
 export const MAX_CHAT_MESSAGE_LENGTH = 4_000;
@@ -34,6 +35,7 @@ export function boundCanonicalChatHistory(
   );
   const selected: ChatMessage[] = [];
   let includedSources = false;
+  let imageCount = 0;
 
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (selected.length >= MAX_CHAT_MESSAGES) break;
@@ -81,6 +83,9 @@ export function boundCanonicalChatHistory(
       content,
       ...(message.fileIds ? { fileIds: message.fileIds } : {}),
       ...(message.documents ? { documents: message.documents } : {}),
+      ...(message.role === "user" && message.images?.length
+        ? { images: message.images.slice(0, Math.max(0, MAX_CHAT_IMAGE_CONTEXT - imageCount)) }
+        : {}),
       ...(includeAgentState
         ? {
             agentMessages,
@@ -89,6 +94,7 @@ export function boundCanonicalChatHistory(
       ...(includeSources ? { webSources: message.webSources } : {}),
       ...(contractEvidence ? { contractEvidence } : {}),
     });
+    imageCount += selected.at(-1)?.images?.length ?? 0;
     if (includeSources) includedSources = true;
     remainingCharacters -=
       requiredSize +
@@ -110,9 +116,16 @@ export function boundTemporaryChatHistory(
     messages.slice(-MAX_CHAT_MESSAGES, -1),
     latest.content.length,
   );
+  // Reserve visual context for the newest user turn before keeping earlier images.
+  let imageSlots = MAX_CHAT_IMAGE_CONTEXT - (latest.images?.length ?? 0);
+  for (const message of [...history].reverse()) {
+    if (!message.images) continue;
+    message.images = message.images.slice(0, Math.max(0, imageSlots));
+    imageSlots -= message.images.length;
+  }
   const encoder = new TextEncoder();
   const result = [...history, latest];
-  const maxBytes = result.some((message) => message.documents?.length)
+  const maxBytes = result.some((message) => message.documents?.length || message.images?.length)
     ? MAX_CHAT_DOCUMENT_REQUEST_BODY_BYTES
     : MAX_CHAT_REQUEST_BODY_BYTES;
   // Reserve framing space for thread/mode fields and account for Unicode and JSON escaping.

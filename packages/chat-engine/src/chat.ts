@@ -90,6 +90,8 @@ export type ChatRole = "system" | "user" | "assistant";
 export type ChatMessage = {
   role: ChatRole;
   content: string;
+  /** Optional visual inputs supplied by a caller; only user messages accept them. */
+  images?: Array<{ data: string; mediaType: string }>;
   /** Compacted tool exchanges from an earlier reply, replayed before its content. */
   agentMessages?: ModelMessage[];
   contractEvidence?: ContractEvidence[];
@@ -559,7 +561,19 @@ export async function* generateChatReplyStream<TTool extends string = string>(
           ...(message.role === "assistant" && message.agentMessages?.length
             ? (compactAgentMessages(message.agentMessages) ?? [])
             : []),
-          { role: message.role, content: message.content },
+          message.role === "user" && message.images?.length
+            ? {
+                role: "user",
+                content: [
+                  { type: "text", text: message.content },
+                  ...message.images.map((image) => ({
+                    type: "file" as const,
+                    data: image.data,
+                    mediaType: image.mediaType,
+                  })),
+                ],
+              }
+            : { role: message.role, content: message.content },
         ]),
       abortSignal: signal,
     };

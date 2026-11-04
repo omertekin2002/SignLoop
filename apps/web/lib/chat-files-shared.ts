@@ -1,7 +1,18 @@
 import { z } from "zod";
 
-export const CHAT_FILE_ACCEPT = ".pdf,.txt,.docx";
+export const CHAT_FILE_ACCEPT = ".pdf,.txt,.docx,.png,.jpg,.jpeg,.webp";
 export const MAX_CHAT_FILES_PER_MESSAGE = 4;
+// Four inline images leave room for text/documents under the 3 MiB temporary request limit.
+export const MAX_CHAT_IMAGE_BYTES = 384 * 1024;
+export const MAX_CHAT_IMAGE_CONTEXT = 4;
+export const CHAT_IMAGE_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+] as const;
+export function isChatImage(mediaType: string): boolean {
+  return (CHAT_IMAGE_TYPES as readonly string[]).includes(mediaType);
+}
 export const MAX_CHAT_FILE_TEXT = 200_000;
 export const MAX_CHAT_DOCUMENT_CONTEXT = 400_000;
 // Two base64 downloads plus reply text must fit beneath Vercel's 4.5 MB response limit.
@@ -16,7 +27,11 @@ export type ChatFileFormat = keyof typeof CHAT_FILE_TYPES;
 const fileInfoSchema = z.object({
   id: z.uuid(),
   name: z.string().min(1).max(180),
-  mediaType: z.enum(Object.values(CHAT_FILE_TYPES) as [string, ...string[]]),
+  mediaType: z.enum([
+    CHAT_IMAGE_TYPES[0],
+    ...CHAT_IMAGE_TYPES.slice(1),
+    ...Object.values(CHAT_FILE_TYPES),
+  ] as [string, ...string[]]),
   size: z
     .number()
     .int()
@@ -31,9 +46,22 @@ const fileInfoSchema = z.object({
 export type ChatFileInfo = z.infer<typeof fileInfoSchema>;
 export type ChatDownloadFile = ChatFileInfo & { data?: string };
 export const chatDocumentSchema = fileInfoSchema.omit({ url: true }).extend({
+  mediaType: z.enum(Object.values(CHAT_FILE_TYPES) as [string, ...string[]]),
   text: z.string().min(1).max(MAX_CHAT_FILE_TEXT),
 });
 export type ChatDocument = z.infer<typeof chatDocumentSchema>;
+export const chatImageSchema = fileInfoSchema.omit({ url: true }).extend({
+  mediaType: z.enum(CHAT_IMAGE_TYPES),
+  size: z.number().int().positive().max(MAX_CHAT_IMAGE_BYTES),
+  data: z
+    .string()
+    .min(4)
+    .max(Math.ceil(MAX_CHAT_IMAGE_BYTES / 3) * 4)
+    .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+});
+export type ChatImage = z.infer<typeof chatImageSchema>;
+export const chatUploadSchema = z.union([chatDocumentSchema, chatImageSchema]);
+export type ChatUpload = z.infer<typeof chatUploadSchema>;
 
 /** Accept a bounded document batch; reject the entire batch if any item is malformed. */
 export function parseChatDocuments(value: unknown): ChatDocument[] {

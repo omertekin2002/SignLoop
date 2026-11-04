@@ -22,6 +22,7 @@ import { POST as parse } from "@/app/api/internal/parse/route";
 import { GET } from "@/app/api/chat/threads/[id]/files/[fileId]/route";
 import { generateChatFile } from "./chat-file-generation";
 import { savedChatFile } from "./chat-files-shared";
+import { chatImageFormats } from "./fixtures/chat-image";
 
 const threadId = "11e3e947-f71f-4ecd-a901-adbf24edbb8a";
 const fileId = "7b0d5c1e-2a43-4f6b-9a1c-3d8e5f6a7b8c";
@@ -54,6 +55,37 @@ afterEach(() => {
 });
 
 describe("chat file upload", () => {
+  it.each(chatImageFormats.flatMap((image) => [false, true].map((saved) => ({ image, saved }))))("accepts $image.mediaType without OCR (saved=$saved)", async ({ image, saved }) => {
+    auth.mockResolvedValue({ userId: "owner" });
+    isChatThreadOwnedByUser.mockResolvedValue(true);
+    saveChatFileForUser.mockImplementation(async ({ file }) => savedChatFile(file, threadId));
+    const bytes = Buffer.from(image.data, "base64");
+    const response = await POST(request(new File([bytes], image.name, { type: image.mediaType }), saved));
+    expect(response.status).toBe(200);
+    const { file } = await response.json();
+    expect(file).toMatchObject({ name: image.name, mediaType: image.mediaType, size: bytes.length });
+    expect(file).not.toHaveProperty("text");
+    expect(parseCall).not.toHaveBeenCalled();
+    if (saved) {
+      expect(file).not.toHaveProperty("data");
+      expect(saveChatFileForUser).toHaveBeenCalledWith(expect.objectContaining({ userId: "owner", threadId, data: bytes }));
+    } else {
+      expect(file.data).toBe(image.data);
+      expect(saveChatFileForUser).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each([
+    new File(["not an image"], "fake.png", { type: "image/png" }),
+    new File([new Uint8Array(384 * 1024 + 1)], "large.png", { type: "image/png" }),
+    new File(["<svg/>"], "image.svg", { type: "image/svg+xml" }),
+  ])("rejects invalid, oversized, or unsupported images ($name)", async (file) => {
+    auth.mockResolvedValue({ userId: "owner" });
+    expect((await POST(request(file))).status).toBeGreaterThanOrEqual(400);
+    expect(parseCall).not.toHaveBeenCalled();
+    expect(saveChatFileForUser).not.toHaveBeenCalled();
+  });
+
   it("requires authentication before extraction or storage", async () => {
     auth.mockResolvedValue({ userId: null });
     expect((await POST(request())).status).toBe(401);
