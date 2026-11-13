@@ -47,10 +47,19 @@ vi.mock("@/lib/server-db", () => ({
 vi.mock("@/lib/model-settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./model-settings")>()),
   getModelAvailabilitySnapshot,
+  // Read once at import; the test that runs the real analysis sends its calls here.
+  PRIMARY_LLM_BASE_URL: "https://analysis.test/v1",
 }));
 
 import { POST, maxDuration } from "@/app/api/contracts/[id]/analyze/route";
 import { ContractRevisionChangedError } from "@/lib/errors";
+import {
+  completed,
+  contractOf,
+  mergeOutput,
+  provider,
+  sectionOutput,
+} from "./fixtures/analysis-provider";
 
 const CONTRACT_ID = "11e3e947-f71f-4ecd-a901-adbf24edbb8a";
 const ANALYSIS_ID = "22e3e947-f71f-4ecd-a901-adbf24edbb8a";
@@ -130,6 +139,8 @@ afterEach(() => {
   vi.useRealTimers();
   vi.resetAllMocks();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("POST /api/contracts/[id]/analyze", () => {
@@ -654,6 +665,47 @@ describe("POST /api/contracts/[id]/analyze", () => {
         end: start + quote.length,
         contract_id: CONTRACT_ID,
       });
+    });
+
+    it("admits a contract past the section limit once and makes at most one call per analysed section plus a merge", async () => {
+      // The real analysis runs behind the route here, against a provider double, so the number of
+      // model calls one quota unit pays for is measured rather than mocked.
+      vi.resetModules();
+      vi.stubEnv("PRIMARY_LLM_API_KEY", "test-primary-key");
+      vi.stubEnv("OPENROUTER_API_KEY", "");
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const analysis =
+        await vi.importActual<typeof import("./analysis")>("./analysis");
+      const { MAX_ANALYSED_SECTIONS } = analysis;
+      const { contractAnalysisSegments } = await import("./source-citations");
+      const text = contractOf(175 * (MAX_ANALYSED_SECTIONS + 2));
+      const segments = contractAnalysisSegments(text);
+      expect(segments.length).toBeGreaterThan(MAX_ANALYSED_SECTIONS);
+      const double = provider(segments, (call) =>
+        call.section === "merge"
+          ? completed(mergeOutput())
+          : completed(sectionOutput(double.segment(call))),
+      );
+      arrangeRunnableContract(contractRecord({ text }));
+      analyzeText.mockImplementation(analysis.analyzeText);
+
+      expect((await POST(postRequest(), params(CONTRACT_ID))).status).toBe(200);
+      expect(admitAnalysis).toHaveBeenCalledOnce();
+      expect(
+        double
+          .sectionCalls()
+          .map((call) => call.section)
+          .sort((a, b) => +a - +b),
+      ).toEqual(
+        segments.slice(0, MAX_ANALYSED_SECTIONS).map((_, index) => index + 1),
+      );
+      expect(double.mergeCalls()).toHaveLength(1);
+      expect(double.calls).toHaveLength(MAX_ANALYSED_SECTIONS + 1);
+      expect(createAnalysisForContract).toHaveBeenCalledOnce();
+      const stored = createAnalysisForContract.mock.calls[0]![0].resultJson;
+      expect(stored.coverage_notices).toEqual([
+        `Contract sections ${MAX_ANALYSED_SECTIONS + 1}–${segments.length} of ${segments.length} (Unicode code points ${segments[MAX_ANALYSED_SECTIONS]!.start}–${segments.at(-1)!.end}, end exclusive) could not be analysed because one analysis covers at most ${MAX_ANALYSED_SECTIONS} sections; terms in that text are not reflected in this analysis.`,
+      ]);
     });
 
     it("replaces forged verification with server-derived receipts without an extra inference call", async () => {
