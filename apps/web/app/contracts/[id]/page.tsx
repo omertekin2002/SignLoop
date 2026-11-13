@@ -63,6 +63,7 @@ import { AnalysisDetails } from "@/components/analysis-details";
 import { DownloadBriefButton } from "@/components/download-brief-button";
 import { ContractNotes } from "@/components/contract-notes";
 import { ContractJurisdiction } from "@/components/contract-jurisdiction";
+import { AnalysisCoverageNotice } from "@/components/analysis-coverage-notice";
 import type { AnalysisResult } from "@/lib/schemas";
 import {
   contractDetailOptions,
@@ -566,6 +567,11 @@ const ContractDetails = () => {
           </div>
         )}
 
+        {/* Next to Re-run Analysis; before the first run it sits by Start Analysis instead. */}
+        {analysis && (
+          <AnalysisCoverageNotice coverage={contract.analysisCoverage} rerun />
+        )}
+
         {/* Analysis Result Section */}
         {analysis ? (
           <>
@@ -1020,6 +1026,10 @@ const ContractDetails = () => {
                     Run our AI analysis to identify risks, missing clauses, and
                     key obligations in this contract.
                   </p>
+                  <AnalysisCoverageNotice
+                    coverage={contract.analysisCoverage}
+                    className="mb-6 w-full max-w-xl"
+                  />
                   <Button
                     onClick={() => analyzeMutation.mutate({})}
                     disabled={analyzeMutation.isPending}

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { finalizeAnalysisResult } from "./analysis-sources";
 import {
   CONTRACT_ANALYSIS_LIMIT,
+  contractAnalysisCoverage,
   contractAnalysisSegments,
 } from "./source-citations";
 import {
@@ -411,6 +412,70 @@ describe("analysis of contracts longer than one request", () => {
     expect(answer.result.coverage_notices).toEqual([
       `Contract sections ${MAX_ANALYSED_SECTIONS + 1}–${segments.length} of ${segments.length} (Unicode code points ${segments[MAX_ANALYSED_SECTIONS]!.start}–${segments.at(-1)!.end}, end exclusive) could not be analysed because one analysis covers at most ${MAX_ANALYSED_SECTIONS} sections; terms in that text are not reflected in this analysis.`,
     ]);
+  });
+
+  it.each([
+    ["one section", 1],
+    ["several sections within the cap", 3],
+    ["more sections than one analysis covers", 3 * 16],
+  ])(
+    "reports the coverage the analysis then runs for a contract of %s",
+    async (_label, clauses) => {
+      const { analyzeText, MAX_ANALYSED_SECTIONS } = await import("./analysis");
+      const text = clauses === 1 ? "1. Monthly fee." : contractOf(175 * clauses);
+      const segments = contractAnalysisSegments(text);
+      expect(segments.length === 1).toBe(clauses === 1);
+      expect(segments.length > MAX_ANALYSED_SECTIONS).toBe(
+        clauses > MAX_ANALYSED_SECTIONS,
+      );
+      const coverage = await contractAnalysisCoverage(
+        Array.from(text).length,
+        () => text,
+      );
+      const double = provider(segments, (call) =>
+        segments.length === 1
+          ? completed(sectionOutput(segments[0]!))
+          : call.section === "merge"
+            ? completed(mergeOutput())
+            : completed(sectionOutput(double.segment(call))),
+      );
+
+      const answer = await analyzeText(text);
+
+      expect(coverage.sectionCount).toBe(segments.length);
+      expect(coverage.characterCount).toBe(Array.from(text).length);
+      // A single-section contract is one call; a longer one is one call per section plus a merge.
+      expect(
+        segments.length === 1
+          ? double.calls.length
+          : double.sectionCalls().length,
+      ).toBe(coverage.analysedSectionCount);
+      const overLimit = (answer.result.coverage_notices ?? []).filter(
+        (notice) => notice.includes("one analysis covers at most"),
+      );
+      if (coverage.uncoveredFrom === null) {
+        expect(coverage.analysedSectionCount).toBe(segments.length);
+        expect(overLimit).toEqual([]);
+      } else {
+        expect(coverage.analysedSectionCount).toBe(MAX_ANALYSED_SECTIONS);
+        expect(overLimit).toEqual([
+          `Contract sections ${coverage.analysedSectionCount + 1}–${coverage.sectionCount} of ${coverage.sectionCount} (Unicode code points ${coverage.uncoveredFrom}–${coverage.characterCount}, end exclusive) could not be analysed because one analysis covers at most ${MAX_ANALYSED_SECTIONS} sections; terms in that text are not reflected in this analysis.`,
+        ]);
+      }
+    },
+  );
+
+  it("does not load the text to count the sections of a contract within the limit", async () => {
+    const loadText = vi.fn(() => "unused");
+    expect(
+      await contractAnalysisCoverage(CONTRACT_ANALYSIS_LIMIT, loadText),
+    ).toEqual({
+      characterCount: CONTRACT_ANALYSIS_LIMIT,
+      sectionCount: 1,
+      analysedSectionCount: 1,
+      uncoveredFrom: null,
+    });
+    expect(loadText).not.toHaveBeenCalled();
   });
 
   it("reads loosely formatted red flag IDs and keeps every flag when one cannot be read", async () => {

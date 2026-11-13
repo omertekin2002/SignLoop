@@ -74,7 +74,12 @@ import {
 } from "./server-db";
 import { resolveWorkOSUserId } from "./auth-identity";
 import { attachAnalysisSources, contractSourceRevision } from "./analysis-sources";
-import { citationForReport } from "./source-citations";
+import {
+  citationForReport,
+  CONTRACT_ANALYSIS_LIMIT,
+  contractAnalysisSegments,
+  MAX_ANALYSED_SECTIONS,
+} from "./source-citations";
 import { buildAnalysisPrompt } from "./analysis";
 import { boundCanonicalChatHistory } from "./chat-history-bounds";
 import { admissionLimits, type AdmissionResult } from "./inference-policy";
@@ -301,6 +306,47 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(
       (await getContractByIdForUser("owner", item.id))?.extractionWarning,
     ).toBeNull();
+  });
+
+  it("returns analysis coverage counts in contract detail without the text, in code points", async () => {
+    const item = await contract();
+    const textless = await getContractByIdForUser("owner", item.id);
+    expect(textless?.analysisCoverage).toEqual({
+      characterCount: 0,
+      sectionCount: 1,
+      analysedSectionCount: 1,
+      uncoveredFrom: null,
+    });
+
+    // At the limit in code points (twice that in UTF-16 units) is still one section.
+    const oneSection = "😀".repeat(CONTRACT_ANALYSIS_LIMIT);
+    await pool.current!.query("UPDATE contracts SET text_content = $1 WHERE id = $2", [oneSection, item.id]);
+    expect((await getContractByIdForUser("owner", item.id))?.analysisCoverage).toEqual({
+      characterCount: CONTRACT_ANALYSIS_LIMIT,
+      sectionCount: 1,
+      analysedSectionCount: 1,
+      uncoveredFrom: null,
+    });
+
+    const clause = (n: number) => `${n}. Clause ${n} ${"😀".repeat(4_000)} terms.\n\n`;
+    const long = Array.from({ length: 80 }, (_, i) => clause(i + 1)).join("");
+    await pool.current!.query("UPDATE contracts SET text_content = $1 WHERE id = $2", [long, item.id]);
+    const detail = await getContractByIdForUser("owner", item.id);
+    const segments = contractAnalysisSegments(long);
+    expect(segments.length).toBeGreaterThan(MAX_ANALYSED_SECTIONS);
+    expect(detail?.analysisCoverage).toEqual({
+      characterCount: Array.from(long).length,
+      sectionCount: segments.length,
+      analysedSectionCount: MAX_ANALYSED_SECTIONS,
+      uncoveredFrom: segments[MAX_ANALYSED_SECTIONS]!.start,
+    });
+    const body = JSON.stringify(detail);
+    expect(body).not.toContain("Clause");
+    expect(body).not.toContain("😀");
+    for (const key of ["text", "textContent", "sectionedText", "characterCount"]) {
+      expect(detail).not.toHaveProperty(key);
+    }
+    expect(await getContractByIdForUser("intruder", item.id)).toBeNull();
   });
 
   it("confirms, changes, and clears a contract's jurisdiction for its owner only", async () => {

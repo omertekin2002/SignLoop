@@ -1,4 +1,4 @@
-import { MAX_EVIDENCE_QUOTE, SOURCE_PAGE_SIZE, type SourceCitation } from "@/lib/source-citations";
+import { CONTRACT_ANALYSIS_LIMIT, contractAnalysisCoverage, MAX_EVIDENCE_QUOTE, SOURCE_PAGE_SIZE, type AnalysisCoverage, type SourceCitation } from "@/lib/source-citations";
 import { parseContractEvidence, validateContractReplay, STALE_CONTRACT_REPLY, type ContractEvidence, type CurrentContractRevision } from "@/lib/contract-evidence";
 import {
   compactAgentMessages,
@@ -417,6 +417,8 @@ export type ContractJurisdictionRecord = {
 export type ContractRecord = ContractSummaryRecord & ContractJurisdictionRecord & {
   /** Quality warning for the current extracted text, recorded by its upload. */
   extractionWarning: string | null;
+  /** How much of the current text one analysis covers; counts and offsets only, never text. */
+  analysisCoverage: AnalysisCoverage;
   analysesHasMore: boolean;
   analyses: AnalysisRecord[];
 };
@@ -759,11 +761,16 @@ export async function getContractByIdForUser(
 ): Promise<ContractRecord | null> {
   await ensureSchema();
 
-  // The warning belongs to the active text (saved with it by each upload), so the page can show
-  // it before any analysis exists. The text itself stays out of this response.
+  // The warning and coverage belong to the active text (the warning is saved with it by each
+  // upload), so the page can show them before any analysis exists. The text itself stays out of
+  // this response: it is read only when it is longer than one section, to count its sections.
   const { rows: contractRows } = await sql<
     ContractSummaryRecord &
-      ContractJurisdictionRecord & { extractionWarning: string | null }
+      ContractJurisdictionRecord & {
+        extractionWarning: string | null;
+        characterCount: number;
+        sectionedText: string | null;
+      }
   >`
     select
       id,
@@ -772,6 +779,10 @@ export async function getContractByIdForUser(
       title,
       status,
       extraction_warning as "extractionWarning",
+      coalesce(char_length(text_content), 0)::integer as "characterCount",
+      case
+        when char_length(text_content) > ${CONTRACT_ANALYSIS_LIMIT}::integer then text_content
+      end as "sectionedText",
       confirmed_jurisdiction as "confirmedJurisdiction",
       jurisdiction_confirmed_at as "jurisdictionConfirmedAt",
       created_at as "createdAt",
@@ -782,10 +793,15 @@ export async function getContractByIdForUser(
     limit 1
   `;
 
-  const contract = contractRows[0];
-  if (!contract) {
+  const row = contractRows[0];
+  if (!row) {
     return null;
   }
+  const { characterCount, sectionedText, ...contract } = row;
+  const analysisCoverage = await contractAnalysisCoverage(
+    characterCount,
+    () => sectionedText ?? "",
+  );
 
   const analysisRows = await fetchAnalysisRowsByContractId(
     contractId,
@@ -796,6 +812,7 @@ export async function getContractByIdForUser(
 
   return {
     ...contract,
+    analysisCoverage,
     analyses,
     analysesHasMore: analysisRows.length > 50,
   };
