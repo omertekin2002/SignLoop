@@ -5,6 +5,12 @@ export type PdfDocumentProxy = Awaited<
   ReturnType<(typeof import("unpdf"))["getDocumentProxy"]>
 >;
 
+/**
+ * A raster at least this many pixels on either side can hold page content (a page, or a strip of
+ * one); smaller ones are stamps, logos or placeholders.
+ */
+export const MIN_CONTENT_RASTER_SIDE = 300;
+
 // PDF.js's decoded image kinds (ImageKind in pdf.js's shared util).
 const GRAYSCALE_1BPP = 1;
 const RGB_24BPP = 2;
@@ -35,6 +41,48 @@ function unpackBlackAndWhite(
   return gray;
 }
 
+type ImageSize = { width?: unknown; height?: unknown };
+
+/**
+ * Whether an image-painting operator paints a raster that can hold page content: one whose width
+ * or height reaches MIN_CONTENT_RASTER_SIDE, or whose size PDF.js does not report. Sizes come from
+ * the operator's arguments, so nothing is decoded. Solid-color masks and non-image operators never
+ * count.
+ */
+function paintsContentRaster(
+  ops: Record<string, number>,
+  operator: number,
+  args: unknown[] | null | undefined,
+): boolean {
+  const contentSized = (size: ImageSize | undefined) =>
+    typeof size?.width !== "number" ||
+    typeof size.height !== "number" ||
+    size.width >= MIN_CONTENT_RASTER_SIDE ||
+    size.height >= MIN_CONTENT_RASTER_SIDE;
+  switch (operator) {
+    case ops.paintImageXObject:
+      // [objectId, width, height]
+      return contentSized({ width: args?.[1], height: args?.[2] });
+    case ops.paintImageXObjectRepeat:
+      // [objectId, scaleX, scaleY, positions]: the image's own size is not in the arguments.
+      return true;
+    case ops.paintImageMaskXObject:
+    case ops.paintImageMaskXObjectRepeat:
+    case ops.paintInlineImageXObject:
+    case ops.paintInlineImageXObjectGroup:
+      return contentSized(args?.[0] as ImageSize | undefined);
+    case ops.paintImageMaskXObjectGroup: {
+      const images = args?.[0];
+      return (
+        !Array.isArray(images) ||
+        images.some((image) => contentSized(image as ImageSize))
+      );
+    }
+    default:
+      return false;
+  }
+}
+
 function toRaster(image: DecodedImage): RawRaster | null {
   const { width, height, kind, data } = image;
   if (!data || !width || !height) return null;
@@ -60,6 +108,11 @@ function toRaster(image: DecodedImage): RawRaster | null {
  * path (a whiteout or redaction box), a shading, or another image. OCR reads the raster alone,
  * so it would otherwise read text that the page does not show. Thin strokes and text on top are
  * allowed; they cannot hide a page of text.
+ *
+ * And it returns null when the page paints another content-sized raster (see
+ * MIN_CONTENT_RASTER_SIDE), before or after the largest: a page scanned as several tiles or
+ * strips would otherwise lose the text in all but one of them while counting as read. Small
+ * stamps and logos beside the raster are allowed.
  */
 export async function largestPageRaster(
   pdf: PdfDocumentProxy,
@@ -97,7 +150,17 @@ export async function largestPageRaster(
     const operators = await withAbort(page.getOperatorList(), signal);
     let largest: DecodedImage | null = null;
     let largestIndex = -1;
+    const contentRasterIndexes: number[] = [];
     for (let index = 0; index < operators.fnArray.length; index++) {
+      if (
+        paintsContentRaster(
+          ops,
+          operators.fnArray[index]!,
+          operators.argsArray[index],
+        )
+      ) {
+        contentRasterIndexes.push(index);
+      }
       if (operators.fnArray[index] !== OPS.paintImageXObject) continue;
       const key: unknown = operators.argsArray[index]?.[0];
       if (typeof key !== "string") continue;
@@ -130,6 +193,9 @@ export async function largestPageRaster(
           ? fills.has(operators.argsArray[index]?.[0])
           : coverings.has(operator);
       if (covers) return null;
+    }
+    if (contentRasterIndexes.some((index) => index !== largestIndex)) {
+      return null;
     }
     if (
       !largest ||

@@ -10,6 +10,7 @@ import {
 } from "pdf-lib";
 import { getDocumentProxy } from "unpdf";
 import { describe, expect, it, vi } from "vitest";
+import type { RawRaster } from "@/lib/png-encode";
 import { largestPageRaster } from "./pdf-rasters";
 
 // Runs the installed PDF.js on synthetic PDFs built with pdf-lib.
@@ -174,6 +175,86 @@ describe("largestPageRaster", () => {
       await expect(largestPageRaster(pdf, 1, any)).resolves.toMatchObject({
         width: 40,
         height: 30,
+      });
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  /** A blank DeviceGray image; flate compresses it, so content-sized rasters stay small. */
+  const blank = (width: number, height: number) => ({
+    width,
+    height,
+    bits: 8 as const,
+    data: new Uint8Array(width * height).fill(255),
+  });
+
+  /** The raster's size only, so a failing assertion does not print its pixels. */
+  const sizeOf = async (raster: Promise<RawRaster | null>) => {
+    const read = await raster;
+    return read && { width: read.width, height: read.height };
+  };
+
+  it("skips a page scanned as two content-sized rasters", async () => {
+    // The smaller tile is painted first, so nothing is painted over the largest.
+    const pdf = await pdfWithGrayImages([blank(320, 400), blank(640, 400)]);
+    try {
+      expect(await sizeOf(largestPageRaster(pdf, 1, any))).toBeNull();
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  it("skips a full-page raster with a wide, short strip beside it", async () => {
+    // The strip is only 200 px tall, but 1200 px wide: it can hold a line of text.
+    const pdf = await pdfWithGrayImages([blank(1200, 200), blank(1200, 1600)]);
+    try {
+      expect(await sizeOf(largestPageRaster(pdf, 1, any))).toBeNull();
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  it("skips a raster beside a content-sized stencil mask", async () => {
+    // Black-and-white scans are often stencil masks (ImageMask), which are not read for OCR.
+    const mask = (page: PDFPage) => {
+      const stream = page.doc.context.flateStream(
+        new Uint8Array((1200 / 8) * 200).fill(0x55),
+        {
+          Type: "XObject",
+          Subtype: "Image",
+          Width: 1200,
+          Height: 200,
+          ImageMask: true,
+          BitsPerComponent: 1,
+        },
+      );
+      page.node.setXObject(
+        PDFName.of("Mask"),
+        page.doc.context.register(stream),
+      );
+      page.pushOperators(
+        pushGraphicsState(),
+        concatTransformationMatrix(300, 0, 0, 50, 10, 700),
+        drawObject("Mask"),
+        popGraphicsState(),
+      );
+    };
+    const pdf = await pdfWithGrayImages([blank(640, 400)], { before: mask });
+    try {
+      expect(await sizeOf(largestPageRaster(pdf, 1, any))).toBeNull();
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  it("reads a content raster with a small stamp or logo beside it", async () => {
+    // Both of the logo's sides are under 300 px.
+    const pdf = await pdfWithGrayImages([blank(299, 120), blank(640, 400)]);
+    try {
+      expect(await sizeOf(largestPageRaster(pdf, 1, any))).toEqual({
+        width: 640,
+        height: 400,
       });
     } finally {
       await pdf.destroy();
