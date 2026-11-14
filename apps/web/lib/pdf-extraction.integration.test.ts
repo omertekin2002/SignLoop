@@ -9,6 +9,7 @@ import {
   PDFString,
   popGraphicsState,
   pushGraphicsState,
+  rgb,
   type PDFPage,
 } from "pdf-lib";
 import { getDocumentProxy } from "unpdf";
@@ -343,4 +344,23 @@ describe("real PDF extraction", () => {
     expect(result.text.replace(/\s+/g, " ")).toBe(OCR_TEXT);
     expect(result).toMatchObject({ method: "pdf_ocr", ocrPages: [1] });
   }, 60_000);
+
+  it("does not OCR text hidden under a whiteout box and keeps the page flagged", async () => {
+    const document = await PDFDocument.load(
+      await readFile(
+        new URL("./fixtures/pdf-ocr-raster-page.pdf", import.meta.url),
+      ),
+    );
+    document.getPage(0).drawRectangle({
+      x: 0,
+      y: 0,
+      width: 612,
+      height: 792,
+      color: rgb(1, 1, 1),
+    });
+
+    const result = await extractTextFromPdf(Buffer.from(await document.save()));
+
+    expect(result).toEqual({ text: "", method: "pdf_scanned", confidence: 0 });
+  });
 });

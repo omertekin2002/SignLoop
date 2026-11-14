@@ -5,6 +5,8 @@ import {
   PDFName,
   popGraphicsState,
   pushGraphicsState,
+  rgb,
+  type PDFPage,
 } from "pdf-lib";
 import { getDocumentProxy } from "unpdf";
 import { describe, expect, it, vi } from "vitest";
@@ -20,9 +22,14 @@ async function pdfWithGrayImages(
     bits: 1 | 8;
     data: Uint8Array;
   }>,
+  draw: {
+    before?: (page: PDFPage) => void;
+    after?: (page: PDFPage) => void;
+  } = {},
 ) {
   const document = await PDFDocument.create();
   const page = document.addPage([612, 792]);
+  draw.before?.(page);
   images.forEach((image, index) => {
     const name = `Im${index}`;
     const stream = document.context.flateStream(image.data, {
@@ -48,6 +55,7 @@ async function pdfWithGrayImages(
       popGraphicsState(),
     );
   });
+  draw.after?.(page);
   document.addPage([612, 792]).drawText("A vector page.", { x: 40, y: 700 });
   return getDocumentProxy(new Uint8Array(await document.save()));
 }
@@ -82,10 +90,11 @@ describe("largestPageRaster", () => {
   });
 
   it("returns the page's largest raster, sized before it is accepted", async () => {
+    // Smaller images painted beneath it; one painted over it would cover it (see below).
     const pdf = await pdfWithGrayImages([
       { width: 8, height: 8, bits: 8, data: new Uint8Array(64).fill(10) },
-      { width: 40, height: 30, bits: 8, data: new Uint8Array(1200).fill(200) },
       { width: 20, height: 20, bits: 8, data: new Uint8Array(400).fill(90) },
+      { width: 40, height: 30, bits: 8, data: new Uint8Array(1200).fill(200) },
     ]);
     try {
       const accept = vi.fn(() => true);
@@ -106,6 +115,66 @@ describe("largestPageRaster", () => {
     const pdf = await pdfWithGrayImages([]);
     try {
       await expect(largestPageRaster(pdf, 2, any)).resolves.toBeNull();
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  const scan = () => [
+    {
+      width: 40,
+      height: 30,
+      bits: 8 as const,
+      data: new Uint8Array(1200).fill(200),
+    },
+  ];
+  const box = (page: PDFPage) =>
+    page.drawRectangle({
+      x: 0,
+      y: 0,
+      width: 612,
+      height: 792,
+      color: rgb(1, 1, 1),
+    });
+
+  it("skips a raster that a filled shape (a whiteout or redaction box) is painted over", async () => {
+    const pdf = await pdfWithGrayImages(scan(), { after: box });
+    try {
+      await expect(largestPageRaster(pdf, 1, any)).resolves.toBeNull();
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  it("skips a raster that another image is painted over", async () => {
+    const pdf = await pdfWithGrayImages([
+      ...scan(),
+      { width: 8, height: 8, bits: 8, data: new Uint8Array(64).fill(0) },
+    ]);
+    try {
+      await expect(largestPageRaster(pdf, 1, any)).resolves.toBeNull();
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  it("reads a raster with a filled background beneath it and text or thin lines over it", async () => {
+    const pdf = await pdfWithGrayImages(scan(), {
+      before: box,
+      after: (page) => {
+        page.drawText("Bates 0001", { x: 500, y: 20, size: 8 });
+        page.drawLine({
+          start: { x: 40, y: 100 },
+          end: { x: 300, y: 100 },
+          thickness: 1,
+        });
+      },
+    });
+    try {
+      await expect(largestPageRaster(pdf, 1, any)).resolves.toMatchObject({
+        width: 40,
+        height: 30,
+      });
     } finally {
       await pdf.destroy();
     }
