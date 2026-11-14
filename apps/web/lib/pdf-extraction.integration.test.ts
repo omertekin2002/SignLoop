@@ -364,6 +364,20 @@ describe("real PDF extraction", () => {
     expect(result).toEqual({ text: "", method: "pdf_scanned", confidence: 0 });
   });
 
+  it("does not OCR a raster that the page's crop box cuts off and keeps the page flagged", async () => {
+    const document = await PDFDocument.load(
+      await readFile(
+        new URL("./fixtures/pdf-ocr-raster-page.pdf", import.meta.url),
+      ),
+    );
+    // The page shows one point of the raster's corner; none of its text is visible.
+    document.getPage(0).setCropBox(0, 0, 1, 1);
+
+    const result = await extractTextFromPdf(Buffer.from(await document.save()));
+
+    expect(result).toEqual({ text: "", method: "pdf_scanned", confidence: 0 });
+  });
+
   it("keeps a scanned page's own selectable text, such as a stamp, with its OCR text", async () => {
     const document = await PDFDocument.load(
       await readFile(

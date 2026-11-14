@@ -1,10 +1,16 @@
 import {
+  clip,
+  closePath,
   concatTransformationMatrix,
   drawObject,
+  endPath,
+  lineTo,
+  moveTo,
   PDFDocument,
   PDFName,
   popGraphicsState,
   pushGraphicsState,
+  rectangle,
   rgb,
   type PDFPage,
 } from "pdf-lib";
@@ -258,6 +264,146 @@ describe("largestPageRaster", () => {
       });
     } finally {
       await pdf.destroy();
+    }
+  });
+
+  // pdfWithGrayImages paints a 640×400 raster over the page area from (10, 10) to (170, 110).
+  const tile = () => [blank(640, 400)];
+  const read = { width: 640, height: 400 };
+
+  it("skips a raster that the page's crop box cuts off", async () => {
+    const pdf = await pdfWithGrayImages(tile(), {
+      before: (page) => page.setCropBox(0, 0, 100, 60),
+    });
+    try {
+      expect(await sizeOf(largestPageRaster(pdf, 1, any))).toBeNull();
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  it("skips a raster placed partly off the page", async () => {
+    // 2600 px wide, so it is painted 650 points wide on a page 612 points wide.
+    const pdf = await pdfWithGrayImages([blank(2600, 400)]);
+    try {
+      expect(await sizeOf(largestPageRaster(pdf, 1, any))).toBeNull();
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  it("skips a raster that a clip rectangle cuts off", async () => {
+    const pdf = await pdfWithGrayImages(tile(), {
+      before: (page) =>
+        page.pushOperators(rectangle(10, 10, 80, 50), clip(), endPath()),
+    });
+    try {
+      expect(await sizeOf(largestPageRaster(pdf, 1, any))).toBeNull();
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  it("skips a raster under a clip that is not a rectangle", async () => {
+    // A triangle over the raster's corner of the page: its bounds hold the raster, its area may not.
+    const pdf = await pdfWithGrayImages(tile(), {
+      before: (page) =>
+        page.pushOperators(
+          moveTo(0, 0),
+          lineTo(612, 0),
+          lineTo(0, 792),
+          closePath(),
+          clip(),
+          endPath(),
+        ),
+    });
+    try {
+      expect(await sizeOf(largestPageRaster(pdf, 1, any))).toBeNull();
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  it("reads a raster that shows in full inside the crop box and its clip", async () => {
+    const pdf = await pdfWithGrayImages(tile(), {
+      before: (page) => {
+        // The crop box trims 0.3 of the raster's 160 points: within the slack for placement.
+        page.setCropBox(10.3, 5, 400, 300);
+        page.pushOperators(
+          // A clip that ends with its graphics state does not apply to the raster.
+          pushGraphicsState(),
+          rectangle(0, 0, 20, 20),
+          clip(),
+          endPath(),
+          popGraphicsState(),
+          // A page-sized clip, as many PDF writers emit, holds the raster.
+          rectangle(0, 0, 612, 792),
+          clip(),
+          endPath(),
+        );
+      },
+    });
+    try {
+      expect(await sizeOf(largestPageRaster(pdf, 1, any))).toEqual(read);
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  /** A page that draws a scanned page (see `tile`) as a form XObject clipped to `box`. */
+  async function pdfWithScanInForm(box: {
+    left: number;
+    bottom: number;
+    right: number;
+    top: number;
+  }) {
+    const scan = await PDFDocument.create();
+    const scanPage = scan.addPage([612, 792]);
+    const image = blank(640, 400);
+    const stream = scan.context.flateStream(image.data, {
+      Type: "XObject",
+      Subtype: "Image",
+      Width: image.width,
+      Height: image.height,
+      ColorSpace: "DeviceGray",
+      BitsPerComponent: image.bits,
+    });
+    scanPage.node.setXObject(PDFName.of("Im0"), scan.context.register(stream));
+    scanPage.pushOperators(
+      pushGraphicsState(),
+      concatTransformationMatrix(160, 0, 0, 100, 10, 10),
+      drawObject("Im0"),
+      popGraphicsState(),
+    );
+    const document = await PDFDocument.create();
+    const form = await document.embedPage(scanPage, box);
+    document.addPage([612, 792]).drawPage(form, { x: box.left, y: box.bottom });
+    return getDocumentProxy(new Uint8Array(await document.save()));
+  }
+
+  it("reads a raster inside a form, unless the form's box cuts it off", async () => {
+    const whole = await pdfWithScanInForm({
+      left: 0,
+      bottom: 0,
+      right: 612,
+      top: 792,
+    });
+    try {
+      expect(await sizeOf(largestPageRaster(whole, 1, any))).toEqual(read);
+    } finally {
+      await whole.destroy();
+    }
+
+    const cut = await pdfWithScanInForm({
+      left: 0,
+      bottom: 0,
+      right: 90,
+      top: 792,
+    });
+    try {
+      expect(await sizeOf(largestPageRaster(cut, 1, any))).toBeNull();
+    } finally {
+      await cut.destroy();
     }
   });
 });
