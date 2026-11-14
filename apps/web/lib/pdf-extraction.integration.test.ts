@@ -1,7 +1,24 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { PDFDocument, PDFName, PDFString, type PDFPage } from "pdf-lib";
+import path from "node:path";
+import {
+  concatTransformationMatrix,
+  drawObject,
+  PDFDocument,
+  PDFName,
+  PDFString,
+  popGraphicsState,
+  pushGraphicsState,
+  rgb,
+  type PDFPage,
+} from "pdf-lib";
+import { getDocumentProxy } from "unpdf";
 import { describe, expect, it } from "vitest";
+import { largestPageRaster } from "./pdf-rasters";
 import { extractTextFromPdf } from "./text-extraction";
+import { getExtractionWarning } from "./upload-pipeline";
+
+const OCR_TEXT = "Termination fee: 250 USD Notice period: 30 days";
 
 // A tiny, one-page Quartz PDF. Keep this as bytes so the test exercises the real unpdf/PDF.js
 // boundary rather than the mocked extraction guard suite.
@@ -218,4 +235,146 @@ describe("real PDF extraction", () => {
     expect(result.text.split(value)).toHaveLength(3);
     expect(result.text).toContain(`Visible annotations: ${value}`);
   });
+
+  it("reads a page that is only a raster of text with the bundled OCR engine", async () => {
+    // Synthetic one-page PDF; the page is a 1275×1650 raster of known text (fixtures/README.md).
+    const source = await readFile(
+      new URL("./fixtures/pdf-ocr-raster-page.pdf", import.meta.url),
+    );
+    const original = Buffer.from(source);
+
+    const result = await extractTextFromPdf(source);
+
+    expect(result.text.replace(/\s+/g, " ")).toBe(OCR_TEXT);
+    expect(result).toMatchObject({
+      method: "pdf_ocr",
+      confidence: 99,
+      ocrPages: [1],
+    });
+    expect(result.ocrConfidence).toBeGreaterThan(80);
+    expect(result.sparseTextPages).toBeUndefined();
+    expect(source.equals(original)).toBe(true);
+    expect(existsSync(path.join(process.cwd(), "eng.traineddata"))).toBe(false);
+  }, 60_000);
+
+  it("puts an OCR'd raster page's text between text-layer pages in page order", async () => {
+    const raster = await PDFDocument.load(
+      await readFile(
+        new URL("./fixtures/pdf-ocr-raster-page.pdf", import.meta.url),
+      ),
+    );
+    const document = await PDFDocument.create();
+    const first = document.addPage();
+    first.drawText(
+      "1. Services. The Supplier will provide the services in Schedule A.",
+      { x: 40, y: 730, size: 11 },
+    );
+    const [scanned] = await document.copyPages(raster, [0]);
+    document.addPage(scanned);
+    const last = document.addPage();
+    last.drawText(
+      "3. Term. This Agreement lasts twelve months from the Effective Date.",
+      { x: 40, y: 730, size: 11 },
+    );
+
+    const result = await extractTextFromPdf(Buffer.from(await document.save()));
+
+    expect(result.text.replace(/\s+/g, " ")).toBe(
+      "1. Services. The Supplier will provide the services in Schedule A. " +
+        `${OCR_TEXT} ` +
+        "3. Term. This Agreement lasts twelve months from the Effective Date.",
+    );
+    expect(result).toMatchObject({
+      method: "pdf_ocr",
+      confidence: 99,
+      ocrPages: [2],
+    });
+    expect(result.sparseTextPages).toBeUndefined();
+
+    const warning = getExtractionWarning({
+      method: result.method,
+      confidence: result.confidence ?? null,
+      sparseTextPages: result.sparseTextPages,
+      ocrPages: result.ocrPages,
+      ocrConfidence: result.ocrConfidence,
+    });
+    expect(warning).toMatch(/^Page 2 was read by OCR/);
+    expect(warning).not.toMatch(/missing|little or no selectable text/i);
+  }, 60_000);
+
+  it("reads a black-and-white (1-bit) scanned page", async () => {
+    // Threshold the fixture's raster to one bit per pixel, the usual form of office scans.
+    const fixture = await getDocumentProxy(
+      new Uint8Array(
+        await readFile(
+          new URL("./fixtures/pdf-ocr-raster-page.pdf", import.meta.url),
+        ),
+      ),
+    );
+    const raster = await largestPageRaster(fixture, 1, () => true);
+    await fixture.destroy();
+    const { width, height, channels, data } = raster!;
+    const rowBytes = Math.ceil(width / 8);
+    const bits = new Uint8Array(rowBytes * height);
+    for (let y = 0; y < height; y++)
+      for (let x = 0; x < width; x++)
+        if (data[(y * width + x) * channels]! >= 128)
+          bits[y * rowBytes + (x >> 3)]! |= 0x80 >> (x & 7);
+
+    const document = await PDFDocument.create();
+    const page = document.addPage([612, 792]);
+    const image = document.context.flateStream(bits, {
+      Type: "XObject",
+      Subtype: "Image",
+      Width: width,
+      Height: height,
+      ColorSpace: "DeviceGray",
+      BitsPerComponent: 1,
+    });
+    page.node.setXObject(PDFName.of("Scan"), document.context.register(image));
+    page.pushOperators(
+      pushGraphicsState(),
+      concatTransformationMatrix(612, 0, 0, 792, 0, 0),
+      drawObject("Scan"),
+      popGraphicsState(),
+    );
+
+    const result = await extractTextFromPdf(Buffer.from(await document.save()));
+
+    expect(result.text.replace(/\s+/g, " ")).toBe(OCR_TEXT);
+    expect(result).toMatchObject({ method: "pdf_ocr", ocrPages: [1] });
+  }, 60_000);
+
+  it("does not OCR text hidden under a whiteout box and keeps the page flagged", async () => {
+    const document = await PDFDocument.load(
+      await readFile(
+        new URL("./fixtures/pdf-ocr-raster-page.pdf", import.meta.url),
+      ),
+    );
+    document.getPage(0).drawRectangle({
+      x: 0,
+      y: 0,
+      width: 612,
+      height: 792,
+      color: rgb(1, 1, 1),
+    });
+
+    const result = await extractTextFromPdf(Buffer.from(await document.save()));
+
+    expect(result).toEqual({ text: "", method: "pdf_scanned", confidence: 0 });
+  });
+
+  it("keeps a scanned page's own selectable text, such as a stamp, with its OCR text", async () => {
+    const document = await PDFDocument.load(
+      await readFile(
+        new URL("./fixtures/pdf-ocr-raster-page.pdf", import.meta.url),
+      ),
+    );
+    document.getPage(0).drawText("VOID", { x: 40, y: 40, size: 10 });
+
+    const result = await extractTextFromPdf(Buffer.from(await document.save()));
+
+    expect(result.text.replace(/\s+/g, " ")).toBe(`VOID ${OCR_TEXT}`);
+    expect(result).toMatchObject({ method: "pdf_ocr", ocrPages: [1] });
+  }, 60_000);
 });

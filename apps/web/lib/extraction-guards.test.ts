@@ -14,6 +14,8 @@ vi.mock("tesseract.js", () => ({
 vi.mock("unpdf", () => ({
   extractText: mocks.extractText,
   getDocumentProxy: mocks.getDocumentProxy,
+  // Scanned-page OCR reads each sparse page's operator list; these pages paint no images.
+  getResolvedPDFJS: () => Promise.resolve({ OPS: { paintImageXObject: 85 } }),
 }));
 
 import {
@@ -29,6 +31,8 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+const NO_IMAGES = { fnArray: [], argsArray: [] };
+
 function pdfFixture(
   numPages: number,
   text: string,
@@ -42,6 +46,7 @@ function pdfFixture(
       .mockResolvedValue({
         cleanup: vi.fn(),
         getAnnotations: vi.fn().mockResolvedValue([]),
+        getOperatorList: vi.fn().mockResolvedValue(NO_IMAGES),
         getTextContent: vi.fn().mockResolvedValue({ items: [{ str: text }] }),
       }),
   };
@@ -62,6 +67,7 @@ function pdfPagesFixture(
         getAnnotations: vi
           .fn()
           .mockResolvedValue(pageAnnotations[pageNumber - 1] ?? []),
+        getOperatorList: vi.fn().mockResolvedValue(NO_IMAGES),
         getTextContent: vi.fn().mockResolvedValue({
           items: pageTextItems[pageNumber - 1] ?? [
             { str: pageTexts[pageNumber - 1] },

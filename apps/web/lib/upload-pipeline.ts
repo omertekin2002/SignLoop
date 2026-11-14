@@ -72,11 +72,8 @@ export type ExtractedText = {
   extractionWarning: string | null;
 };
 
-/**
- * "Pages 7–9 and 12 …" for [7, 8, 9, 12]; a long list ends with a count of the other pages. A
- * sparse page's short text (a cover title, a stamp) is kept, so this must not call it unread.
- */
-function describeSparseTextPages(pages: readonly number[]): string {
+/** "7–9, 12" style page list for [7, 8, 9, 12]; a long list ends with a count of the other pages. */
+function formatPageList(pages: readonly number[]): string {
   const ranges: Array<[number, number]> = [];
   for (const page of pages) {
     const previous = ranges.at(-1);
@@ -92,24 +89,60 @@ function describeSparseTextPages(pages: readonly number[]): string {
   if (otherPages > 0) {
     listed.push(`${otherPages} more ${otherPages === 1 ? "page" : "pages"}`);
   }
-  const list = new Intl.ListFormat("en-US").format(listed);
+  return new Intl.ListFormat("en-US").format(listed);
+}
+
+/**
+ * "Pages 7–9 and 12 …" for [7, 8, 9, 12]. A sparse page's short text (a cover title, a stamp) is
+ * kept, so this must not call it unread.
+ */
+function describeSparseTextPages(pages: readonly number[]): string {
+  const list = formatPageList(pages);
   return pages.length === 1
     ? `Page ${list} has little or no selectable text. Any text on it is included, but if it is a scanned image, its content is missing from the analysis. Verify that page in the original before relying on the analysis.`
     : `Pages ${list} have little or no selectable text. Any text on them is included, but if they are scanned images, their content is missing from the analysis. Verify those pages in the original before relying on the analysis.`;
+}
+
+/** Pages whose text was read by OCR: included, but to be checked, more firmly at low confidence. */
+function describeOcrPages(
+  pages: readonly number[],
+  confidence: number | null,
+): string {
+  const list = formatPageList(pages);
+  const subject =
+    pages.length === 1
+      ? `Page ${list} was read by OCR`
+      : `Pages ${list} were read by OCR`;
+  const pronoun = pages.length === 1 ? "that page" : "those pages";
+  if (confidence !== null && confidence < LOW_OCR_CONFIDENCE) {
+    return `${subject} with low confidence (${Math.round(confidence)}%), so the analysis may contain misread text. Verify ${pronoun} in the original before relying on the analysis.`;
+  }
+  const measured =
+    confidence === null ? "" : ` (confidence ${Math.round(confidence)}%)`;
+  return `${subject}${measured} and ${pages.length === 1 ? "its" : "their"} text is included in the analysis. OCR can misread names, numbers and dates, so check ${pronoun} against the original.`;
 }
 
 export function getExtractionWarning(input: {
   method: ExtractionMethod | null;
   confidence: number | null;
   sparseTextPages?: readonly number[];
+  ocrPages?: readonly number[];
+  ocrConfidence?: number | null;
 }): string | null {
   if (input.method === "pdf_scanned") {
     return "This PDF appears to be scanned and may have an incomplete text layer. Verify the extracted text before relying on the analysis.";
   }
 
-  if (input.sparseTextPages?.length) {
-    return describeSparseTextPages(input.sparseTextPages);
+  const warnings: string[] = [];
+  if (input.ocrPages?.length) {
+    warnings.push(
+      describeOcrPages(input.ocrPages, input.ocrConfidence ?? null),
+    );
   }
+  if (input.sparseTextPages?.length) {
+    warnings.push(describeSparseTextPages(input.sparseTextPages));
+  }
+  if (warnings.length) return warnings.join(" ");
 
   if (
     input.method === "tesseract_ocr" &&
