@@ -1,19 +1,29 @@
 import {
+  beginText,
   clip,
   closePath,
   concatTransformationMatrix,
   drawObject,
+  endMarkedContent,
   endPath,
+  endText,
   lineTo,
   moveTo,
   PDFDocument,
   PDFName,
+  PDFOperator,
   popGraphicsState,
   pushGraphicsState,
   rectangle,
   rgb,
+  setFontAndSize,
+  setGraphicsState,
   setLineWidth,
+  setTextRenderingMode,
+  showText,
+  StandardFonts,
   stroke,
+  TextRenderingMode,
   type PDFPage,
 } from "pdf-lib";
 import { getDocumentProxy } from "unpdf";
@@ -478,6 +488,107 @@ describe("largestPageRaster", () => {
       expect(await sizeOf(largestPageRaster(pen, 1, any))).toEqual(read);
     } finally {
       await pen.destroy();
+    }
+  });
+
+  /** Set an ExtGState with these entries before the page's rasters are painted. */
+  const graphicsState = (entries: Record<string, unknown>) => (page: PDFPage) =>
+    page.pushOperators(
+      setGraphicsState(
+        page.node.newExtGState(
+          "GS",
+          page.doc.context.obj({ Type: "ExtGState", ...entries }),
+        ),
+      ),
+    );
+
+  /** A soft mask drawn by a form that fills the page. */
+  const softMask = (page: PDFPage) => {
+    const form = page.doc.context.stream("0 0 612 792 re f", {
+      Type: "XObject",
+      Subtype: "Form",
+      BBox: [0, 0, 612, 792],
+      Group: { S: "Transparency", CS: "DeviceGray" },
+    });
+    graphicsState({
+      SMask: {
+        Type: "Mask",
+        S: "Luminosity",
+        G: page.doc.context.register(form),
+      },
+    })(page);
+  };
+
+  /** Open an optional-content section (a layer) that the rasters are then painted in. */
+  const layer = (page: PDFPage) => {
+    const group = page.doc.context.register(
+      page.doc.context.obj({ Type: "OCG", Name: "Scan" }),
+    );
+    page.doc.catalog.set(
+      PDFName.of("OCProperties"),
+      page.doc.context.obj({ OCGs: [group], D: { Order: [group] } }),
+    );
+    page.node
+      .normalizedEntries()
+      .Resources.set(
+        PDFName.of("Properties"),
+        page.doc.context.obj({ Layer: group }),
+      );
+    page.pushOperators(
+      PDFOperator.of("BDC" as never, [PDFName.of("OC"), PDFName.of("Layer")]),
+    );
+  };
+
+  /** Draw a letter with a text mode that adds it to the clip. */
+  const textClip = (page: PDFPage) => {
+    const font = page.doc.embedStandardFont(StandardFonts.Helvetica);
+    page.pushOperators(
+      beginText(),
+      setFontAndSize(page.node.newFontDictionary("F1", font.ref), 12),
+      setTextRenderingMode(TextRenderingMode.FillAndClip),
+      showText(font.encodeText("x")),
+      endText(),
+    );
+  };
+
+  it.each([
+    ["with no opacity", graphicsState({ ca: 0 }), undefined],
+    ["with a blend mode", graphicsState({ BM: "Multiply" }), undefined],
+    ["under a soft mask", softMask, undefined],
+    [
+      "in optional content",
+      layer,
+      (page: PDFPage) => page.pushOperators(endMarkedContent()),
+    ],
+    ["under a clip made of text", textClip, undefined],
+  ])("skips a raster painted %s", async (_name, before, after) => {
+    const pdf = await pdfWithGrayImages(tile(), { before, after });
+    try {
+      expect(await sizeOf(largestPageRaster(pdf, 1, any))).toBeNull();
+    } finally {
+      await pdf.destroy();
+    }
+  });
+
+  it("reads a raster painted under graphics state settings that leave it as it is", async () => {
+    const pdf = await pdfWithGrayImages(tile(), {
+      before: (page) => {
+        // Hidden settings that a later graphics state puts back.
+        graphicsState({ ca: 0, BM: "Multiply" })(page);
+        graphicsState({
+          ca: 1,
+          BM: "Normal",
+          SMask: "None",
+          // Stroke settings do not change an image.
+          CA: 0.5,
+          LW: 3,
+        })(page);
+      },
+    });
+    try {
+      expect(await sizeOf(largestPageRaster(pdf, 1, any))).toEqual(read);
+    } finally {
+      await pdf.destroy();
     }
   });
 

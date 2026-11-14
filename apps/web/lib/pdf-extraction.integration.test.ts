@@ -397,6 +397,30 @@ describe("real PDF extraction", () => {
     expect(result).toEqual({ text: "", method: "pdf_scanned", confidence: 0 });
   });
 
+  it("does not OCR a raster painted with no opacity and keeps the page flagged", async () => {
+    const document = await PDFDocument.load(
+      await readFile(
+        new URL("./fixtures/pdf-ocr-raster-page.pdf", import.meta.url),
+      ),
+    );
+    // Wrap the page's content in a graphics state with fill opacity 0: the page shows nothing.
+    const page = document.getPage(0);
+    const state = page.node.newExtGState(
+      "Hidden",
+      document.context.obj({ Type: "ExtGState", ca: 0 }),
+    );
+    page.node.wrapContentStreams(
+      document.context.register(
+        document.context.stream(`q ${state.asString()} gs`),
+      ),
+      document.context.register(document.context.stream("Q")),
+    );
+
+    const result = await extractTextFromPdf(Buffer.from(await document.save()));
+
+    expect(result).toEqual({ text: "", method: "pdf_scanned", confidence: 0 });
+  });
+
   it("keeps a page flagged when its scan is over the image pixel limit, even beside a readable raster", async () => {
     const document = await PDFDocument.load(
       await readFile(

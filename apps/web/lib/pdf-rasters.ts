@@ -88,14 +88,40 @@ type Matrix = [number, number, number, number, number, number];
 type Box = [number, number, number, number];
 /**
  * What a painting operator draws under: the transform in effect, the clip (a box, "unknown" for a
- * clip that is not a plain upright rectangle, or null for none) and the stroke width, in the
- * transform's units.
+ * clip that is not a plain upright rectangle, or null for none), the stroke width in the
+ * transform's units, and the names of the settings that change how an image shows (see
+ * IMAGE_SETTINGS) and are not at their plain value.
  */
 type PaintState = {
   matrix: Matrix;
   clip: Box | "unknown" | null;
   lineWidth: number;
+  altered: Set<string>;
 };
+
+/**
+ * The ExtGState entries, as PDF.js's setGState passes them, that change how an image shows, each
+ * with the value that leaves it as painted: fill opacity, blend mode, soft mask and transfer
+ * function.
+ */
+const IMAGE_SETTINGS: Record<string, unknown> = {
+  ca: 1,
+  BM: "source-over",
+  SMask: false,
+  TR: null,
+};
+/** The entries that do not affect an image: stroke and text settings. */
+const OTHER_SETTINGS = new Set([
+  "LW",
+  "LC",
+  "LJ",
+  "ML",
+  "D",
+  "RI",
+  "FL",
+  "Font",
+  "CA",
+]);
 
 /**
  * A stroke wider than this many points can black out a line of text, as a marker or a thick line
@@ -271,6 +297,10 @@ function toRaster(image: DecodedImage): RawRaster | null {
  * visible box (the crop box) or the clip it is painted under, or that clip is not a plain
  * rectangle. OCR would otherwise read text that the page cuts off.
  *
+ * Likewise when the raster may not show as its own pixels: it is painted with an opacity below
+ * 1, a blend mode, a soft mask or a transfer function, inside a soft mask's own drawing, or in
+ * optional content (a layer, which can be switched off).
+ *
  * `strict` is the same document opened with PDF.js's stopAtErrors. PDF.js leaves out what it
  * cannot use, such as an image over the document's maxImageSize, without a trace in the operator
  * list, so a page could count as read from a stamp while its real scan was dropped. With
@@ -316,7 +346,7 @@ export async function largestPageRaster(
     const operators = await withAbort(page.getOperatorList(), signal);
     let largest: DecodedImage | null = null;
     let largestIndex = -1;
-    let largestShowsInFull = false;
+    let largestShows = false;
     let lastCoveringIndex = -1;
     const contentRasterIndexes: number[] = [];
     // The page's visible box: its crop box, within its media box.
@@ -332,10 +362,14 @@ export async function largestPageRaster(
       matrix: [1, 0, 0, 1, 0, 0],
       clip: null,
       lineWidth: 1,
+      altered: new Set(),
     });
     let state = initial();
     const saved: PaintState[] = [];
-    const save = () => saved.push({ ...state });
+    const save = () =>
+      saved.push({ ...state, altered: new Set(state.altered) });
+    // For each open marked-content section, whether it is optional content.
+    const optionalContent: boolean[] = [];
     const restore = () => {
       state = saved.pop() ?? state;
     };
@@ -345,8 +379,29 @@ export async function largestPageRaster(
       const args: unknown[] | null | undefined = operators.argsArray[index];
       switch (operators.fnArray[index]) {
         case OPS.save:
-        case OPS.beginGroup:
           save();
+          break;
+        case OPS.beginGroup: {
+          save();
+          // A group with `smask` is the drawing of a soft mask, not something the page shows.
+          const group = args?.[0] as { smask?: unknown } | null | undefined;
+          if (group?.smask) state.altered.add("mask drawing");
+          break;
+        }
+        case OPS.beginMarkedContent:
+          optionalContent.push(false);
+          break;
+        case OPS.beginMarkedContentProps:
+          optionalContent.push(args?.[0] === "OC");
+          break;
+        case OPS.endMarkedContent:
+          optionalContent.pop();
+          break;
+        case OPS.setTextRenderingMode:
+          // Modes 4 to 7 add the text drawn to the clip.
+          if (!(typeof args?.[0] === "number" && args[0] < 4)) {
+            state.clip = "unknown";
+          }
           break;
         case OPS.restore:
         case OPS.endGroup:
@@ -394,11 +449,21 @@ export async function largestPageRaster(
           state.lineWidth = typeof args?.[0] === "number" ? args[0] : NaN;
           break;
         case OPS.setGState: {
-          // [[key, value], ...] from an ExtGState dictionary; LW is its line width.
+          // [[key, value], ...] from an ExtGState dictionary.
           const entries: unknown = args?.[0];
-          for (const entry of Array.isArray(entries) ? entries : []) {
-            if (Array.isArray(entry) && entry[0] === "LW") {
-              state.lineWidth = typeof entry[1] === "number" ? entry[1] : NaN;
+          for (const entry of Array.isArray(entries) ? entries : [null]) {
+            const [key, value]: unknown[] = Array.isArray(entry) ? entry : [];
+            if (key === "LW") {
+              state.lineWidth = typeof value === "number" ? value : NaN;
+            } else if (
+              typeof key === "string" &&
+              Object.hasOwn(IMAGE_SETTINGS, key)
+            ) {
+              if (value === IMAGE_SETTINGS[key]) state.altered.delete(key);
+              else state.altered.add(key);
+            } else if (typeof key !== "string" || !OTHER_SETTINGS.has(key)) {
+              // An entry this does not know may change how an image shows.
+              state.altered.add("unknown setting");
             }
           }
           break;
@@ -457,14 +522,17 @@ export async function largestPageRaster(
       ) {
         largest = image;
         largestIndex = index;
-        largestShowsInFull = showsInFull(state, view);
+        largestShows =
+          showsInFull(state, view) &&
+          state.altered.size === 0 &&
+          !optionalContent.includes(true);
       }
     }
     if (largest && lastCoveringIndex > largestIndex) return null;
     if (contentRasterIndexes.some((index) => index !== largestIndex)) {
       return null;
     }
-    if (largest && !largestShowsInFull) return null;
+    if (largest && !largestShows) return null;
     if (
       !largest ||
       !accept({ width: largest.width!, height: largest.height! })
