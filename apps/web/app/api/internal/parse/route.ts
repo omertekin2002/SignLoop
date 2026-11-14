@@ -18,7 +18,8 @@ import {
 // and the signing protocol: no database, session or model clients.
 
 // Its own duration, below the upload routes' 180 s, also keeps Vercel from grouping it with them.
-// OCR budgets 60 s for worker start plus 90 s for recognition.
+// OCR budgets 60 s for worker start plus 90 s for recognition; a PDF's scanned pages get 10 s
+// of queue wait and 70 s for reading and recognizing them (see lib/text-extraction.ts).
 export const maxDuration = 160;
 
 const PARSE_DEADLINE_MS = 150_000;

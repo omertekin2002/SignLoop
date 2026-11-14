@@ -259,6 +259,38 @@ describe("prepareUpload then parseUpload", () => {
     );
     expect(result.extractionWarning).not.toMatch(/not read|omitted|skipped/i);
   });
+
+  it("reads a scanned page by OCR and names it in the warning without calling it missing", async () => {
+    // Synthetic PDF whose only page is a raster of known text (fixtures/README.md).
+    const pdf = await fs.readFile(
+      new URL("./fixtures/pdf-ocr-raster-page.pdf", import.meta.url),
+    );
+    const formData = new FormData();
+    formData.set(
+      "file",
+      new File([pdf], "signed.pdf", { type: "application/pdf" }),
+    );
+
+    const result = await prepareAndParse(
+      new Request("http://localhost/upload", {
+        method: "POST",
+        body: formData,
+      }),
+    );
+
+    if (!result.ok) throw new Error("expected a prepared upload");
+    expect(result).toMatchObject({
+      method: "pdf_ocr",
+      confidence: 99,
+      extractionError: null,
+    });
+    expect(result.text.replace(/\s+/g, " ")).toBe(
+      "Termination fee: 250 USD Notice period: 30 days",
+    );
+    expect(result.extractionWarning).toMatch(
+      /^Page 1 was read by OCR \(confidence \d+%\) and its text is included in the analysis\. OCR can misread names, numbers and dates, so check that page against the original\.$/,
+    );
+  }, 60_000);
 });
 
 describe("getExtractionWarning", () => {
@@ -305,6 +337,53 @@ describe("getExtractionWarning", () => {
     expect(
       getExtractionWarning({ ...digital, sparseTextPages: [] }),
     ).toBeNull();
+  });
+
+  it("names pages read by OCR and asks for a check without calling them missing", () => {
+    const warning = getExtractionWarning({
+      method: "pdf_ocr",
+      confidence: 99,
+      ocrPages: [2],
+      ocrConfidence: 91.4,
+    });
+    expect(warning).toBe(
+      "Page 2 was read by OCR (confidence 91%) and its text is included in the analysis. OCR can misread names, numbers and dates, so check that page against the original.",
+    );
+    expect(
+      getExtractionWarning({
+        method: "pdf_ocr",
+        confidence: 99,
+        ocrPages: [2, 3, 4, 9],
+        ocrConfidence: 88,
+      }),
+    ).toMatch(/^Pages 2–4 and 9 were read by OCR \(confidence 88%\) and their text is included/);
+  });
+
+  it("warns more firmly when OCR confidence is low", () => {
+    expect(
+      getExtractionWarning({
+        method: "pdf_ocr",
+        confidence: 99,
+        ocrPages: [3, 4],
+        ocrConfidence: 41.6,
+      }),
+    ).toBe(
+      "Pages 3–4 were read by OCR with low confidence (42%), so the analysis may contain misread text. Verify those pages in the original before relying on the analysis.",
+    );
+  });
+
+  it("names OCR'd pages and pages still unread separately", () => {
+    const warning = getExtractionWarning({
+      method: "pdf_ocr",
+      confidence: 83,
+      ocrPages: [2],
+      ocrConfidence: 90,
+      sparseTextPages: [11, 12],
+    });
+    expect(warning).toBe(
+      "Page 2 was read by OCR (confidence 90%) and its text is included in the analysis. OCR can misread names, numbers and dates, so check that page against the original. " +
+        "Pages 11–12 have little or no selectable text. Any text on them is included, but if they are scanned images, their content is missing from the analysis. Verify those pages in the original before relying on the analysis.",
+    );
   });
 });
 
@@ -379,6 +458,30 @@ describe("toExtractedText", () => {
         live(),
       ),
     ).toMatchObject({ ok: false, status: 422 });
+  });
+
+  it("derives a PDF OCR warning from the parse result", () => {
+    expect(
+      toExtractedText(
+        {
+          ok: true,
+          text: "Signed by both parties.",
+          method: "pdf_ocr",
+          confidence: 99,
+          sparseTextPages: [],
+          ocrPages: [3],
+          ocrConfidence: 52,
+        },
+        live(),
+      ),
+    ).toMatchObject({
+      ok: true,
+      method: "pdf_ocr",
+      confidence: 99,
+      extractionWarning: expect.stringMatching(
+        /^Page 3 was read by OCR with low confidence \(52%\)/,
+      ),
+    });
   });
 
   it("derives the warning from the parse result", () => {

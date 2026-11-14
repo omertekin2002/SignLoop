@@ -44,6 +44,12 @@ export async function parseDocument(
       confidence:
         typeof extracted.confidence === "number" ? extracted.confidence : null,
       sparseTextPages: extracted.sparseTextPages ?? [],
+      ...(extracted.ocrPages?.length
+        ? {
+            ocrPages: extracted.ocrPages,
+            ocrConfidence: extracted.ocrConfidence,
+          }
+        : {}),
     };
   } catch (error: unknown) {
     if (
