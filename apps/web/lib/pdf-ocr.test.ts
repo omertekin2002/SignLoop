@@ -151,7 +151,58 @@ describe("scanned PDF page OCR", () => {
       2,
       expect.any(Function),
       expect.anything(),
+      expect.anything(),
     );
+  });
+
+  it("checks page images against a strict reading of the PDF, opened only when a page needs OCR", async () => {
+    const lenient = pdfPages(["", ""]);
+    const strict = pdfPages(["", ""]);
+    mocks.getDocumentProxy
+      .mockResolvedValueOnce(lenient)
+      .mockResolvedValueOnce(strict);
+    rasters({ 1: PAGE });
+    mocks.createWorker.mockResolvedValueOnce(fakeWorker(read("Page one.")));
+    const { extractTextFromPdf } = await loadExtraction();
+
+    await extractTextFromPdf(Buffer.from("%PDF-1.7"));
+
+    expect(mocks.getDocumentProxy).toHaveBeenCalledTimes(2);
+    expect(mocks.getDocumentProxy).toHaveBeenLastCalledWith(
+      expect.any(Uint8Array),
+      { maxImageSize: 25_000_000, stopAtErrors: true },
+    );
+    expect(mocks.largestPageRaster).toHaveBeenCalledWith(
+      lenient,
+      1,
+      expect.any(Function),
+      expect.anything(),
+      strict,
+    );
+    expect(lenient.destroy).toHaveBeenCalledOnce();
+    expect(strict.destroy).toHaveBeenCalledOnce();
+
+    // A PDF whose pages all have text is opened once.
+    mocks.getDocumentProxy.mockReset();
+    mocks.getDocumentProxy.mockResolvedValue(pdfPages([CLAUSE.repeat(3)]));
+    await extractTextFromPdf(Buffer.from("%PDF-1.7"));
+    expect(mocks.getDocumentProxy).toHaveBeenCalledOnce();
+  });
+
+  it("leaves pages flagged when the PDF cannot be opened strictly", async () => {
+    mocks.getDocumentProxy
+      .mockResolvedValueOnce(pdfPages(["", "SCAN", ""]))
+      .mockRejectedValueOnce(new Error("Invalid XRef stream"));
+    rasters({ 1: PAGE, 2: PAGE, 3: PAGE });
+    const { extractTextFromPdf } = await loadExtraction();
+
+    await expect(extractTextFromPdf(Buffer.from("%PDF-1.7"))).resolves.toEqual({
+      text: "SCAN",
+      method: "pdf_scanned",
+      confidence: 0,
+    });
+    expect(mocks.largestPageRaster).not.toHaveBeenCalled();
+    expect(mocks.createWorker).not.toHaveBeenCalled();
   });
 
   it.each([

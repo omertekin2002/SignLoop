@@ -87,10 +87,21 @@ type Matrix = [number, number, number, number, number, number];
 /** [minX, minY, maxX, maxY] in the page's coordinates. */
 type Box = [number, number, number, number];
 /**
- * Where a painting operator draws: the transform in effect and the clip, as a box, "unknown" for a
- * clip that is not a plain upright rectangle, or null for none.
+ * What a painting operator draws under: the transform in effect, the clip (a box, "unknown" for a
+ * clip that is not a plain upright rectangle, or null for none) and the stroke width, in the
+ * transform's units.
  */
-type PaintState = { matrix: Matrix; clip: Box | "unknown" | null };
+type PaintState = {
+  matrix: Matrix;
+  clip: Box | "unknown" | null;
+  lineWidth: number;
+};
+
+/**
+ * A stroke wider than this many points can black out a line of text, as a marker or a thick line
+ * drawn over it does; rules, underlines and pen strokes are thinner.
+ */
+const MAX_THIN_STROKE_WIDTH = 2;
 
 /** How far past the visible area a raster may reach, as a share of its own width and height. */
 const VISIBLE_AREA_SLACK = 0.005;
@@ -112,6 +123,22 @@ function toPage(matrix: Matrix, x: number, y: number): [number, number] {
     matrix[0] * x + matrix[2] * y + matrix[4],
     matrix[1] * x + matrix[3] * y + matrix[5],
   ];
+}
+
+/**
+ * The width, in points, of a stroke painted in `state`: its line width under the transform's
+ * largest stretch. NaN when either is unknown.
+ */
+function strokeWidth(state: PaintState): number {
+  const [a, b, c, d] = state.matrix;
+  const squares = a * a + b * b + c * c + d * d;
+  const determinant = a * d - b * c;
+  const stretch = Math.sqrt(
+    (squares +
+      Math.sqrt(Math.max(0, squares * squares - 4 * determinant ** 2))) /
+      2,
+  );
+  return Math.abs(state.lineWidth) * stretch;
 }
 
 function isNumberList(
@@ -230,7 +257,8 @@ function toRaster(image: DecodedImage): RawRaster | null {
  * objects are released before this returns.
  *
  * It also returns null when anything that can cover the raster is painted after it: a filled
- * path (a whiteout or redaction box), a shading, or another image. OCR reads the raster alone,
+ * path (a whiteout or redaction box), a shading, another image, or a stroke wider than
+ * MAX_THIN_STROKE_WIDTH (a marker or thick line drawn over text). OCR reads the raster alone,
  * so it would otherwise read text that the page does not show. Thin strokes and text on top are
  * allowed; they cannot hide a page of text.
  *
@@ -242,18 +270,26 @@ function toRaster(image: DecodedImage): RawRaster | null {
  * And it returns null when the raster does not show in full: part of it lies outside the page's
  * visible box (the crop box) or the clip it is painted under, or that clip is not a plain
  * rectangle. OCR would otherwise read text that the page cuts off.
+ *
+ * `strict` is the same document opened with PDF.js's stopAtErrors. PDF.js leaves out what it
+ * cannot use, such as an image over the document's maxImageSize, without a trace in the operator
+ * list, so a page could count as read from a stamp while its real scan was dropped. With
+ * stopAtErrors the page's list ends at the first such error instead, so when the two lists differ
+ * in length something was left out and this returns null.
  */
 export async function largestPageRaster(
   pdf: PdfDocumentProxy,
   pageNumber: number,
   accept: (size: { width: number; height: number }) => boolean,
   signal?: AbortSignal,
+  strict?: PdfDocumentProxy,
 ): Promise<RawRaster | null> {
   const { getResolvedPDFJS } = await import("unpdf");
   const { OPS } = await getResolvedPDFJS();
   const ops = OPS as Record<string, number>;
-  // Painting operators that can cover what was painted before them. pdf.js 5 folds a path's
-  // painting operator into constructPath's first argument; older versions emit it on its own.
+  // Painting operators that can cover what was painted before them: fills, shadings and images
+  // always, strokes when they are wide. Older pdf.js versions emit a path's painting operator on
+  // its own.
   const fills = new Set(
     [
       "fill",
@@ -264,6 +300,7 @@ export async function largestPageRaster(
       "closeEOFillStroke",
     ].map((name) => ops[name]),
   );
+  const strokes = new Set(["stroke", "closeStroke"].map((name) => ops[name]));
   const coverings = new Set([
     ...fills,
     ops.shadingFill,
@@ -280,6 +317,7 @@ export async function largestPageRaster(
     let largest: DecodedImage | null = null;
     let largestIndex = -1;
     let largestShowsInFull = false;
+    let lastCoveringIndex = -1;
     const contentRasterIndexes: number[] = [];
     // The page's visible box: its crop box, within its media box.
     const [viewX1, viewY1, viewX2, viewY2] = page.view as Box;
@@ -290,7 +328,12 @@ export async function largestPageRaster(
       Math.max(viewY1, viewY2),
     ];
     // Follow the transform and clip each operator paints under, as PDF.js's canvas does.
-    let state: PaintState = { matrix: [1, 0, 0, 1, 0, 0], clip: null };
+    const initial = (): PaintState => ({
+      matrix: [1, 0, 0, 1, 0, 0],
+      clip: null,
+      lineWidth: 1,
+    });
+    let state = initial();
     const saved: PaintState[] = [];
     const save = () => saved.push({ ...state });
     const restore = () => {
@@ -330,11 +373,36 @@ export async function largestPageRaster(
           if (box) narrowClip(state, isNumberList(box, 4) ? box : null);
           break;
         }
-        case OPS.beginAnnotation:
-          // An annotation's appearance is placed and clipped by its own rectangle and matrices.
+        case OPS.beginAnnotation: {
+          // [id, rectangle, transform, matrix]: an annotation's appearance starts from the
+          // page's own coordinates and a fresh graphics state, is clipped to its rectangle and
+          // drawn under both matrices.
           save();
-          state.clip = "unknown";
+          state = initial();
+          const [, rectangle, transform, matrix] = args ?? [];
+          if (rectangle) {
+            narrowClip(state, isNumberList(rectangle, 4) ? rectangle : null);
+          }
+          for (const next of [transform, matrix]) {
+            state.matrix = isNumberList(next, 6)
+              ? concatenate(state.matrix, next)
+              : [NaN, NaN, NaN, NaN, NaN, NaN];
+          }
           break;
+        }
+        case OPS.setLineWidth:
+          state.lineWidth = typeof args?.[0] === "number" ? args[0] : NaN;
+          break;
+        case OPS.setGState: {
+          // [[key, value], ...] from an ExtGState dictionary; LW is its line width.
+          const entries: unknown = args?.[0];
+          for (const entry of Array.isArray(entries) ? entries : []) {
+            if (Array.isArray(entry) && entry[0] === "LW") {
+              state.lineWidth = typeof entry[1] === "number" ? entry[1] : NaN;
+            }
+          }
+          break;
+        }
         case OPS.clip:
         case OPS.eoClip:
           clipPending = true;
@@ -343,6 +411,23 @@ export async function largestPageRaster(
           if (clipPending) narrowClip(state, pathRectangle(args));
           clipPending = false;
           break;
+      }
+      // pdf.js 5 folds a path's painting operator into constructPath's first argument.
+      const operator = operators.fnArray[index]!;
+      const paint: unknown =
+        operator === OPS.constructPath ? args?.[0] : operator;
+      if (
+        operator === OPS.constructPath
+          ? fills.has(paint as number)
+          : coverings.has(operator)
+      ) {
+        lastCoveringIndex = index;
+      } else if (
+        strokes.has(paint as number) &&
+        // Also when the width is unknown (NaN).
+        !(strokeWidth(state) <= MAX_THIN_STROKE_WIDTH)
+      ) {
+        lastCoveringIndex = index;
       }
       if (
         paintsContentRaster(
@@ -375,18 +460,7 @@ export async function largestPageRaster(
         largestShowsInFull = showsInFull(state, view);
       }
     }
-    for (
-      let index = largestIndex + 1;
-      largest && index < operators.fnArray.length;
-      index++
-    ) {
-      const operator = operators.fnArray[index];
-      const covers =
-        operator === OPS.constructPath
-          ? fills.has(operators.argsArray[index]?.[0])
-          : coverings.has(operator);
-      if (covers) return null;
-    }
+    if (largest && lastCoveringIndex > largestIndex) return null;
     if (contentRasterIndexes.some((index) => index !== largestIndex)) {
       return null;
     }
@@ -396,6 +470,15 @@ export async function largestPageRaster(
       !accept({ width: largest.width!, height: largest.height! })
     ) {
       return null;
+    }
+    if (strict) {
+      const strictPage = await strict.getPage(pageNumber);
+      try {
+        const complete = await withAbort(strictPage.getOperatorList(), signal);
+        if (complete.fnArray.length !== operators.fnArray.length) return null;
+      } finally {
+        strictPage.cleanup();
+      }
     }
     return toRaster(largest);
   } finally {

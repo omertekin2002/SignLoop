@@ -396,9 +396,13 @@ function isOcrRasterSize({
  * stops after MAX_PDF_OCR_PAGES recognitions, when PDF_OCR_BUDGET_MS is spent (waiting for the
  * queue and starting the engine have their own bounds), or at the first OCR failure. Pages it does
  * not read keep their flag; only the caller's abort makes it throw.
+ *
+ * `strict` is the same PDF opened with stopAtErrors: a page PDF.js could only read by leaving
+ * something out, such as an image over the pixel limit, stays flagged (see largestPageRaster).
  */
 async function ocrPdfPages(
   pdf: PdfDocumentProxy,
+  strict: PdfDocumentProxy,
   candidates: readonly number[],
   signal: AbortSignal | undefined,
 ): Promise<Map<number, PdfOcrPage>> {
@@ -425,6 +429,7 @@ async function ocrPdfPages(
           pageNumber,
           isOcrRasterSize,
           AbortSignal.any([jobSignal, budget]),
+          strict,
         );
         if (raster) {
           const encoded = encodePng(raster);
@@ -685,15 +690,15 @@ export async function extractTextFromPdf(
   buffer: Buffer,
   options?: { signal?: AbortSignal },
 ): Promise<ExtractionResult> {
-  let pdf: Awaited<
-    ReturnType<(typeof import("unpdf"))["getDocumentProxy"]>
-  > | null = null;
+  let pdf: PdfDocumentProxy | null = null;
+  let strictPdf: PdfDocumentProxy | null = null;
   try {
     const { getDocumentProxy } = await import("unpdf");
     // PDF.js rejects Node Buffer instances and takes ownership of/detaches the supplied
     // ArrayBuffer. Make an owned copy so parsing cannot empty the original bytes before storage.
-    // maxImageSize stops PDF.js from decoding a raster over the image pixel limit at all; the page
-    // then has no image to OCR and stays flagged.
+    // maxImageSize stops PDF.js from decoding a raster over the image pixel limit at all. It
+    // leaves such an image out of the page without a trace, so OCR checks each page against a
+    // second, strict reading of the PDF (below) and the page stays flagged.
     pdf = await getDocumentProxy(new Uint8Array(buffer), {
       maxImageSize: MAX_IMAGE_PIXELS,
     });
@@ -801,7 +806,24 @@ export async function extractTextFromPdf(
     const ocrCandidates = pageCharacters.flatMap((count, index) =>
       count < unreadThreshold ? [index + 1] : [],
     );
-    const ocr = await ocrPdfPages(pdf, ocrCandidates, options?.signal);
+    let ocr = new Map<number, PdfOcrPage>();
+    if (ocrCandidates.length > 0) {
+      try {
+        strictPdf = await getDocumentProxy(new Uint8Array(buffer), {
+          maxImageSize: MAX_IMAGE_PIXELS,
+          stopAtErrors: true,
+        });
+      } catch (error: unknown) {
+        options?.signal?.throwIfAborted();
+        console.warn(
+          "Could not open the PDF for OCR; scanned pages stay flagged.",
+          error,
+        );
+      }
+      if (strictPdf) {
+        ocr = await ocrPdfPages(pdf, strictPdf, ocrCandidates, options?.signal);
+      }
+    }
     if (ocr.size > 0) {
       // Each OCR'd page's text goes in its place in page order, after the page's own (sparse)
       // selectable text: a stamp or correction drawn as text is not in the raster OCR reads.
@@ -883,9 +905,10 @@ export async function extractTextFromPdf(
     }
     throw new Error(`Failed to parse PDF: ${getErrorMessage(error)}`);
   } finally {
-    if (pdf) {
+    for (const opened of [pdf, strictPdf]) {
+      if (!opened) continue;
       try {
-        await pdf.destroy();
+        await opened.destroy();
       } catch (destroyError: unknown) {
         console.warn("Failed to release PDF parser resources:", destroyError);
       }

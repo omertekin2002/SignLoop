@@ -12,6 +12,8 @@ import {
   pushGraphicsState,
   rectangle,
   rgb,
+  setLineWidth,
+  stroke,
   type PDFPage,
 } from "pdf-lib";
 import { getDocumentProxy } from "unpdf";
@@ -21,19 +23,19 @@ import { largestPageRaster } from "./pdf-rasters";
 
 // Runs the installed PDF.js on synthetic PDFs built with pdf-lib.
 
-/** A page painting raw DeviceGray image XObjects, each at its own size on the page. */
-async function pdfWithGrayImages(
-  images: Array<{
-    width: number;
-    height: number;
-    bits: 1 | 8;
-    data: Uint8Array;
-  }>,
-  draw: {
-    before?: (page: PDFPage) => void;
-    after?: (page: PDFPage) => void;
-  } = {},
-) {
+type GrayImage = {
+  width: number;
+  height: number;
+  bits: 1 | 8;
+  data: Uint8Array;
+};
+type Drawing = {
+  before?: (page: PDFPage) => void;
+  after?: (page: PDFPage) => void;
+};
+
+/** The bytes of a PDF whose first page paints raw DeviceGray image XObjects, each at its own size. */
+async function grayImagesPdf(images: GrayImage[], draw: Drawing = {}) {
   const document = await PDFDocument.create();
   const page = document.addPage([612, 792]);
   draw.before?.(page);
@@ -64,7 +66,11 @@ async function pdfWithGrayImages(
   });
   draw.after?.(page);
   document.addPage([612, 792]).drawText("A vector page.", { x: 40, y: 700 });
-  return getDocumentProxy(new Uint8Array(await document.save()));
+  return document.save();
+}
+
+async function pdfWithGrayImages(images: GrayImage[], draw: Drawing = {}) {
+  return getDocumentProxy(new Uint8Array(await grayImagesPdf(images, draw)));
 }
 
 const any = () => true;
@@ -404,6 +410,114 @@ describe("largestPageRaster", () => {
       expect(await sizeOf(largestPageRaster(cut, 1, any))).toBeNull();
     } finally {
       await cut.destroy();
+    }
+  });
+
+  it("skips a raster that a wide stroke (a marker or thick line) is painted over", async () => {
+    const marker = await pdfWithGrayImages(tile(), {
+      after: (page) =>
+        page.drawLine({
+          start: { x: 10, y: 60 },
+          end: { x: 170, y: 60 },
+          thickness: 12,
+        }),
+    });
+    try {
+      expect(await sizeOf(largestPageRaster(marker, 1, any))).toBeNull();
+    } finally {
+      await marker.destroy();
+    }
+
+    // A hairline in its own coordinates, drawn ten times larger: 5 points wide on the page.
+    const scaled = await pdfWithGrayImages(tile(), {
+      after: (page) =>
+        page.pushOperators(
+          pushGraphicsState(),
+          concatTransformationMatrix(10, 0, 0, 10, 0, 0),
+          setLineWidth(0.5),
+          moveTo(1, 6),
+          lineTo(17, 6),
+          stroke(),
+          popGraphicsState(),
+        ),
+    });
+    try {
+      expect(await sizeOf(largestPageRaster(scaled, 1, any))).toBeNull();
+    } finally {
+      await scaled.destroy();
+    }
+  });
+
+  /** Draw an ink annotation (a pen or marker stroke added in a PDF viewer) over the raster. */
+  const ink = (width: number) => (page: PDFPage) => {
+    const annotation = page.doc.context.obj({
+      Type: "Annot",
+      Subtype: "Ink",
+      Rect: [10, 10, 170, 110],
+      InkList: [[20, 60, 160, 60]],
+      C: [0, 0, 0],
+      BS: { W: width },
+      F: 4,
+    });
+    page.node.set(
+      PDFName.of("Annots"),
+      page.doc.context.obj([page.doc.context.register(annotation)]),
+    );
+  };
+
+  it("skips a raster under a wide ink annotation, and reads one under a thin one", async () => {
+    const marker = await pdfWithGrayImages(tile(), { after: ink(12) });
+    try {
+      expect(await sizeOf(largestPageRaster(marker, 1, any))).toBeNull();
+    } finally {
+      await marker.destroy();
+    }
+
+    const pen = await pdfWithGrayImages(tile(), { after: ink(1) });
+    try {
+      expect(await sizeOf(largestPageRaster(pen, 1, any))).toEqual(read);
+    } finally {
+      await pen.destroy();
+    }
+  });
+
+  it("skips a page from which PDF.js left out an image over the size limit", async () => {
+    // The 640×400 scan is over this limit, so PDF.js drops it and only the 320×300 stamp is left.
+    const limit = { maxImageSize: 200_000 };
+    const bytes = await grayImagesPdf([blank(640, 400), blank(320, 300)]);
+    const pdf = await getDocumentProxy(new Uint8Array(bytes), limit);
+    const strict = await getDocumentProxy(new Uint8Array(bytes), {
+      ...limit,
+      stopAtErrors: true,
+    });
+    try {
+      // On its own the lenient reading shows a page with one raster.
+      expect(await sizeOf(largestPageRaster(pdf, 1, any))).toEqual({
+        width: 320,
+        height: 300,
+      });
+      expect(
+        await sizeOf(largestPageRaster(pdf, 1, any, undefined, strict)),
+      ).toBeNull();
+    } finally {
+      await pdf.destroy();
+      await strict.destroy();
+    }
+  });
+
+  it("reads a page that the strict reading of the PDF shows in full", async () => {
+    const bytes = await grayImagesPdf(tile());
+    const pdf = await getDocumentProxy(new Uint8Array(bytes));
+    const strict = await getDocumentProxy(new Uint8Array(bytes), {
+      stopAtErrors: true,
+    });
+    try {
+      expect(
+        await sizeOf(largestPageRaster(pdf, 1, any, undefined, strict)),
+      ).toEqual(read);
+    } finally {
+      await pdf.destroy();
+      await strict.destroy();
     }
   });
 });

@@ -378,6 +378,58 @@ describe("real PDF extraction", () => {
     expect(result).toEqual({ text: "", method: "pdf_scanned", confidence: 0 });
   });
 
+  it("does not OCR text under a thick line drawn over it and keeps the page flagged", async () => {
+    const document = await PDFDocument.load(
+      await readFile(
+        new URL("./fixtures/pdf-ocr-raster-page.pdf", import.meta.url),
+      ),
+    );
+    // A stroke as tall as the page: it covers the raster the way a marker covers a clause.
+    document.getPage(0).drawLine({
+      start: { x: 0, y: 396 },
+      end: { x: 612, y: 396 },
+      thickness: 792,
+      color: rgb(0, 0, 0),
+    });
+
+    const result = await extractTextFromPdf(Buffer.from(await document.save()));
+
+    expect(result).toEqual({ text: "", method: "pdf_scanned", confidence: 0 });
+  });
+
+  it("keeps a page flagged when its scan is over the image pixel limit, even beside a readable raster", async () => {
+    const document = await PDFDocument.load(
+      await readFile(
+        new URL("./fixtures/pdf-ocr-raster-page.pdf", import.meta.url),
+      ),
+    );
+    // A 5001×5000 black-and-white scan (25,005,000 pixels): PDF.js leaves it out of the page, so
+    // without the strict check the fixture's own raster would be read as the whole page.
+    const page = document.getPage(0);
+    const scan = document.context.flateStream(
+      new Uint8Array(Math.ceil(5001 / 8) * 5000),
+      {
+        Type: "XObject",
+        Subtype: "Image",
+        Width: 5001,
+        Height: 5000,
+        ColorSpace: "DeviceGray",
+        BitsPerComponent: 1,
+      },
+    );
+    page.node.setXObject(PDFName.of("Big"), document.context.register(scan));
+    page.pushOperators(
+      pushGraphicsState(),
+      concatTransformationMatrix(612, 0, 0, 792, 0, 0),
+      drawObject("Big"),
+      popGraphicsState(),
+    );
+
+    const result = await extractTextFromPdf(Buffer.from(await document.save()));
+
+    expect(result).toEqual({ text: "", method: "pdf_scanned", confidence: 0 });
+  });
+
   it("keeps a scanned page's own selectable text, such as a stamp, with its OCR text", async () => {
     const document = await PDFDocument.load(
       await readFile(
