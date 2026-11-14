@@ -54,7 +54,8 @@ agreement title and clauses 1–2, then clauses 3–4. Page 2 stands in for a
 scanned signature page: it paints one 8×8 DeviceGray raster and has no text
 operators. `../pdf-extraction.integration.test.ts` and
 `../upload-pipeline.test.ts` expect page 2 to be flagged as having little or
-no selectable text and the other pages' text to be kept exactly.
+no selectable text and the other pages' text to be kept exactly. The raster is
+below OCR's minimum size, so the page is not OCR'd.
 `.gitattributes` marks the PDF and PNG fixtures binary, since line-ending
 conversion would break the PDF's cross-reference offsets.
 
@@ -70,6 +71,21 @@ object, the cross-reference table and the trailer directly; it is not kept.
 The tests expect page 1 to be flagged as sparse while `EXHIBIT A` stays in the
 extracted text, and the stored upload warning to say that text is included
 rather than that the page was not read.
+
+## PDF with a raster page of text
+
+`pdf-ocr-raster-page.pdf` is a one-page US Letter PDF 1.7 file whose page is a
+single 1275×1650 8-bit grayscale raster (150 dpi) drawn over the whole page,
+with no text layer, metadata or document ID. The raster is white with
+`ocr-notice-terms.png` pasted at (150, 150), made with Pillow 12.1.1; pdf-lib
+1.17.1 embedded it (`PDFDocument.create({ updateMetadata: false })`, `embedPng`,
+`drawImage`, saved with `useObjectStreams: false`). The intermediate PNG and the
+scripts are not kept. `../pdf-extraction.integration.test.ts` and
+`../upload-pipeline.test.ts` expect OCR to read the page as
+`Termination fee: 250 USD Notice period: 30 days` and report it as OCR'd, not
+sparse. The integration test also copies the page between two text pages and
+thresholds the raster to a 1-bit image, to check reading order and
+black-and-white scans.
 
 ```sh
 bun --no-env-file run test lib/image-extraction.integration.test.ts lib/pdf-extraction.integration.test.ts

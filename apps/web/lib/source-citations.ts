@@ -6,6 +6,11 @@ import { z } from "zod";
  * results are merged (analyzeText in lib/analysis.ts).
  */
 export const CONTRACT_ANALYSIS_LIMIT = 15000;
+// One analysis is admitted and charged as one request, so it makes at most this many section calls
+// plus one merge call however long the contract is (a 2,000,000-character upload would otherwise
+// be over 130 sections). At SECTION_CONCURRENCY (lib/analysis.ts) calls at a time this is about
+// what the section deadline leaves room for. Later sections are named in a coverage notice.
+export const MAX_ANALYSED_SECTIONS = 16;
 /** Shorter passages, such as a section heading, join the passage that follows them. */
 const PASSAGE_MIN_LENGTH = 80;
 /** "full" for a contract within CONTRACT_ANALYSIS_LIMIT, otherwise "section-1" to "section-N". */
@@ -75,6 +80,43 @@ export function contractAnalysisSegments(text: string): ContractSegment[] {
     end,
     text: chars.slice(start, end).join(""),
   }));
+}
+
+/**
+ * How much of a contract one analysis reads, without any of its text: the contract detail page
+ * shows it before analysis, and analyzeText uses the same count, so the two cannot disagree.
+ * Offsets are Unicode code points; uncoveredFrom is where the unanalysed text starts, or null.
+ */
+export type AnalysisCoverage = {
+  characterCount: number;
+  sectionCount: number;
+  analysedSectionCount: number;
+  uncoveredFrom: number | null;
+};
+
+export function analysisCoverageOf(
+  segments: readonly Pick<ContractSegment, "start" | "end">[],
+): AnalysisCoverage {
+  const analysedSectionCount = Math.min(segments.length, MAX_ANALYSED_SECTIONS);
+  return {
+    characterCount: segments.at(-1)?.end ?? 0,
+    sectionCount: segments.length,
+    analysedSectionCount,
+    uncoveredFrom: segments[analysedSectionCount]?.start ?? null,
+  };
+}
+
+/**
+ * Coverage for a contract of `characterCount` code points. A contract within
+ * CONTRACT_ANALYSIS_LIMIT is always one section, so `loadText` is called only for a longer one.
+ */
+export async function contractAnalysisCoverage(
+  characterCount: number,
+  loadText: () => string | Promise<string>,
+): Promise<AnalysisCoverage> {
+  if (characterCount <= CONTRACT_ANALYSIS_LIMIT)
+    return analysisCoverageOf([{ start: 0, end: characterCount }]);
+  return analysisCoverageOf(contractAnalysisSegments(await loadText()));
 }
 
 type Passage = { start: number; end: number };

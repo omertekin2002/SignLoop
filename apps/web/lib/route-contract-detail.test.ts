@@ -145,6 +145,37 @@ describe("GET /api/contracts/[id]", () => {
     }
   });
 
+  it("includes the analysis coverage counts and no contract text", async () => {
+    const analysisCoverage = {
+      characterCount: 312_480,
+      sectionCount: 22,
+      analysedSectionCount: 16,
+      uncoveredFrom: 228_115,
+    };
+    auth.mockResolvedValue({ userId: "owner" });
+    getContractByIdForUser.mockResolvedValue({
+      ...contractRecord(),
+      analyses: [],
+      analysesHasMore: false,
+      analysisCoverage,
+    });
+
+    const response = await GET(getRequest(), params(CONTRACT_ID));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.analysisCoverage).toEqual(analysisCoverage);
+    expect(Object.keys(body.analysisCoverage).sort()).toEqual([
+      "analysedSectionCount",
+      "characterCount",
+      "sectionCount",
+      "uncoveredFrom",
+    ]);
+    for (const key of ["text", "textContent", "text_content", "sectionedText"]) {
+      expect(body).not.toHaveProperty(key);
+    }
+  });
+
   it("accepts an upper-case contract uuid", async () => {
     auth.mockResolvedValue({ userId: "owner" });
     getContractByIdForUser.mockResolvedValue(contractRecord());

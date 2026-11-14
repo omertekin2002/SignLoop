@@ -1,7 +1,9 @@
 import OpenAI from "openai";
 import {
+  analysisCoverageOf,
   contractAnalysisSegments,
   EvidenceProposalSchema,
+  MAX_ANALYSED_SECTIONS,
   verifyQuote,
   type ContractSegment,
 } from "@/lib/source-citations";
@@ -1102,11 +1104,8 @@ function firstAnalysisSection(text: string): AnalysisSection {
 // Section calls run at most this many at a time. It limits load on the provider, not the number
 // of calls; MAX_ANALYSED_SECTIONS limits that.
 export const SECTION_CONCURRENCY = 4;
-// One analysis is admitted and charged as one request, so it makes at most this many section calls
-// plus one merge call however long the contract is (a 2,000,000-character upload would otherwise
-// be over 130 sections). At SECTION_CONCURRENCY calls at a time this is about what the section
-// deadline leaves room for. Later sections are named in a coverage notice.
-export const MAX_ANALYSED_SECTIONS = 16;
+// One analysis covers at most MAX_ANALYSED_SECTIONS sections (lib/source-citations.ts).
+export { MAX_ANALYSED_SECTIONS };
 // Overall budget for a sectioned analysis when the caller sets no deadline.
 const SECTIONED_ANALYSIS_BUDGET_MS = 250_000;
 // Section calls stop this long before the deadline, so the merge call still has time to run.
@@ -1511,7 +1510,8 @@ async function analyzeSections(
     options.deadline - MERGE_RESERVE_MS,
     options.signal,
   );
-  const analysable = Math.min(segments.length, MAX_ANALYSED_SECTIONS);
+  // The same count the contract page shows before analysis (GET /api/contracts/[id]).
+  const analysable = analysisCoverageOf(segments).analysedSectionCount;
   const outcomes: SectionOutcome[] = segments.map((_, index) =>
     index < analysable ? { status: "unanalysed" } : { status: "over_limit" },
   );

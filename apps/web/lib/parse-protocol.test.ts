@@ -5,6 +5,7 @@ import {
   decodeBytesParseHeader,
   encodeBytesParseHeader,
   PARSE_SIGNATURE_TTL_MS,
+  parseOutcomeSchema,
   parseRequestSchema,
   signBytesParseRequest,
   signParseRequest,
@@ -143,5 +144,34 @@ describe("bytes parse request signing", () => {
     ]) {
       expect(decodeBytesParseHeader(value)).toBeNull();
     }
+  });
+});
+
+describe("parse outcome schema", () => {
+  const parsed = {
+    ok: true,
+    text: "Signed by both parties.",
+    method: "pdf_ocr",
+    confidence: 99,
+    sparseTextPages: [4],
+  };
+
+  it("accepts a PDF OCR result with its OCR'd pages and their confidence", () => {
+    const outcome = { ...parsed, ocrPages: [2, 3], ocrConfidence: 88.4 };
+    expect(parseOutcomeSchema.parse(outcome)).toEqual(outcome);
+  });
+
+  it("accepts a result without OCR'd pages", () => {
+    expect(parseOutcomeSchema.parse(parsed)).toEqual(parsed);
+  });
+
+  it("refuses invalid OCR page numbers or confidence", () => {
+    expect(
+      parseOutcomeSchema.safeParse({ ...parsed, ocrPages: [0] }).success,
+    ).toBe(false);
+    expect(
+      parseOutcomeSchema.safeParse({ ...parsed, ocrPages: [1], ocrConfidence: 101 })
+        .success,
+    ).toBe(false);
   });
 });

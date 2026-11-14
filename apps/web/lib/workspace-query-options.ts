@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { apiClient, ApiRequestError } from "@/lib/api-client";
 import type { ChatToolActivity } from "@/lib/chat";
 import type { AnalysisResult } from "@/lib/schemas";
+import type { AnalysisCoverage } from "@/lib/source-citations";
 
 export type AnalysisRecord = {
   id: string;
@@ -18,6 +19,8 @@ export type ContractDetail = {
   status?: string | null;
   /** Quality warning for the current extracted text; absent when extraction was clean. */
   extractionWarning?: string | null;
+  /** How much of the current text one analysis covers (counts and offsets, never text). */
+  analysisCoverage?: AnalysisCoverage | null;
   /** The jurisdiction the owner confirmed; analyses run afterwards may include comparisons. */
   confirmedJurisdiction?: string | null;
   jurisdictionConfirmedAt?: string | Date | null;

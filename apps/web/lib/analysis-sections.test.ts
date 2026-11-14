@@ -2,187 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { finalizeAnalysisResult } from "./analysis-sources";
 import {
   CONTRACT_ANALYSIS_LIMIT,
+  contractAnalysisCoverage,
   contractAnalysisSegments,
-  type ContractSegment,
 } from "./source-citations";
+import {
+  completed,
+  contractOf,
+  failure,
+  hang,
+  mergeOutput,
+  provider,
+  sectionOutput,
+} from "./fixtures/analysis-provider";
 
 const CONTRACT_ID = "11e3e947-f71f-4ecd-a901-adbf24edbb8a";
-
-// Numbered clauses of about 88 code points; the emoji make code point and UTF-16 offsets differ.
-const clause = (number: number) =>
-  `${number}. Records. Each party keeps accurate records of its own work under this agreement 😀.\n`;
-const contractOf = (clauses: number, extra: Record<number, string> = {}) =>
-  Array.from(
-    { length: clauses },
-    (_, index) => extra[index + 1] ?? clause(index + 1),
-  ).join("");
-
-type Flag = {
-  type: string;
-  explanation: string;
-  quote?: string;
-  severity?: number;
-};
-
-function sectionOutput(
-  segment: ContractSegment,
-  options: {
-    flags?: Flag[];
-    questions?: string[];
-    badge?: "LOW" | "MEDIUM" | "HIGH";
-    autoRenew?: boolean | null;
-    noticeDays?: number | null;
-    noticeText?: string | null;
-    jurisdiction?: string;
-  } = {},
-) {
-  return {
-    risk_badge: options.badge ?? "LOW",
-    key_points: [`Covers ${segment.label}.`],
-    summary: {
-      what_it_is: "A services agreement.",
-      payments: { amount: null, frequency: null, fees: [] },
-      term: { start: null, end: null, minimum_term: null },
-      renewal: { auto_renew: options.autoRenew ?? null, renewal_period: null },
-      cancellation: {
-        how: "Not specified",
-        notice_period_days: options.noticeDays ?? null,
-        notice_period_text: options.noticeText ?? null,
-        penalties: [],
-      },
-    },
-    red_flags: (options.flags ?? []).map((flag) => ({
-      type: flag.type,
-      severity: flag.severity ?? 6,
-      explanation: flag.explanation,
-      where: null,
-      confidence: 80,
-      evidence: flag.quote
-        ? { quote: flag.quote, segment: segment.label }
-        : null,
-    })),
-    proposed_jurisdiction: options.jurisdiction
-      ? {
-          jurisdiction: "State of Delaware",
-          evidence: { quote: options.jurisdiction, segment: segment.label },
-        }
-      : null,
-    normal_in_region: [],
-    next_actions: {
-      questions_to_ask: options.questions ?? [],
-      email_templates: [],
-    },
-    key_dates: [],
-    obligations: [],
-    parties: ["Provider", "Customer"],
-    disclaimer: "This is an AI analysis, not legal advice.",
-  };
-}
-
-function mergeOutput(overrides: Record<string, unknown> = {}) {
-  return {
-    risk_badge: "HIGH",
-    key_points: ["Renews automatically each year."],
-    summary: {
-      what_it_is: "A services agreement.",
-      payments: { amount: null, frequency: null, fees: [] },
-      term: { start: null, end: null, minimum_term: null },
-      renewal: { auto_renew: true, renewal_period: "1 year" },
-      cancellation: {
-        how: "Written notice",
-        notice_period_days: 60,
-        notice_period_text: "60 days",
-        penalties: [],
-      },
-    },
-    red_flag_ids: [],
-    normal_in_region: [],
-    next_actions: { questions_to_ask: [], email_templates: [] },
-    key_dates: [],
-    obligations: [],
-    parties: ["Provider", "Customer"],
-    disclaimer: "This is an AI analysis, not legal advice.",
-    ...overrides,
-  };
-}
-
-function completed(output: unknown, usage = { input: 100, output: 10 }) {
-  return Response.json({
-    id: "resp_test",
-    object: "response",
-    status: "completed",
-    usage: {
-      input_tokens: usage.input,
-      output_tokens: usage.output,
-      total_tokens: usage.input + usage.output,
-    },
-    output: [
-      {
-        type: "message",
-        role: "assistant",
-        content: [
-          {
-            type: "output_text",
-            text: JSON.stringify(output),
-            annotations: [],
-          },
-        ],
-      },
-    ],
-  });
-}
-
-type Call = { section: number | "merge"; input: string; signal?: AbortSignal };
-type Reply = (call: Call) => Response | Promise<Response>;
-
-/** A provider double that answers section and merge calls and records how many ran at once. */
-function provider(segments: readonly ContractSegment[], reply: Reply) {
-  const calls: Call[] = [];
-  let inFlight = 0;
-  let maxInFlight = 0;
-  const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
-    const input = String(JSON.parse(String(init?.body)).input);
-    const match = input.match(/This request contains section (\d+) of/);
-    const call: Call = {
-      section: match ? Number(match[1]) : "merge",
-      input,
-      signal: init?.signal ?? undefined,
-    };
-    calls.push(call);
-    inFlight += 1;
-    maxInFlight = Math.max(maxInFlight, inFlight);
-    try {
-      // Yield so concurrent calls overlap, as real requests would.
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      return await reply(call);
-    } finally {
-      inFlight -= 1;
-    }
-  });
-  vi.stubGlobal("fetch", fetch);
-  return {
-    calls,
-    maxInFlight: () => maxInFlight,
-    sectionCalls: () => calls.filter((call) => call.section !== "merge"),
-    mergeCalls: () => calls.filter((call) => call.section === "merge"),
-    segment: (call: Call) => segments[(call.section as number) - 1]!,
-  };
-}
-
-/** Never answers; rejects once the request is aborted, as the SDK's fetch would. */
-const hang: Reply = ({ signal }) =>
-  new Promise((_resolve, reject) => {
-    const abort = () =>
-      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
-    if (signal?.aborted) abort();
-    signal?.addEventListener("abort", abort);
-  });
-
-const failure = () =>
-  Response.json(
-    { error: { message: "upstream unavailable" } },
-    { status: 500 },
-  );
 
 beforeEach(() => {
   vi.resetModules();
@@ -579,6 +412,70 @@ describe("analysis of contracts longer than one request", () => {
     expect(answer.result.coverage_notices).toEqual([
       `Contract sections ${MAX_ANALYSED_SECTIONS + 1}–${segments.length} of ${segments.length} (Unicode code points ${segments[MAX_ANALYSED_SECTIONS]!.start}–${segments.at(-1)!.end}, end exclusive) could not be analysed because one analysis covers at most ${MAX_ANALYSED_SECTIONS} sections; terms in that text are not reflected in this analysis.`,
     ]);
+  });
+
+  it.each([
+    ["one section", 1],
+    ["several sections within the cap", 3],
+    ["more sections than one analysis covers", 3 * 16],
+  ])(
+    "reports the coverage the analysis then runs for a contract of %s",
+    async (_label, clauses) => {
+      const { analyzeText, MAX_ANALYSED_SECTIONS } = await import("./analysis");
+      const text = clauses === 1 ? "1. Monthly fee." : contractOf(175 * clauses);
+      const segments = contractAnalysisSegments(text);
+      expect(segments.length === 1).toBe(clauses === 1);
+      expect(segments.length > MAX_ANALYSED_SECTIONS).toBe(
+        clauses > MAX_ANALYSED_SECTIONS,
+      );
+      const coverage = await contractAnalysisCoverage(
+        Array.from(text).length,
+        () => text,
+      );
+      const double = provider(segments, (call) =>
+        segments.length === 1
+          ? completed(sectionOutput(segments[0]!))
+          : call.section === "merge"
+            ? completed(mergeOutput())
+            : completed(sectionOutput(double.segment(call))),
+      );
+
+      const answer = await analyzeText(text);
+
+      expect(coverage.sectionCount).toBe(segments.length);
+      expect(coverage.characterCount).toBe(Array.from(text).length);
+      // A single-section contract is one call; a longer one is one call per section plus a merge.
+      expect(
+        segments.length === 1
+          ? double.calls.length
+          : double.sectionCalls().length,
+      ).toBe(coverage.analysedSectionCount);
+      const overLimit = (answer.result.coverage_notices ?? []).filter(
+        (notice) => notice.includes("one analysis covers at most"),
+      );
+      if (coverage.uncoveredFrom === null) {
+        expect(coverage.analysedSectionCount).toBe(segments.length);
+        expect(overLimit).toEqual([]);
+      } else {
+        expect(coverage.analysedSectionCount).toBe(MAX_ANALYSED_SECTIONS);
+        expect(overLimit).toEqual([
+          `Contract sections ${coverage.analysedSectionCount + 1}–${coverage.sectionCount} of ${coverage.sectionCount} (Unicode code points ${coverage.uncoveredFrom}–${coverage.characterCount}, end exclusive) could not be analysed because one analysis covers at most ${MAX_ANALYSED_SECTIONS} sections; terms in that text are not reflected in this analysis.`,
+        ]);
+      }
+    },
+  );
+
+  it("does not load the text to count the sections of a contract within the limit", async () => {
+    const loadText = vi.fn(() => "unused");
+    expect(
+      await contractAnalysisCoverage(CONTRACT_ANALYSIS_LIMIT, loadText),
+    ).toEqual({
+      characterCount: CONTRACT_ANALYSIS_LIMIT,
+      sectionCount: 1,
+      analysedSectionCount: 1,
+      uncoveredFrom: null,
+    });
+    expect(loadText).not.toHaveBeenCalled();
   });
 
   it("reads loosely formatted red flag IDs and keeps every flag when one cannot be read", async () => {
