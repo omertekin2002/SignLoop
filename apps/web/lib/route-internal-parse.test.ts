@@ -134,6 +134,28 @@ describe("POST /api/internal/parse", () => {
     );
   });
 
+  it("returns the pages a PDF had read by OCR and their mean confidence", async () => {
+    processValidatedFile.mockResolvedValue({
+      text: "Signed by both parties.",
+      method: "pdf_ocr",
+      confidence: 99,
+      ocrPages: [3],
+      ocrConfidence: 87.5,
+    });
+
+    const response = await POST(parseRequest(signed()));
+
+    expect(await response.json()).toEqual({
+      ok: true,
+      text: "Signed by both parties.",
+      method: "pdf_ocr",
+      confidence: 99,
+      sparseTextPages: [],
+      ocrPages: [3],
+      ocrConfidence: 87.5,
+    });
+  });
+
   it("streams a result larger than Vercel's buffered response limit", async () => {
     const text = "ş".repeat(1_999_999);
     processValidatedFile.mockResolvedValue({ text, method: "plain_text" });

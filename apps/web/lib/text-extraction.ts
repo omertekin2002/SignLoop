@@ -6,6 +6,7 @@ import type { Worker as NodeWorker } from "node:worker_threads";
 import {
   ExtractionLimitError,
   MAX_EXTRACTED_TEXT_LENGTH,
+  MAX_IMAGE_PIXELS,
   validateImageDimensions,
   validateDocxExpansion,
   validatePdfExpansion,
@@ -21,6 +22,8 @@ import type WordExtractor from "word-extractor";
 import { getErrorMessage } from "@/lib/utils";
 import { withAbort } from "@repo/chat-engine/bounded-response";
 import { isOleCompoundFile, validateOleCompoundFile } from "@/lib/ole-guard";
+import { largestPageRaster, type PdfDocumentProxy } from "@/lib/pdf-rasters";
+import { encodePng } from "@/lib/png-encode";
 import {
   DOC_MIME_TYPE,
   DOCX_MIME_TYPE,
@@ -50,6 +53,15 @@ const MAX_PENDING_OCR_JOBS = 2;
 const OCR_WORKER_INIT_TIMEOUT_MS = 60_000;
 const OCR_RECOGNITION_TIMEOUT_MS = 90_000;
 const OCR_LANGUAGE = "eng";
+// Scanned PDF pages are read within the parse function's 150 s deadline: at most this many
+// recognitions per PDF, within this budget for reading page images and recognizing them. Waiting
+// for the shared worker (PDF_OCR_QUEUE_WAIT_MS) and starting it (OCR_WORKER_INIT_TIMEOUT_MS) are
+// bounded separately: 10 + 60 + 70 s leaves room for the text pass.
+export const MAX_PDF_OCR_PAGES = 10;
+export const PDF_OCR_BUDGET_MS = 70_000;
+const PDF_OCR_QUEUE_WAIT_MS = 10_000;
+// Smaller rasters are stamps, logos or placeholders rather than a page of text.
+const MIN_PDF_OCR_RASTER_SIDE = 300;
 const OCR_UNAVAILABLE_MESSAGE =
   "Image text extraction is unavailable right now. Please try again shortly.";
 
@@ -73,10 +85,8 @@ let ocrEnginePromise: Promise<OcrEngine> | null = null;
 let ocrQueue: Promise<void> = Promise.resolve();
 let pendingOcrJobs = 0;
 
-async function runSerializedOcr<T>(
-  task: () => Promise<T>,
-  signal: AbortSignal,
-): Promise<T> {
+/** Wait for the shared OCR worker and hold it until the returned release is called. */
+async function acquireOcrSlot(signal: AbortSignal): Promise<() => void> {
   const previous = ocrQueue;
   let release!: () => void;
   ocrQueue = new Promise<void>((resolve) => {
@@ -90,6 +100,14 @@ async function runSerializedOcr<T>(
     void previous.then(release, release);
     throw error;
   }
+  return release;
+}
+
+async function runSerializedOcr<T>(
+  task: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  const release = await acquireOcrSlot(signal);
   try {
     return await task();
   } finally {
@@ -257,6 +275,233 @@ function getOcrEngine(): Promise<OcrEngine> {
   return ocrEnginePromise;
 }
 
+/**
+ * The cached engine for an OCR job that already holds the queue slot, waiting at most
+ * OCR_WORKER_INIT_TIMEOUT_MS for it to start.
+ */
+async function startOcrJobEngine(signal: AbortSignal): Promise<OcrEngine> {
+  const enginePromise = getOcrEngine();
+  let engineInitTimeout: ReturnType<typeof setTimeout> | undefined;
+  let initTimedOut = false;
+  try {
+    return await withAbort(
+      Promise.race([
+        enginePromise,
+        new Promise<never>((_resolve, reject) => {
+          engineInitTimeout = setTimeout(() => {
+            initTimedOut = true;
+            reject(
+              new ExtractionUnavailableError(
+                "Image text extraction could not start. Please try again shortly.",
+              ),
+            );
+          }, OCR_WORKER_INIT_TIMEOUT_MS);
+        }),
+      ]),
+      signal,
+    );
+  } catch (error: unknown) {
+    if (initTimedOut || signal.aborted) {
+      // A late engine must not remain orphaned or become the cached engine after this
+      // request has already failed. Terminate it asynchronously when startup eventually ends;
+      // a startup failure is already logged and uncached by getOcrEngine.
+      if (ocrEnginePromise === enginePromise) ocrEnginePromise = null;
+      void enginePromise
+        .then(
+          (lateEngine) => lateEngine.terminate(),
+          () => {},
+        )
+        .catch((lateEngineError: unknown) => {
+          console.warn(
+            "Failed to clean up a late OCR worker:",
+            lateEngineError,
+          );
+        });
+    }
+    throw error;
+  } finally {
+    if (engineInitTimeout) clearTimeout(engineInitTimeout);
+  }
+}
+
+/** Recognize one image file on a started engine, within `timeoutMs`. */
+async function recognizeWithEngine(
+  engine: OcrEngine,
+  image: Buffer,
+  signal: AbortSignal,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<{ text: string; confidence: number }> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(
+      () => reject(new ExtractionUnavailableError(timeoutMessage)),
+      timeoutMs,
+    );
+  });
+
+  try {
+    // `failed` ends the wait at once if the worker thread dies mid-recognition.
+    const result = await withAbort(
+      Promise.race([
+        engine.worker.recognize(image),
+        engine.failed,
+        timeoutPromise,
+      ]),
+      signal,
+    );
+    return { text: result.data.text, confidence: result.data.confidence };
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+/**
+ * After a failed OCR job: recognition failures can leave Tesseract's cached worker in an unusable
+ * state. Clear it and terminate the failed instance so the next job gets a clean worker.
+ */
+async function discardOcrEngine(engine: OcrEngine | null): Promise<void> {
+  ocrEnginePromise = null;
+  if (!engine) return;
+  try {
+    await withAbort(engine.terminate(), AbortSignal.timeout(2_000));
+  } catch (terminationError: unknown) {
+    console.warn(
+      "Failed to terminate OCR worker after recognition error:",
+      terminationError,
+    );
+  }
+}
+
+type PdfOcrPage = { text: string; confidence: number };
+
+function isOcrRasterSize({
+  width,
+  height,
+}: {
+  width: number;
+  height: number;
+}): boolean {
+  return (
+    width >= MIN_PDF_OCR_RASTER_SIDE &&
+    height >= MIN_PDF_OCR_RASTER_SIDE &&
+    width * height <= MAX_IMAGE_PIXELS
+  );
+}
+
+/**
+ * OCR the candidate pages of an open PDF, in page order: each page's largest raster, when it is
+ * large enough to hold page text and within the image pixel limit. The whole PDF takes one slot of
+ * the OCR queue and starts the engine at most once, and only when a page has a usable raster. It
+ * stops after MAX_PDF_OCR_PAGES recognitions, when PDF_OCR_BUDGET_MS is spent (waiting for the
+ * queue and starting the engine have their own bounds), or at the first OCR failure. Pages it does
+ * not read keep their flag; only the caller's abort makes it throw.
+ */
+async function ocrPdfPages(
+  pdf: PdfDocumentProxy,
+  candidates: readonly number[],
+  signal: AbortSignal | undefined,
+): Promise<Map<number, PdfOcrPage>> {
+  const read = new Map<number, PdfOcrPage>();
+  const jobSignal = signal ?? new AbortController().signal;
+  let deadline = Date.now() + PDF_OCR_BUDGET_MS;
+  let recognitions = 0;
+  let engine: OcrEngine | null = null;
+  let release: (() => void) | null = null;
+  let holdsPendingJob = false;
+  try {
+    for (const pageNumber of candidates) {
+      if (recognitions >= MAX_PDF_OCR_PAGES || Date.now() >= deadline) break;
+      jobSignal.throwIfAborted();
+
+      let png: Buffer | null = null;
+      try {
+        // One page's raster at a time: it is released once encoded, before the next page.
+        const raster = await largestPageRaster(
+          pdf,
+          pageNumber,
+          isOcrRasterSize,
+          jobSignal,
+        );
+        if (raster) {
+          const encoded = encodePng(raster);
+          png = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.length);
+        }
+      } catch (error: unknown) {
+        jobSignal.throwIfAborted();
+        console.warn(
+          `Could not read PDF page ${pageNumber}'s image for OCR:`,
+          error,
+        );
+      }
+      if (!png) continue;
+
+      if (!engine) {
+        // Bounded like an image upload: one active job plus one waiter.
+        if (pendingOcrJobs >= MAX_PENDING_OCR_JOBS) {
+          console.warn("OCR is busy; scanned PDF pages stay flagged.");
+          break;
+        }
+        pendingOcrJobs += 1;
+        holdsPendingJob = true;
+        const started = Date.now();
+        try {
+          release = await acquireOcrSlot(
+            AbortSignal.any([
+              jobSignal,
+              AbortSignal.timeout(PDF_OCR_QUEUE_WAIT_MS),
+            ]),
+          );
+        } catch (error: unknown) {
+          jobSignal.throwIfAborted();
+          console.warn("OCR is busy; scanned PDF pages stay flagged.", error);
+          break;
+        }
+        try {
+          engine = await startOcrJobEngine(jobSignal);
+        } catch (error: unknown) {
+          await discardOcrEngine(null);
+          jobSignal.throwIfAborted();
+          console.warn(
+            "OCR is unavailable; scanned PDF pages stay flagged.",
+            error,
+          );
+          break;
+        }
+        deadline += Date.now() - started;
+      }
+
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      recognitions += 1;
+      let result: { text: string; confidence: number };
+      try {
+        result = await recognizeWithEngine(
+          engine,
+          png,
+          jobSignal,
+          Math.min(remaining, OCR_RECOGNITION_TIMEOUT_MS),
+          "PDF page OCR ran out of time.",
+        );
+      } catch (error: unknown) {
+        await discardOcrEngine(engine);
+        engine = null;
+        jobSignal.throwIfAborted();
+        // Pages read so far are kept; this page and the rest stay flagged.
+        console.warn(`OCR of PDF page ${pageNumber} failed:`, error);
+        break;
+      }
+      const text = result.text.trim();
+      // An empty result (a blank or illegible page) leaves the page flagged.
+      if (text) read.set(pageNumber, { text, confidence: result.confidence });
+    }
+  } finally {
+    release?.();
+    if (holdsPendingJob) pendingOcrJobs -= 1;
+  }
+  return read;
+}
+
 // Lazily construct and cache a single WordExtractor instance on first .doc/.docx use.
 let wordExtractorPromise: Promise<WordExtractor> | null = null;
 
@@ -275,13 +520,22 @@ function getWordExtractor(): Promise<WordExtractor> {
 export interface ExtractionResult {
   text: string;
   method:
-    "pdf_parse" | "pdf_scanned" | "tesseract_ocr" | "word_parse" | "plain_text";
+    | "pdf_parse"
+    | "pdf_scanned"
+    | "pdf_ocr"
+    | "tesseract_ocr"
+    | "word_parse"
+    | "plain_text";
   confidence?: number;
   /**
-   * One-based numbers of PDF pages with little or no selectable text. Any text those pages do have
-   * is retained in `text`.
+   * One-based numbers of PDF pages with little or no selectable text that OCR did not read. Any
+   * text those pages do have is retained in `text`.
    */
   sparseTextPages?: number[];
+  /** One-based numbers of PDF pages whose text was read by OCR (method `pdf_ocr`). */
+  ocrPages?: number[];
+  /** Mean OCR confidence (0–100) of `ocrPages`. */
+  ocrConfidence?: number;
 }
 
 export type ExtractionMethod = ExtractionResult["method"];
@@ -411,10 +665,12 @@ function visiblePdfAnnotationText(
 /**
  * Extract text from a PDF buffer using unpdf.
  * Includes visible FreeText annotations and filled text/choice widgets in addition to page text.
- * If the PDF appears to be scanned (low text density), returns the extracted text with method
- * pdf_scanned. Otherwise individual pages with little or no selectable text are listed in
- * sparseTextPages; their text, if any, stays in the result.
- * Callers turn either into a warning.
+ * Pages without usable text are OCR'd from their largest raster within bounds (ocrPdfPages); when
+ * any is read the method is pdf_ocr, the OCR'd pages are listed in ocrPages, and only the pages
+ * still unread in sparseTextPages. Otherwise, if the PDF appears to be scanned (low text density),
+ * returns the extracted text with method pdf_scanned, or else lists the individual pages with
+ * little or no selectable text in sparseTextPages; their text, if any, stays in the result.
+ * Callers turn each of these into a warning.
  */
 export async function extractTextFromPdf(
   buffer: Buffer,
@@ -427,7 +683,11 @@ export async function extractTextFromPdf(
     const { getDocumentProxy } = await import("unpdf");
     // PDF.js rejects Node Buffer instances and takes ownership of/detaches the supplied
     // ArrayBuffer. Make an owned copy so parsing cannot empty the original bytes before storage.
-    pdf = await getDocumentProxy(new Uint8Array(buffer));
+    // maxImageSize stops PDF.js from decoding a raster over the image pixel limit at all; the page
+    // then has no image to OCR and stays flagged.
+    pdf = await getDocumentProxy(new Uint8Array(buffer), {
+      maxImageSize: MAX_IMAGE_PIXELS,
+    });
     options?.signal?.throwIfAborted();
     if (pdf.numPages > MAX_PDF_PAGES) {
       throw new ExtractionLimitError(
@@ -436,6 +696,10 @@ export async function extractTextFromPdf(
     }
 
     const pages: string[] = [];
+    // Per page: displayed annotation text, kept when OCR replaces the page's text layer, and the
+    // non-whitespace characters of its actual text.
+    const pageAnnotationTexts: string[] = [];
+    const pageCharacters: number[] = [];
     const sparseTextPages: number[] = [];
     let characters = 0;
     let densityCharacters = 0;
@@ -479,6 +743,7 @@ export async function extractTextFromPdf(
           );
         const pageText = baseText + annotationText;
         pages.push(pageText);
+        pageAnnotationTexts.push(annotationText);
         // Count only actual page text and displayed values. Generated labels, field names,
         // and separators must not make a sparse scanned page appear fully extracted.
         const densityText =
@@ -491,7 +756,9 @@ export async function extractTextFromPdf(
           densityCharacters +=
             pageDensityCharacters + (densityCharacters > 0 ? 1 : 0);
         }
-        if (densityText.replace(/\s+/g, "").length < MIN_PAGE_TEXT_CHARACTERS) {
+        const nonWhitespace = densityText.replace(/\s+/g, "").length;
+        pageCharacters.push(nonWhitespace);
+        if (nonWhitespace < MIN_PAGE_TEXT_CHARACTERS) {
           sparseTextPages.push(pageNumber);
         }
       } finally {
@@ -513,8 +780,56 @@ export async function extractTextFromPdf(
     // parsed contract at confidence 100 and analyzed as if that furniture were the agreement.
     const isSparse = avgCharsPerPage < MIN_TEXT_DENSITY;
     const isShortDocument = pageCount <= SHORT_DOCUMENT_PAGE_COUNT;
-    if (isSparse && (!isShortDocument || densityCharacters < 500)) {
-      // Scanned PDF with no usable text layer (OCR of rasterized PDF pages is not implemented).
+    const isScanned = isSparse && (!isShortDocument || densityCharacters < 500);
+
+    // OCR the pages without usable text: the sparse pages, or in a scanned document every page
+    // short of the average density a text page has (scanner stamps alone stay below it).
+    const unreadThreshold = isScanned
+      ? MIN_TEXT_DENSITY
+      : MIN_PAGE_TEXT_CHARACTERS;
+    const ocrCandidates = pageCharacters.flatMap((count, index) =>
+      count < unreadThreshold ? [index + 1] : [],
+    );
+    const ocr = await ocrPdfPages(pdf, ocrCandidates, options?.signal);
+    if (ocr.size > 0) {
+      // Each OCR'd page's text takes the place of its text layer, in page order.
+      const merged = pages.map((pageText, index) => {
+        const read = ocr.get(index + 1);
+        return read ? read.text + pageAnnotationTexts[index] : pageText;
+      });
+      if (
+        merged.reduce((total, pageText) => total + pageText.length + 1, 0) >
+        MAX_EXTRACTED_TEXT_LENGTH
+      ) {
+        throw new ExtractionLimitError(
+          "PDF text exceeds the 2,000,000-character processing limit.",
+        );
+      }
+      const ocrPages = [...ocr.keys()];
+      const unreadPages = ocrCandidates.filter((page) => !ocr.has(page));
+      const confidences = [...ocr.values()].map(({ confidence }) => confidence);
+      return {
+        text: merged.join("\n").replace(/\s+/g, " ").trim(),
+        method: "pdf_ocr",
+        // As for pdf_parse, the share of pages read (here by text layer or OCR), below 100
+        // because OCR can misread.
+        confidence: Math.min(
+          99,
+          Math.floor(((pageCount - unreadPages.length) / pageCount) * 100),
+        ),
+        ...(unreadPages.length > 0 ? { sparseTextPages: unreadPages } : {}),
+        ocrPages,
+        ocrConfidence:
+          Math.round(
+            (confidences.reduce((sum, value) => sum + value, 0) /
+              confidences.length) *
+              10,
+          ) / 10,
+      };
+    }
+
+    if (isScanned) {
+      // Scanned PDF whose pages OCR could not read: no usable raster, or OCR unavailable.
       // Empty text is rejected by the callers' "no text extracted" check. Sparse non-empty text is
       // kept and flagged pdf_scanned, and upload-pipeline turns that flag into a persisted warning.
       // Stamps or page headers can be the only text, so for them the warning is the only guard.
@@ -585,96 +900,22 @@ export async function extractTextFromImage(
     return await runSerializedOcr(async () => {
       let engine: OcrEngine | null = null;
       try {
-        const enginePromise = getOcrEngine();
-        let engineInitTimeout: ReturnType<typeof setTimeout> | undefined;
-        let initTimedOut = false;
-        try {
-          engine = await withAbort(
-            Promise.race([
-              enginePromise,
-              new Promise<never>((_resolve, reject) => {
-                engineInitTimeout = setTimeout(() => {
-                  initTimedOut = true;
-                  reject(
-                    new ExtractionUnavailableError(
-                      "Image text extraction could not start. Please try again shortly.",
-                    ),
-                  );
-                }, OCR_WORKER_INIT_TIMEOUT_MS);
-              }),
-            ]),
-            signal,
-          );
-        } catch (error: unknown) {
-          if (initTimedOut || signal.aborted) {
-            // A late engine must not remain orphaned or become the cached engine after this
-            // request has already failed. Terminate it asynchronously when startup eventually ends;
-            // a startup failure is already logged and uncached by getOcrEngine.
-            if (ocrEnginePromise === enginePromise) ocrEnginePromise = null;
-            void enginePromise
-              .then(
-                (lateEngine) => lateEngine.terminate(),
-                () => {},
-              )
-              .catch((lateEngineError: unknown) => {
-                console.warn(
-                  "Failed to clean up a late OCR worker:",
-                  lateEngineError,
-                );
-              });
-          }
-          throw error;
-        } finally {
-          if (engineInitTimeout) clearTimeout(engineInitTimeout);
-        }
-
-        let timeout: ReturnType<typeof setTimeout> | undefined;
-        const timeoutPromise = new Promise<never>((_resolve, reject) => {
-          timeout = setTimeout(
-            () =>
-              reject(
-                new ExtractionUnavailableError(
-                  "Image text extraction timed out. Try a smaller image.",
-                ),
-              ),
-            OCR_RECOGNITION_TIMEOUT_MS,
-          );
-        });
-
-        let result: Awaited<ReturnType<TesseractWorker["recognize"]>>;
-        try {
-          // `failed` ends the wait at once if the worker thread dies mid-recognition.
-          result = await withAbort(
-            Promise.race([
-              engine.worker.recognize(buffer),
-              engine.failed,
-              timeoutPromise,
-            ]),
-            signal,
-          );
-        } finally {
-          if (timeout) clearTimeout(timeout);
-        }
+        engine = await startOcrJobEngine(signal);
+        const result = await recognizeWithEngine(
+          engine,
+          buffer,
+          signal,
+          OCR_RECOGNITION_TIMEOUT_MS,
+          "Image text extraction timed out. Try a smaller image.",
+        );
 
         return {
-          text: result.data.text.trim(),
+          text: result.text.trim(),
           method: "tesseract_ocr",
-          confidence: result.data.confidence,
+          confidence: result.confidence,
         };
       } catch (error: unknown) {
-        // Recognition failures can leave Tesseract's cached worker in an unusable state. Clear it
-        // and terminate the failed instance so the next request gets a clean worker.
-        ocrEnginePromise = null;
-        if (engine) {
-          try {
-            await withAbort(engine.terminate(), AbortSignal.timeout(2_000));
-          } catch (terminationError: unknown) {
-            console.warn(
-              "Failed to terminate OCR worker after recognition error:",
-              terminationError,
-            );
-          }
-        }
+        await discardOcrEngine(engine);
         if (error instanceof ExtractionUnavailableError) {
           throw error;
         }

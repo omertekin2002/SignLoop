@@ -43,6 +43,7 @@ export type ParseErrorKind = (typeof PARSE_ERROR_KINDS)[number];
 const EXTRACTION_METHODS = [
   "pdf_parse",
   "pdf_scanned",
+  "pdf_ocr",
   "tesseract_ocr",
   "word_parse",
   "plain_text",
@@ -60,6 +61,9 @@ export const parseOutcomeSchema = z.discriminatedUnion("ok", [
     method: z.enum(EXTRACTION_METHODS),
     confidence: z.number().nullable(),
     sparseTextPages: z.array(z.number().int().positive()),
+    // PDF pages read by OCR (method pdf_ocr) and their mean OCR confidence.
+    ocrPages: z.array(z.number().int().positive()).optional(),
+    ocrConfidence: z.number().min(0).max(100).optional(),
   }),
   z.object({
     ok: z.literal(false),
