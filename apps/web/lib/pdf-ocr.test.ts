@@ -271,6 +271,39 @@ describe("scanned PDF page OCR", () => {
     expect(worker.terminate).toHaveBeenCalledOnce();
   });
 
+  it("stops waiting for a page image that outlasts the remaining budget", async () => {
+    const { PDF_OCR_BUDGET_MS } = await loadExtraction();
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    mocks.getDocumentProxy.mockResolvedValue(
+      pdfPages([CLAUSE.repeat(4), "", "", "", CLAUSE.repeat(4)]),
+    );
+    mocks.largestPageRaster
+      .mockImplementationOnce(async () => {
+        // Page 2 paints no image but leaves only 20 ms of the budget.
+        now += PDF_OCR_BUDGET_MS - 20;
+        return null;
+      })
+      // Page 3's images never finish decoding; only the signal ends the wait.
+      .mockImplementationOnce(
+        (_pdf: unknown, _page: number, _accept: unknown, signal: AbortSignal) =>
+          new Promise((_resolve, reject) =>
+            signal.addEventListener("abort", () => reject(signal.reason)),
+          ),
+      );
+    const { extractTextFromPdf } = await loadExtraction();
+
+    await expect(extractTextFromPdf(Buffer.from("%PDF-1.7"))).resolves.toEqual({
+      text: [CLAUSE.repeat(4).trim(), CLAUSE.repeat(4).trim()].join(" "),
+      method: "pdf_parse",
+      confidence: 40,
+      sparseTextPages: [2, 3, 4],
+    });
+    // Page 4 is not tried once the budget is spent.
+    expect(mocks.largestPageRaster).toHaveBeenCalledTimes(2);
+    expect(mocks.createWorker).not.toHaveBeenCalled();
+  });
+
   it("keeps the rest of the result when OCR fails on a page", async () => {
     mocks.getDocumentProxy.mockResolvedValue(
       pdfPages([CLAUSE.repeat(4), "", "", CLAUSE.repeat(4), CLAUSE.repeat(4)]),

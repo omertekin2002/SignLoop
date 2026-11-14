@@ -415,13 +415,16 @@ async function ocrPdfPages(
       jobSignal.throwIfAborted();
 
       let png: Buffer | null = null;
+      // Decoding a page's images counts against the budget too: a slow page must not run past it
+      // into the request deadline.
+      const budget = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
       try {
         // One page's raster at a time: it is released once encoded, before the next page.
         const raster = await largestPageRaster(
           pdf,
           pageNumber,
           isOcrRasterSize,
-          jobSignal,
+          AbortSignal.any([jobSignal, budget]),
         );
         if (raster) {
           const encoded = encodePng(raster);
@@ -429,6 +432,12 @@ async function ocrPdfPages(
         }
       } catch (error: unknown) {
         jobSignal.throwIfAborted();
+        if (budget.aborted) {
+          console.warn(
+            `Reading PDF page ${pageNumber}'s image for OCR ran past the OCR budget.`,
+          );
+          break;
+        }
         console.warn(
           `Could not read PDF page ${pageNumber}'s image for OCR:`,
           error,
