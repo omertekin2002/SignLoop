@@ -133,11 +133,11 @@ describe("scanned PDF page OCR", () => {
 
     const result = await extractTextFromPdf(Buffer.from("%PDF-1.7"));
 
-    // The OCR text replaces page 2's sparse text layer ("SCAN-0002").
+    // Page 2's own selectable text ("SCAN-0002") is kept ahead of its OCR text.
     expect(result).toEqual({
       text: [
         CLAUSE.repeat(3).trim(),
-        "Schedule B. Fees: 2,000 USD monthly.",
+        "SCAN-0002 Schedule B. Fees: 2,000 USD monthly.",
         CLAUSE.repeat(3).trim(),
       ].join(" "),
       method: "pdf_ocr",

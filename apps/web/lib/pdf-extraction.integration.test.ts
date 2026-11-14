@@ -363,4 +363,18 @@ describe("real PDF extraction", () => {
 
     expect(result).toEqual({ text: "", method: "pdf_scanned", confidence: 0 });
   });
+
+  it("keeps a scanned page's own selectable text, such as a stamp, with its OCR text", async () => {
+    const document = await PDFDocument.load(
+      await readFile(
+        new URL("./fixtures/pdf-ocr-raster-page.pdf", import.meta.url),
+      ),
+    );
+    document.getPage(0).drawText("VOID", { x: 40, y: 40, size: 10 });
+
+    const result = await extractTextFromPdf(Buffer.from(await document.save()));
+
+    expect(result.text.replace(/\s+/g, " ")).toBe(`VOID ${OCR_TEXT}`);
+    expect(result).toMatchObject({ method: "pdf_ocr", ocrPages: [1] });
+  }, 60_000);
 });

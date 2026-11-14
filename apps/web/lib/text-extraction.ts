@@ -705,8 +705,9 @@ export async function extractTextFromPdf(
     }
 
     const pages: string[] = [];
-    // Per page: displayed annotation text, kept when OCR replaces the page's text layer, and the
-    // non-whitespace characters of its actual text.
+    // Per page: its text layer and displayed annotation text, both kept around the OCR text when
+    // the page is OCR'd, and the non-whitespace characters of its actual text.
+    const pageBaseTexts: string[] = [];
     const pageAnnotationTexts: string[] = [];
     const pageCharacters: number[] = [];
     const sparseTextPages: number[] = [];
@@ -752,6 +753,7 @@ export async function extractTextFromPdf(
           );
         const pageText = baseText + annotationText;
         pages.push(pageText);
+        pageBaseTexts.push(baseText);
         pageAnnotationTexts.push(annotationText);
         // Count only actual page text and displayed values. Generated labels, field names,
         // and separators must not make a sparse scanned page appear fully extracted.
@@ -801,10 +803,17 @@ export async function extractTextFromPdf(
     );
     const ocr = await ocrPdfPages(pdf, ocrCandidates, options?.signal);
     if (ocr.size > 0) {
-      // Each OCR'd page's text takes the place of its text layer, in page order.
+      // Each OCR'd page's text goes in its place in page order, after the page's own (sparse)
+      // selectable text: a stamp or correction drawn as text is not in the raster OCR reads.
       const merged = pages.map((pageText, index) => {
         const read = ocr.get(index + 1);
-        return read ? read.text + pageAnnotationTexts[index] : pageText;
+        if (!read) return pageText;
+        const base = pageBaseTexts[index]!;
+        return (
+          (base.trim() ? `${base}\n` : "") +
+          read.text +
+          pageAnnotationTexts[index]
+        );
       });
       if (
         merged.reduce((total, pageText) => total + pageText.length + 1, 0) >
