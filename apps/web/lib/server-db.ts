@@ -1544,10 +1544,12 @@ export async function createProjectForUser(input: {
 export async function listProjectsByUserId(
   userId: string,
   pagination?: PaginationOptions,
+  search: string | null = null,
 ): Promise<PaginatedResult<ProjectSummaryRecord>> {
   await ensureSchema();
 
   const { limit, offset } = clampPagination(pagination);
+  const pattern = search ? `%${escapeLikePattern(search)}%` : null;
 
   const [{ rows: projectRows }, { rows: countRows }] = await Promise.all([
     sql<ProjectSummaryRecord>`
@@ -1572,13 +1574,15 @@ export async function listProjectsByUserId(
         ) as "contextDocumentCount"
       from projects p
       where p.user_id = ${userId}
+        and (${pattern}::text is null or p.title ilike ${pattern}::text escape '\\')
       order by p.created_at desc, p.id desc
       limit ${limit} offset ${offset}
     `,
     sql<{ count: number }>`
       select count(*)::integer as count
-      from projects
-      where user_id = ${userId}
+      from projects p
+      where p.user_id = ${userId}
+        and (${pattern}::text is null or p.title ilike ${pattern}::text escape '\\')
     `,
   ]);
 

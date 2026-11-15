@@ -179,6 +179,57 @@ for (const theme of THEMES) {
   });
 }
 
+// Each theme creates its own projects, so it can run in isolation.
+for (const theme of THEMES) {
+  test(`a name search finds a new project and clears back to the list (${theme} theme)`, async ({
+    page,
+  }) => {
+    const pageErrors = collectPageErrors(page);
+    await startInTheme(page, theme);
+    const stamp = `${theme} ${Date.now()}`;
+    const title = `E2E findable project ${stamp}`;
+    const created = await page.request.post("/api/projects", { data: { title } });
+    expect(created.status()).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+    const otherTitle = `E2E other project ${stamp}`;
+    expect((await page.request.post("/api/projects", { data: { title: otherTitle } })).status()).toBe(201);
+
+    // The API matches names case-insensitively after trimming, and counts only the matches.
+    const found = await page.request.get(
+      `/api/projects?q=${encodeURIComponent(`  FINDABLE project ${stamp} `)}`,
+    );
+    expect(found.status()).toBe(200);
+    expect(await found.json()).toMatchObject({ total: 1, data: [{ id, title }] });
+    expect((await page.request.get(`/api/projects?q=${"a".repeat(201)}`)).status()).toBe(400);
+
+    await openDashboard(page);
+    await openSidebarSection(page, "Projects");
+    const search = page.getByRole("searchbox", { name: "Search projects" });
+    const main = page.getByRole("main");
+    const cardTitle = main.getByRole("heading", { name: title, exact: true });
+    const otherCardTitle = main.getByRole("heading", { name: otherTitle, exact: true });
+    await expect(otherCardTitle).toBeVisible();
+
+    await search.fill(`findable project ${stamp}`);
+    await expect(cardTitle).toBeVisible();
+    await expect(otherCardTitle).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: "1 project matches" })).toBeVisible();
+    await expectNoA11yViolations(page, { theme });
+
+    await search.fill(`no such project ${stamp}`);
+    const noMatch = page.getByRole("heading", { name: `No projects match “no such project ${stamp}”` });
+    await expect(noMatch).toBeVisible();
+    await expect(page.getByRole("heading", { name: "No projects yet" })).toHaveCount(0);
+    await expectNoA11yViolations(page, { theme });
+
+    await page.getByRole("button", { name: "Clear search" }).last().click();
+    await expect(search).toHaveValue("");
+    await expect(noMatch).toHaveCount(0);
+    await expect(otherCardTitle).toBeVisible();
+    expect(pageErrors).toEqual([]);
+  });
+}
+
 test("the usage API reports the account's unused hourly quota", async ({ page }) => {
   const response = await page.request.get("/api/usage");
   expect(response.status()).toBe(200);
