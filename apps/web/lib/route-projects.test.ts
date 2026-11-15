@@ -64,10 +64,11 @@ describe("GET /api/projects", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(page);
-    expect(listProjectsByUserId).toHaveBeenCalledExactlyOnceWith("owner", {
-      limit: undefined,
-      offset: undefined,
-    });
+    expect(listProjectsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      { limit: undefined, offset: undefined },
+      null,
+    );
   });
 
   it("forwards limit and offset query params as numbers", async () => {
@@ -81,10 +82,11 @@ describe("GET /api/projects", () => {
     const response = await GET(new Request(`${projectsUrl}?limit=5&offset=10`));
 
     expect(response.status).toBe(200);
-    expect(listProjectsByUserId).toHaveBeenCalledExactlyOnceWith("owner", {
-      limit: 5,
-      offset: 10,
-    });
+    expect(listProjectsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      { limit: 5, offset: 10 },
+      null,
+    );
   });
 
   it("scopes the listing to the caller rather than any query-supplied user", async () => {
@@ -96,7 +98,106 @@ describe("GET /api/projects", () => {
     expect(listProjectsByUserId).toHaveBeenCalledExactlyOnceWith(
       "owner",
       expect.any(Object),
+      null,
     );
+  });
+
+  it("passes a trimmed title search through with paging", async () => {
+    const page = {
+      ...emptyPage,
+      data: [projectSummary],
+      total: 1,
+    };
+    auth.mockResolvedValue({ userId: "owner" });
+    listProjectsByUserId.mockResolvedValue(page);
+
+    const response = await GET(
+      new Request(`${projectsUrl}?q=%20%20Vendor%20&limit=50&offset=50`),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(page);
+    expect(listProjectsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      { limit: 50, offset: 50 },
+      "Vendor",
+    );
+  });
+
+  it("passes LIKE wildcards and backslashes through unchanged for the data layer to escape", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    listProjectsByUserId.mockResolvedValue(emptyPage);
+
+    await GET(
+      new Request(`${projectsUrl}?q=${encodeURIComponent("50%_off\\v2")}`),
+    );
+
+    expect(listProjectsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      expect.any(Object),
+      "50%_off\\v2",
+    );
+  });
+
+  it.each(["", "   ", "%20%09%0A"])(
+    "treats q=%j as no search",
+    async (value) => {
+      auth.mockResolvedValue({ userId: "owner" });
+      listProjectsByUserId.mockResolvedValue(emptyPage);
+
+      const response = await GET(new Request(`${projectsUrl}?q=${value}`));
+
+      expect(response.status).toBe(200);
+      expect(listProjectsByUserId).toHaveBeenCalledExactlyOnceWith(
+        "owner",
+        expect.any(Object),
+        null,
+      );
+    },
+  );
+
+  it("accepts a 200-character search and measures it after trimming", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    listProjectsByUserId.mockResolvedValue(emptyPage);
+    const term = "a".repeat(200);
+
+    const response = await GET(
+      new Request(`${projectsUrl}?q=${encodeURIComponent(`  ${term}  `)}`),
+    );
+
+    expect(response.status).toBe(200);
+    expect(listProjectsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      expect.any(Object),
+      term,
+    );
+  });
+
+  it("counts characters rather than UTF-16 code units", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    listProjectsByUserId.mockResolvedValue(emptyPage);
+    const term = "📁".repeat(200);
+
+    const response = await GET(
+      new Request(`${projectsUrl}?q=${encodeURIComponent(term)}`),
+    );
+
+    expect(response.status).toBe(200);
+    expect(listProjectsByUserId).toHaveBeenCalledOnce();
+  });
+
+  it("returns 400 without touching the database for a 201-character search", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+
+    const response = await GET(
+      new Request(`${projectsUrl}?q=${"a".repeat(201)}`),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Search must be at most 200 characters",
+    });
+    expect(listProjectsByUserId).not.toHaveBeenCalled();
   });
 
   it("does not swallow a data-layer failure", async () => {

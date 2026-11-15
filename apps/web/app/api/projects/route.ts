@@ -1,13 +1,24 @@
 import { NextResponse } from "next/server";
 import { parseJsonBody, parsePaginationParams, requireUserId } from "@/lib/api-auth";
 import { createProjectForUser, listProjectsByUserId } from "@/lib/server-db";
+import { MAX_CONTRACT_SEARCH_LENGTH } from "@/lib/contract-search";
 
 export async function GET(req: Request) {
   const authed = await requireUserId();
   if (authed instanceof NextResponse) return authed;
   const { userId } = authed;
 
-  const result = await listProjectsByUserId(userId, parsePaginationParams(req));
+  const { searchParams } = new URL(req.url);
+  // A blank search is no search; a title search spans every page of the owner's projects.
+  const search = searchParams.get("q")?.trim() || null;
+  if (search && [...search].length > MAX_CONTRACT_SEARCH_LENGTH) {
+    return NextResponse.json(
+      { error: `Search must be at most ${MAX_CONTRACT_SEARCH_LENGTH} characters` },
+      { status: 400 },
+    );
+  }
+
+  const result = await listProjectsByUserId(userId, parsePaginationParams(req), search);
   return NextResponse.json(result);
 }
 

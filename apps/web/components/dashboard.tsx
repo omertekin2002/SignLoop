@@ -65,7 +65,10 @@ import { ChatPanel } from "@/components/chat-panel";
 import {
   ContractSearchField,
   ContractSearchResults,
+  ProjectSearchField,
+  ProjectSearchResults,
   useContractSearch,
+  useWorkspaceSearch,
 } from "@/components/contract-search";
 
 type DashboardTab = "contracts" | "projects" | "chat";
@@ -291,6 +294,8 @@ const Dashboard = ({
   const modelRefreshPromiseRef = useRef<Promise<boolean> | null>(null);
 
   const contractSearch = useContractSearch();
+  // Each tab keeps its own term, so switching tabs never carries a search across.
+  const projectSearch = useWorkspaceSearch();
   const contractList = useWorkspaceList<Contract>(
     "contracts",
     "/contracts?standalone=true",
@@ -588,6 +593,54 @@ const Dashboard = ({
       setContractToDelete(null);
     },
   });
+
+  const renderProjectGrid = (items: Project[]) => (
+    <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      {items.map((project) => (
+        <Link
+          key={project.id}
+          href={`/projects/${project.id}`}
+          {...navigationIntent({ kind: "project", id: project.id })}
+        >
+          <Card className="group h-full cursor-pointer overflow-hidden transition-colors hover:border-input hover:bg-foreground/[0.03]">
+            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+              <CardTitle className="line-clamp-2">
+                {project.title}
+              </CardTitle>
+              <FolderOpen className="h-4 w-4 text-primary shrink-0 ml-2" />
+            </CardHeader>
+            <CardContent>
+              {project.description ? (
+                <p className="mb-4 line-clamp-2 text-sm leading-relaxed text-subtle-foreground">
+                  {project.description}
+                </p>
+              ) : null}
+              <div className="mb-4 flex flex-wrap gap-2">
+                <Badge variant="outline">
+                  <FileText className="mr-1.5 h-3 w-3 text-muted-foreground" />
+                  {project.contractCount || 0} contract
+                  {project.contractCount !== 1 ? "s" : ""}
+                </Badge>
+                <Badge variant="outline">
+                  <Book className="mr-1.5 h-3 w-3 text-muted-foreground" />
+                  {project.contextDocumentCount || 0} context
+                </Badge>
+              </div>
+              <div className="flex items-end justify-between pt-1">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Calendar className="h-3.5 w-3.5" />
+                  {formatDate(project.createdAt, "MMM d, yyyy")}
+                </div>
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+                  <ChevronRight className="h-4 w-4" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      ))}
+    </div>
+  );
 
   const renderContractGrid = (items: Contract[]) => (
     <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -1226,9 +1279,25 @@ const Dashboard = ({
             )
           ) : null}
 
+          {activeTab === "projects" && canUseSavedWorkspace ? (
+            <ProjectSearchField
+              value={projectSearch.input}
+              onChange={projectSearch.setInput}
+              onClear={projectSearch.clear}
+            />
+          ) : null}
+
           {activeTab === "projects" ? (
             !canUseSavedWorkspace ? (
               renderLoginRequired("projects")
+            ) : projectSearch.search ? (
+              <ProjectSearchResults<Project>
+                search={projectSearch.search}
+                enabled
+                onClear={projectSearch.clear}
+                renderProjects={renderProjectGrid}
+                renderLoadError={(retry) => renderLoadError("projects", retry)}
+              />
             ) : projectsFailed ? (
               renderLoadError("projects", () => void refetchProjects())
             ) : loadingProjects ? (
@@ -1260,51 +1329,7 @@ const Dashboard = ({
                 </div>
               </div>
             ) : (
-              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                {projects.map((project) => (
-                  <Link
-                    key={project.id}
-                    href={`/projects/${project.id}`}
-                    {...navigationIntent({ kind: "project", id: project.id })}
-                  >
-                    <Card className="group h-full cursor-pointer overflow-hidden transition-colors hover:border-input hover:bg-foreground/[0.03]">
-                      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-                        <CardTitle className="line-clamp-2">
-                          {project.title}
-                        </CardTitle>
-                        <FolderOpen className="h-4 w-4 text-primary shrink-0 ml-2" />
-                      </CardHeader>
-                      <CardContent>
-                        {project.description ? (
-                          <p className="mb-4 line-clamp-2 text-sm leading-relaxed text-subtle-foreground">
-                            {project.description}
-                          </p>
-                        ) : null}
-                        <div className="mb-4 flex flex-wrap gap-2">
-                          <Badge variant="outline">
-                            <FileText className="mr-1.5 h-3 w-3 text-muted-foreground" />
-                            {project.contractCount || 0} contract
-                            {project.contractCount !== 1 ? "s" : ""}
-                          </Badge>
-                          <Badge variant="outline">
-                            <Book className="mr-1.5 h-3 w-3 text-muted-foreground" />
-                            {project.contextDocumentCount || 0} context
-                          </Badge>
-                        </div>
-                        <div className="flex items-end justify-between pt-1">
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <Calendar className="h-3.5 w-3.5" />
-                            {formatDate(project.createdAt, "MMM d, yyyy")}
-                          </div>
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
-                            <ChevronRight className="h-4 w-4" />
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </Link>
-                ))}
-              </div>
+              renderProjectGrid(projects)
             )
           ) : null}
 
@@ -1344,7 +1369,9 @@ const Dashboard = ({
         {activeTab === "contracts" &&
           !contractSearch.search &&
           renderLoadMore(contractList)}
-        {activeTab === "projects" && renderLoadMore(projectList)}
+        {activeTab === "projects" &&
+          !projectSearch.search &&
+          renderLoadMore(projectList)}
       </main>
 
       <AlertDialog open={confirmNewTemporary} onOpenChange={setConfirmNewTemporary}>

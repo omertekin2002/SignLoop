@@ -19,8 +19,13 @@ export type SearchableContract = {
   projectTitle?: string | null;
 };
 
+export type SearchableProject = {
+  id: string;
+  title: string;
+};
+
 /** The search box's text, and the trimmed term it settles on after typing pauses. Clearing is immediate. */
-export function useContractSearch(delay = CONTRACT_SEARCH_DEBOUNCE_MS) {
+export function useWorkspaceSearch(delay = CONTRACT_SEARCH_DEBOUNCE_MS) {
   const [input, setInput] = useState("");
   const [search, setSearch] = useState("");
 
@@ -39,20 +44,27 @@ export function useContractSearch(delay = CONTRACT_SEARCH_DEBOUNCE_MS) {
   return { input, setInput, search, clear };
 }
 
-export function ContractSearchField({
-  value,
-  onChange,
-  onClear,
-}: {
+export const useContractSearch = useWorkspaceSearch;
+
+type SearchFieldProps = {
   value: string;
   onChange: (value: string) => void;
   onClear: () => void;
-}) {
+};
+
+/** A labelled search box: Escape or the clear button empties it at once. */
+export function WorkspaceSearchField({
+  label,
+  placeholder,
+  value,
+  onChange,
+  onClear,
+}: SearchFieldProps & { label: string; placeholder: string }) {
   const id = useId();
 
   return (
     <div className="mb-6 max-w-md">
-      <Label htmlFor={id}>Search contracts</Label>
+      <Label htmlFor={id}>{label}</Label>
       <div className="relative mt-2">
         <Search
           aria-hidden="true"
@@ -63,7 +75,7 @@ export function ContractSearchField({
           type="search"
           value={value}
           maxLength={MAX_CONTRACT_SEARCH_LENGTH}
-          placeholder="Search by title, including contracts in projects"
+          placeholder={placeholder}
           autoComplete="off"
           className="pl-10 pr-10 [&::-webkit-search-cancel-button]:hidden"
           onChange={(event) => onChange(event.target.value)}
@@ -91,28 +103,55 @@ export function ContractSearchField({
   );
 }
 
-/** Title-search results across every contract the owner has, with their own empty and error states. */
-export function ContractSearchResults<T extends SearchableContract>({
-  search,
-  enabled,
-  onClear,
-  renderContracts,
-  renderLoadError,
-}: {
+export function ContractSearchField(props: SearchFieldProps) {
+  return (
+    <WorkspaceSearchField
+      label="Search contracts"
+      placeholder="Search by title, including contracts in projects"
+      {...props}
+    />
+  );
+}
+
+export function ProjectSearchField(props: SearchFieldProps) {
+  return (
+    <WorkspaceSearchField
+      label="Search projects"
+      placeholder="Search by project name"
+      {...props}
+    />
+  );
+}
+
+type SearchResultsProps = {
   search: string;
   enabled: boolean;
   onClear: () => void;
-  renderContracts: (contracts: T[]) => ReactNode;
   renderLoadError: (retry: () => void) => ReactNode;
+};
+
+/** Search results across every page of one workspace list, with their own empty and error states. */
+export function WorkspaceSearchResults<T>({
+  listKey,
+  path,
+  noun,
+  emptyHint,
+  search,
+  enabled,
+  onClear,
+  renderItems,
+  renderLoadError,
+}: SearchResultsProps & {
+  /** The list's query-key prefix, so invalidating the list refreshes its searches too. */
+  listKey: string;
+  path: string;
+  noun: { one: string; many: string };
+  emptyHint: ReactNode;
+  renderItems: (items: T[]) => ReactNode;
 }) {
-  const list = useWorkspaceList<T>(
-    "contracts",
-    "/contracts?standalone=true",
-    enabled,
-    search,
-  );
-  const contracts = list.data ?? [];
-  const total = list.total ?? contracts.length;
+  const list = useWorkspaceList<T>(listKey, path, enabled, search);
+  const items = list.data ?? [];
+  const total = list.total ?? items.length;
 
   if (list.isLoadingError) return renderLoadError(() => void list.refetch());
 
@@ -126,7 +165,7 @@ export function ContractSearchResults<T extends SearchableContract>({
     );
   }
 
-  if (contracts.length === 0) {
+  if (items.length === 0) {
     return (
       <div className="flex min-h-[400px] max-w-xl flex-col items-start justify-center">
         <p className="app-eyebrow flex items-center gap-2">
@@ -134,12 +173,9 @@ export function ContractSearchResults<T extends SearchableContract>({
           No results
         </p>
         <h3 className="mt-4 break-words text-heading-xs md:text-subheading">
-          No contracts match &ldquo;{search}&rdquo;
+          No {noun.many} match &ldquo;{search}&rdquo;
         </h3>
-        <p className="app-lede mt-4 max-w-md">
-          Search looks at contract titles, including contracts inside projects.
-          Try a shorter or different word.
-        </p>
+        <p className="app-lede mt-4 max-w-md">{emptyHint}</p>
         <Button
           type="button"
           variant="outline"
@@ -155,10 +191,10 @@ export function ContractSearchResults<T extends SearchableContract>({
   return (
     <>
       <p role="status" className="mb-6 text-sm text-muted-foreground">
-        {total === 1 ? "1 contract matches" : `${total} contracts match`}{" "}
+        {total === 1 ? `1 ${noun.one} matches` : `${total} ${noun.many} match`}{" "}
         &ldquo;{search}&rdquo;
       </p>
-      {renderContracts(contracts)}
+      {renderItems(items)}
       {list.hasNextPage ? (
         <Button
           variant="ghost"
@@ -171,5 +207,44 @@ export function ContractSearchResults<T extends SearchableContract>({
         </Button>
       ) : null}
     </>
+  );
+}
+
+/** Title-search results across every contract the owner has, standalone or in a project. */
+export function ContractSearchResults<T extends SearchableContract>({
+  renderContracts,
+  ...props
+}: SearchResultsProps & { renderContracts: (contracts: T[]) => ReactNode }) {
+  return (
+    <WorkspaceSearchResults<T>
+      {...props}
+      listKey="contracts"
+      path="/contracts?standalone=true"
+      noun={{ one: "contract", many: "contracts" }}
+      emptyHint={
+        <>
+          Search looks at contract titles, including contracts inside projects.
+          Try a shorter or different word.
+        </>
+      }
+      renderItems={renderContracts}
+    />
+  );
+}
+
+/** Name-search results across every page of the owner's projects. */
+export function ProjectSearchResults<T extends SearchableProject>({
+  renderProjects,
+  ...props
+}: SearchResultsProps & { renderProjects: (projects: T[]) => ReactNode }) {
+  return (
+    <WorkspaceSearchResults<T>
+      {...props}
+      listKey="projects"
+      path="/projects"
+      noun={{ one: "project", many: "projects" }}
+      emptyHint="Search looks at project names. Try a shorter or different word."
+      renderItems={renderProjects}
+    />
   );
 }
