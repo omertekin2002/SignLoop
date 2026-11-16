@@ -120,3 +120,62 @@ describe("workspace list search", () => {
     }
   });
 });
+
+describe("workspace list head refresh with searches", () => {
+  it("also refreshes searches under the same prefix, and nothing else", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    const get = vi.spyOn(apiClient, "get").mockImplementation(async (url) => {
+      const params = new URL(String(url), "https://app.test").searchParams;
+      return {
+        data: {
+          data: [
+            { id: `${params.get("q") ?? "all"}-${get.mock.calls.length}` },
+          ],
+          offset: 0,
+          limit: 50,
+          total: 1,
+        },
+      };
+    });
+    const observe = (
+      search = "",
+      key = "chat-threads",
+      path = "/chat/threads",
+    ) => {
+      const observer = new InfiniteQueryObserver(
+        client,
+        workspaceListOptions<{ id: string }>(key, path, search),
+      );
+      return { observer, unsubscribe: observer.subscribe(() => {}) };
+    };
+    const head = observe();
+    const search = observe("lease");
+    const projects = observe("", "projects", "/projects");
+    try {
+      await Promise.all([
+        head.observer.refetch(),
+        search.observer.refetch(),
+        projects.observer.refetch(),
+      ]);
+      get.mockClear();
+
+      await refreshWorkspaceList(client, "chat-threads", "/chat/threads");
+
+      expect(get.mock.calls.map(([url]) => url).sort()).toEqual([
+        "/chat/threads?limit=50&offset=0",
+        "/chat/threads?q=lease&limit=50&offset=0",
+      ]);
+      expect(search.observer.getCurrentResult().data?.pages[0]?.data).toEqual([
+        { id: expect.stringMatching(/^lease-/) },
+      ]);
+      expect(search.observer.getCurrentResult().isStale).toBe(false);
+    } finally {
+      head.unsubscribe();
+      search.unsubscribe();
+      projects.unsubscribe();
+      client.clear();
+    }
+  });
+});

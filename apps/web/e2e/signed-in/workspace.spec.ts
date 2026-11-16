@@ -230,6 +230,59 @@ for (const theme of THEMES) {
   });
 }
 
+// Each theme creates its own chats, so it can run in isolation.
+for (const theme of THEMES) {
+  test(`a title search finds a saved chat in the sidebar and clears back to the list (${theme} theme)`, async ({
+    page,
+  }) => {
+    const pageErrors = collectPageErrors(page);
+    await startInTheme(page, theme);
+    const stamp = `${theme} ${Date.now()}`;
+    const title = `E2E findable chat ${stamp}`;
+    const created = await page.request.post("/api/chat/threads", { data: { title } });
+    expect(created.status()).toBe(201);
+    const { data } = (await created.json()) as { data: { id: string } };
+    const otherTitle = `E2E other chat ${stamp}`;
+    expect((await page.request.post("/api/chat/threads", { data: { title: otherTitle } })).status()).toBe(201);
+
+    // The API matches titles case-insensitively after trimming, and counts only the matches.
+    const found = await page.request.get(
+      `/api/chat/threads?q=${encodeURIComponent(`  FINDABLE chat ${stamp} `)}`,
+    );
+    expect(found.status()).toBe(200);
+    expect(await found.json()).toMatchObject({ total: 1, data: [{ id: data.id, title }] });
+    expect((await page.request.get(`/api/chat/threads?q=${"a".repeat(201)}`)).status()).toBe(400);
+
+    await openDashboard(page);
+    await openSidebar(page);
+    const sidebar = page.locator("aside");
+    const search = sidebar.getByRole("searchbox", { name: "Search chats" });
+    const result = sidebar.getByRole("button", { name: new RegExp(`^${title}`) });
+    const other = sidebar.getByRole("button", { name: new RegExp(`^${otherTitle}`) });
+    await expect(other).toBeVisible();
+
+    await search.fill(`findable chat ${stamp}`);
+    await expect(result).toBeVisible();
+    await expect(other).toHaveCount(0);
+    // Temporary chat stays at the top of the section whatever the search.
+    await expect(sidebar.getByRole("button", { name: /^Temporary chat\s*Not saved$/ })).toBeVisible();
+    await expect(sidebar.getByRole("status").filter({ hasText: "1 chat matches" })).toBeVisible();
+    await expectNoA11yViolations(page, { theme });
+
+    await search.fill(`no such chat ${stamp}`);
+    const noMatch = sidebar.getByText(`No chats match “no such chat ${stamp}”`);
+    await expect(noMatch).toBeVisible();
+    await expect(sidebar.getByText("No chats yet")).toHaveCount(0);
+    await expectNoA11yViolations(page, { theme });
+
+    await sidebar.getByRole("button", { name: "Clear search" }).last().click();
+    await expect(search).toHaveValue("");
+    await expect(noMatch).toHaveCount(0);
+    await expect(other).toBeVisible();
+    expect(pageErrors).toEqual([]);
+  });
+}
+
 test("the usage API reports the account's unused hourly quota", async ({ page }) => {
   const response = await page.request.get("/api/usage");
   expect(response.status()).toBe(200);
