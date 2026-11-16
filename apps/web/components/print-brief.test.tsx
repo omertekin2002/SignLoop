@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { marked, type Tokens } from "marked";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrintBrief } from "@/components/print-brief";
 import { renderAnalysisBriefMarkdown } from "@/lib/analysis-brief";
 import type { AnalysisResult } from "@/lib/schemas";
@@ -76,6 +76,12 @@ const ANALYSIS = {
 
 const BUTTON = { name: "Print brief" };
 
+// The brief gives the analysis time in the viewer's local zone, so these tests set the zone instead
+// of inheriting the host's. Kiritimati (UTC+14) puts ANALYSIS.createdAt on the next calendar day,
+// which a run in UTC could not tell apart from formatting in UTC. Setting TZ changes the zone in
+// Vitest's default forks pool; a worker thread cannot change it, and the date assertion would fail.
+const TIME_ZONE = "Pacific/Kiritimati";
+
 function printedBrief(): HTMLElement {
   const articles = document.body.querySelectorAll<HTMLElement>(":scope > [data-print-brief]");
   expect(articles).toHaveLength(1);
@@ -91,6 +97,14 @@ function headingsOf(element: HTMLElement): string[] {
 describe("PrintBrief", () => {
   const fetchMock = vi.fn();
   const printMock = vi.fn();
+
+  beforeAll(() => {
+    vi.stubEnv("TZ", TIME_ZONE);
+  });
+
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
 
   beforeEach(() => {
     fetchMock.mockReset();
@@ -150,7 +164,7 @@ describe("PrintBrief", () => {
 
     // Report identity, coverage and jurisdiction.
     expect(brief).toHaveTextContent("Contract: Gym membership");
-    expect(brief).toHaveTextContent("Analyzed: Oct 29, 2026");
+    expect(brief).toHaveTextContent("Analyzed: Oct 30, 2026 00:00");
     expect(brief).toHaveTextContent("Risk level: MEDIUM");
     expect(brief).toHaveTextContent(`Source revision: ${REVISION}`);
     expect(brief).toHaveTextContent("Text extraction: Scanned pages were read with OCR.");
