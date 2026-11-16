@@ -46,7 +46,9 @@ export async function refreshWorkspaceList(
   key: string,
   path: string,
 ) {
-  await client.cancelQueries({ queryKey: [key], exact: true });
+  // Cancel searches too, not only the list. Invalidating a search that is still waiting for its
+  // first response reuses that request, and its answer from before the change would count as fresh.
+  await client.cancelQueries({ queryKey: [key] });
   const [result] = await Promise.all([
     client.fetchInfiniteQuery({
       ...workspaceListOptions(key, path),

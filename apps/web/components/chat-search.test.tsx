@@ -312,6 +312,59 @@ describe("chat title search", () => {
     );
   });
 
+  it("restarts a search that is still loading when the list refreshes, without an empty state in between", async () => {
+    const user = userEvent.setup();
+    // The first search request is sent before the new chat exists and is answered late, without it.
+    let answerEarlierSearch!: (value: { data: Page }) => void;
+    let searches = 0;
+    mocks.get.mockImplementation(async (url: string) => {
+      if (!requestUrl([url]).searchParams.get("q"))
+        return page([{ id: "b", title: "Lease renewal" }]);
+      searches += 1;
+      if (searches > 1)
+        return page([
+          { id: "b", title: "Lease renewal" },
+          { id: "a", title: "Lease draft" },
+        ]);
+      return new Promise((resolve) => {
+        answerEarlierSearch = resolve;
+      });
+    });
+    const client = renderWithClient(<Harness />);
+
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search chats" }),
+      "lease",
+    );
+    expect(await screen.findByText("Searching chats…")).toBeInTheDocument();
+
+    const rendered: string[] = [];
+    const recorder = new MutationObserver(() => {
+      rendered.push(document.body.textContent ?? "");
+    });
+    recorder.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    const refresh = refreshWorkspaceList(
+      client,
+      "chat-threads",
+      "/chat/threads",
+    );
+    answerEarlierSearch(page([{ id: "a", title: "Lease draft" }]));
+    await refresh;
+
+    expect(
+      await screen.findByRole("button", { name: "Lease renewal" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "2 chats match “lease”",
+    );
+    recorder.disconnect();
+    expect(rendered.join("\n")).not.toContain("No chats match");
+  });
+
   it("drops a deleted chat from an open search when the list is invalidated", async () => {
     const user = userEvent.setup();
     mocks.get.mockResolvedValue(
