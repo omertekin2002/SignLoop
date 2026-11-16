@@ -97,7 +97,8 @@ export function WorkspaceSearchField({
             "[&::-webkit-search-cancel-button]:hidden",
             compact ? "h-8 pl-8 pr-8 md:text-xs" : "pl-10 pr-10",
           )}
-          // Capped here, in code points as the API counts; a native maxLength counts UTF-16 code units.
+          // Capped here as the API counts, in code points after trimming; a native maxLength counts
+          // UTF-16 code units, and leading spaces too.
           onChange={(event) => onChange(capContractSearch(event.target.value))}
           onKeyDown={(event) => {
             if (event.key === "Escape" && value) {

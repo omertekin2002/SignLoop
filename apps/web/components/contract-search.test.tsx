@@ -141,6 +141,24 @@ describe("contract title search", () => {
     expect(field).toHaveValue(longest);
   });
 
+  it("keeps all of a 200-character search pasted after a space, which the API accepts once trimmed", async () => {
+    const user = userEvent.setup();
+    mocks.get.mockResolvedValue(page([]));
+    renderHarness();
+
+    const field = screen.getByRole("searchbox", { name: "Search contracts" });
+    const longest = `${"lease ".repeat(33)}ab`;
+    expect(longest).toHaveLength(200);
+    await user.click(field);
+    await user.paste(` ${longest}`);
+    expect(field).toHaveValue(` ${longest}`);
+    await waitFor(() => expect(mocks.get).toHaveBeenCalledOnce());
+    expect(urlParams(mocks.get.mock.calls[0]!).get("q")).toBe(longest);
+
+    await user.paste("c");
+    expect(field).toHaveValue(` ${longest}`);
+  });
+
   it("shows a distinct no-match state whose Clear search restores the list", async () => {
     const user = userEvent.setup();
     mocks.get.mockResolvedValue(page([]));

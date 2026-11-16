@@ -2,17 +2,21 @@
 export const MAX_CONTRACT_SEARCH_LENGTH = 200;
 
 /**
- * Cut a search to its first MAX_CONTRACT_SEARCH_LENGTH code points, the unit the list routes count.
- * Search boxes use this instead of a native `maxLength`, which counts UTF-16 code units and so
- * stops emoji and other characters outside the Basic Multilingual Plane at half the limit.
+ * Cut a search box's text so that the search it holds, once trimmed, is at most
+ * MAX_CONTRACT_SEARCH_LENGTH code points, the unit the list routes count. Leading whitespace is
+ * kept and not counted, because the search is trimmed before it is sent; counting it would cut a
+ * search the routes accept. Search boxes use this instead of a native `maxLength`, which counts
+ * UTF-16 code units and so stops emoji and other characters outside the Basic Multilingual Plane
+ * at half the limit.
  */
 export function capContractSearch(value: string): string {
   // A code point is at least one code unit, so a string this short is within the limit.
   if (value.length <= MAX_CONTRACT_SEARCH_LENGTH) return value;
+  const search = value.trimStart();
   let codePoints = 0;
-  let end = 0;
+  let end = value.length - search.length;
   // Iterating a string yields whole code points, never half a surrogate pair.
-  for (const character of value) {
+  for (const character of search) {
     if (codePoints === MAX_CONTRACT_SEARCH_LENGTH) break;
     codePoints += 1;
     end += character.length;
