@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useWorkspaceList } from "@/lib/use-workspace-list";
+import { invalidateAfterWrite } from "@/lib/invalidate-after-write";
 import { useNavigationPrefetch } from "@/lib/use-navigation-prefetch";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
@@ -63,9 +64,14 @@ import { UploadDialog } from "@/components/upload-dialog";
 import { NewProjectDialog } from "@/components/new-project-dialog";
 import { ChatPanel } from "@/components/chat-panel";
 import {
+  ChatSearchField,
+  ChatSearchResults,
   ContractSearchField,
   ContractSearchResults,
+  ProjectSearchField,
+  ProjectSearchResults,
   useContractSearch,
+  useWorkspaceSearch,
 } from "@/components/contract-search";
 
 type DashboardTab = "contracts" | "projects" | "chat";
@@ -291,6 +297,9 @@ const Dashboard = ({
   const modelRefreshPromiseRef = useRef<Promise<boolean> | null>(null);
 
   const contractSearch = useContractSearch();
+  // Each tab keeps its own term, so switching tabs never carries a search across.
+  const projectSearch = useWorkspaceSearch();
+  const chatSearch = useWorkspaceSearch();
   const contractList = useWorkspaceList<Contract>(
     "contracts",
     "/contracts?standalone=true",
@@ -557,7 +566,8 @@ const Dashboard = ({
         chatThreads?.find((thread) => thread.id !== deletedThreadId)?.id ??
         null;
       setRecentlyDeletedChatThreadId(deletedThreadId);
-      queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+      // Not awaited: the selection below moves on at once, and this never rejects.
+      void invalidateAfterWrite(queryClient, ["chat-threads"]);
       queryClient.removeQueries({ queryKey: ["chat-thread", deletedThreadId] });
       setSelectedChatThreadId((current) =>
         current === deletedThreadId ? fallbackThreadId : current,
@@ -576,18 +586,68 @@ const Dashboard = ({
     },
     onSuccess: (_data, contract) => {
       setContractToDelete(null);
-      queryClient.invalidateQueries({ queryKey: ["contracts"] });
       // Search results include contracts in projects, whose page and list counts also change.
-      if (contract.projectId) {
-        queryClient.invalidateQueries({ queryKey: ["project", contract.projectId] });
-        queryClient.invalidateQueries({ queryKey: ["projects"] });
-      }
+      void invalidateAfterWrite(
+        queryClient,
+        ["contracts"],
+        ...(contract.projectId
+          ? [["project", contract.projectId], ["projects"]]
+          : []),
+      );
     },
     onError: (error: unknown) => {
       toast.error(getApiErrorMessage(error, "Failed to delete contract"));
       setContractToDelete(null);
     },
   });
+
+  const renderProjectGrid = (items: Project[]) => (
+    <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      {items.map((project) => (
+        <Link
+          key={project.id}
+          href={`/projects/${project.id}`}
+          {...navigationIntent({ kind: "project", id: project.id })}
+        >
+          <Card className="group h-full cursor-pointer overflow-hidden transition-colors hover:border-input hover:bg-foreground/[0.03]">
+            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+              <CardTitle className="line-clamp-2">
+                {project.title}
+              </CardTitle>
+              <FolderOpen className="h-4 w-4 text-primary shrink-0 ml-2" />
+            </CardHeader>
+            <CardContent>
+              {project.description ? (
+                <p className="mb-4 line-clamp-2 text-sm leading-relaxed text-subtle-foreground">
+                  {project.description}
+                </p>
+              ) : null}
+              <div className="mb-4 flex flex-wrap gap-2">
+                <Badge variant="outline">
+                  <FileText className="mr-1.5 h-3 w-3 text-muted-foreground" />
+                  {project.contractCount || 0} contract
+                  {project.contractCount !== 1 ? "s" : ""}
+                </Badge>
+                <Badge variant="outline">
+                  <Book className="mr-1.5 h-3 w-3 text-muted-foreground" />
+                  {project.contextDocumentCount || 0} context
+                </Badge>
+              </div>
+              <div className="flex items-end justify-between pt-1">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Calendar className="h-3.5 w-3.5" />
+                  {formatDate(project.createdAt, "MMM d, yyyy")}
+                </div>
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+                  <ChevronRight className="h-4 w-4" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      ))}
+    </div>
+  );
 
   const renderContractGrid = (items: Contract[]) => (
     <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -655,6 +715,58 @@ const Dashboard = ({
       [section]: open,
     }));
   };
+
+  // One sidebar row, shared by the saved-chat list and its title search.
+  const renderChatThread = (thread: ChatThreadSummary) => (
+    <div
+      key={thread.id}
+      className={cn(
+        "group flex items-start justify-between rounded-md px-3 py-2 text-xs transition-colors",
+        selectedChatThreadId === thread.id
+          ? "bg-accent text-accent-foreground"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+      )}
+    >
+      <button
+        type="button"
+        {...navigationIntent({ kind: "thread", id: thread.id })}
+        onClick={() => {
+          setActiveTab("chat");
+          selectSavedChatThread(thread.id);
+        }}
+        className="min-w-0 flex-1 text-left"
+      >
+        <p className="truncate font-medium">{thread.title}</p>
+        <p className="mt-0.5 text-[10px]">
+          {thread.messageCount} msg
+          {thread.messageCount !== 1 ? "s" : ""}
+        </p>
+      </button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className={cn(
+          "h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+          selectedChatThreadId === thread.id && "opacity-100",
+        )}
+        onClick={() => setChatThreadToDelete(thread)}
+        disabled={
+          deleteChatMutation.isPending &&
+          deleteChatMutation.variables === thread.id
+        }
+        title="Delete chat"
+        aria-label="Delete chat"
+      >
+        {deleteChatMutation.isPending &&
+        deleteChatMutation.variables === thread.id ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+        )}
+      </Button>
+    </div>
+  );
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground">
@@ -908,10 +1020,35 @@ const Dashboard = ({
                       </p>
                       <p className="mt-0.5 text-[10px]">Not saved</p>
                     </button>
+                    {canUseSavedWorkspace ? (
+                      <ChatSearchField
+                        value={chatSearch.input}
+                        onChange={chatSearch.setInput}
+                        onClear={chatSearch.clear}
+                      />
+                    ) : null}
                     {!canUseSavedWorkspace ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">
                         Log in to save chats
                       </p>
+                    ) : chatSearch.search ? (
+                      <ChatSearchResults<ChatThreadSummary>
+                        search={chatSearch.search}
+                        enabled={canUseSavedWorkspace}
+                        onClear={chatSearch.clear}
+                        renderThreads={(threads) =>
+                          threads.map(renderChatThread)
+                        }
+                        renderLoadError={(retry) => (
+                          <button
+                            type="button"
+                            className="px-3 py-1.5 text-left text-xs text-destructive hover:underline"
+                            onClick={retry}
+                          >
+                            Couldn&apos;t search chats. Retry
+                          </button>
+                        )}
+                      />
                     ) : loadingChatThreads ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">
                         Loading chats...
@@ -929,61 +1066,9 @@ const Dashboard = ({
                         No chats yet
                       </p>
                     ) : (
-                      chatThreads.map((thread) => (
-                        <div
-                          key={thread.id}
-                          className={cn(
-                            "group flex items-start justify-between rounded-md px-3 py-2 text-xs transition-colors",
-                            selectedChatThreadId === thread.id
-                              ? "bg-accent text-accent-foreground"
-                              : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                          )}
-                        >
-                          <button
-                            type="button"
-                            {...navigationIntent({ kind: "thread", id: thread.id })}
-                            onClick={() => {
-                              setActiveTab("chat");
-                              selectSavedChatThread(thread.id);
-                            }}
-                            className="min-w-0 flex-1 text-left"
-                          >
-                            <p className="truncate font-medium">
-                              {thread.title}
-                            </p>
-                            <p className="mt-0.5 text-[10px]">
-                              {thread.messageCount} msg
-                              {thread.messageCount !== 1 ? "s" : ""}
-                            </p>
-                          </button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className={cn(
-                              "h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
-                              selectedChatThreadId === thread.id &&
-                                "opacity-100",
-                            )}
-                            onClick={() => setChatThreadToDelete(thread)}
-                            disabled={
-                              deleteChatMutation.isPending &&
-                              deleteChatMutation.variables === thread.id
-                            }
-                            title="Delete chat"
-                            aria-label="Delete chat"
-                          >
-                            {deleteChatMutation.isPending &&
-                            deleteChatMutation.variables === thread.id ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-                            )}
-                          </Button>
-                        </div>
-                      ))
+                      chatThreads.map(renderChatThread)
                     )}
-                    {renderLoadMore(threadList)}
+                    {chatSearch.search ? null : renderLoadMore(threadList)}
                   </CollapsibleContent>
                 </Collapsible>
               </div>
@@ -1226,9 +1311,25 @@ const Dashboard = ({
             )
           ) : null}
 
+          {activeTab === "projects" && canUseSavedWorkspace ? (
+            <ProjectSearchField
+              value={projectSearch.input}
+              onChange={projectSearch.setInput}
+              onClear={projectSearch.clear}
+            />
+          ) : null}
+
           {activeTab === "projects" ? (
             !canUseSavedWorkspace ? (
               renderLoginRequired("projects")
+            ) : projectSearch.search ? (
+              <ProjectSearchResults<Project>
+                search={projectSearch.search}
+                enabled
+                onClear={projectSearch.clear}
+                renderProjects={renderProjectGrid}
+                renderLoadError={(retry) => renderLoadError("projects", retry)}
+              />
             ) : projectsFailed ? (
               renderLoadError("projects", () => void refetchProjects())
             ) : loadingProjects ? (
@@ -1260,51 +1361,7 @@ const Dashboard = ({
                 </div>
               </div>
             ) : (
-              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                {projects.map((project) => (
-                  <Link
-                    key={project.id}
-                    href={`/projects/${project.id}`}
-                    {...navigationIntent({ kind: "project", id: project.id })}
-                  >
-                    <Card className="group h-full cursor-pointer overflow-hidden transition-colors hover:border-input hover:bg-foreground/[0.03]">
-                      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-                        <CardTitle className="line-clamp-2">
-                          {project.title}
-                        </CardTitle>
-                        <FolderOpen className="h-4 w-4 text-primary shrink-0 ml-2" />
-                      </CardHeader>
-                      <CardContent>
-                        {project.description ? (
-                          <p className="mb-4 line-clamp-2 text-sm leading-relaxed text-subtle-foreground">
-                            {project.description}
-                          </p>
-                        ) : null}
-                        <div className="mb-4 flex flex-wrap gap-2">
-                          <Badge variant="outline">
-                            <FileText className="mr-1.5 h-3 w-3 text-muted-foreground" />
-                            {project.contractCount || 0} contract
-                            {project.contractCount !== 1 ? "s" : ""}
-                          </Badge>
-                          <Badge variant="outline">
-                            <Book className="mr-1.5 h-3 w-3 text-muted-foreground" />
-                            {project.contextDocumentCount || 0} context
-                          </Badge>
-                        </div>
-                        <div className="flex items-end justify-between pt-1">
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <Calendar className="h-3.5 w-3.5" />
-                            {formatDate(project.createdAt, "MMM d, yyyy")}
-                          </div>
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
-                            <ChevronRight className="h-4 w-4" />
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </Link>
-                ))}
-              </div>
+              renderProjectGrid(projects)
             )
           ) : null}
 
@@ -1344,7 +1401,9 @@ const Dashboard = ({
         {activeTab === "contracts" &&
           !contractSearch.search &&
           renderLoadMore(contractList)}
-        {activeTab === "projects" && renderLoadMore(projectList)}
+        {activeTab === "projects" &&
+          !projectSearch.search &&
+          renderLoadMore(projectList)}
       </main>
 
       <AlertDialog open={confirmNewTemporary} onOpenChange={setConfirmNewTemporary}>

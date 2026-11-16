@@ -122,6 +122,43 @@ describe("contract title search", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("accepts a search of 200 emoji, the longest the API takes, and cuts a longer one", async () => {
+    const user = userEvent.setup();
+    mocks.get.mockResolvedValue(page([]));
+    renderHarness();
+
+    const field = screen.getByRole("searchbox", { name: "Search contracts" });
+    // The API counts code points. An emoji is one, but two of the UTF-16 code units that a native
+    // maxLength counts, so that attribute would stop this search at 100 emoji.
+    const longest = "😀".repeat(200);
+    await user.click(field);
+    await user.paste(longest);
+    expect(field).toHaveValue(longest);
+    await waitFor(() => expect(mocks.get).toHaveBeenCalledOnce());
+    expect(urlParams(mocks.get.mock.calls[0]!).get("q")).toBe(longest);
+
+    await user.paste("😀 and more");
+    expect(field).toHaveValue(longest);
+  });
+
+  it("keeps all of a 200-character search pasted after a space, which the API accepts once trimmed", async () => {
+    const user = userEvent.setup();
+    mocks.get.mockResolvedValue(page([]));
+    renderHarness();
+
+    const field = screen.getByRole("searchbox", { name: "Search contracts" });
+    const longest = `${"lease ".repeat(33)}ab`;
+    expect(longest).toHaveLength(200);
+    await user.click(field);
+    await user.paste(` ${longest}`);
+    expect(field).toHaveValue(` ${longest}`);
+    await waitFor(() => expect(mocks.get).toHaveBeenCalledOnce());
+    expect(urlParams(mocks.get.mock.calls[0]!).get("q")).toBe(longest);
+
+    await user.paste("c");
+    expect(field).toHaveValue(` ${longest}`);
+  });
+
   it("shows a distinct no-match state whose Clear search restores the list", async () => {
     const user = userEvent.setup();
     mocks.get.mockResolvedValue(page([]));

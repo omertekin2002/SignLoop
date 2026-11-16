@@ -80,6 +80,7 @@ import { cn } from "@/lib/utils";
 import { createOperationGuard } from "@/lib/operation-guard";
 import { createSavedChatSession } from "@/lib/saved-chat-session";
 import { refreshWorkspaceList } from "@/lib/use-workspace-list";
+import { invalidateAfterWrite } from "@/lib/invalidate-after-write";
 import {
   chatThreadOptions,
   type ChatThreadDetail,
@@ -520,7 +521,7 @@ export function ChatPanel({
       );
       if (response.ok) {
         queryClient.removeQueries({ queryKey: ["chat-thread", id] });
-        void queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+        void invalidateAfterWrite(queryClient, ["chat-threads"]);
       }
     }),
   );

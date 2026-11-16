@@ -120,3 +120,126 @@ describe("workspace list search", () => {
     }
   });
 });
+
+describe("workspace list head refresh with searches", () => {
+  it("restarts a search still waiting for its first response, instead of keeping that earlier answer", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    const page = (...ids: string[]) => ({
+      data: {
+        data: ids.map((id) => ({ id })),
+        offset: 0,
+        limit: 50,
+        total: ids.length,
+      },
+    });
+    // The first search request is sent before the list changes and is answered late, without the new chat.
+    let answerEarlierSearch!: (value: ReturnType<typeof page>) => void;
+    let earlierSearchSignal: { readonly aborted: boolean } | undefined;
+    const searchUrls: string[] = [];
+    vi.spyOn(apiClient, "get").mockImplementation(async (url, config) => {
+      if (!new URL(String(url), "https://app.test").searchParams.has("q"))
+        return page("new-thread");
+      searchUrls.push(String(url));
+      if (searchUrls.length > 1) return page("new-thread", "older-thread");
+      earlierSearchSignal = config?.signal;
+      return new Promise((resolve) => {
+        answerEarlierSearch = resolve;
+      });
+    });
+    const observer = new InfiniteQueryObserver(
+      client,
+      workspaceListOptions<{ id: string }>(
+        "chat-threads",
+        "/chat/threads",
+        "thread",
+      ),
+    );
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      await vi.waitFor(() => expect(searchUrls).toHaveLength(1));
+      expect(observer.getCurrentResult().isPending).toBe(true);
+
+      const refresh = refreshWorkspaceList(
+        client,
+        "chat-threads",
+        "/chat/threads",
+      );
+      answerEarlierSearch(page("older-thread"));
+      await refresh;
+
+      const result = observer.getCurrentResult();
+      expect(result.data?.pages[0]?.data).toEqual([
+        { id: "new-thread" },
+        { id: "older-thread" },
+      ]);
+      expect(result.isStale).toBe(false);
+      expect(earlierSearchSignal?.aborted).toBe(true);
+      expect(searchUrls).toEqual([
+        "/chat/threads?q=thread&limit=50&offset=0",
+        "/chat/threads?q=thread&limit=50&offset=0",
+      ]);
+    } finally {
+      unsubscribe();
+      client.clear();
+    }
+  });
+
+  it("also refreshes searches under the same prefix, and nothing else", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    const get = vi.spyOn(apiClient, "get").mockImplementation(async (url) => {
+      const params = new URL(String(url), "https://app.test").searchParams;
+      return {
+        data: {
+          data: [
+            { id: `${params.get("q") ?? "all"}-${get.mock.calls.length}` },
+          ],
+          offset: 0,
+          limit: 50,
+          total: 1,
+        },
+      };
+    });
+    const observe = (
+      search = "",
+      key = "chat-threads",
+      path = "/chat/threads",
+    ) => {
+      const observer = new InfiniteQueryObserver(
+        client,
+        workspaceListOptions<{ id: string }>(key, path, search),
+      );
+      return { observer, unsubscribe: observer.subscribe(() => {}) };
+    };
+    const head = observe();
+    const search = observe("lease");
+    const projects = observe("", "projects", "/projects");
+    try {
+      await Promise.all([
+        head.observer.refetch(),
+        search.observer.refetch(),
+        projects.observer.refetch(),
+      ]);
+      get.mockClear();
+
+      await refreshWorkspaceList(client, "chat-threads", "/chat/threads");
+
+      expect(get.mock.calls.map(([url]) => url).sort()).toEqual([
+        "/chat/threads?limit=50&offset=0",
+        "/chat/threads?q=lease&limit=50&offset=0",
+      ]);
+      expect(search.observer.getCurrentResult().data?.pages[0]?.data).toEqual([
+        { id: expect.stringMatching(/^lease-/) },
+      ]);
+      expect(search.observer.getCurrentResult().isStale).toBe(false);
+    } finally {
+      head.unsubscribe();
+      search.unsubscribe();
+      projects.unsubscribe();
+      client.clear();
+    }
+  });
+});

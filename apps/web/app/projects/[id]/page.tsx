@@ -11,6 +11,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, getApiErrorMessage } from "@/lib/api-client";
+import { invalidateAfterWrite } from "@/lib/invalidate-after-write";
 import { formatDate, formatFileSize, getRiskColor } from "@/lib/utils";
 import {
   formatUploadLimit,
@@ -109,8 +110,7 @@ const ProjectDetails = () => {
     },
     onSuccess: () => {
       toast.success("Project deleted");
-      queryClient.invalidateQueries({ queryKey: ["contracts"] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      void invalidateAfterWrite(queryClient, ["contracts"], ["projects"]);
       for (const contract of project?.contracts ?? []) {
         queryClient.removeQueries({ queryKey: ["contract", contract.id] });
         queryClient.removeQueries({ queryKey: ["analysis", contract.id] });
@@ -130,10 +130,13 @@ const ProjectDetails = () => {
     },
     onSuccess: () => {
       toast.success("Context document deleted");
-      queryClient.invalidateQueries({ queryKey: ["project", id] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["contract"] });
-      queryClient.invalidateQueries({ queryKey: ["contracts"] });
+      void invalidateAfterWrite(
+        queryClient,
+        ["project", id],
+        ["projects"],
+        ["contract"],
+        ["contracts"],
+      );
       setDocToDelete(null);
     },
     onError: (error: unknown) => {
@@ -176,10 +179,13 @@ const ProjectDetails = () => {
       setSelectedContractFile(null);
       setContractName("");
       if (contractFileRef.current) contractFileRef.current.value = "";
-      queryClient.invalidateQueries({ queryKey: ["project", id] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
       // Dashboard title searches include contracts in projects.
-      queryClient.invalidateQueries({ queryKey: ["contracts"] });
+      void invalidateAfterWrite(
+        queryClient,
+        ["project", id],
+        ["projects"],
+        ["contracts"],
+      );
     },
     onError: (error: unknown) => {
       if (isOperationCanceled(error)) return;
@@ -212,10 +218,13 @@ const ProjectDetails = () => {
       setContextTitle("");
       setContextType("other");
       if (contextFileRef.current) contextFileRef.current.value = "";
-      queryClient.invalidateQueries({ queryKey: ["contract"] });
-      queryClient.invalidateQueries({ queryKey: ["contracts"] });
-      queryClient.invalidateQueries({ queryKey: ["project", id] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      void invalidateAfterWrite(
+        queryClient,
+        ["contract"],
+        ["contracts"],
+        ["project", id],
+        ["projects"],
+      );
     },
     onError: (error: unknown) => {
       if (isOperationCanceled(error)) return;

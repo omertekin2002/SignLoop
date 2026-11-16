@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/lib/api-client";
+import { invalidateAfterWrite } from "@/lib/invalidate-after-write";
 import { cn, formatFileSize } from "@/lib/utils";
 import { formatUploadLimit, uploadConfigOptions } from "@/lib/upload-client";
 import { Upload, File, Loader2 } from "lucide-react";
@@ -71,7 +72,7 @@ export function UploadDialog({ children }: UploadDialogProps) {
       setFile(null);
       setContractName("");
       if (fileInputRef.current) fileInputRef.current.value = "";
-      queryClient.invalidateQueries({ queryKey: ["contracts"] });
+      void invalidateAfterWrite(queryClient, ["contracts"]);
     },
     onError: (error: unknown) => {
       if (isOperationCanceled(error)) return;

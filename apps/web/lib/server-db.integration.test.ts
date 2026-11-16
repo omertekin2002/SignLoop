@@ -66,8 +66,10 @@ import {
   getProjectContextForAnalysis,
   listProjectContextDocumentsForUser,
   getRecentChatMessagesForThreadForUser,
+  listChatThreadsByUserId,
   listContractsByUserId,
   listContractsForChat,
+  listProjectsByUserId,
   saveContractUploadForUser,
   setContractJurisdictionForUser,
   addContextDocumentToProject,
@@ -98,9 +100,11 @@ if (process.env.REQUIRE_DB_TESTS === "1" && !connectionString)
 
 const TEST_OWNERS = [
   "another-user", "bounded-followup-owner", "chat-owner", "chat-pagination-owner",
+  "chat-search-intruder", "chat-search-owner", "chat-search-paging-owner",
   "content-receipt-owner", "empty-lookup-intruder", "empty-lookup-owner", "file-owner",
   "intruder", "late-reply-owner", "legacy-receipt-owner", "other", "owner", "OWNER",
-  "project-analysis-owner", "quota-owner", "replay-failure-owner", "replay-intruder",
+  "project-analysis-owner", "project-search-intruder", "project-search-owner",
+  "project-search-paging-owner", "quota-owner", "replay-failure-owner", "replay-intruder",
   "replay-owner", "replay-project-owner", "revision-chat-owner", "scope-user", "search-intruder",
   "search-owner", "search-paging-owner", "settings-owner", "title-owner",
 ];
@@ -1779,6 +1783,122 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(new Set(titles).size).toBe(55);
     expect(titles[0]).toBe("Paged lease 2");
     expect(titles.at(-1)).toBe("Paged lease 110");
+  });
+
+  it("searches the owner's projects by title, case-insensitively and with wildcards taken literally", async () => {
+    const owner = "project-search-owner";
+    const older = await createProjectForUser({ userId: owner, title: "Office LEASES" });
+    const newer = await createProjectForUser({ userId: owner, title: "Warehouse leases" });
+    await createProjectForUser({ userId: owner, title: "Employment" });
+    await createProjectForUser({ userId: "project-search-intruder", title: "Intruder leases" });
+    const percent = await createProjectForUser({ userId: owner, title: "50% renewals" });
+    await createProjectForUser({ userId: owner, title: "500 renewals" });
+    const underscore = await createProjectForUser({ userId: owner, title: "plan_b" });
+    await createProjectForUser({ userId: owner, title: "planxb" });
+    const backslash = await createProjectForUser({ userId: owner, title: "C:\\deals" });
+    await createProjectForUser({ userId: owner, title: "C:deals" });
+
+    // Matches keep the list's newest-first order and count only what matched.
+    const leases = await listProjectsByUserId(owner, {}, "lease");
+    expect(leases.total).toBe(2);
+    expect(leases.data.map((row) => row.id)).toEqual([newer.id, older.id]);
+    expect(leases.data.every((row) => row.userId === owner)).toBe(true);
+    expect((await listProjectsByUserId("project-search-intruder", {}, "lease")).data.map((row) => row.title))
+      .toEqual(["Intruder leases"]);
+
+    const only = async (term: string) => {
+      const page = await listProjectsByUserId(owner, {}, term);
+      return [page.total, page.data.map((row) => row.id)];
+    };
+    expect(await only("50%")).toEqual([1, [percent.id]]);
+    expect(await only("n_b")).toEqual([1, [underscore.id]]);
+    expect(await only("C:\\d")).toEqual([1, [backslash.id]]);
+    expect(await only("no such title")).toEqual([0, []]);
+
+    // Without a search the list is unchanged.
+    expect((await listProjectsByUserId(owner, {})).total).toBe(9);
+    expect((await listProjectsByUserId(owner, {}, null)).total).toBe(9);
+  });
+
+  it("pages through more than one page of project search results with the filtered total", async () => {
+    const owner = "project-search-paging-owner";
+    await pool.current!.query(
+      `insert into projects (user_id, title, created_at)
+       select $1, case when n % 2 = 0 then 'Paged deal ' || n else 'Unrelated ' || n end,
+              now() - n * interval '1 minute'
+       from generate_series(1, 110) as n`,
+      [owner],
+    );
+
+    const first = await listProjectsByUserId(owner, { offset: 0 }, "PAGED");
+    const second = await listProjectsByUserId(owner, { offset: 50 }, "PAGED");
+    expect([first.total, first.data.length, second.total, second.data.length]).toEqual([55, 50, 55, 5]);
+    const titles = [...first.data, ...second.data].map((row) => row.title);
+    expect(new Set(titles).size).toBe(55);
+    expect(titles[0]).toBe("Paged deal 2");
+    expect(titles.at(-1)).toBe("Paged deal 110");
+  });
+
+  it("searches the owner's chats by title, case-insensitively and with wildcards taken literally", async () => {
+    const owner = "chat-search-owner";
+    const create = async (title: string, minutesAgo: number, userId = owner) => {
+      const thread = await createChatThreadForUser({ userId, title });
+      await pool.current!.query(
+        "update chat_threads set updated_at = now() - $2 * interval '1 minute' where id = $1",
+        [thread.id, minutesAgo],
+      );
+      return thread;
+    };
+    const older = await create("Office LEASES", 10);
+    const newer = await create("Warehouse leases", 1);
+    await create("Employment", 2);
+    await create("Intruder leases", 0, "chat-search-intruder");
+    const percent = await create("50% renewals", 3);
+    await create("500 renewals", 4);
+    const underscore = await create("plan_b", 5);
+    await create("planxb", 6);
+    const backslash = await create("C:\\deals", 7);
+    await create("C:deals", 8);
+
+    // Matches keep the list's most-recently-updated-first order and count only what matched.
+    const leases = await listChatThreadsByUserId(owner, {}, "lease");
+    expect(leases.total).toBe(2);
+    expect(leases.data.map((row) => row.id)).toEqual([newer.id, older.id]);
+    expect(leases.data.every((row) => row.userId === owner)).toBe(true);
+    expect((await listChatThreadsByUserId("chat-search-intruder", {}, "lease")).data.map((row) => row.title))
+      .toEqual(["Intruder leases"]);
+
+    const only = async (term: string) => {
+      const page = await listChatThreadsByUserId(owner, {}, term);
+      return [page.total, page.data.map((row) => row.id)];
+    };
+    expect(await only("50%")).toEqual([1, [percent.id]]);
+    expect(await only("n_b")).toEqual([1, [underscore.id]]);
+    expect(await only("C:\\d")).toEqual([1, [backslash.id]]);
+    expect(await only("no such title")).toEqual([0, []]);
+
+    // Without a search the list is unchanged.
+    expect((await listChatThreadsByUserId(owner, {})).total).toBe(9);
+    expect((await listChatThreadsByUserId(owner, {}, null)).total).toBe(9);
+  });
+
+  it("pages through more than one page of chat search results with the filtered total", async () => {
+    const owner = "chat-search-paging-owner";
+    await pool.current!.query(
+      `insert into chat_threads (user_id, title, updated_at)
+       select $1, case when n % 2 = 0 then 'Paged chat ' || n else 'Unrelated ' || n end,
+              now() - n * interval '1 minute'
+       from generate_series(1, 110) as n`,
+      [owner],
+    );
+
+    const first = await listChatThreadsByUserId(owner, { offset: 0 }, "PAGED");
+    const second = await listChatThreadsByUserId(owner, { offset: 50 }, "PAGED");
+    expect([first.total, first.data.length, second.total, second.data.length]).toEqual([55, 50, 55, 5]);
+    const titles = [...first.data, ...second.data].map((row) => row.title);
+    expect(new Set(titles).size).toBe(55);
+    expect(titles[0]).toBe("Paged chat 2");
+    expect(titles.at(-1)).toBe("Paged chat 110");
   });
 
   it("exposes contract text to chat tools for the owner only", async () => {

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, getApiErrorMessage } from "@/lib/api-client";
+import { invalidateAfterWrite } from "@/lib/invalidate-after-write";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,7 +39,7 @@ export function NewProjectDialog({ children }: NewProjectDialogProps) {
         },
         onSuccess: (data) => {
             toast.success("Project created successfully");
-            queryClient.invalidateQueries({ queryKey: ["projects"] });
+            void invalidateAfterWrite(queryClient, ["projects"]);
             setOpen(false);
             setTitle("");
             setDescription("");

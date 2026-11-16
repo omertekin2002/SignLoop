@@ -12,6 +12,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, getApiErrorMessage, type ApiError } from "@/lib/api-client";
+import { invalidateAfterWrite } from "@/lib/invalidate-after-write";
 import { formatDate, getRiskColor } from "@/lib/utils";
 import {
   admissionRejectionMessage,
@@ -61,6 +62,7 @@ import { toast } from "sonner";
 import { ContractSourceProvider, FindingSource, OpenContractSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
 import { DownloadBriefButton } from "@/components/download-brief-button";
+import { PrintBrief } from "@/components/print-brief";
 import { ContractNotes } from "@/components/contract-notes";
 import { ContractJurisdiction } from "@/components/contract-jurisdiction";
 import { AnalysisCoverageNotice } from "@/components/analysis-coverage-notice";
@@ -186,10 +188,13 @@ const ContractDetails = () => {
           });
           // A request can outlive this page. Refresh only its captured identity's cache;
           // the operation hook suppresses stale view callbacks after navigation.
-          void queryClient.invalidateQueries({ queryKey: ["contract", id] });
-          void queryClient.invalidateQueries({ queryKey: ["contracts"] });
-          void queryClient.invalidateQueries({ queryKey: ["projects"] });
-          void queryClient.invalidateQueries({ queryKey: ["project"] });
+          void invalidateAfterWrite(
+            queryClient,
+            ["contract", id],
+            ["contracts"],
+            ["projects"],
+            ["project"],
+          );
           return data;
         } catch (error) {
           const apiError = error as ApiError;
@@ -361,10 +366,13 @@ const ContractDetails = () => {
     },
     onSuccess: () => {
       toast.success("Analysis deleted");
-      queryClient.invalidateQueries({ queryKey: ["contract", id] });
-      queryClient.invalidateQueries({ queryKey: ["contracts"] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["project"] });
+      void invalidateAfterWrite(
+        queryClient,
+        ["contract", id],
+        ["contracts"],
+        ["projects"],
+        ["project"],
+      );
     },
     onError: (error: ApiError) => {
       toast.error(getApiErrorMessage(error, "Failed to delete analysis"));
@@ -379,10 +387,13 @@ const ContractDetails = () => {
       );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["contract", id] });
-      queryClient.invalidateQueries({ queryKey: ["contracts"] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["project"] });
+      void invalidateAfterWrite(
+        queryClient,
+        ["contract", id],
+        ["contracts"],
+        ["projects"],
+        ["project"],
+      );
       toast.success("Older analyses deleted");
     },
     onError: (error: ApiError) => {
@@ -396,9 +407,12 @@ const ContractDetails = () => {
     },
     onSuccess: () => {
       toast.success("Contract deleted");
-      queryClient.invalidateQueries({ queryKey: ["contracts"] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["project"] });
+      void invalidateAfterWrite(
+        queryClient,
+        ["contracts"],
+        ["projects"],
+        ["project"],
+      );
       queryClient.removeQueries({ queryKey: ["contract", id] });
       router.push("/dashboard");
     },
@@ -487,6 +501,11 @@ const ContractDetails = () => {
             <div className="flex flex-wrap items-center gap-2">
               <OpenContractSource />
               <DownloadBriefButton
+                contract={{ ...contract, id }}
+                analysis={analysis}
+                historical={isViewingHistoricalAnalysis}
+              />
+              <PrintBrief
                 contract={{ ...contract, id }}
                 analysis={analysis}
                 historical={isViewingHistoricalAnalysis}
