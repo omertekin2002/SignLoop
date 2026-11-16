@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MAX_CONTRACT_SEARCH_LENGTH } from "@/lib/contract-search";
+import { capContractSearch } from "@/lib/contract-search";
 import { cn } from "@/lib/utils";
 import { useWorkspaceList } from "@/lib/use-workspace-list";
 
@@ -58,7 +58,7 @@ type SearchFieldProps = {
   onClear: () => void;
 };
 
-/** A labelled search box: Escape or the clear button empties it at once. */
+/** A labelled search box, capped at the length the API accepts: Escape or the clear button empties it at once. */
 export function WorkspaceSearchField({
   label,
   placeholder,
@@ -91,14 +91,14 @@ export function WorkspaceSearchField({
           id={id}
           type="search"
           value={value}
-          maxLength={MAX_CONTRACT_SEARCH_LENGTH}
           placeholder={placeholder}
           autoComplete="off"
           className={cn(
             "[&::-webkit-search-cancel-button]:hidden",
             compact ? "h-8 pl-8 pr-8 md:text-xs" : "pl-10 pr-10",
           )}
-          onChange={(event) => onChange(event.target.value)}
+          // Capped here, in code points as the API counts; a native maxLength counts UTF-16 code units.
+          onChange={(event) => onChange(capContractSearch(event.target.value))}
           onKeyDown={(event) => {
             if (event.key === "Escape" && value) {
               event.preventDefault();

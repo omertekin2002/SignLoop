@@ -99,7 +99,8 @@ describe("chat title search", () => {
 
     const field = screen.getByRole("searchbox", { name: "Search chats" });
     expect(field).toHaveAttribute("placeholder", "Search chats by title");
-    expect(field).toHaveAttribute("maxLength", "200");
+    // The field caps its value in code points itself; a native maxLength counts UTF-16 code units.
+    expect(field).not.toHaveAttribute("maxLength");
     await user.type(field, "  lease ");
     expect(screen.getByText("All chats")).toBeInTheDocument();
 

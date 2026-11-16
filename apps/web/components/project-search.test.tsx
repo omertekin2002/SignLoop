@@ -94,7 +94,8 @@ describe("project name search", () => {
 
     const field = screen.getByRole("searchbox", { name: "Search projects" });
     expect(field).toHaveAttribute("placeholder", "Search by project name");
-    expect(field).toHaveAttribute("maxLength", "200");
+    // The field caps its value in code points itself; a native maxLength counts UTF-16 code units.
+    expect(field).not.toHaveAttribute("maxLength");
     await user.type(field, "  leases ");
     expect(screen.getByText("All projects")).toBeInTheDocument();
 
