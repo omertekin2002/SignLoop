@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useWorkspaceList } from "@/lib/use-workspace-list";
+import { invalidateAfterWrite } from "@/lib/invalidate-after-write";
 import { useNavigationPrefetch } from "@/lib/use-navigation-prefetch";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
@@ -565,7 +566,8 @@ const Dashboard = ({
         chatThreads?.find((thread) => thread.id !== deletedThreadId)?.id ??
         null;
       setRecentlyDeletedChatThreadId(deletedThreadId);
-      queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+      // Not awaited: the selection below moves on at once, and this never rejects.
+      void invalidateAfterWrite(queryClient, ["chat-threads"]);
       queryClient.removeQueries({ queryKey: ["chat-thread", deletedThreadId] });
       setSelectedChatThreadId((current) =>
         current === deletedThreadId ? fallbackThreadId : current,
@@ -584,12 +586,14 @@ const Dashboard = ({
     },
     onSuccess: (_data, contract) => {
       setContractToDelete(null);
-      queryClient.invalidateQueries({ queryKey: ["contracts"] });
       // Search results include contracts in projects, whose page and list counts also change.
-      if (contract.projectId) {
-        queryClient.invalidateQueries({ queryKey: ["project", contract.projectId] });
-        queryClient.invalidateQueries({ queryKey: ["projects"] });
-      }
+      void invalidateAfterWrite(
+        queryClient,
+        ["contracts"],
+        ...(contract.projectId
+          ? [["project", contract.projectId], ["projects"]]
+          : []),
+      );
     },
     onError: (error: unknown) => {
       toast.error(getApiErrorMessage(error, "Failed to delete contract"));

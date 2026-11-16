@@ -1,4 +1,9 @@
-import { QueryClient, QueryClientProvider, queryOptions } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+  queryOptions,
+} from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -58,6 +63,7 @@ async function openDialog() {
   await screen.findByText(/up to 10 MB/);
   return {
     user,
+    queryClient,
     dialog,
     fileInput: screen.getByLabelText("Contract File"),
     nameInput: screen.getByLabelText("Contract Name"),
@@ -206,6 +212,43 @@ describe("UploadDialog", () => {
     expect(screen.queryByText("lease.pdf")).not.toBeInTheDocument();
     expect(screen.getByText(PROMPT)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Upload Contract" })).toBeDisabled();
+  });
+
+  it("reads the contracts list again when it was still loading as the upload finished", async () => {
+    mocks.uploadContract.mockResolvedValue({ success: true });
+    const { user, queryClient, fileInput, uploadButton } = await openDialog();
+    // The list's first request is sent before the upload and answered after it, without the new contract.
+    let answerEarlierList!: (titles: string[]) => void;
+    const listContracts = vi
+      .fn<() => Promise<string[]>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            answerEarlierList = resolve;
+          }),
+      )
+      .mockResolvedValue(["Office lease"]);
+    const list = new QueryObserver(queryClient, {
+      queryKey: ["contracts"],
+      queryFn: listContracts,
+      staleTime: 60_000,
+    });
+    const unsubscribe = list.subscribe(() => {});
+    try {
+      await waitFor(() => expect(listContracts).toHaveBeenCalledOnce());
+
+      await user.upload(fileInput, makeFile("lease.pdf", 2048));
+      await user.click(uploadButton);
+      await waitFor(() => expect(mocks.toast.success).toHaveBeenCalled());
+      answerEarlierList([]);
+
+      await waitFor(() =>
+        expect(list.getCurrentResult().data).toEqual(["Office lease"]),
+      );
+      expect(listContracts).toHaveBeenCalledTimes(2);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("shows the API error message when the upload fails", async () => {

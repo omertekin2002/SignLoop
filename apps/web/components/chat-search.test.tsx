@@ -9,6 +9,7 @@ import {
   useWorkspaceSearch,
   type SearchableChatThread,
 } from "@/components/contract-search";
+import { invalidateAfterWrite } from "@/lib/invalidate-after-write";
 import { refreshWorkspaceList } from "@/lib/use-workspace-list";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn() }));
@@ -383,7 +384,7 @@ describe("chat title search", () => {
 
     mocks.get.mockResolvedValue(page([{ id: "b", title: "Lease renewal" }]));
     // Deleting a chat invalidates the ["chat-threads"] prefix.
-    await client.invalidateQueries({ queryKey: ["chat-threads"] });
+    await invalidateAfterWrite(client, ["chat-threads"]);
 
     await waitFor(() =>
       expect(
