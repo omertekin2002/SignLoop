@@ -37,18 +37,28 @@ export function workspaceListOptions<T>(
   });
 }
 
-/** Replace the paginated view atomically after one head-page read, keeping stale pages visible until then. */
+/**
+ * Replace the paginated view atomically after one head-page read, keeping stale pages visible until then.
+ * Searches under the same prefix are invalidated too, so an open search never shows a stale list.
+ */
 export async function refreshWorkspaceList(
   client: QueryClient,
   key: string,
   path: string,
 ) {
   await client.cancelQueries({ queryKey: [key], exact: true });
-  return client.fetchInfiniteQuery({
-    ...workspaceListOptions(key, path),
-    pages: 1,
-    staleTime: 0,
-  });
+  const [result] = await Promise.all([
+    client.fetchInfiniteQuery({
+      ...workspaceListOptions(key, path),
+      pages: 1,
+      staleTime: 0,
+    }),
+    client.invalidateQueries({
+      queryKey: [key],
+      predicate: (query) => query.queryKey.length > 1,
+    }),
+  ]);
+  return result;
 }
 
 export function useWorkspaceList<T>(

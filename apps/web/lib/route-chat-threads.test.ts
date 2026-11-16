@@ -27,6 +27,8 @@ const threadSummary = {
   messageCount: 0,
 };
 
+const emptyPage = { data: [], total: 0, limit: 50, offset: 0 };
+
 const postRequest = (body?: string) =>
   new Request(threadsUrl, {
     method: "POST",
@@ -63,10 +65,11 @@ describe("GET /api/chat/threads", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(page);
-    expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith("owner", {
-      limit: undefined,
-      offset: undefined,
-    });
+    expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      { limit: undefined, offset: undefined },
+      null,
+    );
   });
 
   it("forwards limit and offset query params as numbers", async () => {
@@ -81,10 +84,11 @@ describe("GET /api/chat/threads", () => {
     const response = await GET(new Request(`${threadsUrl}?limit=5&offset=10`));
 
     expect(response.status).toBe(200);
-    expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith("owner", {
-      limit: 5,
-      offset: 10,
-    });
+    expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      { limit: 5, offset: 10 },
+      null,
+    );
   });
 
   it("leaves non-numeric pagination for the data layer to clamp", async () => {
@@ -96,13 +100,16 @@ describe("GET /api/chat/threads", () => {
       offset: 0,
     });
 
-    const response = await GET(new Request(`${threadsUrl}?limit=abc&offset=-3`));
+    const response = await GET(
+      new Request(`${threadsUrl}?limit=abc&offset=-3`),
+    );
 
     expect(response.status).toBe(200);
-    expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith("owner", {
-      limit: Number.NaN,
-      offset: -3,
-    });
+    expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      { limit: Number.NaN, offset: -3 },
+      null,
+    );
   });
 
   it("scopes the listing to the caller rather than any query-supplied user", async () => {
@@ -119,7 +126,113 @@ describe("GET /api/chat/threads", () => {
     expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
       "owner",
       expect.any(Object),
+      null,
     );
+  });
+
+  it("passes a trimmed title search through with paging", async () => {
+    const page = { data: [threadSummary], total: 1, limit: 50, offset: 50 };
+    auth.mockResolvedValue({ userId: "owner" });
+    listChatThreadsByUserId.mockResolvedValue(page);
+
+    const response = await GET(
+      new Request(`${threadsUrl}?q=%20%20Lease%20&limit=50&offset=50`),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(page);
+    expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      { limit: 50, offset: 50 },
+      "Lease",
+    );
+  });
+
+  it("passes LIKE wildcards and backslashes through unchanged for the data layer to escape", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    listChatThreadsByUserId.mockResolvedValue(emptyPage);
+
+    await GET(
+      new Request(`${threadsUrl}?q=${encodeURIComponent("50%_off\\v2")}`),
+    );
+
+    expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      expect.any(Object),
+      "50%_off\\v2",
+    );
+  });
+
+  it.each(["", "   ", "%20%09%0A"])(
+    "treats q=%j as no search",
+    async (value) => {
+      auth.mockResolvedValue({ userId: "owner" });
+      listChatThreadsByUserId.mockResolvedValue(emptyPage);
+
+      const response = await GET(new Request(`${threadsUrl}?q=${value}`));
+
+      expect(response.status).toBe(200);
+      expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
+        "owner",
+        expect.any(Object),
+        null,
+      );
+    },
+  );
+
+  it("accepts a 200-character search and measures it after trimming", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    listChatThreadsByUserId.mockResolvedValue(emptyPage);
+    const term = "a".repeat(200);
+
+    const response = await GET(
+      new Request(`${threadsUrl}?q=${encodeURIComponent(`  ${term}  `)}`),
+    );
+
+    expect(response.status).toBe(200);
+    expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      expect.any(Object),
+      term,
+    );
+  });
+
+  it("counts characters rather than UTF-16 code units", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    listChatThreadsByUserId.mockResolvedValue(emptyPage);
+
+    const response = await GET(
+      new Request(`${threadsUrl}?q=${encodeURIComponent("💬".repeat(200))}`),
+    );
+
+    expect(response.status).toBe(200);
+    expect(listChatThreadsByUserId).toHaveBeenCalledOnce();
+  });
+
+  it("returns a JSON 400 without touching the database for a 201-character search", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+
+    const response = await GET(
+      new Request(`${threadsUrl}?q=${"a".repeat(201)}`),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Search must be at most 200 characters",
+    });
+    expect(listChatThreadsByUserId).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 before validating a search when unauthenticated", async () => {
+    auth.mockResolvedValue({ userId: null });
+
+    const response = await GET(
+      new Request(`${threadsUrl}?q=${"a".repeat(201)}`),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Unauthorized" });
+    expect(listChatThreadsByUserId).not.toHaveBeenCalled();
   });
 
   it("maps a database failure to a generic 500 without leaking the cause", async () => {

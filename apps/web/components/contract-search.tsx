@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MAX_CONTRACT_SEARCH_LENGTH } from "@/lib/contract-search";
+import { cn } from "@/lib/utils";
 import { useWorkspaceList } from "@/lib/use-workspace-list";
 
 export const CONTRACT_SEARCH_DEBOUNCE_MS = 300;
@@ -20,6 +21,11 @@ export type SearchableContract = {
 };
 
 export type SearchableProject = {
+  id: string;
+  title: string;
+};
+
+export type SearchableChatThread = {
   id: string;
   title: string;
 };
@@ -59,16 +65,27 @@ export function WorkspaceSearchField({
   value,
   onChange,
   onClear,
-}: SearchFieldProps & { label: string; placeholder: string }) {
+  compact = false,
+}: SearchFieldProps & {
+  label: string;
+  placeholder: string;
+  /** A smaller field for the sidebar, whose label is read by assistive technology only. */
+  compact?: boolean;
+}) {
   const id = useId();
 
   return (
-    <div className="mb-6 max-w-md">
-      <Label htmlFor={id}>{label}</Label>
-      <div className="relative mt-2">
+    <div className={compact ? "py-1" : "mb-6 max-w-md"}>
+      <Label htmlFor={id} className={cn(compact && "sr-only")}>
+        {label}
+      </Label>
+      <div className={cn("relative", !compact && "mt-2")}>
         <Search
           aria-hidden="true"
-          className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+          className={cn(
+            "pointer-events-none absolute top-1/2 -translate-y-1/2 text-muted-foreground",
+            compact ? "left-3 h-3.5 w-3.5" : "left-4 h-4 w-4",
+          )}
         />
         <Input
           id={id}
@@ -77,7 +94,10 @@ export function WorkspaceSearchField({
           maxLength={MAX_CONTRACT_SEARCH_LENGTH}
           placeholder={placeholder}
           autoComplete="off"
-          className="pl-10 pr-10 [&::-webkit-search-cancel-button]:hidden"
+          className={cn(
+            "[&::-webkit-search-cancel-button]:hidden",
+            compact ? "h-8 pl-8 pr-8 md:text-xs" : "pl-10 pr-10",
+          )}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape" && value) {
@@ -91,11 +111,14 @@ export function WorkspaceSearchField({
             type="button"
             variant="ghost"
             size="icon"
-            className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 text-muted-foreground"
+            className={cn(
+              "absolute top-1/2 -translate-y-1/2 text-muted-foreground",
+              compact ? "right-0.5 h-7 w-7" : "right-1 h-8 w-8",
+            )}
             aria-label="Clear search"
             onClick={onClear}
           >
-            <X className="h-4 w-4" />
+            <X className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
           </Button>
         ) : null}
       </div>
@@ -123,6 +146,17 @@ export function ProjectSearchField(props: SearchFieldProps) {
   );
 }
 
+export function ChatSearchField(props: SearchFieldProps) {
+  return (
+    <WorkspaceSearchField
+      label="Search chats"
+      placeholder="Search chats by title"
+      compact
+      {...props}
+    />
+  );
+}
+
 type SearchResultsProps = {
   search: string;
   enabled: boolean;
@@ -141,6 +175,7 @@ export function WorkspaceSearchResults<T>({
   onClear,
   renderItems,
   renderLoadError,
+  compact = false,
 }: SearchResultsProps & {
   /** The list's query-key prefix, so invalidating the list refreshes its searches too. */
   listKey: string;
@@ -148,12 +183,69 @@ export function WorkspaceSearchResults<T>({
   noun: { one: string; many: string };
   emptyHint: ReactNode;
   renderItems: (items: T[]) => ReactNode;
+  /** Sidebar-sized states: one line each instead of a page section. */
+  compact?: boolean;
 }) {
   const list = useWorkspaceList<T>(listKey, path, enabled, search);
   const items = list.data ?? [];
   const total = list.total ?? items.length;
 
   if (list.isLoadingError) return renderLoadError(() => void list.refetch());
+
+  if (compact) {
+    if (list.isLoading) {
+      return (
+        <p role="status" className="px-3 py-1.5 text-xs text-muted-foreground">
+          Searching {noun.many}…
+        </p>
+      );
+    }
+
+    if (items.length === 0) {
+      return (
+        <div className="px-3 py-1.5 text-xs text-muted-foreground">
+          <p role="status" className="break-words">
+            No {noun.many} match &ldquo;{search}&rdquo;
+          </p>
+          <p className="mt-1">{emptyHint}</p>
+          <Button
+            type="button"
+            variant="link"
+            size="sm"
+            className="mt-1 h-auto p-0 text-xs"
+            onClick={onClear}
+          >
+            Clear search
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <p
+          role="status"
+          className="break-words px-3 py-1 text-[10px] text-muted-foreground"
+        >
+          {total === 1
+            ? `1 ${noun.one} matches`
+            : `${total} ${noun.many} match`}{" "}
+          &ldquo;{search}&rdquo;
+        </p>
+        {renderItems(items)}
+        {list.hasNextPage ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={list.isFetchingNextPage}
+            onClick={() => void list.fetchNextPage()}
+          >
+            {list.isFetchingNextPage ? "Loading…" : "Load more"}
+          </Button>
+        ) : null}
+      </>
+    );
+  }
 
   if (list.isLoading) {
     return (
@@ -245,6 +337,24 @@ export function ProjectSearchResults<T extends SearchableProject>({
       noun={{ one: "project", many: "projects" }}
       emptyHint="Search looks at project names. Try a shorter or different word."
       renderItems={renderProjects}
+    />
+  );
+}
+
+/** Title-search results across every page of the owner's saved chats, sized for the sidebar. */
+export function ChatSearchResults<T extends SearchableChatThread>({
+  renderThreads,
+  ...props
+}: SearchResultsProps & { renderThreads: (threads: T[]) => ReactNode }) {
+  return (
+    <WorkspaceSearchResults<T>
+      {...props}
+      listKey="chat-threads"
+      path="/chat/threads"
+      noun={{ one: "chat", many: "chats" }}
+      emptyHint="Search looks at chat titles. Try a shorter or different word."
+      renderItems={renderThreads}
+      compact
     />
   );
 }

@@ -63,6 +63,8 @@ import { UploadDialog } from "@/components/upload-dialog";
 import { NewProjectDialog } from "@/components/new-project-dialog";
 import { ChatPanel } from "@/components/chat-panel";
 import {
+  ChatSearchField,
+  ChatSearchResults,
   ContractSearchField,
   ContractSearchResults,
   ProjectSearchField,
@@ -296,6 +298,7 @@ const Dashboard = ({
   const contractSearch = useContractSearch();
   // Each tab keeps its own term, so switching tabs never carries a search across.
   const projectSearch = useWorkspaceSearch();
+  const chatSearch = useWorkspaceSearch();
   const contractList = useWorkspaceList<Contract>(
     "contracts",
     "/contracts?standalone=true",
@@ -709,6 +712,58 @@ const Dashboard = ({
     }));
   };
 
+  // One sidebar row, shared by the saved-chat list and its title search.
+  const renderChatThread = (thread: ChatThreadSummary) => (
+    <div
+      key={thread.id}
+      className={cn(
+        "group flex items-start justify-between rounded-md px-3 py-2 text-xs transition-colors",
+        selectedChatThreadId === thread.id
+          ? "bg-accent text-accent-foreground"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+      )}
+    >
+      <button
+        type="button"
+        {...navigationIntent({ kind: "thread", id: thread.id })}
+        onClick={() => {
+          setActiveTab("chat");
+          selectSavedChatThread(thread.id);
+        }}
+        className="min-w-0 flex-1 text-left"
+      >
+        <p className="truncate font-medium">{thread.title}</p>
+        <p className="mt-0.5 text-[10px]">
+          {thread.messageCount} msg
+          {thread.messageCount !== 1 ? "s" : ""}
+        </p>
+      </button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className={cn(
+          "h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+          selectedChatThreadId === thread.id && "opacity-100",
+        )}
+        onClick={() => setChatThreadToDelete(thread)}
+        disabled={
+          deleteChatMutation.isPending &&
+          deleteChatMutation.variables === thread.id
+        }
+        title="Delete chat"
+        aria-label="Delete chat"
+      >
+        {deleteChatMutation.isPending &&
+        deleteChatMutation.variables === thread.id ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+        )}
+      </Button>
+    </div>
+  );
+
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground">
       <aside
@@ -961,10 +1016,35 @@ const Dashboard = ({
                       </p>
                       <p className="mt-0.5 text-[10px]">Not saved</p>
                     </button>
+                    {canUseSavedWorkspace ? (
+                      <ChatSearchField
+                        value={chatSearch.input}
+                        onChange={chatSearch.setInput}
+                        onClear={chatSearch.clear}
+                      />
+                    ) : null}
                     {!canUseSavedWorkspace ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">
                         Log in to save chats
                       </p>
+                    ) : chatSearch.search ? (
+                      <ChatSearchResults<ChatThreadSummary>
+                        search={chatSearch.search}
+                        enabled={canUseSavedWorkspace}
+                        onClear={chatSearch.clear}
+                        renderThreads={(threads) =>
+                          threads.map(renderChatThread)
+                        }
+                        renderLoadError={(retry) => (
+                          <button
+                            type="button"
+                            className="px-3 py-1.5 text-left text-xs text-destructive hover:underline"
+                            onClick={retry}
+                          >
+                            Couldn&apos;t search chats. Retry
+                          </button>
+                        )}
+                      />
                     ) : loadingChatThreads ? (
                       <p className="px-3 py-1.5 text-xs text-muted-foreground">
                         Loading chats...
@@ -982,61 +1062,9 @@ const Dashboard = ({
                         No chats yet
                       </p>
                     ) : (
-                      chatThreads.map((thread) => (
-                        <div
-                          key={thread.id}
-                          className={cn(
-                            "group flex items-start justify-between rounded-md px-3 py-2 text-xs transition-colors",
-                            selectedChatThreadId === thread.id
-                              ? "bg-accent text-accent-foreground"
-                              : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                          )}
-                        >
-                          <button
-                            type="button"
-                            {...navigationIntent({ kind: "thread", id: thread.id })}
-                            onClick={() => {
-                              setActiveTab("chat");
-                              selectSavedChatThread(thread.id);
-                            }}
-                            className="min-w-0 flex-1 text-left"
-                          >
-                            <p className="truncate font-medium">
-                              {thread.title}
-                            </p>
-                            <p className="mt-0.5 text-[10px]">
-                              {thread.messageCount} msg
-                              {thread.messageCount !== 1 ? "s" : ""}
-                            </p>
-                          </button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className={cn(
-                              "h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
-                              selectedChatThreadId === thread.id &&
-                                "opacity-100",
-                            )}
-                            onClick={() => setChatThreadToDelete(thread)}
-                            disabled={
-                              deleteChatMutation.isPending &&
-                              deleteChatMutation.variables === thread.id
-                            }
-                            title="Delete chat"
-                            aria-label="Delete chat"
-                          >
-                            {deleteChatMutation.isPending &&
-                            deleteChatMutation.variables === thread.id ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-                            )}
-                          </Button>
-                        </div>
-                      ))
+                      chatThreads.map(renderChatThread)
                     )}
-                    {renderLoadMore(threadList)}
+                    {chatSearch.search ? null : renderLoadMore(threadList)}
                   </CollapsibleContent>
                 </Collapsible>
               </div>
