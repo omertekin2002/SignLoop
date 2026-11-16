@@ -108,7 +108,7 @@ for (const theme of THEMES) {
     const id = await contractWithAnalysis(page, title);
 
     await page.goto(`/contracts/${id}`);
-    await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
     const notes = page.getByRole("region", { name: "Your notes" });
     await expect(notes.getByLabel("Why I'd accept")).toBeEnabled();
     const printButton = page.getByRole("button", { name: "Print brief" });
@@ -141,7 +141,7 @@ for (const theme of THEMES) {
       brief.getByRole("heading", { level: 1, name: `Decision brief: ${title}` }),
     ).toBeVisible();
     for (const section of ["Coverage", "Jurisdiction", "Summary", "Findings", "Next steps"]) {
-      await expect(brief.getByRole("heading", { level: 2, name: section })).toBeVisible();
+      await expect(brief.getByRole("heading", { level: 2, name: section, exact: true })).toBeVisible();
     }
     await expect(brief.locator("blockquote")).toContainText(QUOTE);
     await expect(brief).toContainText("Scanned pages were read with OCR.");
@@ -149,7 +149,7 @@ for (const theme of THEMES) {
     await expect(brief).toContainText(`Source revision: ${REVISION}`);
 
     // The interactive page is not printed.
-    await expect(page.getByRole("heading", { level: 1, name: title })).toBeHidden();
+    await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeHidden();
     await expect(printButton).toBeHidden();
     await expect(page.getByRole("button", { name: "Delete Contract" })).toBeHidden();
     await expect(page.getByRole("link", { name: "Back to Dashboard" })).toBeHidden();
@@ -170,7 +170,7 @@ for (const theme of THEMES) {
     expect(requests).toEqual([]);
     await page.emulateMedia({ media: "screen" });
     await expect(brief).toBeHidden();
-    await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
     expectNoCspViolations(violations, "a contract page with a printable brief");
   });
 }
