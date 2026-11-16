@@ -1,0 +1,226 @@
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { marked, type Tokens } from "marked";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PrintBrief } from "@/components/print-brief";
+import { renderAnalysisBriefMarkdown } from "@/lib/analysis-brief";
+import type { AnalysisResult } from "@/lib/schemas";
+
+const mocks = vi.hoisted(() => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+vi.mock("sonner", () => ({ toast: mocks.toast }));
+
+const CONTRACT_ID = "11111111-2222-4333-8444-555555555555";
+const REVISION = `sha256:${"a".repeat(64)}`;
+const SOURCE = {
+  contract_id: CONTRACT_ID,
+  revision: REVISION,
+  index_unit: "unicode-code-points" as const,
+};
+
+const CONTRACT = {
+  id: CONTRACT_ID,
+  title: "Gym membership",
+  status: "ANALYZED",
+  extractionWarning: "Scanned pages were read with OCR.",
+};
+
+const RESULT: Partial<AnalysisResult> = {
+  source: SOURCE,
+  risk_badge: "MEDIUM",
+  coverage_notices: ["Only part of this contract was analysed."],
+  comparison_jurisdiction: "England and Wales",
+  key_points: ["Renews every year."],
+  summary: {
+    what_it_is: "A gym membership agreement.",
+    payments: { amount: "£45", frequency: "Monthly", fees: [] },
+    term: { start: null, end: null, minimum_term: "12 months" },
+    renewal: { auto_renew: true, renewal_period: "12 months" },
+    cancellation: {
+      how: "Write to the club.",
+      notice_period_days: 30,
+      notice_period_text: null,
+      penalties: [],
+    },
+  },
+  red_flags: [
+    {
+      type: "Auto-renewal",
+      severity: 7,
+      explanation: "The contract renews for a further year unless cancelled.",
+      where: "Clause 9.2",
+      evidence: { quote: "shall renew automatically", segment: "section-2" },
+      citation: {
+        ...SOURCE,
+        status: "verified",
+        quote: "shall renew automatically",
+        start: 100,
+        end: 125,
+      },
+      confidence: 80,
+    },
+  ],
+  next_actions: {
+    questions_to_ask: ["Can I cancel early?"],
+    email_templates: [{ subject: "Cancellation", body: "Dear club,\nI wish to cancel." }],
+  },
+  disclaimer: "This is an AI analysis, not legal advice.",
+};
+
+const ANALYSIS = {
+  createdAt: "2026-10-29T10:00:00Z",
+  riskBadge: "MEDIUM",
+  resultJson: RESULT,
+};
+
+const BUTTON = { name: "Print brief" };
+
+function printedBrief(): HTMLElement {
+  const articles = document.body.querySelectorAll<HTMLElement>(":scope > [data-print-brief]");
+  expect(articles).toHaveLength(1);
+  return articles[0]!;
+}
+
+function headingsOf(element: HTMLElement): string[] {
+  return Array.from(element.querySelectorAll("h1, h2, h3, h4, h5, h6")).map(
+    (heading) => `${heading.tagName.toLowerCase()} ${heading.textContent}`,
+  );
+}
+
+describe("PrintBrief", () => {
+  const fetchMock = vi.fn();
+  const printMock = vi.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    printMock.mockReset();
+    mocks.toast.error.mockClear();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("print", printMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("renders nothing until an analysis exists", () => {
+    const { rerender } = render(<PrintBrief contract={CONTRACT} analysis={null} />);
+    expect(screen.queryByRole("button", BUTTON)).not.toBeInTheDocument();
+    expect(document.body.querySelector("[data-print-brief]")).toBeNull();
+
+    rerender(<PrintBrief contract={CONTRACT} analysis={{ ...ANALYSIS, resultJson: null }} />);
+    expect(screen.queryByRole("button", BUTTON)).not.toBeInTheDocument();
+    expect(document.body.querySelector("[data-print-brief]")).toBeNull();
+
+    rerender(<PrintBrief contract={CONTRACT} analysis={ANALYSIS} />);
+    expect(screen.getByRole("button", BUTTON)).toBeInTheDocument();
+    printedBrief();
+  });
+
+  it("puts the brief directly under <body>, hidden on screen and shown in print", () => {
+    const { container } = render(<PrintBrief contract={CONTRACT} analysis={ANALYSIS} />);
+    const brief = printedBrief();
+    // Outside the app's tree, so the print styles can hide every other child of <body>.
+    expect(container.contains(brief)).toBe(false);
+    expect(brief).toHaveClass("hidden", "print:block", "print-brief");
+  });
+
+  it("prints the same sections as the Markdown brief", () => {
+    render(<PrintBrief contract={CONTRACT} analysis={ANALYSIS} />);
+    const brief = printedBrief();
+
+    const { markdown } = renderAnalysisBriefMarkdown({ contract: CONTRACT, analysis: ANALYSIS });
+    const expected = marked
+      .lexer(markdown)
+      .filter((token): token is Tokens.Heading => token.type === "heading")
+      .map((token) => `h${token.depth} ${token.text}`);
+    expect(expected).toEqual(
+      expect.arrayContaining([
+        "h1 Decision brief: Gym membership",
+        "h2 Coverage",
+        "h2 Jurisdiction",
+        "h2 Summary",
+        "h2 Findings",
+        "h2 Next steps",
+      ]),
+    );
+    expect(headingsOf(brief)).toEqual(expected);
+
+    // Report identity, coverage and jurisdiction.
+    expect(brief).toHaveTextContent("Contract: Gym membership");
+    expect(brief).toHaveTextContent("Analyzed: Oct 29, 2026");
+    expect(brief).toHaveTextContent("Risk level: MEDIUM");
+    expect(brief).toHaveTextContent(`Source revision: ${REVISION}`);
+    expect(brief).toHaveTextContent("Text extraction: Scanned pages were read with OCR.");
+    expect(brief).toHaveTextContent("Only part of this contract was analysed.");
+    expect(brief).toHaveTextContent("Confirmed: England and Wales (confirmed when this analysis ran).");
+    // The finding's source quotation, as a quotation.
+    expect(brief).toHaveTextContent("Verified quotation");
+    const quote = brief.querySelector("blockquote");
+    expect(quote).toHaveTextContent("shall renew automatically");
+    // Draft email bodies keep their line breaks.
+    expect(brief.querySelector("pre")).toHaveTextContent("Dear club, I wish to cancel.");
+    expect(brief).toHaveTextContent("No new analysis was run to produce this brief.");
+    expect(brief).not.toHaveTextContent("Earlier analysis.");
+  });
+
+  it("marks an earlier analysis as historical", () => {
+    render(<PrintBrief contract={CONTRACT} analysis={ANALYSIS} historical />);
+    expect(printedBrief()).toHaveTextContent(
+      "Earlier analysis. A newer analysis of this contract exists.",
+    );
+  });
+
+  it("renders contract and model text as text, never as HTML, links or images", () => {
+    const hostileImage = "<img src=x onerror=alert(1)>";
+    const hostileLink = "[click me](javascript:alert(1))";
+    const hostileScript = "<script>alert(1)</script>";
+    const autolink = "https://evil.example/track";
+    const imageMarkdown = "![pixel](https://evil.example/pixel.png)";
+    render(
+      <PrintBrief
+        contract={{ ...CONTRACT, title: `Lease ${hostileImage}` }}
+        analysis={{
+          ...ANALYSIS,
+          resultJson: {
+            ...RESULT,
+            key_points: [`See ${autolink}`, imageMarkdown],
+            red_flags: [
+              {
+                ...RESULT.red_flags![0]!,
+                type: `**Bold** ${hostileScript}`,
+                explanation: `Read ${hostileLink} now.`,
+                evidence: { quote: `${hostileImage}\n# Not a heading`, segment: "section-2" },
+                citation: null,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+    const brief = printedBrief();
+
+    expect(brief.querySelector("img, script, a, iframe, strong > strong")).toBeNull();
+    expect(brief.querySelector("[onerror], [href], [src]")).toBeNull();
+    expect(brief).toHaveTextContent(`Decision brief: Lease ${hostileImage}`);
+    expect(brief).toHaveTextContent(`**Bold** ${hostileScript}`);
+    expect(brief).toHaveTextContent(`Read ${hostileLink} now.`);
+    expect(brief).toHaveTextContent(imageMarkdown);
+    expect(brief).toHaveTextContent(`See ${autolink}`);
+    expect(within(brief).queryByRole("heading", { name: "Not a heading" })).toBeNull();
+    expect(brief.querySelector("blockquote")).toHaveTextContent(`${hostileImage} # Not a heading`);
+  });
+
+  it("opens the browser's print dialog without a network request", async () => {
+    const user = userEvent.setup();
+    render(<PrintBrief contract={CONTRACT} analysis={ANALYSIS} />);
+
+    await user.click(screen.getByRole("button", BUTTON));
+
+    expect(printMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.toast.error).not.toHaveBeenCalled();
+  });
+});
