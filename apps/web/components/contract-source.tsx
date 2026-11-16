@@ -289,7 +289,7 @@ export function JurisdictionSource() {
   return (
     <QuotedSource
       citationRef={JURISDICTION_CITATION}
-      label="View the governing-law clause in the source text"
+      label="View matched quotation of the governing-law clause"
     />
   );
 }
@@ -299,7 +299,7 @@ export function FindingSource({ index }: { index: number }) {
   return source?.citation(index) ? (
     <QuotedSource
       citationRef={index}
-      label={`View source quotation for finding ${index + 1}`}
+      label={`View matched quotation for finding ${index + 1}`}
     />
   ) : (
     <p className="mt-2 text-xs text-muted-foreground">
