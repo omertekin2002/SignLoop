@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   capContractSearch,
+  describeContractListFilters,
   escapeLikePattern,
+  hasContractListFilters,
+  isContractAddedFilter,
+  isContractStatusFilter,
   MAX_CONTRACT_SEARCH_LENGTH,
 } from "@/lib/contract-search";
 
@@ -50,5 +54,30 @@ describe("capContractSearch", () => {
     expect(capContractSearch("b".repeat(5_000))).toBe(
       "b".repeat(MAX_CONTRACT_SEARCH_LENGTH),
     );
+  });
+});
+
+describe("contract list filters", () => {
+  it("accepts only the preset status and added values, not inherited property names", () => {
+    expect(["analyzed", "draft"].every(isContractStatusFilter)).toBe(true);
+    expect(["7d", "30d", "365d"].every(isContractAddedFilter)).toBe(true);
+    for (const value of ["", "ANALYZED", "toString", "__proto__", "constructor"]) {
+      expect(isContractStatusFilter(value)).toBe(false);
+    }
+    for (const value of ["", "30", "1d", "hasOwnProperty", "__proto__"]) {
+      expect(isContractAddedFilter(value)).toBe(false);
+    }
+  });
+
+  it("describes the active filters in words and knows when none is set", () => {
+    expect(describeContractListFilters({})).toBe("");
+    expect(hasContractListFilters({})).toBe(false);
+    expect(hasContractListFilters({ status: null, added: null })).toBe(false);
+    expect(describeContractListFilters({ status: "draft" })).toBe("not analyzed yet");
+    expect(describeContractListFilters({ added: "365d" })).toBe("added in the last 12 months");
+    expect(describeContractListFilters({ status: "analyzed", added: "7d" })).toBe(
+      "analyzed, added in the last 7 days",
+    );
+    expect(hasContractListFilters({ added: "30d" })).toBe(true);
   });
 });

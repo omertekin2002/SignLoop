@@ -101,6 +101,13 @@ describe("workspace list search", () => {
     expect(
       workspaceListOptions("contracts", "/contracts?standalone=true").queryKey,
     ).toEqual(["contracts"]);
+    // Empty filters leave the key and request as they were.
+    expect(
+      workspaceListOptions("contracts", "/contracts?standalone=true", "", {
+        status: null,
+        added: "",
+      }).queryKey,
+    ).toEqual(["contracts"]);
     const observer = new InfiniteQueryObserver(client, options);
     const unsubscribe = observer.subscribe(() => {});
     try {
@@ -112,6 +119,54 @@ describe("workspace list search", () => {
       ]);
       expect(observer.getCurrentResult().hasNextPage).toBe(false);
       // Uploads and deletions invalidate the ["contracts"] prefix, which must reach searches.
+      await client.invalidateQueries({ queryKey: ["contracts"] });
+      expect(get).toHaveBeenCalledTimes(4);
+    } finally {
+      unsubscribe();
+      client.clear();
+    }
+  });
+});
+
+describe("workspace list filters", () => {
+  it("keys filters with the search under the list's prefix and sends each with every page", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const get = vi.spyOn(apiClient, "get").mockImplementation(async (url) => {
+      const offset = Number(
+        new URL(String(url), "https://app.test").searchParams.get("offset"),
+      );
+      return {
+        data: { data: [{ id: `contract-${offset}` }], offset, limit: 50, total: 60 },
+      };
+    });
+    const options = workspaceListOptions<{ id: string }>(
+      "contracts",
+      "/contracts?standalone=true",
+      "lease",
+      { status: "draft", added: "30d" },
+    );
+    expect(options.queryKey).toEqual([
+      "contracts",
+      { q: "lease", status: "draft", added: "30d" },
+    ]);
+    expect(
+      workspaceListOptions("contracts", "/contracts?standalone=true", "", {
+        status: "analyzed",
+        added: null,
+      }).queryKey,
+    ).toEqual(["contracts", { status: "analyzed" }]);
+    const observer = new InfiniteQueryObserver(client, options);
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      await observer.refetch();
+      await observer.fetchNextPage();
+      expect(get.mock.calls.map(([url]) => url)).toEqual([
+        "/contracts?standalone=true&q=lease&status=draft&added=30d&limit=50&offset=0",
+        "/contracts?standalone=true&q=lease&status=draft&added=30d&limit=50&offset=50",
+      ]);
+      // Uploads and deletions invalidate the ["contracts"] prefix, which must reach filtered lists.
       await client.invalidateQueries({ queryKey: ["contracts"] });
       expect(get).toHaveBeenCalledTimes(4);
     } finally {

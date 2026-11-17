@@ -102,6 +102,7 @@ const TEST_OWNERS = [
   "another-user", "bounded-followup-owner", "chat-owner", "chat-pagination-owner",
   "chat-search-intruder", "chat-search-owner", "chat-search-paging-owner",
   "content-receipt-owner", "empty-lookup-intruder", "empty-lookup-owner", "file-owner",
+  "filter-intruder", "filter-owner", "filter-paging-owner",
   "intruder", "late-reply-owner", "legacy-receipt-owner", "other", "owner", "OWNER",
   "project-analysis-owner", "project-search-intruder", "project-search-owner",
   "project-search-paging-owner", "quota-owner", "replay-failure-owner", "replay-intruder",
@@ -1783,6 +1784,93 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(new Set(titles).size).toBe(55);
     expect(titles[0]).toBe("Paged lease 2");
     expect(titles.at(-1)).toBe("Paged lease 110");
+  });
+
+  it("filters every owned contract by analysis status and added date, alone or with a title search", async () => {
+    const owner = "filter-owner";
+    const project = await createProjectForUser({ userId: owner, title: "Property" });
+    // [title, status, days ago, in the project]
+    const rows: Array<[string, string, number, boolean]> = [
+      ["Fresh lease", "ANALYZED", 0, false],
+      ["Fresh draft lease", "DRAFT", 3, true],
+      ["Month-old agreement", "ANALYZED", 20, true],
+      ["Month-old lease draft", "DRAFT", 29, false],
+      ["Old lease", "ANALYZED", 100, false],
+      ["Ancient draft", "DRAFT", 400, false],
+    ];
+    const ids = new Map<string, string>();
+    for (const [title, status, daysAgo, inProject] of rows) {
+      const { rows: inserted } = await pool.current!.query<{ id: string }>(
+        `insert into contracts (user_id, project_id, title, status, created_at)
+         values ($1, $2, $3, $4, now() - $5 * interval '1 day')
+         returning id`,
+        [owner, inProject ? project.id : null, title, status, daysAgo],
+      );
+      ids.set(title, inserted[0]!.id);
+    }
+    // Another owner's contracts match every filter and must never appear.
+    await pool.current!.query(
+      `insert into contracts (user_id, title, status) values ($1, 'Intruder lease', 'ANALYZED'), ($1, 'Intruder draft', 'DRAFT')`,
+      ["filter-intruder"],
+    );
+
+    const titles = async (filters: Parameters<typeof listContractsByUserId>[4], search: string | null = null) => {
+      // The dashboard asks for standalone contracts; a filter spans projects anyway.
+      const page = await listContractsByUserId(owner, {}, true, search, filters);
+      expect(page.data.every((row) => row.userId === owner)).toBe(true);
+      expect(page.total).toBe(page.data.length);
+      return page.data.map((row) => row.title);
+    };
+
+    expect(await titles({ status: "analyzed" })).toEqual(["Fresh lease", "Month-old agreement", "Old lease"]);
+    expect(await titles({ status: "draft" })).toEqual(["Fresh draft lease", "Month-old lease draft", "Ancient draft"]);
+    expect(await titles({ added: "7d" })).toEqual(["Fresh lease", "Fresh draft lease"]);
+    expect(await titles({ added: "30d" })).toEqual([
+      "Fresh lease", "Fresh draft lease", "Month-old agreement", "Month-old lease draft",
+    ]);
+    expect(await titles({ added: "365d" })).toEqual([
+      "Fresh lease", "Fresh draft lease", "Month-old agreement", "Month-old lease draft", "Old lease",
+    ]);
+    expect(await titles({ status: "draft", added: "30d" })).toEqual(["Fresh draft lease", "Month-old lease draft"]);
+    expect(await titles({ status: "draft", added: "30d" }, "LEASE DRAFT")).toEqual(["Month-old lease draft"]);
+    expect(await titles({ status: "analyzed", added: "7d" }, "agreement")).toEqual([]);
+    // Results filed in a project name it.
+    const inProject = await listContractsByUserId(owner, {}, true, null, { status: "draft", added: "7d" });
+    expect(inProject.data.map((row) => [row.id, row.projectTitle])).toEqual([
+      [ids.get("Fresh draft lease"), "Property"],
+    ]);
+
+    // Without filters the standalone list is unchanged; empty filters are no filters.
+    const standalone = ["Fresh lease", "Month-old lease draft", "Old lease", "Ancient draft"];
+    expect(await titles({})).toEqual(standalone);
+    expect(await titles({ status: null, added: null })).toEqual(standalone);
+    expect((await listContractsByUserId("filter-intruder", {}, false, null, { status: "draft" })).data.map((row) => row.title))
+      .toEqual(["Intruder draft"]);
+  });
+
+  it("pages through more than one page of filtered contracts with the filtered total", async () => {
+    const owner = "filter-paging-owner";
+    // 120 contracts a day apart; the even-numbered ones are analyzed.
+    await pool.current!.query(
+      `insert into contracts (user_id, title, status, created_at)
+       select $1, 'Contract ' || n, case when n % 2 = 0 then 'ANALYZED' else 'DRAFT' end,
+              now() - n * interval '1 day' + interval '1 hour'
+       from generate_series(1, 120) as n`,
+      [owner],
+    );
+
+    const first = await listContractsByUserId(owner, { offset: 0 }, true, null, { status: "analyzed" });
+    const second = await listContractsByUserId(owner, { offset: 50 }, true, null, { status: "analyzed" });
+    expect([first.total, first.data.length, second.total, second.data.length]).toEqual([60, 50, 60, 10]);
+    const seen = [...first.data, ...second.data].map((row) => row.title);
+    expect(new Set(seen).size).toBe(60);
+    expect(seen[0]).toBe("Contract 2");
+    expect(seen.at(-1)).toBe("Contract 120");
+
+    // Contracts 1-30 fall in the last 30 days (each is n days old less an hour); 15 are drafts.
+    const recentDrafts = await listContractsByUserId(owner, { limit: 10 }, true, null, { status: "draft", added: "30d" });
+    expect([recentDrafts.total, recentDrafts.data.length]).toEqual([15, 10]);
+    expect(recentDrafts.data[0]?.title).toBe("Contract 1");
   });
 
   it("searches the owner's projects by title, case-insensitively and with wildcards taken literally", async () => {

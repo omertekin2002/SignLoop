@@ -183,3 +183,124 @@ describe("deleting from the dashboard", () => {
     expect(mocks.toast.error).not.toHaveBeenCalled();
   });
 });
+
+describe("filtering contracts on the dashboard", () => {
+  const filed = { id: "c", title: "Warehouse lease", projectId: "p", projectTitle: "Property" };
+
+  /** Serves the standalone list unfiltered; `answer` decides every filtered or searched request. */
+  function serveContracts(answer: (params: URLSearchParams) => Promise<unknown> | unknown) {
+    const filtered: URLSearchParams[] = [];
+    mocks.get.mockImplementation(async (url: string) => {
+      const { pathname, searchParams } = new URL(url, "https://app.test");
+      if (pathname === "/settings")
+        return { data: { primaryModel: "model", availablePrimaryModels: ["model"] } };
+      if (pathname !== "/contracts") return page([]);
+      if (!["q", "status", "added"].some((name) => searchParams.has(name)))
+        return page([draft, renewal]);
+      filtered.push(searchParams);
+      return answer(searchParams);
+    });
+    return filtered;
+  }
+
+  async function openContracts() {
+    const user = await openDashboard();
+    await user.click(screen.getByRole("button", { name: "Contracts" }));
+    await screen.findByRole("button", { name: "Delete Lease draft" });
+    return user;
+  }
+
+  it("filters by status and added date, combines them with a search, and clears back to the standalone list", async () => {
+    const filtered = serveContracts(() => page([filed]));
+    const user = await openContracts();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Status" }), "analyzed");
+    expect(
+      await screen.findByText("1 contract matches the filters: analyzed"),
+    ).toBeInTheDocument();
+    // A filter spans every contract, so results can come from projects.
+    expect(screen.getByText("Warehouse lease")).toBeInTheDocument();
+    expect(screen.getByText("Property")).toBeInTheDocument();
+    // The open sidebar still lists standalone contracts; the main grid no longer does.
+    expect(screen.queryByRole("button", { name: "Delete Lease draft" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    expect(Object.fromEntries(filtered.at(-1)!)).toEqual({
+      standalone: "true",
+      status: "analyzed",
+      limit: "50",
+      offset: "0",
+    });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Added" }), "30d");
+    expect(
+      await screen.findByText(
+        "1 contract matches the filters: analyzed, added in the last 30 days",
+      ),
+    ).toBeInTheDocument();
+
+    await user.type(screen.getByRole("searchbox", { name: "Search contracts" }), "lease");
+    expect(
+      await screen.findByText(
+        "1 contract matches “lease” and the filters: analyzed, added in the last 30 days",
+      ),
+    ).toBeInTheDocument();
+    expect(Object.fromEntries(filtered.at(-1)!)).toMatchObject({
+      q: "lease",
+      status: "analyzed",
+      added: "30d",
+    });
+
+    // Clearing the filters keeps the search; clearing the search then restores the standalone list.
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Added" })).toHaveValue("");
+    expect(await screen.findByText("1 contract matches “lease”")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(await screen.findByRole("button", { name: "Delete Lease draft" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete Lease renewal" })).toBeInTheDocument();
+    expect(screen.queryByText("Warehouse lease")).not.toBeInTheDocument();
+  });
+
+  it("says no contract matches the filters, distinct from an empty workspace, and clears from there", async () => {
+    serveContracts(() => page([]));
+    const user = await openContracts();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Status" }), "draft");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Added" }), "7d");
+    expect(
+      await screen.findByRole("heading", {
+        name: "No contracts match the filters: not analyzed yet, added in the last 7 days",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No contracts found")).not.toBeInTheDocument();
+
+    const clear = screen.getAllByRole("button", { name: "Clear filters" });
+    // One beside the controls, one in the empty state.
+    expect(clear).toHaveLength(2);
+    await user.click(clear.at(-1)!);
+    expect(await screen.findByRole("button", { name: "Delete Lease draft" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Added" })).toHaveValue("");
+  });
+
+  it("shows the load-error state, not an empty result, when a filtered load fails", async () => {
+    let fail = true;
+    const filtered = serveContracts(() => {
+      if (fail) throw new Error("network");
+      return page([filed]);
+    });
+    const user = await openContracts();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Added" }), "365d");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't load contracts");
+    expect(screen.queryByText(/No contracts match/)).not.toBeInTheDocument();
+
+    fail = false;
+    await user.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(
+      await screen.findByText("1 contract matches the filters: added in the last 12 months"),
+    ).toBeInTheDocument();
+    expect(filtered.every((params) => params.get("added") === "365d")).toBe(true);
+  });
+});
