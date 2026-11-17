@@ -25,7 +25,13 @@ import type { PersonalityMode } from "@/lib/personality-settings";
 import { parseChatFileInfos, savedChatFile, type ChatUpload, type ChatFileInfo } from "@/lib/chat-files-shared";
 import type { GeneratedChatFile } from "@/lib/chat-file-generation";
 import type { ContractNotes } from "@/lib/contract-notes";
-import { escapeLikePattern } from "@/lib/contract-search";
+import {
+  CONTRACT_ADDED_FILTERS,
+  CONTRACT_STATUS_FILTERS,
+  escapeLikePattern,
+  hasContractListFilters,
+  type ContractListFilters,
+} from "@/lib/contract-search";
 import {
   ChatThreadNotFoundError,
   ContractRevisionChangedError,
@@ -671,13 +677,18 @@ export async function listContractsByUserId(
   pagination?: PaginationOptions,
   standalone = false,
   search: string | null = null,
+  filters: ContractListFilters = {},
 ): Promise<PaginatedResult<ContractListItemRecord>> {
   await ensureSchema();
 
   const { limit, offset } = clampPagination(pagination);
-  // A title search covers every contract the owner has, so it ignores the standalone filter.
+  // A title search or a filter covers every contract the owner has, so either ignores the
+  // standalone filter.
   const pattern = search ? `%${escapeLikePattern(search)}%` : null;
-  const standaloneOnly = standalone && pattern === null;
+  const standaloneOnly = standalone && pattern === null && !hasContractListFilters(filters);
+  // Only the presets' own values reach the SQL, whatever the caller passed.
+  const status = filters.status ? CONTRACT_STATUS_FILTERS[filters.status].status : null;
+  const addedDays = filters.added ? CONTRACT_ADDED_FILTERS[filters.added].days : null;
 
   const [{ rows }, { rows: countRows }] = await Promise.all([
     sql<ContractListItemRecord>`
@@ -695,6 +706,8 @@ export async function listContractsByUserId(
       where c.user_id = ${userId}
         and (${standaloneOnly} = false or c.project_id is null)
         and (${pattern}::text is null or c.title ilike ${pattern}::text escape '\\')
+        and (${status}::text is null or c.status = ${status}::text)
+        and (${addedDays}::integer is null or c.created_at >= now() - make_interval(days => ${addedDays}::integer))
       order by c.created_at desc, c.id desc
       limit ${limit} offset ${offset}
     `,
@@ -704,6 +717,8 @@ export async function listContractsByUserId(
       where c.user_id = ${userId}
         and (${standaloneOnly} = false or c.project_id is null)
         and (${pattern}::text is null or c.title ilike ${pattern}::text escape '\\')
+        and (${status}::text is null or c.status = ${status}::text)
+        and (${addedDays}::integer is null or c.created_at >= now() - make_interval(days => ${addedDays}::integer))
     `,
   ]);
 

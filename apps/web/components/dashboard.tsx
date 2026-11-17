@@ -66,10 +66,12 @@ import { ChatPanel } from "@/components/chat-panel";
 import {
   ChatSearchField,
   ChatSearchResults,
+  ContractFilterControls,
   ContractSearchField,
   ContractSearchResults,
   ProjectSearchField,
   ProjectSearchResults,
+  useContractFilters,
   useContractSearch,
   useWorkspaceSearch,
 } from "@/components/contract-search";
@@ -297,6 +299,14 @@ const Dashboard = ({
   const modelRefreshPromiseRef = useRef<Promise<boolean> | null>(null);
 
   const contractSearch = useContractSearch();
+  const contractFilters = useContractFilters();
+  // A search or a filter swaps the standalone list for results across every contract.
+  const contractQueryActive =
+    Boolean(contractSearch.search) || contractFilters.active;
+  const clearContractQuery = () => {
+    contractSearch.clear();
+    contractFilters.clear();
+  };
   // Each tab keeps its own term, so switching tabs never carries a search across.
   const projectSearch = useWorkspaceSearch();
   const chatSearch = useWorkspaceSearch();
@@ -1252,21 +1262,31 @@ const Dashboard = ({
           )}
 
           {activeTab === "contracts" && canUseSavedWorkspace ? (
-            <ContractSearchField
-              value={contractSearch.input}
-              onChange={contractSearch.setInput}
-              onClear={contractSearch.clear}
-            />
+            <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-end">
+              <ContractSearchField
+                className="mb-0 w-full lg:flex-1"
+                value={contractSearch.input}
+                onChange={contractSearch.setInput}
+                onClear={contractSearch.clear}
+              />
+              <ContractFilterControls
+                filters={contractFilters.filters}
+                onStatusChange={contractFilters.setStatus}
+                onAddedChange={contractFilters.setAdded}
+                onClear={contractFilters.clear}
+              />
+            </div>
           ) : null}
 
           {activeTab === "contracts" ? (
             !canUseSavedWorkspace ? (
               renderLoginRequired("contracts")
-            ) : contractSearch.search ? (
+            ) : contractQueryActive ? (
               <ContractSearchResults<Contract>
                 search={contractSearch.search}
+                filters={contractFilters.filters}
                 enabled
-                onClear={contractSearch.clear}
+                onClear={clearContractQuery}
                 renderContracts={renderContractGrid}
                 renderLoadError={(retry) => renderLoadError("contracts", retry)}
               />
@@ -1399,7 +1419,7 @@ const Dashboard = ({
           </div>
         </div>
         {activeTab === "contracts" &&
-          !contractSearch.search &&
+          !contractQueryActive &&
           renderLoadMore(contractList)}
         {activeTab === "projects" &&
           !projectSearch.search &&

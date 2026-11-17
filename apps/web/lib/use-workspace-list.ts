@@ -8,15 +8,29 @@ import {
 } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 
-/** A search term joins the key under the list's prefix, so invalidating `[key]` refreshes searches too. */
+/** Extra query parameters a list request carries, such as the contracts list's filters; empty values are left out. */
+export type WorkspaceListFilters = Record<string, string | null | undefined>;
+
+/**
+ * A search term and any filters join the key under the list's prefix, so invalidating `[key]`
+ * refreshes searches and filtered lists too.
+ */
 export function workspaceListOptions<T>(
   key: string,
   path: string,
   search = "",
+  filters: WorkspaceListFilters = {},
 ) {
-  const searchParam = search ? `q=${encodeURIComponent(search)}&` : "";
+  const params: Record<string, string> = {};
+  if (search) params.q = search;
+  for (const [name, value] of Object.entries(filters)) {
+    if (value) params[name] = value;
+  }
+  const searchParam = Object.entries(params)
+    .map(([name, value]) => `${name}=${encodeURIComponent(value)}&`)
+    .join("");
   return infiniteQueryOptions({
-    queryKey: search ? [key, { q: search }] : [key],
+    queryKey: searchParam ? [key, params] : [key],
     initialPageParam: 0,
     queryFn: async ({ pageParam, signal }) =>
       (
@@ -68,9 +82,10 @@ export function useWorkspaceList<T>(
   path: string,
   enabled: boolean,
   search = "",
+  filters: WorkspaceListFilters = {},
 ) {
   const query = useInfiniteQuery({
-    ...workspaceListOptions<T>(key, path, search),
+    ...workspaceListOptions<T>(key, path, search, filters),
     enabled,
   });
   const data = useMemo(

@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { parseJsonBody, parsePaginationParams, requireUserId } from "@/lib/api-auth";
 import { createContractForUser, listContractsByUserId } from "@/lib/server-db";
-import { MAX_CONTRACT_SEARCH_LENGTH } from "@/lib/contract-search";
+import {
+  CONTRACT_ADDED_FILTERS,
+  CONTRACT_STATUS_FILTERS,
+  isContractAddedFilter,
+  isContractStatusFilter,
+  MAX_CONTRACT_SEARCH_LENGTH,
+} from "@/lib/contract-search";
 import { ProjectNotFoundError } from "@/lib/errors";
 import { isUuid } from "@/lib/utils";
 
@@ -20,7 +26,29 @@ export async function GET(req: Request) {
     );
   }
 
-  const result = await listContractsByUserId(userId, parsePaginationParams(req), searchParams.get("standalone") === "true", search);
+  // Filters are fixed presets; anything else is refused here, so only known values reach the SQL.
+  const status = searchParams.get("status");
+  if (status !== null && !isContractStatusFilter(status)) {
+    return NextResponse.json(
+      { error: `Status must be one of: ${Object.keys(CONTRACT_STATUS_FILTERS).join(", ")}` },
+      { status: 400 },
+    );
+  }
+  const added = searchParams.get("added");
+  if (added !== null && !isContractAddedFilter(added)) {
+    return NextResponse.json(
+      { error: `Added must be one of: ${Object.keys(CONTRACT_ADDED_FILTERS).join(", ")}` },
+      { status: 400 },
+    );
+  }
+
+  const result = await listContractsByUserId(
+    userId,
+    parsePaginationParams(req),
+    searchParams.get("standalone") === "true",
+    search,
+    { status, added },
+  );
   return NextResponse.json(result);
 }
 
