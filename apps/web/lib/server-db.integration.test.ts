@@ -83,6 +83,7 @@ import {
   MAX_ANALYSED_SECTIONS,
 } from "./source-citations";
 import { buildAnalysisPrompt } from "./analysis";
+import { CONTRACT_SEARCH_EXCERPT_LENGTH, MAX_CONTRACT_SEARCH_LENGTH } from "./contract-search";
 import { boundCanonicalChatHistory } from "./chat-history-bounds";
 import { admissionLimits, type AdmissionResult } from "./inference-policy";
 import { createAccountExport } from "./account-export";
@@ -107,7 +108,8 @@ const TEST_OWNERS = [
   "project-analysis-owner", "project-search-intruder", "project-search-owner",
   "project-search-paging-owner", "quota-owner", "replay-failure-owner", "replay-intruder",
   "replay-owner", "replay-project-owner", "revision-chat-owner", "scope-user", "search-intruder",
-  "search-owner", "search-paging-owner", "settings-owner", "title-owner",
+  "search-owner", "search-paging-owner", "settings-owner", "text-search-intruder",
+  "text-search-owner", "text-search-paging-owner", "title-owner",
 ];
 
 describe.skipIf(!connectionString)("database integration", () => {
@@ -1784,6 +1786,180 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(new Set(titles).size).toBe(55);
     expect(titles[0]).toBe("Paged lease 2");
     expect(titles.at(-1)).toBe("Paged lease 110");
+  });
+
+  it("searches contract text from 3 code points, says where each contract matched, and returns only a short excerpt", async () => {
+    const owner = "text-search-owner";
+    const project = await createProjectForUser({ userId: owner, title: "Suppliers" });
+    const filler = (word: string) => `${word} `.repeat(150);
+    // [title, text, status, minutes ago, in the project]
+    const rows: Array<[string, string | null, string, number, boolean]> = [
+      [
+        "Supplier agreement",
+        `START-OF-TEXT ${filler("lorem")}Termination.\n\n   Either party may end it with a 60-day notice period,\tin writing.\r\n${filler("ipsum")} END-OF-TEXT`,
+        "ANALYZED", 1, true,
+      ],
+      ["Renewal terms", "This agreement renews yearly. Renewal needs a 60-DAY NOTICE PERIOD.", "DRAFT", 2, false],
+      ["Null text renewal", null, "DRAFT", 3, false],
+      ["60 Main St lease", null, "DRAFT", 4, false],
+      ["Literal symbols", "Fees: 5%x, a_b and c\\d apply.", "DRAFT", 5, false],
+      ["Wildcard lookalikes", "Fees: 5 tax, axb and cd apply.", "DRAFT", 6, false],
+      ["Short", "Pay 60 days after notice.", "ANALYZED", 7, false],
+    ];
+    const ids = new Map<string, string>();
+    for (const [title, text, status, minutesAgo, inProject] of rows) {
+      const { rows: inserted } = await pool.current!.query<{ id: string }>(
+        `insert into contracts (user_id, project_id, title, text_content, status, created_at)
+         values ($1, $2, $3, $4, $5, now() - $6 * interval '1 minute')
+         returning id`,
+        [owner, inProject ? project.id : null, title, text, status, minutesAgo],
+      );
+      ids.set(title, inserted[0]!.id);
+    }
+    // Another owner's contract matches the same text and must never appear, nor its text.
+    await pool.current!.query(
+      `insert into contracts (user_id, title, text_content, status)
+       values ($1, 'Intruder contract', 'A 60-day notice period and an intruder-only secret.', 'ANALYZED')`,
+      ["text-search-intruder"],
+    );
+
+    const search = async (term: string, filters: Parameters<typeof listContractsByUserId>[4] = {}) => {
+      // The dashboard asks for standalone contracts; a search spans projects anyway.
+      const page = await listContractsByUserId(owner, {}, true, term, filters);
+      expect(page.data.every((row) => row.userId === owner)).toBe(true);
+      expect(page.total).toBe(page.data.length);
+      const serialized = JSON.stringify(page);
+      expect(serialized).not.toContain("intruder");
+      expect(serialized).not.toContain("START-OF-TEXT");
+      expect(serialized).not.toContain("END-OF-TEXT");
+      return page;
+    };
+    const matches = async (term: string, filters: Parameters<typeof listContractsByUserId>[4] = {}) =>
+      (await search(term, filters)).data.map((row) => [row.title, row.match?.in]);
+
+    // A phrase only in the text finds the contract, in a project too, with an excerpt around it.
+    const notice = await search("60-day notice");
+    expect(notice.data.map((row) => [row.title, row.projectTitle, row.match?.in])).toEqual([
+      ["Supplier agreement", "Suppliers", "text"],
+      ["Renewal terms", null, "text"],
+    ]);
+    const excerpt = (row: (typeof notice.data)[number]) =>
+      row.match?.in === "text" ? row.match.snippet : null;
+    const supplier = excerpt(notice.data[0]!)!;
+    // The match sits mid-text, so both ends are cut and marked, and whitespace is collapsed.
+    expect(supplier).toMatch(
+      /^…[lorem ]+ Termination\. Either party may end it with a 60-day notice period, in writing\. [ipsum ]+…$/,
+    );
+    expect(supplier).not.toMatch(/\s{2}|[\n\r\t]/);
+    expect([...supplier].length).toBeLessThanOrEqual(CONTRACT_SEARCH_EXCERPT_LENGTH + 2);
+    expect([...supplier].length).toBeGreaterThan(100);
+    // A short text is shown whole, with no cut marks; the match keeps the text's own case.
+    expect(excerpt(notice.data[1]!)).toBe("This agreement renews yearly. Renewal needs a 60-DAY NOTICE PERIOD.");
+
+    // A title match is reported as one even when the text matches too, and carries no excerpt.
+    const renewal = await search("RENEWAL");
+    expect(renewal.data.map((row) => [row.title, row.match])).toEqual([
+      ["Renewal terms", { in: "title" }],
+      ["Null text renewal", { in: "title" }],
+    ]);
+
+    // Shorter than 3 code points matches titles only; 3 or more looks in the text too.
+    expect(await matches("60")).toEqual([["60 Main St lease", "title"]]);
+    expect(await matches("60 ")).toEqual([["60 Main St lease", "title"]]);
+    expect(await matches("60-")).toEqual([
+      ["Supplier agreement", "text"],
+      ["Renewal terms", "text"],
+    ]);
+    expect(await matches("60 d")).toEqual([["Short", "text"]]);
+
+    // LIKE wildcards and the escape character match literally in the text as in titles.
+    expect(await matches("5%x")).toEqual([["Literal symbols", "text"]]);
+    expect(await matches("a_b")).toEqual([["Literal symbols", "text"]]);
+    expect(await matches("c\\d")).toEqual([["Literal symbols", "text"]]);
+    expect(await matches("no such words")).toEqual([]);
+
+    // Filters narrow a text search as they do a title search.
+    expect(await matches("notice", { status: "analyzed" })).toEqual([
+      ["Supplier agreement", "text"],
+      ["Short", "text"],
+    ]);
+    expect(await matches("notice", { status: "draft", added: "7d" })).toEqual([["Renewal terms", "text"]]);
+    expect(await matches("notice", { added: "7d" })).toHaveLength(3);
+
+    // Without a search, rows carry no match and the standalone list is unchanged.
+    const list = await listContractsByUserId(owner, {}, true);
+    expect(list.data.map((row) => row.title)).toEqual(
+      rows.filter(([, , , , inProject]) => !inProject).map(([title]) => title),
+    );
+    expect(list.data.every((row) => !("match" in row))).toBe(true);
+    const filtered = await listContractsByUserId(owner, {}, true, null, { status: "analyzed" });
+    expect(filtered.data.every((row) => !("match" in row))).toBe(true);
+
+    // The other owner finds only their own contract.
+    const intruder = await listContractsByUserId("text-search-intruder", {}, false, "60-day notice");
+    expect(intruder.data.map((row) => [row.title, row.match?.in])).toEqual([["Intruder contract", "text"]]);
+    expect(JSON.stringify(intruder)).not.toContain("Supplier");
+  });
+
+  it("cuts an excerpt at the start or end of the text without a cut mark there, and widens it for a long search", async () => {
+    const owner = "text-search-owner";
+    const long = "x".repeat(400);
+    const term = `needle ${"y".repeat(190)}`;
+    await pool.current!.query(
+      `insert into contracts (user_id, title, text_content, created_at) values
+         ($1, 'Edge start', $2, now() - interval '1 day'),
+         ($1, 'Edge end', $3, now() - interval '1 day 1 minute'),
+         ($1, 'Long search', $4, now() - interval '1 day 2 minutes')`,
+      [owner, `edgestartword ${long}`, `${long} edgeendword`, `${long} ${term} ${long}`],
+    );
+    const snippet = async (search: string) => {
+      const page = await listContractsByUserId(owner, {}, false, search);
+      expect(page.data).toHaveLength(1);
+      const match = page.data[0]!.match;
+      if (match?.in !== "text") throw new Error("expected a text match");
+      return match.snippet;
+    };
+
+    const start = await snippet("edgestartword");
+    expect(start.startsWith("edgestartword ")).toBe(true);
+    expect(start.endsWith("x…")).toBe(true);
+    expect([...start].length).toBe(CONTRACT_SEARCH_EXCERPT_LENGTH + 1);
+
+    const end = await snippet("edgeendword");
+    expect(end.startsWith("…x")).toBe(true);
+    expect(end.endsWith(" edgeendword")).toBe(true);
+    expect([...end].length).toBe(CONTRACT_SEARCH_EXCERPT_LENGTH + 1);
+
+    // A search longer than the usual excerpt still fits whole, and the excerpt stays bounded.
+    const longMatch = await snippet(term);
+    expect(longMatch).toBe(`…${term}…`);
+    expect([...longMatch].length).toBeLessThanOrEqual(MAX_CONTRACT_SEARCH_LENGTH + 2);
+  });
+
+  it("pages through mixed title and text matches with the matching total and no duplicates or gaps", async () => {
+    const owner = "text-search-paging-owner";
+    // 120 contracts a minute apart: every third has the term in its title, the next in its text only.
+    await pool.current!.query(
+      `insert into contracts (user_id, title, text_content, created_at)
+       select $1,
+              case when n % 3 = 0 then 'Paged title ' || n else 'Contract ' || n end,
+              case when n % 3 = 1 then 'Clause ' || n || ' is PAGED here.' when n % 3 = 0 then 'paged too' else 'nothing' end,
+              now() - n * interval '1 minute'
+       from generate_series(1, 120) as n`,
+      [owner],
+    );
+
+    const first = await listContractsByUserId(owner, { offset: 0 }, true, "paged");
+    const second = await listContractsByUserId(owner, { offset: 50 }, true, "paged");
+    expect([first.total, first.data.length, second.total, second.data.length]).toEqual([80, 50, 80, 30]);
+    const rows = [...first.data, ...second.data];
+    expect(new Set(rows.map((row) => row.id)).size).toBe(80);
+    const expected = Array.from({ length: 120 }, (_, index) => index + 1)
+      .filter((n) => n % 3 !== 2)
+      .map((n) => (n % 3 === 0 ? [`Paged title ${n}`, "title"] : [`Contract ${n}`, "text"]));
+    expect(rows.map((row) => [row.title, row.match?.in])).toEqual(expected);
+    const textRow = rows.find((row) => row.title === "Contract 1")!;
+    expect(textRow.match).toEqual({ in: "text", snippet: "Clause 1 is PAGED here." });
   });
 
   it("filters every owned contract by analysis status and added date, alone or with a title search", async () => {

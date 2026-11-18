@@ -283,6 +283,41 @@ describe("filtering contracts on the dashboard", () => {
     expect(screen.getByRole("combobox", { name: "Added" })).toHaveValue("");
   });
 
+  it("shows where a search matched: an excerpt with the term highlighted for text, nothing extra for titles", async () => {
+    const textHit = {
+      id: "t",
+      title: "Supplier agreement",
+      match: { in: "text", snippet: "…either party may end it on a 60-day Notice period, and the notice…" },
+    };
+    const titleHit = { id: "h", title: "Notice of renewal", match: { in: "title" } };
+    const filtered = serveContracts(() => page([textHit, titleHit]));
+    const user = await openContracts();
+
+    const field = screen.getByRole("searchbox", { name: "Search contracts" });
+    expect(field).toHaveAttribute("placeholder", "Search titles and contract text, including in projects");
+    await user.type(field, "notice");
+    expect(await screen.findByText("2 contracts match “notice”")).toBeInTheDocument();
+    expect(filtered.at(-1)!.get("q")).toBe("notice");
+
+    const textCard = screen.getByText("Supplier agreement").closest("a")!;
+    expect(within(textCard).getByText("Matched in contract text")).toBeInTheDocument();
+    const marks = textCard.querySelectorAll("mark");
+    expect([...marks].map((mark) => mark.textContent)).toEqual(["Notice", "notice"]);
+    expect(marks[0]!.parentElement).toHaveTextContent(
+      "…either party may end it on a 60-day Notice period, and the notice…",
+    );
+
+    const titleCard = screen.getByText("Notice of renewal").closest("a")!;
+    expect(within(titleCard).queryByText("Matched in contract text")).not.toBeInTheDocument();
+    expect(titleCard.querySelector("mark")).toBeNull();
+    expect(screen.getAllByText("Matched in contract text")).toHaveLength(1);
+
+    // Clearing the search restores the standalone list, whose cards carry no match.
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(await screen.findByRole("button", { name: "Delete Lease draft" })).toBeInTheDocument();
+    expect(screen.queryByText("Matched in contract text")).not.toBeInTheDocument();
+  });
+
   it("shows the load-error state, not an empty result, when a filtered load fails", async () => {
     let fail = true;
     const filtered = serveContracts(() => {

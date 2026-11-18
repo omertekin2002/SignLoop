@@ -244,6 +244,71 @@ for (const theme of THEMES) {
   });
 }
 
+// Each theme uploads its own contract, so it can run in isolation.
+for (const theme of THEMES) {
+  test(`a search finds a contract by words in its text and shows where they matched (${theme} theme)`, async ({
+    page,
+  }) => {
+    const pageErrors = collectPageErrors(page);
+    await startInTheme(page, theme);
+    const stamp = `${theme} ${Date.now()}`;
+    // A word no title holds, so only the uploaded text can match it.
+    const phrase = `zephyr${theme}${Date.now()} notice`;
+    const projectTitle = `E2E text search project ${stamp}`;
+    const project = await page.request.post("/api/projects", { data: { title: projectTitle } });
+    expect(project.status()).toBe(201);
+    const { id: projectId } = (await project.json()) as { id: string };
+    const title = `E2E text match ${stamp}`;
+    const created = await page.request.post("/api/contracts", { data: { title, projectId } });
+    expect(created.status()).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+    const upload = await page.request.post(`/api/contracts/${id}/upload`, {
+      multipart: {
+        file: {
+          name: "e2e-text-search.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from(
+            `Either party may end this agreement with a ${phrase} period.\n\nPayment is due in thirty days.`,
+          ),
+        },
+      },
+    });
+    expect(upload.status()).toBe(200);
+
+    // The API reports a text match with a short excerpt, never the full text.
+    const found = await page.request.get(`/api/contracts?standalone=true&q=${encodeURIComponent(phrase)}`);
+    expect(found.status()).toBe(200);
+    expect(await found.json()).toMatchObject({
+      total: 1,
+      data: [{ id, projectTitle, match: { in: "text", snippet: expect.stringContaining(`${phrase} period.`) } }],
+    });
+    const byTitle = await page.request.get(`/api/contracts?q=${encodeURIComponent(title)}`);
+    expect(await byTitle.json()).toMatchObject({ total: 1, data: [{ id, match: { in: "title" } }] });
+
+    await openDashboard(page);
+    await openSidebarSection(page, "Contracts");
+    const main = page.getByRole("main");
+    const search = page.getByRole("searchbox", { name: "Search contracts" });
+    await expect(search).toHaveAttribute("placeholder", "Search titles and contract text, including in projects");
+    await search.fill(phrase);
+    const card = main.getByRole("link").filter({ has: page.getByRole("heading", { name: title, exact: true }) });
+    await expect(card.getByText("Matched in contract text")).toBeVisible();
+    await expect(card.locator("mark")).toHaveText(phrase);
+    await expect(card.getByText(projectTitle)).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "1 contract matches" })).toBeVisible();
+    await expectNoA11yViolations(page, { theme });
+
+    // A title match shows no excerpt; clearing the search restores the standalone list.
+    await search.fill(title);
+    await expect(card.getByText("Matched in contract text")).toHaveCount(0);
+    await expect(card).toBeVisible();
+    await page.getByRole("button", { name: "Clear search" }).first().click();
+    await expect(search).toHaveValue("");
+    await expect(main.getByRole("heading", { name: title, exact: true })).toHaveCount(0);
+    expect(pageErrors).toEqual([]);
+  });
+}
+
 // Each theme creates its own projects, so it can run in isolation.
 for (const theme of THEMES) {
   test(`a name search finds a new project and clears back to the list (${theme} theme)`, async ({
