@@ -1,5 +1,50 @@
-/** Longest contract title search the list accepts, in code points after trimming. */
+/** Longest contract search the list accepts, in code points after trimming. */
 export const MAX_CONTRACT_SEARCH_LENGTH = 200;
+
+/**
+ * Shortest search, in code points after trimming, that also looks in a contract's extracted text.
+ * Shorter searches match titles only: one or two letters would be found in nearly every contract.
+ */
+export const MIN_CONTRACT_TEXT_SEARCH_LENGTH = 3;
+
+/**
+ * Code points of contract text an excerpt shows around a text match, before whitespace is collapsed
+ * and cut ends are marked. A search longer than this widens the excerpt just enough to hold it.
+ */
+export const CONTRACT_SEARCH_EXCERPT_LENGTH = 160;
+
+/**
+ * Where a searched contract matched: its title, or else its extracted text, with a short excerpt
+ * around the first match. List items carry it only when the list was searched.
+ */
+export type ContractSearchMatch =
+  | { in: "title" }
+  | { in: "text"; snippet: string };
+
+/** True when a search is long enough to look in contract text as well as titles. */
+export function searchesContractText(search: string): boolean {
+  return [...search.trim()].length >= MIN_CONTRACT_TEXT_SEARCH_LENGTH;
+}
+
+/** One run of an excerpt: text the search matched, or the text between matches. */
+export type ExcerptPart = { text: string; match: boolean };
+
+/**
+ * Split an excerpt into the runs a search matched and the text around them, case-insensitively.
+ * Whitespace in the search matches any run of whitespace, because excerpts collapse it.
+ */
+export function splitExcerptMatches(excerpt: string, search: string): ExcerptPart[] {
+  const words = search.trim().split(/\s+/u).filter(Boolean);
+  if (!excerpt || words.length === 0) return excerpt ? [{ text: excerpt, match: false }] : [];
+  const pattern = words
+    .map((word) => word.replace(/[\\^$.*+?()[\]{}|]/gu, "\\$&"))
+    .join("\\s+");
+  // A capturing group makes split keep the matches: they land at the odd indices.
+  return excerpt
+    .split(new RegExp(`(${pattern})`, "iu"))
+    .map((text, index) => ({ text, match: index % 2 === 1 }))
+    .filter((part) => part.text);
+}
 
 /**
  * Cut a search box's text so that the search it holds, once trimmed, is at most

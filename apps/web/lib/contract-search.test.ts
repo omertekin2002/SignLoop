@@ -7,7 +7,67 @@ import {
   isContractAddedFilter,
   isContractStatusFilter,
   MAX_CONTRACT_SEARCH_LENGTH,
+  MIN_CONTRACT_TEXT_SEARCH_LENGTH,
+  searchesContractText,
+  splitExcerptMatches,
 } from "@/lib/contract-search";
+
+describe("searchesContractText", () => {
+  it("looks in contract text from 3 code points, after trimming", () => {
+    expect(MIN_CONTRACT_TEXT_SEARCH_LENGTH).toBe(3);
+    expect(searchesContractText("")).toBe(false);
+    expect(searchesContractText("ab")).toBe(false);
+    expect(searchesContractText("  ab \n")).toBe(false);
+    expect(searchesContractText("abc")).toBe(true);
+    expect(searchesContractText(" 60 ")).toBe(false);
+    expect(searchesContractText("60d")).toBe(true);
+  });
+
+  it("counts code points, not UTF-16 code units", () => {
+    // Two emoji are four code units but two code points.
+    expect(searchesContractText("😀😀")).toBe(false);
+    expect(searchesContractText("😀😀😀")).toBe(true);
+  });
+});
+
+describe("splitExcerptMatches", () => {
+  const marked = (excerpt: string, search: string) =>
+    splitExcerptMatches(excerpt, search)
+      .map((part) => (part.match ? `[${part.text}]` : part.text))
+      .join("");
+
+  it("marks every case-insensitive match and keeps the text around it", () => {
+    expect(marked("…a 60-day Notice period; notice is due…", "notice")).toBe(
+      "…a 60-day [Notice] period; [notice] is due…",
+    );
+    expect(splitExcerptMatches("the notice", "NOTICE")).toEqual([
+      { text: "the ", match: false },
+      { text: "notice", match: true },
+    ]);
+  });
+
+  it("takes regular-expression and LIKE characters in the search literally", () => {
+    expect(marked("fee of 5% (net_30) [a.b] \\ c*d", "5% (net_30)")).toBe("fee of [5% (net_30)] [a.b] \\ c*d");
+    expect(marked("a.b axb", "a.b")).toBe("[a.b] axb");
+    expect(marked("x \\ y", "\\")).toBe("x [\\] y");
+    expect(marked("c*d cd", "c*d")).toBe("[c*d] cd");
+  });
+
+  it("lets whitespace in the search match any run of whitespace in the excerpt", () => {
+    expect(marked("sixty  day notice", "sixty day")).toBe("[sixty  day] notice");
+    expect(marked("sixty day notice", "  sixty   day ")).toBe("[sixty day] notice");
+  });
+
+  it("returns the excerpt unmarked when the search is blank or absent from it", () => {
+    expect(splitExcerptMatches("the notice", "  ")).toEqual([{ text: "the notice", match: false }]);
+    expect(splitExcerptMatches("the notice", "renewal")).toEqual([{ text: "the notice", match: false }]);
+    expect(splitExcerptMatches("", "notice")).toEqual([]);
+  });
+
+  it("matches characters outside the Basic Multilingual Plane whole", () => {
+    expect(marked("rate 😀😀 here", "😀😀")).toBe("rate [😀😀] here");
+  });
+});
 
 describe("escapeLikePattern", () => {
   it("leaves ordinary text unchanged", () => {

@@ -69,12 +69,14 @@ import {
   ContractFilterControls,
   ContractSearchField,
   ContractSearchResults,
+  ContractTextMatch,
   ProjectSearchField,
   ProjectSearchResults,
   useContractFilters,
   useContractSearch,
   useWorkspaceSearch,
 } from "@/components/contract-search";
+import type { ContractSearchMatch } from "@/lib/contract-search";
 
 type DashboardTab = "contracts" | "projects" | "chat";
 
@@ -85,8 +87,10 @@ interface Contract {
   createdAt: string;
   updatedAt: string;
   projectId?: string | null;
-  /** Set on title-search results that live in a project. */
+  /** Set on search and filter results that live in a project. */
   projectTitle?: string | null;
+  /** Where a searched contract matched; absent when the list was not searched. */
+  match?: ContractSearchMatch;
 }
 
 interface Project {
@@ -687,6 +691,12 @@ const Dashboard = ({
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {contract.match?.in === "text" ? (
+                <ContractTextMatch
+                  snippet={contract.match.snippet}
+                  search={contractSearch.search}
+                />
+              ) : null}
               {contract.projectTitle ? (
                 <div className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <FolderOpen className="h-3.5 w-3.5 shrink-0" />

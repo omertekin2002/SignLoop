@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ContractSearchField,
   ContractSearchResults,
+  ContractTextMatch,
   useContractSearch,
   type SearchableContract,
 } from "@/components/contract-search";
@@ -173,6 +174,9 @@ describe("contract title search", () => {
       }),
     ).toBeInTheDocument();
     expect(screen.queryByText("No contracts found")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Search looks at contract titles and, for 3 or more characters,\s+contract text/),
+    ).toBeInTheDocument();
 
     const clearButtons = screen.getAllByRole("button", {
       name: "Clear search",
@@ -259,5 +263,31 @@ describe("contract title search", () => {
         (call) => urlParams(call).get("q") === "lease",
       ),
     ).toBe(true);
+  });
+});
+
+describe("ContractTextMatch", () => {
+  it("labels the excerpt and highlights every match of the search in it", () => {
+    render(
+      <ContractTextMatch
+        snippet="…pay within 30 days of the invoice; late invoices accrue…"
+        search="INVOICE"
+      />,
+    );
+
+    expect(screen.getByText("Matched in contract text")).toBeInTheDocument();
+    const marks = document.querySelectorAll("mark");
+    expect([...marks].map((mark) => mark.textContent)).toEqual(["invoice", "invoice"]);
+    expect(marks[0]!.parentElement).toHaveTextContent(
+      "…pay within 30 days of the invoice; late invoices accrue…",
+    );
+  });
+
+  it("highlights a search that spans collapsed whitespace and takes its symbols literally", () => {
+    render(<ContractTextMatch snippet="…a fee of 5% (net_30) is due…" search="5%  (net_30)" />);
+
+    expect([...document.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual([
+      "5% (net_30)",
+    ]);
   });
 });

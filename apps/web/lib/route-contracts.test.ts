@@ -147,6 +147,37 @@ describe("GET /api/contracts", () => {
     );
   });
 
+  it("returns where each searched contract matched, and writes the search to no log", async () => {
+    const logs = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation(() => {}),
+    );
+    const page = {
+      ...emptyPage,
+      data: [
+        { ...contractSummary, projectTitle: null, match: { in: "text", snippet: "…a 60-day notice period…" } },
+        { ...contractSummary, id: "b", projectTitle: null, match: { in: "title" } },
+      ],
+      total: 2,
+    };
+    auth.mockResolvedValue({ userId: "owner" });
+    listContractsByUserId.mockResolvedValue(page);
+
+    const response = await GET(new Request(`${contractsUrl}?standalone=true&q=${encodeURIComponent(" 60-day notice ")}`));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(page);
+    expect(listContractsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      expect.any(Object),
+      true,
+      "60-day notice",
+      noFilters,
+    );
+    for (const log of logs) {
+      expect(JSON.stringify(log.mock.calls)).not.toContain("60-day");
+    }
+  });
+
   it("passes a trimmed title search through with the standalone flag and paging", async () => {
     const page = {
       ...emptyPage,

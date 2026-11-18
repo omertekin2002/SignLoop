@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useId,
@@ -21,8 +22,10 @@ import {
   hasContractListFilters,
   isContractAddedFilter,
   isContractStatusFilter,
+  splitExcerptMatches,
   type ContractAddedFilter,
   type ContractListFilters,
+  type ContractSearchMatch,
   type ContractStatusFilter,
 } from "@/lib/contract-search";
 import { cn } from "@/lib/utils";
@@ -37,8 +40,10 @@ export type SearchableContract = {
   id: string;
   title: string;
   projectId?: string | null;
-  /** The project a contract is filed in; only title searches return contracts in projects. */
+  /** The project a contract is filed in; only searches and filters return contracts in projects. */
   projectTitle?: string | null;
+  /** Where a searched contract matched; absent when the list was not searched. */
+  match?: ContractSearchMatch;
 };
 
 export type SearchableProject = {
@@ -156,7 +161,7 @@ export function ContractSearchField(
   return (
     <WorkspaceSearchField
       label="Search contracts"
-      placeholder="Search by title, including contracts in projects"
+      placeholder="Search titles and contract text, including in projects"
       {...props}
     />
   );
@@ -446,7 +451,39 @@ export function WorkspaceSearchResults<T>({
 }
 
 /**
- * Title-search and filter results across every contract the owner has, standalone or in a project.
+ * An excerpt of the contract text a search matched, with the search highlighted, under a label
+ * saying where it matched. Title matches show none.
+ */
+export function ContractTextMatch({
+  snippet,
+  search,
+}: {
+  snippet: string;
+  search: string;
+}) {
+  return (
+    <div className="mb-3 text-xs">
+      <p className="text-muted-foreground">Matched in contract text</p>
+      <p className="mt-1 break-words leading-relaxed text-subtle-foreground">
+        {splitExcerptMatches(snippet, search).map((part, index) =>
+          part.match ? (
+            <mark
+              key={index}
+              className="rounded-sm bg-highlight/20 px-0.5 text-foreground"
+            >
+              {part.text}
+            </mark>
+          ) : (
+            <Fragment key={index}>{part.text}</Fragment>
+          ),
+        )}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Search and filter results across every contract the owner has, standalone or in a project.
  * Either a search or a filter (or both) is set.
  */
 export function ContractSearchResults<T extends SearchableContract>({
@@ -479,8 +516,9 @@ export function ContractSearchResults<T extends SearchableContract>({
           </>
         ) : (
           <>
-            Search looks at contract titles, including contracts inside
-            projects. Try a shorter or different word.
+            Search looks at contract titles and, for 3 or more characters,
+            contract text, including contracts inside projects. Try a
+            different word or phrase.
           </>
         )
       }
