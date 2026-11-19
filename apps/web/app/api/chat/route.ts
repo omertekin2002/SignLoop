@@ -38,6 +38,7 @@ import {
   type ChatMessageRecord,
   claimGenerationOperation,
   appendChatMessagesToThread,
+  getChatTurnByTurnId,
   getRecentChatMessagesForThreadForUser,
   getUserSettingsByUserId,
   getChatDocumentsForUser,
@@ -122,6 +123,7 @@ function streamEvent(event: Record<string, unknown>): Uint8Array {
 async function persistChatMessages(input: {
   userId: string | null;
   threadId: string;
+  turnId: string | null;
   latestUserMessage: ChatMessage;
   assistantMessage: string;
   assistantModel: string | null;
@@ -150,6 +152,7 @@ async function persistChatMessages(input: {
   return appendChatMessagesToThread({
     userId: input.userId,
     threadId: input.threadId,
+    turnId: input.turnId,
     generatedTitle: input.generatedTitle,
     ...(input.generatedFiles?.length
       ? { generatedFiles: input.generatedFiles }
@@ -255,6 +258,32 @@ function toDoneStreamEvent(input: {
   };
 }
 
+/**
+ * The completed result for a turn that was already saved: a retry whose first attempt finished on
+ * the server but never reached the client. It has the shape of a fresh saved reply, so the client
+ * renders it the same way, but no model ran and no quota was charged, so it carries no quota.
+ */
+function toReplayedTurnResult(
+  storedMessages: ChatMessageRecord[],
+): Record<string, unknown> {
+  const reply = storedMessages.find((message) => message.role === "assistant");
+  return {
+    storedMessages: storedMessages.map(toPublicChatMessage),
+    message: reply?.content ?? "",
+    provider: reply?.provider ?? null,
+    model: reply?.model ?? null,
+    mode: "chat",
+    persisted: true,
+    toolActivity: Array.isArray(reply?.toolActivity) ? reply.toolActivity : [],
+    // Saved sources are already appended to the stored answer's text.
+    webSearchQuery: null,
+    webSearchAttempts: [],
+    webSearchSuccessfulCount: 0,
+    webSources: [],
+    ...(reply?.files?.length ? { files: reply.files } : {}),
+  };
+}
+
 /** Authenticate before bounded parsing, then run a temporary or owner-scoped saved chat turn. */
 export async function POST(req: Request) {
   const timings = new GenerationTimings("chat");
@@ -344,6 +373,18 @@ export async function POST(req: Request) {
       );
     }
 
+    // Saved chats may name each turn so a retried request can't store it twice. Temporary chats
+    // keep no history to match against, so they ignore the field.
+    const rawTurnId =
+      !isTemporaryChat && isRecord(body) ? (body.turnId ?? null) : null;
+    if (rawTurnId !== null && !isUuid(rawTurnId)) {
+      return NextResponse.json(
+        { error: "turnId must be a UUID." },
+        { status: 400 },
+      );
+    }
+    const turnId = isUuid(rawTurnId) ? rawTurnId.toLowerCase() : null;
+
     const parsedMessages = isTemporaryChat
       ? parseClientChatMessages(body)
       : parseLatestClientUserMessage(body);
@@ -393,6 +434,25 @@ export async function POST(req: Request) {
           { status: 404 },
         );
       persistedMessages = recentMessages;
+      // A retry of a turn that is already saved gets the saved answer back, before admission, so
+      // it neither calls the model nor spends quota again.
+      const savedTurn = turnId
+        ? await timings.measure("history", () =>
+            getChatTurnByTurnId(userId, threadId, turnId),
+          )
+        : null;
+      if (savedTurn) {
+        timings.outcome = "reused";
+        const result = toReplayedTurnResult(savedTurn);
+        if (isRecord(body) && body.stream === true)
+          return new Response(`${JSON.stringify({ type: "done", ...result })}\n`, {
+            headers: {
+              "Content-Type": "application/x-ndjson; charset=utf-8",
+              "Cache-Control": "no-cache, no-transform",
+            },
+          });
+        return NextResponse.json(result);
+      }
       if (latestUserMessage.fileIds?.length) {
         currentDocuments = await getChatDocumentsForUser(
           userId,
@@ -669,6 +729,7 @@ export async function POST(req: Request) {
                     persistChatMessages({
                       userId,
                       threadId,
+                      turnId,
                       latestUserMessage,
                       assistantMessage,
                       agentMessages: chunk.reply.agentMessages,
@@ -819,6 +880,7 @@ export async function POST(req: Request) {
           persistChatMessages({
             userId,
             threadId,
+            turnId,
             latestUserMessage,
             assistantMessage,
             agentMessages,

@@ -66,13 +66,17 @@ import { ChatPanel } from "@/components/chat-panel";
 import {
   ChatSearchField,
   ChatSearchResults,
+  ContractFilterControls,
   ContractSearchField,
   ContractSearchResults,
+  ContractTextMatch,
   ProjectSearchField,
   ProjectSearchResults,
+  useContractFilters,
   useContractSearch,
   useWorkspaceSearch,
 } from "@/components/contract-search";
+import type { ContractSearchMatch } from "@/lib/contract-search";
 
 type DashboardTab = "contracts" | "projects" | "chat";
 
@@ -83,8 +87,10 @@ interface Contract {
   createdAt: string;
   updatedAt: string;
   projectId?: string | null;
-  /** Set on title-search results that live in a project. */
+  /** Set on search and filter results that live in a project. */
   projectTitle?: string | null;
+  /** Where a searched contract matched; absent when the list was not searched. */
+  match?: ContractSearchMatch;
 }
 
 interface Project {
@@ -297,6 +303,14 @@ const Dashboard = ({
   const modelRefreshPromiseRef = useRef<Promise<boolean> | null>(null);
 
   const contractSearch = useContractSearch();
+  const contractFilters = useContractFilters();
+  // A search or a filter swaps the standalone list for results across every contract.
+  const contractQueryActive =
+    Boolean(contractSearch.search) || contractFilters.active;
+  const clearContractQuery = () => {
+    contractSearch.clear();
+    contractFilters.clear();
+  };
   // Each tab keeps its own term, so switching tabs never carries a search across.
   const projectSearch = useWorkspaceSearch();
   const chatSearch = useWorkspaceSearch();
@@ -677,6 +691,12 @@ const Dashboard = ({
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {contract.match?.in === "text" ? (
+                <ContractTextMatch
+                  snippet={contract.match.snippet}
+                  search={contractSearch.search}
+                />
+              ) : null}
               {contract.projectTitle ? (
                 <div className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <FolderOpen className="h-3.5 w-3.5 shrink-0" />
@@ -1252,21 +1272,31 @@ const Dashboard = ({
           )}
 
           {activeTab === "contracts" && canUseSavedWorkspace ? (
-            <ContractSearchField
-              value={contractSearch.input}
-              onChange={contractSearch.setInput}
-              onClear={contractSearch.clear}
-            />
+            <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-end">
+              <ContractSearchField
+                className="mb-0 w-full lg:flex-1"
+                value={contractSearch.input}
+                onChange={contractSearch.setInput}
+                onClear={contractSearch.clear}
+              />
+              <ContractFilterControls
+                filters={contractFilters.filters}
+                onStatusChange={contractFilters.setStatus}
+                onAddedChange={contractFilters.setAdded}
+                onClear={contractFilters.clear}
+              />
+            </div>
           ) : null}
 
           {activeTab === "contracts" ? (
             !canUseSavedWorkspace ? (
               renderLoginRequired("contracts")
-            ) : contractSearch.search ? (
+            ) : contractQueryActive ? (
               <ContractSearchResults<Contract>
                 search={contractSearch.search}
+                filters={contractFilters.filters}
                 enabled
-                onClear={contractSearch.clear}
+                onClear={clearContractQuery}
                 renderContracts={renderContractGrid}
                 renderLoadError={(retry) => renderLoadError("contracts", retry)}
               />
@@ -1399,7 +1429,7 @@ const Dashboard = ({
           </div>
         </div>
         {activeTab === "contracts" &&
-          !contractSearch.search &&
+          !contractQueryActive &&
           renderLoadMore(contractList)}
         {activeTab === "projects" &&
           !projectSearch.search &&

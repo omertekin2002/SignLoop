@@ -31,6 +31,7 @@ const contractSummary = {
 };
 
 const emptyPage = { data: [], total: 0, limit: 20, offset: 0 };
+const noFilters = { status: null, added: null };
 
 const postRequest = (body?: string) =>
   new Request(contractsUrl, {
@@ -71,6 +72,7 @@ describe("GET /api/contracts", () => {
       { limit: undefined, offset: undefined },
       false,
       null,
+      noFilters,
     );
   });
 
@@ -92,6 +94,7 @@ describe("GET /api/contracts", () => {
       { limit: 5, offset: 10 },
       false,
       null,
+      noFilters,
     );
   });
 
@@ -107,6 +110,7 @@ describe("GET /api/contracts", () => {
       { limit: undefined, offset: undefined },
       true,
       null,
+      noFilters,
     );
   });
 
@@ -123,6 +127,7 @@ describe("GET /api/contracts", () => {
         expect.any(Object),
         false,
         null,
+        noFilters,
       );
     },
   );
@@ -138,7 +143,39 @@ describe("GET /api/contracts", () => {
       expect.any(Object),
       false,
       null,
+      noFilters,
     );
+  });
+
+  it("returns where each searched contract matched, and writes the search to no log", async () => {
+    const logs = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation(() => {}),
+    );
+    const page = {
+      ...emptyPage,
+      data: [
+        { ...contractSummary, projectTitle: null, match: { in: "text", snippet: "…a 60-day notice period…" } },
+        { ...contractSummary, id: "b", projectTitle: null, match: { in: "title" } },
+      ],
+      total: 2,
+    };
+    auth.mockResolvedValue({ userId: "owner" });
+    listContractsByUserId.mockResolvedValue(page);
+
+    const response = await GET(new Request(`${contractsUrl}?standalone=true&q=${encodeURIComponent(" 60-day notice ")}`));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(page);
+    expect(listContractsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      expect.any(Object),
+      true,
+      "60-day notice",
+      noFilters,
+    );
+    for (const log of logs) {
+      expect(JSON.stringify(log.mock.calls)).not.toContain("60-day");
+    }
   });
 
   it("passes a trimmed title search through with the standalone flag and paging", async () => {
@@ -163,6 +200,7 @@ describe("GET /api/contracts", () => {
       { limit: 50, offset: 50 },
       true,
       "Lease",
+      noFilters,
     );
   });
 
@@ -179,6 +217,7 @@ describe("GET /api/contracts", () => {
       expect.any(Object),
       false,
       "50%_off\\v2",
+      noFilters,
     );
   });
 
@@ -198,6 +237,7 @@ describe("GET /api/contracts", () => {
         expect.any(Object),
         true,
         null,
+        noFilters,
       );
     },
   );
@@ -217,6 +257,7 @@ describe("GET /api/contracts", () => {
       expect.any(Object),
       false,
       term,
+      noFilters,
     );
   });
 
@@ -246,6 +287,100 @@ describe("GET /api/contracts", () => {
     });
     expect(listContractsByUserId).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["analyzed", { status: "analyzed", added: null }],
+    ["draft", { status: "draft", added: null }],
+  ])("passes status=%s through as a filter", async (value, filters) => {
+    auth.mockResolvedValue({ userId: "owner" });
+    listContractsByUserId.mockResolvedValue(emptyPage);
+
+    const response = await GET(
+      new Request(`${contractsUrl}?standalone=true&status=${value}`),
+    );
+
+    expect(response.status).toBe(200);
+    expect(listContractsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      expect.any(Object),
+      true,
+      null,
+      filters,
+    );
+  });
+
+  it.each(["7d", "30d", "365d"])(
+    "passes added=%s through as a filter",
+    async (value) => {
+      auth.mockResolvedValue({ userId: "owner" });
+      listContractsByUserId.mockResolvedValue(emptyPage);
+
+      const response = await GET(new Request(`${contractsUrl}?added=${value}`));
+
+      expect(response.status).toBe(200);
+      expect(listContractsByUserId).toHaveBeenCalledExactlyOnceWith(
+        "owner",
+        expect.any(Object),
+        false,
+        null,
+        { status: null, added: value },
+      );
+    },
+  );
+
+  it("combines status, added, the title search and paging", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    listContractsByUserId.mockResolvedValue(emptyPage);
+
+    const response = await GET(
+      new Request(
+        `${contractsUrl}?standalone=true&q=lease&status=draft&added=30d&limit=50&offset=50`,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(listContractsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      { limit: 50, offset: 50 },
+      true,
+      "lease",
+      { status: "draft", added: "30d" },
+    );
+  });
+
+  it.each(["", "ANALYZED", "Draft", "pending", "analyzed ", "analyzed' or '1'='1"])(
+    "returns 400 without touching the database for status=%j",
+    async (value) => {
+      auth.mockResolvedValue({ userId: "owner" });
+
+      const response = await GET(
+        new Request(`${contractsUrl}?status=${encodeURIComponent(value)}`),
+      );
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error: "Status must be one of: analyzed, draft",
+      });
+      expect(listContractsByUserId).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["", "1d", "30", "30D", "-30d", "toString", "30d; drop table contracts"])(
+    "returns 400 without touching the database for added=%j",
+    async (value) => {
+      auth.mockResolvedValue({ userId: "owner" });
+
+      const response = await GET(
+        new Request(`${contractsUrl}?added=${encodeURIComponent(value)}`),
+      );
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error: "Added must be one of: 7d, 30d, 365d",
+      });
+      expect(listContractsByUserId).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not swallow a data-layer failure", async () => {
     auth.mockResolvedValue({ userId: "owner" });

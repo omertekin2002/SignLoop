@@ -140,9 +140,12 @@ describe("chat title search", () => {
       "lease",
     );
 
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent("Searching chats…"),
-    );
+    // The searching state renders as the results mount, but the request starts in an effect
+    // after that render: wait for it too, or there is no request to answer yet.
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Searching chats…");
+      expect(mocks.get).toHaveBeenCalledOnce();
+    });
     finish(page([{ id: "a", title: "Lease" }]));
     expect(
       await screen.findByRole("button", { name: "Lease" }),
@@ -338,6 +341,8 @@ describe("chat title search", () => {
       "lease",
     );
     expect(await screen.findByText("Searching chats…")).toBeInTheDocument();
+    // The request starts in an effect after the searching state renders; wait until it is sent.
+    await waitFor(() => expect(searches).toBe(1));
 
     const rendered: string[] = [];
     const recorder = new MutationObserver(() => {

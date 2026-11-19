@@ -58,6 +58,7 @@ import {
   getChatFileForUser,
   getChatDocumentsForUser,
   getChatThreadByIdForUser,
+  getChatTurnByTurnId,
   getContractAnalysisGateForUser,
   getContractByIdForUser,
   getContractTextForUser,
@@ -83,6 +84,7 @@ import {
   MAX_ANALYSED_SECTIONS,
 } from "./source-citations";
 import { buildAnalysisPrompt } from "./analysis";
+import { CONTRACT_SEARCH_EXCERPT_LENGTH, MAX_CONTRACT_SEARCH_LENGTH } from "./contract-search";
 import { boundCanonicalChatHistory } from "./chat-history-bounds";
 import { admissionLimits, type AdmissionResult } from "./inference-policy";
 import { createAccountExport } from "./account-export";
@@ -102,11 +104,13 @@ const TEST_OWNERS = [
   "another-user", "bounded-followup-owner", "chat-owner", "chat-pagination-owner",
   "chat-search-intruder", "chat-search-owner", "chat-search-paging-owner",
   "content-receipt-owner", "empty-lookup-intruder", "empty-lookup-owner", "file-owner",
+  "filter-intruder", "filter-owner", "filter-paging-owner",
   "intruder", "late-reply-owner", "legacy-receipt-owner", "other", "owner", "OWNER",
   "project-analysis-owner", "project-search-intruder", "project-search-owner",
   "project-search-paging-owner", "quota-owner", "replay-failure-owner", "replay-intruder",
   "replay-owner", "replay-project-owner", "revision-chat-owner", "scope-user", "search-intruder",
-  "search-owner", "search-paging-owner", "settings-owner", "title-owner",
+  "search-owner", "search-paging-owner", "settings-owner", "text-search-intruder",
+  "text-search-owner", "text-search-paging-owner", "title-owner", "turn-intruder", "turn-owner",
 ];
 
 describe.skipIf(!connectionString)("database integration", () => {
@@ -651,6 +655,69 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(
       (await getChatThreadByIdForUser("title-owner", thread.id))?.title,
     ).toBe("Lease Renewal Terms");
+  });
+
+  it("stores a retried chat turn once and finds it only in its owner's thread", async () => {
+    const userId = "turn-owner";
+    const thread = await createChatThreadForUser({ userId });
+    await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
+      { role: "user", content: "An earlier question" },
+      { role: "assistant", content: "An earlier answer" },
+    ] });
+    const turnId = crypto.randomUUID();
+    const download = (id: string, text: string) => ({
+      id, name: "summary.txt", mediaType: "text/plain", size: text.length, text,
+      data: Buffer.from(text).toString("base64"),
+    });
+    const turn = (answer: string, file: ReturnType<typeof download>) =>
+      appendChatMessagesToThread({ userId, threadId: thread.id, turnId, generatedFiles: [file], messages: [
+        { role: "user", content: "Summarize the fees" },
+        { role: "assistant", content: answer, metadata: { files: [{ id: file.id, name: file.name, mediaType: file.mediaType, size: file.size, url: `/api/chat/threads/${thread.id}/files/${file.id}` }] } },
+      ] });
+
+    const first = await turn("Fees are 2%.", download(crypto.randomUUID(), "First"));
+    expect(first.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(await getChatTurnByTurnId(userId, thread.id, turnId)).toEqual(first);
+
+    // A retry that raced past the route's check returns the saved pair and writes nothing,
+    // including its own generated download.
+    const retriedFile = download(crypto.randomUUID(), "Second");
+    expect(await turn("Fees are 3%.", retriedFile)).toEqual(first);
+    expect((await getChatThreadByIdForUser(userId, thread.id))?.messages.map((message) => message.content))
+      .toEqual(["An earlier question", "An earlier answer", "Summarize the fees", "Fees are 2%."]);
+    expect(await getChatFileForUser(userId, thread.id, retriedFile.id)).toBeNull();
+
+    // Two attempts at once serialize on the thread lock and still store one pair.
+    const racedTurnId = crypto.randomUUID();
+    const raced = await Promise.all([1, 2].map((attempt) =>
+      appendChatMessagesToThread({ userId, threadId: thread.id, turnId: racedTurnId, messages: [
+        { role: "user", content: "Any penalties?" },
+        { role: "assistant", content: `Attempt ${attempt}` },
+      ] }),
+    ));
+    expect(raced[0]).toEqual(raced[1]);
+    expect((await getChatThreadByIdForUser(userId, thread.id))?.messages).toHaveLength(6);
+
+    // Lookups are scoped by owner and thread, and need the saved reply, not just the question.
+    const intruderThread = await createChatThreadForUser({ userId: "turn-intruder" });
+    await appendChatMessagesToThread({ userId: "turn-intruder", threadId: intruderThread.id, turnId, messages: [
+      { role: "user", content: "Same id, other owner" },
+      { role: "assistant", content: "Their own answer" },
+    ] });
+    expect(await getChatTurnByTurnId("turn-intruder", thread.id, turnId)).toBeNull();
+    expect(await getChatTurnByTurnId(userId, intruderThread.id, turnId)).toBeNull();
+    expect((await getChatTurnByTurnId("turn-intruder", intruderThread.id, turnId))?.[1]?.content)
+      .toBe("Their own answer");
+    const unanswered = crypto.randomUUID();
+    await appendChatMessagesToThread({ userId, threadId: thread.id, turnId: unanswered, messages: [
+      { role: "user", content: "A question with no saved reply" },
+    ] });
+    expect(await getChatTurnByTurnId(userId, thread.id, unanswered)).toBeNull();
+    expect(await getChatTurnByTurnId(userId, thread.id, crypto.randomUUID())).toBeNull();
+
+    // The id lives in existing metadata, so export still reads every message.
+    const exported = await getAccountExportForUser(userId);
+    expect(exported.chatMessages.filter((message) => message.threadId === thread.id)).toHaveLength(7);
   });
 
   it("preserves custom titles and saves replies even when title generation failed", async () => {
@@ -1783,6 +1850,267 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(new Set(titles).size).toBe(55);
     expect(titles[0]).toBe("Paged lease 2");
     expect(titles.at(-1)).toBe("Paged lease 110");
+  });
+
+  it("searches contract text from 3 code points, says where each contract matched, and returns only a short excerpt", async () => {
+    const owner = "text-search-owner";
+    const project = await createProjectForUser({ userId: owner, title: "Suppliers" });
+    const filler = (word: string) => `${word} `.repeat(150);
+    // [title, text, status, minutes ago, in the project]
+    const rows: Array<[string, string | null, string, number, boolean]> = [
+      [
+        "Supplier agreement",
+        `START-OF-TEXT ${filler("lorem")}Termination.\n\n   Either party may end it with a 60-day notice period,\tin writing.\r\n${filler("ipsum")} END-OF-TEXT`,
+        "ANALYZED", 1, true,
+      ],
+      ["Renewal terms", "This agreement renews yearly. Renewal needs a 60-DAY NOTICE PERIOD.", "DRAFT", 2, false],
+      ["Null text renewal", null, "DRAFT", 3, false],
+      ["60 Main St lease", null, "DRAFT", 4, false],
+      ["Literal symbols", "Fees: 5%x, a_b and c\\d apply.", "DRAFT", 5, false],
+      ["Wildcard lookalikes", "Fees: 5 tax, axb and cd apply.", "DRAFT", 6, false],
+      ["Short", "Pay 60 days after notice.", "ANALYZED", 7, false],
+    ];
+    const ids = new Map<string, string>();
+    for (const [title, text, status, minutesAgo, inProject] of rows) {
+      const { rows: inserted } = await pool.current!.query<{ id: string }>(
+        `insert into contracts (user_id, project_id, title, text_content, status, created_at)
+         values ($1, $2, $3, $4, $5, now() - $6 * interval '1 minute')
+         returning id`,
+        [owner, inProject ? project.id : null, title, text, status, minutesAgo],
+      );
+      ids.set(title, inserted[0]!.id);
+    }
+    // Another owner's contract matches the same text and must never appear, nor its text.
+    await pool.current!.query(
+      `insert into contracts (user_id, title, text_content, status)
+       values ($1, 'Intruder contract', 'A 60-day notice period and an intruder-only secret.', 'ANALYZED')`,
+      ["text-search-intruder"],
+    );
+
+    const search = async (term: string, filters: Parameters<typeof listContractsByUserId>[4] = {}) => {
+      // The dashboard asks for standalone contracts; a search spans projects anyway.
+      const page = await listContractsByUserId(owner, {}, true, term, filters);
+      expect(page.data.every((row) => row.userId === owner)).toBe(true);
+      expect(page.total).toBe(page.data.length);
+      const serialized = JSON.stringify(page);
+      expect(serialized).not.toContain("intruder");
+      expect(serialized).not.toContain("START-OF-TEXT");
+      expect(serialized).not.toContain("END-OF-TEXT");
+      return page;
+    };
+    const matches = async (term: string, filters: Parameters<typeof listContractsByUserId>[4] = {}) =>
+      (await search(term, filters)).data.map((row) => [row.title, row.match?.in]);
+
+    // A phrase only in the text finds the contract, in a project too, with an excerpt around it.
+    const notice = await search("60-day notice");
+    expect(notice.data.map((row) => [row.title, row.projectTitle, row.match?.in])).toEqual([
+      ["Supplier agreement", "Suppliers", "text"],
+      ["Renewal terms", null, "text"],
+    ]);
+    const excerpt = (row: (typeof notice.data)[number]) =>
+      row.match?.in === "text" ? row.match.snippet : null;
+    const supplier = excerpt(notice.data[0]!)!;
+    // The match sits mid-text, so both ends are cut and marked, and whitespace is collapsed.
+    expect(supplier).toMatch(
+      /^…[lorem ]+ Termination\. Either party may end it with a 60-day notice period, in writing\. [ipsum ]+…$/,
+    );
+    expect(supplier).not.toMatch(/\s{2}|[\n\r\t]/);
+    expect([...supplier].length).toBeLessThanOrEqual(CONTRACT_SEARCH_EXCERPT_LENGTH + 2);
+    expect([...supplier].length).toBeGreaterThan(100);
+    // A short text is shown whole, with no cut marks; the match keeps the text's own case.
+    expect(excerpt(notice.data[1]!)).toBe("This agreement renews yearly. Renewal needs a 60-DAY NOTICE PERIOD.");
+
+    // A title match is reported as one even when the text matches too, and carries no excerpt.
+    const renewal = await search("RENEWAL");
+    expect(renewal.data.map((row) => [row.title, row.match])).toEqual([
+      ["Renewal terms", { in: "title" }],
+      ["Null text renewal", { in: "title" }],
+    ]);
+
+    // Shorter than 3 code points matches titles only; 3 or more looks in the text too.
+    expect(await matches("60")).toEqual([["60 Main St lease", "title"]]);
+    expect(await matches("60 ")).toEqual([["60 Main St lease", "title"]]);
+    expect(await matches("60-")).toEqual([
+      ["Supplier agreement", "text"],
+      ["Renewal terms", "text"],
+    ]);
+    expect(await matches("60 d")).toEqual([["Short", "text"]]);
+
+    // LIKE wildcards and the escape character match literally in the text as in titles.
+    expect(await matches("5%x")).toEqual([["Literal symbols", "text"]]);
+    expect(await matches("a_b")).toEqual([["Literal symbols", "text"]]);
+    expect(await matches("c\\d")).toEqual([["Literal symbols", "text"]]);
+    expect(await matches("no such words")).toEqual([]);
+
+    // Filters narrow a text search as they do a title search.
+    expect(await matches("notice", { status: "analyzed" })).toEqual([
+      ["Supplier agreement", "text"],
+      ["Short", "text"],
+    ]);
+    expect(await matches("notice", { status: "draft", added: "7d" })).toEqual([["Renewal terms", "text"]]);
+    expect(await matches("notice", { added: "7d" })).toHaveLength(3);
+
+    // Without a search, rows carry no match and the standalone list is unchanged.
+    const list = await listContractsByUserId(owner, {}, true);
+    expect(list.data.map((row) => row.title)).toEqual(
+      rows.filter(([, , , , inProject]) => !inProject).map(([title]) => title),
+    );
+    expect(list.data.every((row) => !("match" in row))).toBe(true);
+    const filtered = await listContractsByUserId(owner, {}, true, null, { status: "analyzed" });
+    expect(filtered.data.every((row) => !("match" in row))).toBe(true);
+
+    // The other owner finds only their own contract.
+    const intruder = await listContractsByUserId("text-search-intruder", {}, false, "60-day notice");
+    expect(intruder.data.map((row) => [row.title, row.match?.in])).toEqual([["Intruder contract", "text"]]);
+    expect(JSON.stringify(intruder)).not.toContain("Supplier");
+  });
+
+  it("cuts an excerpt at the start or end of the text without a cut mark there, and widens it for a long search", async () => {
+    const owner = "text-search-owner";
+    const long = "x".repeat(400);
+    const term = `needle ${"y".repeat(190)}`;
+    await pool.current!.query(
+      `insert into contracts (user_id, title, text_content, created_at) values
+         ($1, 'Edge start', $2, now() - interval '1 day'),
+         ($1, 'Edge end', $3, now() - interval '1 day 1 minute'),
+         ($1, 'Long search', $4, now() - interval '1 day 2 minutes')`,
+      [owner, `edgestartword ${long}`, `${long} edgeendword`, `${long} ${term} ${long}`],
+    );
+    const snippet = async (search: string) => {
+      const page = await listContractsByUserId(owner, {}, false, search);
+      expect(page.data).toHaveLength(1);
+      const match = page.data[0]!.match;
+      if (match?.in !== "text") throw new Error("expected a text match");
+      return match.snippet;
+    };
+
+    const start = await snippet("edgestartword");
+    expect(start.startsWith("edgestartword ")).toBe(true);
+    expect(start.endsWith("x…")).toBe(true);
+    expect([...start].length).toBe(CONTRACT_SEARCH_EXCERPT_LENGTH + 1);
+
+    const end = await snippet("edgeendword");
+    expect(end.startsWith("…x")).toBe(true);
+    expect(end.endsWith(" edgeendword")).toBe(true);
+    expect([...end].length).toBe(CONTRACT_SEARCH_EXCERPT_LENGTH + 1);
+
+    // A search longer than the usual excerpt still fits whole, and the excerpt stays bounded.
+    const longMatch = await snippet(term);
+    expect(longMatch).toBe(`…${term}…`);
+    expect([...longMatch].length).toBeLessThanOrEqual(MAX_CONTRACT_SEARCH_LENGTH + 2);
+  });
+
+  it("pages through mixed title and text matches with the matching total and no duplicates or gaps", async () => {
+    const owner = "text-search-paging-owner";
+    // 120 contracts a minute apart: every third has the term in its title, the next in its text only.
+    await pool.current!.query(
+      `insert into contracts (user_id, title, text_content, created_at)
+       select $1,
+              case when n % 3 = 0 then 'Paged title ' || n else 'Contract ' || n end,
+              case when n % 3 = 1 then 'Clause ' || n || ' is PAGED here.' when n % 3 = 0 then 'paged too' else 'nothing' end,
+              now() - n * interval '1 minute'
+       from generate_series(1, 120) as n`,
+      [owner],
+    );
+
+    const first = await listContractsByUserId(owner, { offset: 0 }, true, "paged");
+    const second = await listContractsByUserId(owner, { offset: 50 }, true, "paged");
+    expect([first.total, first.data.length, second.total, second.data.length]).toEqual([80, 50, 80, 30]);
+    const rows = [...first.data, ...second.data];
+    expect(new Set(rows.map((row) => row.id)).size).toBe(80);
+    const expected = Array.from({ length: 120 }, (_, index) => index + 1)
+      .filter((n) => n % 3 !== 2)
+      .map((n) => (n % 3 === 0 ? [`Paged title ${n}`, "title"] : [`Contract ${n}`, "text"]));
+    expect(rows.map((row) => [row.title, row.match?.in])).toEqual(expected);
+    const textRow = rows.find((row) => row.title === "Contract 1")!;
+    expect(textRow.match).toEqual({ in: "text", snippet: "Clause 1 is PAGED here." });
+  });
+
+  it("filters every owned contract by analysis status and added date, alone or with a title search", async () => {
+    const owner = "filter-owner";
+    const project = await createProjectForUser({ userId: owner, title: "Property" });
+    // [title, status, days ago, in the project]
+    const rows: Array<[string, string, number, boolean]> = [
+      ["Fresh lease", "ANALYZED", 0, false],
+      ["Fresh draft lease", "DRAFT", 3, true],
+      ["Month-old agreement", "ANALYZED", 20, true],
+      ["Month-old lease draft", "DRAFT", 29, false],
+      ["Old lease", "ANALYZED", 100, false],
+      ["Ancient draft", "DRAFT", 400, false],
+    ];
+    const ids = new Map<string, string>();
+    for (const [title, status, daysAgo, inProject] of rows) {
+      const { rows: inserted } = await pool.current!.query<{ id: string }>(
+        `insert into contracts (user_id, project_id, title, status, created_at)
+         values ($1, $2, $3, $4, now() - $5 * interval '1 day')
+         returning id`,
+        [owner, inProject ? project.id : null, title, status, daysAgo],
+      );
+      ids.set(title, inserted[0]!.id);
+    }
+    // Another owner's contracts match every filter and must never appear.
+    await pool.current!.query(
+      `insert into contracts (user_id, title, status) values ($1, 'Intruder lease', 'ANALYZED'), ($1, 'Intruder draft', 'DRAFT')`,
+      ["filter-intruder"],
+    );
+
+    const titles = async (filters: Parameters<typeof listContractsByUserId>[4], search: string | null = null) => {
+      // The dashboard asks for standalone contracts; a filter spans projects anyway.
+      const page = await listContractsByUserId(owner, {}, true, search, filters);
+      expect(page.data.every((row) => row.userId === owner)).toBe(true);
+      expect(page.total).toBe(page.data.length);
+      return page.data.map((row) => row.title);
+    };
+
+    expect(await titles({ status: "analyzed" })).toEqual(["Fresh lease", "Month-old agreement", "Old lease"]);
+    expect(await titles({ status: "draft" })).toEqual(["Fresh draft lease", "Month-old lease draft", "Ancient draft"]);
+    expect(await titles({ added: "7d" })).toEqual(["Fresh lease", "Fresh draft lease"]);
+    expect(await titles({ added: "30d" })).toEqual([
+      "Fresh lease", "Fresh draft lease", "Month-old agreement", "Month-old lease draft",
+    ]);
+    expect(await titles({ added: "365d" })).toEqual([
+      "Fresh lease", "Fresh draft lease", "Month-old agreement", "Month-old lease draft", "Old lease",
+    ]);
+    expect(await titles({ status: "draft", added: "30d" })).toEqual(["Fresh draft lease", "Month-old lease draft"]);
+    expect(await titles({ status: "draft", added: "30d" }, "LEASE DRAFT")).toEqual(["Month-old lease draft"]);
+    expect(await titles({ status: "analyzed", added: "7d" }, "agreement")).toEqual([]);
+    // Results filed in a project name it.
+    const inProject = await listContractsByUserId(owner, {}, true, null, { status: "draft", added: "7d" });
+    expect(inProject.data.map((row) => [row.id, row.projectTitle])).toEqual([
+      [ids.get("Fresh draft lease"), "Property"],
+    ]);
+
+    // Without filters the standalone list is unchanged; empty filters are no filters.
+    const standalone = ["Fresh lease", "Month-old lease draft", "Old lease", "Ancient draft"];
+    expect(await titles({})).toEqual(standalone);
+    expect(await titles({ status: null, added: null })).toEqual(standalone);
+    expect((await listContractsByUserId("filter-intruder", {}, false, null, { status: "draft" })).data.map((row) => row.title))
+      .toEqual(["Intruder draft"]);
+  });
+
+  it("pages through more than one page of filtered contracts with the filtered total", async () => {
+    const owner = "filter-paging-owner";
+    // 120 contracts a day apart; the even-numbered ones are analyzed.
+    await pool.current!.query(
+      `insert into contracts (user_id, title, status, created_at)
+       select $1, 'Contract ' || n, case when n % 2 = 0 then 'ANALYZED' else 'DRAFT' end,
+              now() - n * interval '1 day' + interval '1 hour'
+       from generate_series(1, 120) as n`,
+      [owner],
+    );
+
+    const first = await listContractsByUserId(owner, { offset: 0 }, true, null, { status: "analyzed" });
+    const second = await listContractsByUserId(owner, { offset: 50 }, true, null, { status: "analyzed" });
+    expect([first.total, first.data.length, second.total, second.data.length]).toEqual([60, 50, 60, 10]);
+    const seen = [...first.data, ...second.data].map((row) => row.title);
+    expect(new Set(seen).size).toBe(60);
+    expect(seen[0]).toBe("Contract 2");
+    expect(seen.at(-1)).toBe("Contract 120");
+
+    // Contracts 1-30 fall in the last 30 days (each is n days old less an hour); 15 are drafts.
+    const recentDrafts = await listContractsByUserId(owner, { limit: 10 }, true, null, { status: "draft", added: "30d" });
+    expect([recentDrafts.total, recentDrafts.data.length]).toEqual([15, 10]);
+    expect(recentDrafts.data[0]?.title).toBe("Contract 1");
   });
 
   it("searches the owner's projects by title, case-insensitively and with wildcards taken literally", async () => {

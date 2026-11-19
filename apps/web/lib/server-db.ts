@@ -25,7 +25,16 @@ import type { PersonalityMode } from "@/lib/personality-settings";
 import { parseChatFileInfos, savedChatFile, type ChatUpload, type ChatFileInfo } from "@/lib/chat-files-shared";
 import type { GeneratedChatFile } from "@/lib/chat-file-generation";
 import type { ContractNotes } from "@/lib/contract-notes";
-import { escapeLikePattern } from "@/lib/contract-search";
+import {
+  CONTRACT_ADDED_FILTERS,
+  CONTRACT_SEARCH_EXCERPT_LENGTH,
+  CONTRACT_STATUS_FILTERS,
+  escapeLikePattern,
+  hasContractListFilters,
+  searchesContractText,
+  type ContractListFilters,
+  type ContractSearchMatch,
+} from "@/lib/contract-search";
 import {
   ChatThreadNotFoundError,
   ContractRevisionChangedError,
@@ -661,9 +670,18 @@ function mapAnalysisRow(row: AnalysisRow): AnalysisRecord {
   };
 }
 
-/** A list row; `projectTitle` names the contract's project, or is null for a standalone contract. */
+/**
+ * A list row; `projectTitle` names the contract's project, or is null for a standalone contract.
+ * `match` says where a searched contract matched, and is absent when the list was not searched.
+ */
 export type ContractListItemRecord = ContractSummaryRecord & {
   projectTitle: string | null;
+  match?: ContractSearchMatch;
+};
+
+type ContractListRow = Omit<ContractListItemRecord, "match"> & {
+  matchIn: "title" | "text" | null;
+  snippet: string | null;
 };
 
 export async function listContractsByUserId(
@@ -671,43 +689,112 @@ export async function listContractsByUserId(
   pagination?: PaginationOptions,
   standalone = false,
   search: string | null = null,
+  filters: ContractListFilters = {},
 ): Promise<PaginatedResult<ContractListItemRecord>> {
   await ensureSchema();
 
   const { limit, offset } = clampPagination(pagination);
-  // A title search covers every contract the owner has, so it ignores the standalone filter.
+  // A search or a filter covers every contract the owner has, so either ignores the standalone
+  // filter. A search matches titles, and contract text too once it is long enough.
   const pattern = search ? `%${escapeLikePattern(search)}%` : null;
-  const standaloneOnly = standalone && pattern === null;
+  const searchText = search !== null && searchesContractText(search);
+  const standaloneOnly = standalone && pattern === null && !hasContractListFilters(filters);
+  // Only the presets' own values reach the SQL, whatever the caller passed.
+  const status = filters.status ? CONTRACT_STATUS_FILTERS[filters.status].status : null;
+  const addedDays = filters.added ? CONTRACT_ADDED_FILTERS[filters.added].days : null;
 
   const [{ rows }, { rows: countRows }] = await Promise.all([
-    sql<ContractListItemRecord>`
+    // The page is chosen first; only then is an excerpt cut from each text match, so text is read
+    // for at most one page of rows and only the bounded excerpt leaves the database. The excerpt
+    // finds the match with lower() on both sides, as ILIKE compares, and is widened only when the
+    // search itself is longer than the usual excerpt.
+    sql<ContractListRow>`
       select
-        c.id,
-        c.user_id as "userId",
-        c.project_id as "projectId",
-        c.title,
-        c.status,
-        c.created_at as "createdAt",
-        c.updated_at as "updatedAt",
-        p.title as "projectTitle"
-      from contracts c
-      left join projects p on p.id = c.project_id and p.user_id = ${userId}
-      where c.user_id = ${userId}
-        and (${standaloneOnly} = false or c.project_id is null)
-        and (${pattern}::text is null or c.title ilike ${pattern}::text escape '\\')
-      order by c.created_at desc, c.id desc
-      limit ${limit} offset ${offset}
+        page.id,
+        page."userId",
+        page."projectId",
+        page.title,
+        page.status,
+        page."createdAt",
+        page."updatedAt",
+        page."projectTitle",
+        page."matchIn",
+        case when page."matchIn" = 'text' then (
+          select
+            case when w.start > 1 then '…' else '' end
+            || btrim(regexp_replace(substring(page.text_content from w.start for w.width), '[[:space:]]+', ' ', 'g'))
+            || case when w.start + w.width <= w.total then '…' else '' end
+          from (
+            select
+              greatest(1, least(m.pos - (m.width - m.term_length) / 2, m.total - m.width + 1)) as start,
+              m.width,
+              m.total
+            from (
+              select
+                strpos(lower(page.text_content), lower(${search}::text)) as pos,
+                char_length(${search}::text) as term_length,
+                greatest(${CONTRACT_SEARCH_EXCERPT_LENGTH}::integer, char_length(${search}::text)) as width,
+                char_length(page.text_content) as total
+            ) m
+          ) w
+        ) end as snippet
+      from (
+        select
+          c.id,
+          c.user_id as "userId",
+          c.project_id as "projectId",
+          c.title,
+          c.status,
+          c.created_at as "createdAt",
+          c.updated_at as "updatedAt",
+          p.title as "projectTitle",
+          c.text_content,
+          case
+            when ${pattern}::text is null then null
+            when c.title ilike ${pattern}::text escape '\\' then 'title'
+            else 'text'
+          end as "matchIn"
+        from contracts c
+        left join projects p on p.id = c.project_id and p.user_id = ${userId}
+        where c.user_id = ${userId}
+          and (${standaloneOnly} = false or c.project_id is null)
+          and (
+            ${pattern}::text is null
+            or c.title ilike ${pattern}::text escape '\\'
+            or (${searchText}::boolean and c.text_content ilike ${pattern}::text escape '\\')
+          )
+          and (${status}::text is null or c.status = ${status}::text)
+          and (${addedDays}::integer is null or c.created_at >= now() - make_interval(days => ${addedDays}::integer))
+        order by c.created_at desc, c.id desc
+        limit ${limit} offset ${offset}
+      ) page
+      order by page."createdAt" desc, page.id desc
     `,
     sql<{ count: number }>`
       select count(*)::integer as count
       from contracts c
       where c.user_id = ${userId}
         and (${standaloneOnly} = false or c.project_id is null)
-        and (${pattern}::text is null or c.title ilike ${pattern}::text escape '\\')
+        and (
+          ${pattern}::text is null
+          or c.title ilike ${pattern}::text escape '\\'
+          or (${searchText}::boolean and c.text_content ilike ${pattern}::text escape '\\')
+        )
+        and (${status}::text is null or c.status = ${status}::text)
+        and (${addedDays}::integer is null or c.created_at >= now() - make_interval(days => ${addedDays}::integer))
     `,
   ]);
 
-  return { data: rows, total: countRows[0]?.count ?? 0, limit, offset };
+  return {
+    data: rows.map(({ matchIn, snippet, ...row }): ContractListItemRecord =>
+      matchIn === null
+        ? row
+        : { ...row, match: matchIn === "title" ? { in: "title" } : { in: "text", snippet: snippet ?? "" } },
+    ),
+    total: countRows[0]?.count ?? 0,
+    limit,
+    offset,
+  };
 }
 
 export async function createContractForUser(input: {
@@ -2480,10 +2567,68 @@ export async function getChatThreadByIdForUser(
   };
 }
 
+/**
+ * Read the saved turn whose user message carries this client turn id: that user message and, when
+ * present, the assistant reply stored right after it. Scoped to the owner's thread, so another
+ * user's thread or turn id never matches. Pass the transaction client to read under its lock.
+ */
+async function findChatTurn(
+  userId: string,
+  threadId: string,
+  turnId: string,
+  client?: VercelPoolClient,
+): Promise<ChatMessageRecord[]> {
+  const { rows } = await (client ?? sql).query<{
+    id: string;
+    threadId: string;
+    role: string;
+    content: string;
+    position: number;
+    createdAt: string;
+    metadata: unknown;
+  }>(
+    `SELECT m.id, m.thread_id AS "threadId", m.role, m.content, m.position,
+       m.created_at AS "createdAt", m.metadata_json - 'agentMessages' - 'webSources' AS metadata
+     FROM (
+       SELECT u.thread_id, u.id, u.position
+       FROM chat_messages u
+       JOIN chat_threads t ON t.id = u.thread_id AND t.user_id = $2
+       WHERE u.thread_id = $1 AND u.role = 'user' AND u.metadata_json->>'turnId' = $3
+       ORDER BY u.position
+       LIMIT 1
+     ) turn
+     JOIN chat_messages m ON m.thread_id = turn.thread_id
+       AND (m.id = turn.id OR (m.position = turn.position + 1 AND m.role = 'assistant'))
+     ORDER BY m.position`,
+    [threadId, userId, turnId],
+  );
+  return rows.map((row) => mapChatMessageRow(row, "omit"));
+}
+
+/**
+ * Return a completed saved turn (user message and reply) by its client turn id, or null when this
+ * owner's thread has no finished turn with that id. A retried request uses it to replay the saved
+ * answer instead of generating, and storing, a second one.
+ */
+export async function getChatTurnByTurnId(
+  userId: string,
+  threadId: string,
+  turnId: string,
+): Promise<ChatMessageRecord[] | null> {
+  await ensureSchema();
+  const turn = await findChatTurn(userId, threadId, turnId);
+  return turn.some((message) => message.role === "assistant") ? turn : null;
+}
+
 /** Atomically append a turn and generated files under the owning thread's row lock. */
 export async function appendChatMessagesToThread(input: {
   userId: string;
   threadId: string;
+  /**
+   * The client's id for this turn, stored in the user message's metadata. When the thread already
+   * holds a turn with this id, nothing is written and the saved records are returned instead.
+   */
+  turnId?: string | null;
   generatedFiles?: GeneratedChatFile[];
   /** Applied only to an untitled thread's first saved turn, under the same row lock. */
   generatedTitle?: string | null;
@@ -2495,18 +2640,24 @@ export async function appendChatMessagesToThread(input: {
 }): Promise<ChatMessageRecord[]> {
   await ensureSchema();
 
+  const turnId = input.turnId || null;
   const cleanedMessages = input.messages
-    .map((message) => ({
-      role: message.role,
-      content: message.content.trim(),
-      metadata: message.metadata
-        ? {
-            ...message.metadata,
-            agentMessages: compactAgentMessages(message.metadata.agentMessages),
-            webSources: parseWebSources(message.metadata.webSources),
-          }
-        : null,
-    }))
+    .map((message) => {
+      const metadata = message.role === "user" && turnId
+        ? { ...message.metadata, turnId }
+        : message.metadata;
+      return {
+        role: message.role,
+        content: message.content.trim(),
+        metadata: metadata
+          ? {
+              ...metadata,
+              agentMessages: compactAgentMessages(metadata.agentMessages),
+              webSources: parseWebSources(metadata.webSources),
+            }
+          : null,
+      };
+    })
     .filter((message) => message.content.length > 0);
 
   if (!cleanedMessages.length) {
@@ -2529,6 +2680,16 @@ export async function appendChatMessagesToThread(input: {
     if (!lockedThreadCount) {
       await client.query("ROLLBACK");
       throw new ChatThreadNotFoundError();
+    }
+
+    // A retry can race past the route's replay check. Under the thread lock, a turn id that is
+    // already saved means this turn was stored once: return it rather than store it twice.
+    if (turnId) {
+      const existing = await findChatTurn(input.userId, input.threadId, turnId, client);
+      if (existing.length) {
+        await client.query("COMMIT");
+        return existing;
+      }
     }
 
     // Original uploads are staged under this thread; generated downloads commit with the turn.
