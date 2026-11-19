@@ -2567,10 +2567,68 @@ export async function getChatThreadByIdForUser(
   };
 }
 
+/**
+ * Read the saved turn whose user message carries this client turn id: that user message and, when
+ * present, the assistant reply stored right after it. Scoped to the owner's thread, so another
+ * user's thread or turn id never matches. Pass the transaction client to read under its lock.
+ */
+async function findChatTurn(
+  userId: string,
+  threadId: string,
+  turnId: string,
+  client?: VercelPoolClient,
+): Promise<ChatMessageRecord[]> {
+  const { rows } = await (client ?? sql).query<{
+    id: string;
+    threadId: string;
+    role: string;
+    content: string;
+    position: number;
+    createdAt: string;
+    metadata: unknown;
+  }>(
+    `SELECT m.id, m.thread_id AS "threadId", m.role, m.content, m.position,
+       m.created_at AS "createdAt", m.metadata_json - 'agentMessages' - 'webSources' AS metadata
+     FROM (
+       SELECT u.thread_id, u.id, u.position
+       FROM chat_messages u
+       JOIN chat_threads t ON t.id = u.thread_id AND t.user_id = $2
+       WHERE u.thread_id = $1 AND u.role = 'user' AND u.metadata_json->>'turnId' = $3
+       ORDER BY u.position
+       LIMIT 1
+     ) turn
+     JOIN chat_messages m ON m.thread_id = turn.thread_id
+       AND (m.id = turn.id OR (m.position = turn.position + 1 AND m.role = 'assistant'))
+     ORDER BY m.position`,
+    [threadId, userId, turnId],
+  );
+  return rows.map((row) => mapChatMessageRow(row, "omit"));
+}
+
+/**
+ * Return a completed saved turn (user message and reply) by its client turn id, or null when this
+ * owner's thread has no finished turn with that id. A retried request uses it to replay the saved
+ * answer instead of generating, and storing, a second one.
+ */
+export async function getChatTurnByTurnId(
+  userId: string,
+  threadId: string,
+  turnId: string,
+): Promise<ChatMessageRecord[] | null> {
+  await ensureSchema();
+  const turn = await findChatTurn(userId, threadId, turnId);
+  return turn.some((message) => message.role === "assistant") ? turn : null;
+}
+
 /** Atomically append a turn and generated files under the owning thread's row lock. */
 export async function appendChatMessagesToThread(input: {
   userId: string;
   threadId: string;
+  /**
+   * The client's id for this turn, stored in the user message's metadata. When the thread already
+   * holds a turn with this id, nothing is written and the saved records are returned instead.
+   */
+  turnId?: string | null;
   generatedFiles?: GeneratedChatFile[];
   /** Applied only to an untitled thread's first saved turn, under the same row lock. */
   generatedTitle?: string | null;
@@ -2582,18 +2640,24 @@ export async function appendChatMessagesToThread(input: {
 }): Promise<ChatMessageRecord[]> {
   await ensureSchema();
 
+  const turnId = input.turnId || null;
   const cleanedMessages = input.messages
-    .map((message) => ({
-      role: message.role,
-      content: message.content.trim(),
-      metadata: message.metadata
-        ? {
-            ...message.metadata,
-            agentMessages: compactAgentMessages(message.metadata.agentMessages),
-            webSources: parseWebSources(message.metadata.webSources),
-          }
-        : null,
-    }))
+    .map((message) => {
+      const metadata = message.role === "user" && turnId
+        ? { ...message.metadata, turnId }
+        : message.metadata;
+      return {
+        role: message.role,
+        content: message.content.trim(),
+        metadata: metadata
+          ? {
+              ...metadata,
+              agentMessages: compactAgentMessages(metadata.agentMessages),
+              webSources: parseWebSources(metadata.webSources),
+            }
+          : null,
+      };
+    })
     .filter((message) => message.content.length > 0);
 
   if (!cleanedMessages.length) {
@@ -2616,6 +2680,16 @@ export async function appendChatMessagesToThread(input: {
     if (!lockedThreadCount) {
       await client.query("ROLLBACK");
       throw new ChatThreadNotFoundError();
+    }
+
+    // A retry can race past the route's replay check. Under the thread lock, a turn id that is
+    // already saved means this turn was stored once: return it rather than store it twice.
+    if (turnId) {
+      const existing = await findChatTurn(input.userId, input.threadId, turnId, client);
+      if (existing.length) {
+        await client.query("COMMIT");
+        return existing;
+      }
     }
 
     // Original uploads are staged under this thread; generated downloads commit with the turn.

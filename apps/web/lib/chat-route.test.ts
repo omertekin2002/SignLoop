@@ -5,6 +5,7 @@ const {
   claimGenerationOperation,
   admitChat,
   appendChatMessagesToThread,
+  getChatTurnByTurnId,
   getRecentChatMessagesForThreadForUser,
   getUserSettingsByUserId,
   getChatDocumentsForUser,
@@ -18,6 +19,7 @@ const {
   claimGenerationOperation: vi.fn(),
   admitChat: vi.fn(),
   appendChatMessagesToThread: vi.fn(),
+  getChatTurnByTurnId: vi.fn(),
   getRecentChatMessagesForThreadForUser: vi.fn(),
   getUserSettingsByUserId: vi.fn(),
   getChatDocumentsForUser: vi.fn(),
@@ -32,6 +34,7 @@ vi.mock("@/lib/auth", () => ({ auth }));
 vi.mock("@/lib/server-db", () => ({
   claimGenerationOperation,
   appendChatMessagesToThread,
+  getChatTurnByTurnId,
   getRecentChatMessagesForThreadForUser,
   getUserSettingsByUserId,
   getChatDocumentsForUser,
@@ -727,6 +730,175 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
     const body = await response.text();
     expect(body).toContain("Chat request failed");
     expect(titleSignal?.aborted).toBe(true);
+    expect(appendChatMessagesToThread).not.toHaveBeenCalled();
+  });
+});
+
+describe.each([false, true])("saved chat turn retries (stream=%s)", (stream) => {
+  const threadId = "11e3e947-f71f-4ecd-a901-adbf24edbb8a";
+  const turnId = "6f1c2b9e-8d4a-4b7c-9e2f-0a1b2c3d4e5f";
+  const reply = {
+    message: "Renewal extends the term.",
+    model: "selected-model",
+    provider: "primary-openai-compatible",
+    webSearch: null,
+  };
+  const download = {
+    id: "abcdef01-2345-4678-9abc-def012345678",
+    name: "summary.txt",
+    mediaType: "text/plain",
+    size: 7,
+    url: `/api/chat/threads/${threadId}/files/abcdef01-2345-4678-9abc-def012345678`,
+  };
+  const savedTurn = [
+    {
+      id: "a0000000-0000-4000-8000-000000000001",
+      threadId,
+      role: "user",
+      content: "Explain my lease renewal.",
+      position: 3,
+      createdAt: "2026-11-19T00:00:00.000Z",
+      model: null,
+      provider: null,
+    },
+    {
+      id: "a0000000-0000-4000-8000-000000000002",
+      threadId,
+      role: "assistant",
+      content: "The saved answer.",
+      position: 4,
+      createdAt: "2026-11-19T00:00:01.000Z",
+      model: "saved-model",
+      provider: "saved-provider",
+      toolActivity: [{ id: "search-1", status: "done", query: "lease renewal" }],
+      files: [download],
+    },
+  ];
+  const request = (extra: Record<string, unknown> = {}) =>
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        threadId,
+        stream,
+        messages: [{ role: "user", content: "Explain my lease renewal." }],
+        ...extra,
+      }),
+    });
+  async function completion(response: Response) {
+    if (!stream) return response.json();
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    return events.at(-1);
+  }
+  let releaseLease: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    releaseLease = vi.fn().mockResolvedValue(undefined);
+    auth.mockResolvedValue({ userId: "owner" });
+    claimGenerationOperation.mockResolvedValue(releaseLease);
+    admitChat.mockResolvedValue({
+      release: vi.fn().mockResolvedValue(undefined),
+      quota: quota(1),
+    });
+    getUserSettingsByUserId.mockResolvedValue({ primaryModel: "selected-model" });
+    getModelAvailabilitySnapshot.mockResolvedValue({
+      availablePrimaryModels: ["selected-model"],
+      availableImageInputModels: [],
+      imageGenerationAvailable: false,
+    });
+    getRecentChatMessagesForThreadForUser.mockResolvedValue([]);
+    getChatTurnByTurnId.mockResolvedValue(null);
+    generateChatTitle.mockResolvedValue(null);
+    generateChatReply.mockResolvedValue(reply);
+    generateChatReplyStream.mockImplementation(async function* () {
+      yield { type: "delta", text: reply.message };
+      yield { type: "done", reply };
+    });
+    appendChatMessagesToThread.mockResolvedValue([]);
+  });
+
+  it("returns an already-saved turn without generating, charging quota or saving again", async () => {
+    getChatTurnByTurnId.mockResolvedValue(savedTurn);
+
+    const response = await POST(request({ turnId }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("RateLimit")).toBeNull();
+    const result = await completion(response);
+    expect(result).toEqual({
+      ...(stream ? { type: "done" } : {}),
+      storedMessages: savedTurn,
+      message: "The saved answer.",
+      provider: "saved-provider",
+      model: "saved-model",
+      mode: "chat",
+      persisted: true,
+      toolActivity: savedTurn[1]!.toolActivity,
+      webSearchQuery: null,
+      webSearchAttempts: [],
+      webSearchSuccessfulCount: 0,
+      webSources: [],
+      files: [download],
+    });
+    expect(getChatTurnByTurnId).toHaveBeenCalledExactlyOnceWith("owner", threadId, turnId);
+    expect(admitChat).not.toHaveBeenCalled();
+    expect(generateChatReply).not.toHaveBeenCalled();
+    expect(generateChatReplyStream).not.toHaveBeenCalled();
+    expect(generateChatTitle).not.toHaveBeenCalled();
+    expect(appendChatMessagesToThread).not.toHaveBeenCalled();
+    expect(releaseLease).toHaveBeenCalledOnce();
+  });
+
+  it("answers a new turn id normally and saves it with the turn", async () => {
+    const result = await completion(await POST(request({ turnId: turnId.toUpperCase() })));
+
+    expect(result.message).toBe(reply.message);
+    expect(result.persisted).toBe(true);
+    expect(getChatTurnByTurnId).toHaveBeenCalledExactlyOnceWith("owner", threadId, turnId);
+    expect(admitChat).toHaveBeenCalledExactlyOnceWith("owner");
+    expect(appendChatMessagesToThread).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ userId: "owner", threadId, turnId }),
+    );
+  });
+
+  it("keeps today's path for a request without a turn id", async () => {
+    const result = await completion(await POST(request()));
+
+    expect(result.message).toBe(reply.message);
+    expect(getChatTurnByTurnId).not.toHaveBeenCalled();
+    expect(admitChat).toHaveBeenCalledExactlyOnceWith("owner");
+    expect(appendChatMessagesToThread).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ threadId, turnId: null }),
+    );
+  });
+
+  it.each([["not-a-uuid"], [42], [""], [{ id: turnId }]])(
+    "rejects turn id %j before any lease, admission or model work",
+    async (value) => {
+      const response = await POST(request({ turnId: value }));
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "turnId must be a UUID." });
+      expect(claimGenerationOperation).not.toHaveBeenCalled();
+      expect(getChatTurnByTurnId).not.toHaveBeenCalled();
+      expect(admitChat).not.toHaveBeenCalled();
+      expect(generateChatReply).not.toHaveBeenCalled();
+      expect(generateChatReplyStream).not.toHaveBeenCalled();
+    },
+  );
+
+  it("ignores a turn id in temporary chat, valid or not", async () => {
+    for (const value of [turnId, "not-a-uuid"]) {
+      const result = await completion(
+        await POST(request({ temporary: true, threadId: undefined, turnId: value })),
+      );
+      expect(result.message).toBe(reply.message);
+    }
+    expect(claimGenerationOperation).not.toHaveBeenCalled();
+    expect(getChatTurnByTurnId).not.toHaveBeenCalled();
     expect(appendChatMessagesToThread).not.toHaveBeenCalled();
   });
 });

@@ -58,6 +58,7 @@ import {
   getChatFileForUser,
   getChatDocumentsForUser,
   getChatThreadByIdForUser,
+  getChatTurnByTurnId,
   getContractAnalysisGateForUser,
   getContractByIdForUser,
   getContractTextForUser,
@@ -109,7 +110,7 @@ const TEST_OWNERS = [
   "project-search-paging-owner", "quota-owner", "replay-failure-owner", "replay-intruder",
   "replay-owner", "replay-project-owner", "revision-chat-owner", "scope-user", "search-intruder",
   "search-owner", "search-paging-owner", "settings-owner", "text-search-intruder",
-  "text-search-owner", "text-search-paging-owner", "title-owner",
+  "text-search-owner", "text-search-paging-owner", "title-owner", "turn-intruder", "turn-owner",
 ];
 
 describe.skipIf(!connectionString)("database integration", () => {
@@ -654,6 +655,69 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(
       (await getChatThreadByIdForUser("title-owner", thread.id))?.title,
     ).toBe("Lease Renewal Terms");
+  });
+
+  it("stores a retried chat turn once and finds it only in its owner's thread", async () => {
+    const userId = "turn-owner";
+    const thread = await createChatThreadForUser({ userId });
+    await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
+      { role: "user", content: "An earlier question" },
+      { role: "assistant", content: "An earlier answer" },
+    ] });
+    const turnId = crypto.randomUUID();
+    const download = (id: string, text: string) => ({
+      id, name: "summary.txt", mediaType: "text/plain", size: text.length, text,
+      data: Buffer.from(text).toString("base64"),
+    });
+    const turn = (answer: string, file: ReturnType<typeof download>) =>
+      appendChatMessagesToThread({ userId, threadId: thread.id, turnId, generatedFiles: [file], messages: [
+        { role: "user", content: "Summarize the fees" },
+        { role: "assistant", content: answer, metadata: { files: [{ id: file.id, name: file.name, mediaType: file.mediaType, size: file.size, url: `/api/chat/threads/${thread.id}/files/${file.id}` }] } },
+      ] });
+
+    const first = await turn("Fees are 2%.", download(crypto.randomUUID(), "First"));
+    expect(first.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(await getChatTurnByTurnId(userId, thread.id, turnId)).toEqual(first);
+
+    // A retry that raced past the route's check returns the saved pair and writes nothing,
+    // including its own generated download.
+    const retriedFile = download(crypto.randomUUID(), "Second");
+    expect(await turn("Fees are 3%.", retriedFile)).toEqual(first);
+    expect((await getChatThreadByIdForUser(userId, thread.id))?.messages.map((message) => message.content))
+      .toEqual(["An earlier question", "An earlier answer", "Summarize the fees", "Fees are 2%."]);
+    expect(await getChatFileForUser(userId, thread.id, retriedFile.id)).toBeNull();
+
+    // Two attempts at once serialize on the thread lock and still store one pair.
+    const racedTurnId = crypto.randomUUID();
+    const raced = await Promise.all([1, 2].map((attempt) =>
+      appendChatMessagesToThread({ userId, threadId: thread.id, turnId: racedTurnId, messages: [
+        { role: "user", content: "Any penalties?" },
+        { role: "assistant", content: `Attempt ${attempt}` },
+      ] }),
+    ));
+    expect(raced[0]).toEqual(raced[1]);
+    expect((await getChatThreadByIdForUser(userId, thread.id))?.messages).toHaveLength(6);
+
+    // Lookups are scoped by owner and thread, and need the saved reply, not just the question.
+    const intruderThread = await createChatThreadForUser({ userId: "turn-intruder" });
+    await appendChatMessagesToThread({ userId: "turn-intruder", threadId: intruderThread.id, turnId, messages: [
+      { role: "user", content: "Same id, other owner" },
+      { role: "assistant", content: "Their own answer" },
+    ] });
+    expect(await getChatTurnByTurnId("turn-intruder", thread.id, turnId)).toBeNull();
+    expect(await getChatTurnByTurnId(userId, intruderThread.id, turnId)).toBeNull();
+    expect((await getChatTurnByTurnId("turn-intruder", intruderThread.id, turnId))?.[1]?.content)
+      .toBe("Their own answer");
+    const unanswered = crypto.randomUUID();
+    await appendChatMessagesToThread({ userId, threadId: thread.id, turnId: unanswered, messages: [
+      { role: "user", content: "A question with no saved reply" },
+    ] });
+    expect(await getChatTurnByTurnId(userId, thread.id, unanswered)).toBeNull();
+    expect(await getChatTurnByTurnId(userId, thread.id, crypto.randomUUID())).toBeNull();
+
+    // The id lives in existing metadata, so export still reads every message.
+    const exported = await getAccountExportForUser(userId);
+    expect(exported.chatMessages.filter((message) => message.threadId === thread.id)).toHaveLength(7);
   });
 
   it("preserves custom titles and saves replies even when title generation failed", async () => {
