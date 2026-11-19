@@ -4,6 +4,7 @@ import { extractMessageText, toApiMessages } from "@/lib/chat-message-client";
 import type { ChatToolActivity } from "@/lib/chat";
 import { chatAttachmentAdapter, uploadChatFile } from "@/lib/chat-files-client";
 import { pasteChatFiles } from "@/lib/chat-clipboard";
+import { createChatTurnIds } from "@/lib/chat-turn-id";
 import {
   MAX_CHAT_DOCUMENT_CONTEXT,
   MAX_CHAT_FILES_PER_MESSAGE,
@@ -531,6 +532,8 @@ export function ChatPanel({
   const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
   const previousActiveThreadIdRef = useRef<string | null>(null);
   const [attachmentAdapter] = useState(chatAttachmentAdapter);
+  // A function as state needs the initializer form, which also creates the map only once.
+  const [turnIdFor] = useState(() => createChatTurnIds());
   const preparedFilesRef = useRef(
     new Map<string, ChatUpload | ChatFileInfo>(),
   );
@@ -725,6 +728,12 @@ export function ChatPanel({
           },
           body: JSON.stringify({
             threadId: temporary ? undefined : threadId,
+            // Retry resends the same user message, so it sends the same turn id, and the server
+            // returns that turn if it was already saved instead of answering and saving it twice.
+            turnId:
+              !temporary && latestMessage?.role === "user"
+                ? turnIdFor(latestMessage.id)
+                : undefined,
             messages: payloadMessages,
             temporary,
             stream: true,
@@ -830,6 +839,7 @@ export function ChatPanel({
       savedChatSession,
       temporary,
       temporarySessionKey,
+      turnIdFor,
       user,
     ],
   );
