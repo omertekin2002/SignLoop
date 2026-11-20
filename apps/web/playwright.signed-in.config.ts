@@ -72,9 +72,17 @@ export default defineConfig({
       use: { storageState: AUTH_STATE_PATH },
     },
     {
+      // Also after the workspace checks: it adds a contract, a note and a project, then downloads
+      // the account's data export from Settings.
+      name: "account-export",
+      testMatch: "account-export.spec.ts",
+      dependencies: ["workspace"],
+      use: { storageState: AUTH_STATE_PATH },
+    },
+    {
       name: "sign-out",
       testMatch: "sign-out.spec.ts",
-      dependencies: ["csp", "contract-notes", "print-brief"],
+      dependencies: ["csp", "contract-notes", "print-brief", "account-export"],
       use: { storageState: AUTH_STATE_PATH },
     },
   ],
