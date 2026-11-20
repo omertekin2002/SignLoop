@@ -103,7 +103,9 @@ async function expectStubAnalysis(page: Page) {
     await expect(onScreen(page.locator("blockquote").filter({ hasText: quote }))).toHaveText(`“${quote}”`);
   }
   await expect(onScreen(page.getByText("Verified source quotation unavailable."))).toHaveCount(0);
-  await expect(onScreen(page.locator("blockquote").filter({ hasText: STUB_NOTICE_QUOTE }))).toHaveText(
+  // The first finding quotes the whole sentence, which contains the notice clause, so match from the
+  // opening quotation mark.
+  await expect(onScreen(page.locator("blockquote").filter({ hasText: `“${STUB_NOTICE_QUOTE}` }))).toHaveText(
     `“${STUB_NOTICE_QUOTE}”`,
   );
   await expect(onScreen(page.getByText("No verified quotation", { exact: true }))).toHaveCount(0);
