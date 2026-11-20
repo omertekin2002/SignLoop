@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { THEMES, expectNoA11yViolations, startInTheme } from "../axe";
 import { expectNoCspViolations, recordCspViolations } from "../csp";
 import {
@@ -80,19 +80,26 @@ async function uploadThroughDashboard(page: Page, title: string, contents: strin
   return id;
 }
 
+// The contract page has no <main> landmark, and its printable brief repeats the report in a hidden
+// element, so the checks below look only at what is on screen.
+function onScreen(locator: Locator): Locator {
+  return locator.filter({ visible: true });
+}
+
 // The stub's report as the contract page renders it: its summary and key points, every finding
 // with the quotation the server verified, and the stub named as the model.
 async function expectStubAnalysis(page: Page) {
-  const main = page.getByRole("main");
-  await expect(main.getByText(STUB_ANALYSIS_SUMMARY, { exact: true })).toBeVisible();
-  await expect(main.getByText("Stub key point: the agreement renews automatically each year.")).toBeVisible();
-  await expect(main.getByText(`Red Flags (${STUB_ANALYSIS_FLAGS.length})`)).toBeVisible();
+  await expect(onScreen(page.getByText(STUB_ANALYSIS_SUMMARY, { exact: true }))).toBeVisible();
+  await expect(
+    onScreen(page.getByText("Stub key point: the agreement renews automatically each year.", { exact: true })),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { level: 3, name: `Red Flags (${STUB_ANALYSIS_FLAGS.length})` })).toBeVisible();
   for (const { explanation, quote } of STUB_ANALYSIS_FLAGS) {
-    await expect(main.getByText(explanation, { exact: true })).toBeVisible();
-    await expect(main.locator("blockquote").filter({ hasText: quote })).toHaveText(`“${quote}”`);
+    await expect(onScreen(page.getByText(explanation, { exact: true }))).toBeVisible();
+    await expect(onScreen(page.locator("blockquote").filter({ hasText: quote }))).toHaveText(`“${quote}”`);
   }
-  await expect(main.getByText("Verified source quotation unavailable.")).toHaveCount(0);
-  await expect(main.getByText(`LLM: Primary provider • ${STUB_MODEL}`, { exact: true })).toBeVisible();
+  await expect(onScreen(page.getByText("Verified source quotation unavailable."))).toHaveCount(0);
+  await expect(onScreen(page.getByText(`LLM: Primary provider • ${STUB_MODEL}`, { exact: true }))).toBeVisible();
   await expect(page.getByRole("button", { name: "Re-run Analysis" })).toBeEnabled();
 }
 
@@ -111,12 +118,11 @@ for (const theme of THEMES) {
     const contents = `${FIXTURE_TEXT}\n\n${reference}\n`;
 
     const id = await uploadThroughDashboard(page, title, contents);
-    const main = page.getByRole("main");
-    const card = main.getByRole("link").filter({ has: page.getByRole("heading", { name: title, exact: true }) });
+    const card = page.getByRole("main").getByRole("link").filter({ has: page.getByRole("heading", { name: title, exact: true }) });
     await card.click();
     await page.waitForURL(`${SIGNED_IN_ORIGIN}/contracts/${id}`);
     await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
-    await expect(main.getByText("No Analysis Yet")).toBeVisible();
+    await expect(page.getByRole("heading", { level: 3, name: "No Analysis Yet" })).toBeVisible();
 
     // Start Analysis runs the real route against the stub; the page refreshes itself when it ends.
     const analysed = page.waitForResponse(
@@ -124,15 +130,15 @@ for (const theme of THEMES) {
         response.request().method() === "POST" &&
         new URL(response.url()).pathname === `/api/contracts/${id}/analyze`,
     );
-    await main.getByRole("button", { name: "Start Analysis" }).click();
+    await page.getByRole("button", { name: "Start Analysis" }).click();
     expect((await analysed).status()).toBe(200);
     await expect(page.getByText("Analysis complete", { exact: true })).toBeVisible({ timeout: 30_000 });
     await expectStubAnalysis(page);
-    await expect(page.getByText("ANALYZED", { exact: true })).toBeVisible();
+    await expect(onScreen(page.getByText("ANALYZED", { exact: true }))).toBeVisible();
 
     // A finding's quotation opens the extracted text with that passage highlighted.
     const [first] = STUB_ANALYSIS_FLAGS;
-    await main.getByRole("button", { name: "View matched quotation for finding 1" }).click();
+    await page.getByRole("button", { name: "View matched quotation for finding 1" }).click();
     const source = page.getByRole("dialog", { name: "Extracted contract text" });
     await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
     await expect(source.getByRole("region", { name: "Source passage" }).locator("mark")).toHaveText(first.quote);
