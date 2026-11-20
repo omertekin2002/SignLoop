@@ -2660,6 +2660,11 @@ export async function appendChatMessagesToThread(input: {
   generatedFiles?: GeneratedChatFile[];
   /** Applied only to an untitled thread's first saved turn, under the same row lock. */
   generatedTitle?: string | null;
+  /**
+   * Abandon the save once aborted: it is checked after a connection is acquired and again just
+   * before COMMIT, so a save its caller stopped waiting for rolls back instead of committing later.
+   */
+  signal?: AbortSignal;
   messages: Array<{
     role: ChatMessageRole;
     content: string;
@@ -2696,6 +2701,7 @@ export async function appendChatMessagesToThread(input: {
   // concurrent inserts from producing duplicate position values.
   const client = await sql.connect();
   try {
+    input.signal?.throwIfAborted();
     await client.query("BEGIN");
 
     // Lock the thread row, scoped by user, so concurrent appends serialize here AND ownership is
@@ -2827,6 +2833,7 @@ export async function appendChatMessagesToThread(input: {
       ],
     );
 
+    input.signal?.throwIfAborted();
     await client.query("COMMIT");
     return inserted.rows.map((row) => mapChatMessageRow(row, "omit"));
   } catch (err) {

@@ -127,11 +127,19 @@ describe("a reloaded thread with an interrupted turn", () => {
     expect(screen.queryByText("Renewal ext")).not.toBeInTheDocument();
   });
 
-  it("shows the question with a marker and Retry when no reply text was saved", async () => {
+  it("shows the question with a marker and Retry, which resends its saved files", async () => {
+    const file = {
+      id: "abcdef01-2345-4678-9abc-def012345678",
+      name: "lease.txt",
+      mediaType: "text/plain",
+      size: 12,
+      url: `/api/chat/threads/${threadId}/files/abcdef01-2345-4678-9abc-def012345678`,
+    };
     threadMessages = [
       message("question", 1, "user", "Explain my lease renewal.", {
         turnId,
         interrupted: "error",
+        files: [file],
       }),
     ];
     renderThread();
@@ -143,7 +151,11 @@ describe("a reloaded thread with an interrupted turn", () => {
     await userEvent.click(within(notice).getByRole("button", { name: "Retry" }));
 
     await waitFor(() => expect(chatRequests).toHaveLength(1));
-    expect(chatRequests[0]).toMatchObject({ turnId });
+    // The saved file is sent by id; no "Reattach the file" error.
+    expect(chatRequests[0]).toMatchObject({
+      turnId,
+      messages: [{ role: "user", fileIds: [file.id] }],
+    });
     expect(await screen.findByText("Renewal extends the term by a year.")).toBeInTheDocument();
   });
 

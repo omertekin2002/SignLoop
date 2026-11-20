@@ -216,9 +216,20 @@ async function persistInterruptedTurn(input: {
   reason: ChatTurnInterruption;
   inputFiles: ChatFileInfo[];
   generatedTitle: Promise<string | null>;
+  /**
+   * The partial text may restate contract text (read this turn, or inherited from receipts in its
+   * history) that no saved receipt vouches for. Then it is stored as unverifiable, so it is shown
+   * but never replayed to the model as current contract evidence.
+   */
+  contractDependent: boolean;
 }): Promise<void> {
-  const interrupted = { interrupted: true, interruptedReason: input.reason };
+  const interrupted = {
+    interrupted: true,
+    interruptedReason: input.reason,
+  };
   const partial = input.partialMessage.trim();
+  // The deadline also cancels the save itself, so it cannot commit after the lease is released.
+  const deadline = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const save = (async () =>
@@ -227,6 +238,7 @@ async function persistInterruptedTurn(input: {
         threadId: input.threadId,
         turnId: input.turnId,
         generatedTitle: await input.generatedTitle,
+        signal: deadline.signal,
         messages: [
           {
             role: "user",
@@ -237,17 +249,26 @@ async function persistInterruptedTurn(input: {
             },
           },
           ...(partial
-            ? [{ role: "assistant" as const, content: partial, metadata: interrupted }]
+            ? [
+                {
+                  role: "assistant" as const,
+                  content: partial,
+                  metadata: input.contractDependent
+                    ? { ...interrupted, contractEvidenceInvalid: true }
+                    : interrupted,
+                },
+              ]
             : []),
         ],
       }))();
     await Promise.race([
       save,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("Timed out saving the interrupted chat turn.")),
-          INTERRUPTED_TURN_SAVE_TIMEOUT_MS,
-        );
+        timer = setTimeout(() => {
+          const error = new Error("Timed out saving the interrupted chat turn.");
+          deadline.abort(error);
+          reject(error);
+        }, INTERRUPTED_TURN_SAVE_TIMEOUT_MS);
       }),
     ]);
   } catch (error) {
@@ -767,6 +788,7 @@ export async function POST(req: Request) {
           let sentDone = false;
           let streamedText = "";
           let turnSaved = false;
+          let readContracts = false;
           let interruption: ChatTurnInterruption = "stopped";
 
           try {
@@ -800,6 +822,11 @@ export async function POST(req: Request) {
 
               if (chunk.type === "tool") {
                 timings.mark("first_output");
+                if (
+                  chunk.activity.tool === "read_contract" ||
+                  chunk.activity.tool === "list_contracts"
+                )
+                  readContracts = true;
                 controller.enqueue(streamEvent(chunk));
                 continue;
               }
@@ -924,6 +951,11 @@ export async function POST(req: Request) {
                 reason: interruption,
                 inputFiles,
                 generatedTitle,
+                contractDependent:
+                  readContracts ||
+                  persistedMessages.some(
+                    (message) => message.contractEvidence?.length,
+                  ),
               });
             }
             const endRelease = timings.start("release");

@@ -61,6 +61,7 @@ import {
   useLocalRuntime,
   useMessage,
   useThread,
+  type AssistantRuntime,
   type ChatModelAdapter,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
@@ -147,15 +148,10 @@ function describeToolActivity(activity: ChatToolActivity): string {
 /**
  * Restore saved messages, attachment links, and model metadata into assistant-ui's runtime. An
  * interrupted turn keeps its marker: on the partial reply, or on an empty reply placed after a
- * question that got no text. Saved questions get their turn ids back, so Retry names the same turn.
+ * question that got no text.
  */
-function toRuntimeMessages(
-  messages: ChatThreadMessage[],
-  turnIds: ChatTurnIds,
-): ThreadMessageLike[] {
+function toRuntimeMessages(messages: ChatThreadMessage[]): ThreadMessageLike[] {
   return messages.flatMap((message): ThreadMessageLike[] => {
-    if (message.role === "user" && message.turnId)
-      turnIds.remember(message.id, message.turnId);
     const restored = toRuntimeMessage(message);
     return message.role === "user" && message.interrupted
       ? [
@@ -212,6 +208,28 @@ function toRuntimeMessage(message: ChatThreadMessage): ThreadMessageLike {
         }
       : {}),
   };
+}
+
+/**
+ * Load a saved thread into the runtime. Its questions get back the turn ids they were sent with
+ * and their saved file descriptors (under the adapter's scope key), so Retry of an interrupted turn
+ * names the same turn and resends its attachments by id instead of asking for the file again.
+ */
+function restoreSavedThread(input: {
+  runtime: AssistantRuntime;
+  turnIds: ChatTurnIds;
+  preparedFiles: Map<string, ChatUpload | ChatFileInfo>;
+  scope: string;
+  messages: ChatThreadMessage[];
+}) {
+  for (const message of input.messages) {
+    if (message.role !== "user") continue;
+    if (message.turnId) input.turnIds.remember(message.id, message.turnId);
+    for (const file of message.files ?? [])
+      input.preparedFiles.set(`${input.scope}:${file.id}`, file);
+  }
+  input.runtime.thread.cancelRun();
+  input.runtime.thread.reset(toRuntimeMessages(input.messages));
 }
 
 /**
@@ -633,6 +651,7 @@ export function ChatPanel({
   const preparedFilesRef = useRef(
     new Map<string, ChatUpload | ChatFileInfo>(),
   );
+
   useEffect(() => {
     preparedFilesRef.current.clear();
   }, [user?.id, temporarySessionKey]);
@@ -1061,8 +1080,13 @@ export function ChatPanel({
       return;
     }
 
-    runtime.thread.cancelRun();
-    runtime.thread.reset(toRuntimeMessages(thread.messages, turnIdFor));
+    restoreSavedThread({
+      runtime,
+      turnIds: turnIdFor,
+      preparedFiles: preparedFilesRef.current,
+      scope: `${user?.id}:${thread.id}`,
+      messages: thread.messages,
+    });
     hydratedSignatureRef.current = signature;
     if (isNewlyCreatedThread) {
       newlyCreatedThreadIdsRef.current.delete(thread.id);
@@ -1074,6 +1098,7 @@ export function ChatPanel({
     runtime,
     temporary,
     turnIdFor,
+    user?.id,
   ]);
 
   useEffect(
@@ -1147,8 +1172,13 @@ export function ChatPanel({
       if (!result.data || result.data.id !== threadId) return;
 
       const lastMessage = result.data.messages[result.data.messages.length - 1];
-      runtime.thread.cancelRun();
-      runtime.thread.reset(toRuntimeMessages(result.data.messages, turnIdFor));
+      restoreSavedThread({
+        runtime,
+        turnIds: turnIdFor,
+        preparedFiles: preparedFilesRef.current,
+        scope: `${user?.id}:${result.data.id}`,
+        messages: result.data.messages,
+      });
       hydratedSignatureRef.current = `${result.data.id}:${result.data.messages.length}:${lastMessage?.id ?? "none"}`;
       newlyCreatedThreadIdsRef.current.delete(result.data.id);
       setPersistenceWarning(false);

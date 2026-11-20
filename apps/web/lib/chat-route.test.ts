@@ -1082,6 +1082,7 @@ describe("interrupted saved-chat streams", () => {
       threadId,
       turnId,
       generatedTitle: null,
+      signal: expect.any(AbortSignal),
       messages: [
         {
           role: "user",
@@ -1119,6 +1120,45 @@ describe("interrupted saved-chat streams", () => {
       }),
     );
     expect(releaseLease).toHaveBeenCalledOnce();
+  });
+
+  it("stores a partial reply as unverifiable when it may restate contract text", async () => {
+    // Read this turn: a contract tool ran before the reply was cut off.
+    generateChatReplyStream.mockImplementation(async function* (
+      _messages: unknown,
+      options: { signal: AbortSignal },
+    ) {
+      yield {
+        type: "tool",
+        activity: { id: "c1", tool: "read_contract", status: "complete", query: "Lease" },
+      };
+      yield { type: "delta", text: "Clause 4 says" };
+      await new Promise((_resolve, reject) =>
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+          once: true,
+        }),
+      );
+    });
+    await disconnectAfter(await POST(request()), 2);
+    // Inherited: the history it builds on carries contract receipts.
+    getRecentChatMessagesForThreadForUser.mockResolvedValue([
+      {
+        id: "a1", threadId, role: "assistant", content: "Clause 4 renews yearly.", position: 2,
+        createdAt: "2026-11-19T00:00:00.000Z", model: null, provider: null,
+        contractEvidence: [{ id: "c0000000-0000-4000-8000-000000000001", revision: "rev" }],
+      },
+    ]);
+    after.mockClear();
+    streamUntilAborted(["It renews"]);
+    await disconnectAfter(await POST(request()), 1);
+
+    expect(appendChatMessagesToThread).toHaveBeenCalledTimes(2);
+    for (const [call] of appendChatMessagesToThread.mock.calls)
+      expect(call.messages[1].metadata).toEqual({
+        interrupted: true,
+        interruptedReason: "stopped",
+        contractEvidenceInvalid: true,
+      });
   });
 
   it("writes nothing for an interrupted temporary chat", async () => {
@@ -1200,9 +1240,13 @@ describe("interrupted saved-chat streams", () => {
     await reader.cancel();
     await vi.waitFor(() => expect(appendChatMessagesToThread).toHaveBeenCalledOnce());
     expect(releaseLease).not.toHaveBeenCalled();
+    const { signal } = appendChatMessagesToThread.mock.calls[0]![0] as { signal: AbortSignal };
+    expect(signal.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(10_000);
     await runAfterTasks();
 
+    // The save is cancelled as well, so it cannot commit once the lease is gone.
+    expect(signal.aborted).toBe(true);
     expect(releaseLease).toHaveBeenCalledOnce();
     expect(error).toHaveBeenCalledWith(
       "Chat persist (interrupted) failed:",

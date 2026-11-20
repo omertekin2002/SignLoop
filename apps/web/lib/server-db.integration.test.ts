@@ -802,6 +802,24 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(final).toHaveLength(6);
     expect(final.some((message) => message.interrupted)).toBe(false);
 
+    // A save its caller abandoned rolls back, whether it is stopped before it starts or just
+    // before it would commit.
+    const abandoned = crypto.randomUUID();
+    const save = (signal: AbortSignal) =>
+      appendChatMessagesToThread({ userId, threadId: thread.id, turnId: abandoned, signal, messages: [
+        { role: "user", content: "Abandoned question", metadata: interrupted },
+      ] });
+    await expect(save(AbortSignal.abort(new Error("gave up")))).rejects.toThrow("gave up");
+    let checks = 0;
+    const abortsBeforeCommit = {
+      throwIfAborted() {
+        if (++checks === 2) throw new Error("gave up before commit");
+      },
+    } as AbortSignal;
+    await expect(save(abortsBeforeCommit)).rejects.toThrow("gave up before commit");
+    expect(checks).toBe(2);
+    expect((await getChatThreadByIdForUser(userId, thread.id))!.messages).toHaveLength(6);
+
     // Account deletion removes interrupted turns along with every other message.
     await appendChatMessagesToThread({ userId, threadId: thread.id, turnId: crypto.randomUUID(), messages: [
       { role: "user", content: "One more", metadata: interrupted },
