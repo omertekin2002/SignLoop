@@ -80,9 +80,17 @@ export default defineConfig({
       use: { storageState: AUTH_STATE_PATH },
     },
     {
+      // Also after the workspace checks: it adds projects and uploads, lists and deletes their
+      // context documents through the project page.
+      name: "project-context",
+      testMatch: "project-context.spec.ts",
+      dependencies: ["workspace"],
+      use: { storageState: AUTH_STATE_PATH },
+    },
+    {
       name: "sign-out",
       testMatch: "sign-out.spec.ts",
-      dependencies: ["csp", "contract-notes", "print-brief", "account-export"],
+      dependencies: ["csp", "contract-notes", "print-brief", "account-export", "project-context"],
       use: { storageState: AUTH_STATE_PATH },
     },
   ],
