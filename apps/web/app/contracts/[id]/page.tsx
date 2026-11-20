@@ -5,8 +5,6 @@ import { OperationStatus } from "@/components/operation-status";
 import { postOperation } from "@/lib/operation-progress-client";
 import { isAnalysisOperationResult } from "@/lib/operation-progress";
 
-import { formatNoticePeriod } from "@/lib/notice-period";
-
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -59,7 +57,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ContractSourceProvider, FindingSource, OpenContractSource } from "@/components/contract-source";
+import { ContractSourceProvider, FindingSource, NoticePeriodSource, OpenContractSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
 import { DownloadBriefButton } from "@/components/download-brief-button";
 import { PrintBrief } from "@/components/print-brief";
@@ -788,9 +786,7 @@ const ContractDetails = () => {
                       <h4 className="text-sm font-medium text-muted-foreground mb-1">
                         Notice period
                       </h4>
-                      <p className="text-sm">
-                        {formatNoticePeriod(summaryCancellation)}
-                      </p>
+                      <NoticePeriodSource cancellation={summaryCancellation} />
                     </div>
                     <div className="p-4 rounded-lg bg-muted/40">
                       <h4 className="text-sm font-medium text-muted-foreground mb-1">

@@ -65,6 +65,10 @@ export const STUB_ANALYSIS_FLAGS = [
   },
 ] as const;
 
+/** The stub's quotation of the clause stating the notice period, with what starts its clock. */
+export const STUB_NOTICE_QUOTE =
+  "unless either party gives 60 days' written notice before the end of the current term.";
+
 export const STUB_ANALYSIS_SUMMARY = "Stub analysis: a twelve-month website services agreement.";
 
 /**
@@ -87,6 +91,7 @@ export function stubAnalysis() {
         how: "Written notice before the end of the current term.",
         notice_period_days: 60,
         notice_period_text: "60 days",
+        notice_evidence: { quote: STUB_NOTICE_QUOTE, segment: "full" },
         penalties: [],
       },
     },

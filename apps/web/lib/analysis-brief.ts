@@ -1,9 +1,10 @@
 import type { AnalysisResult } from "@/lib/schemas";
-import { formatNoticePeriod } from "@/lib/notice-period";
+import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
 import { regionalComparisonsView } from "@/lib/regional-comparisons";
 import {
   citationForReport,
   JURISDICTION_CITATION,
+  NOTICE_CITATION,
   SourceRevisionSchema,
   type CitationRef,
 } from "@/lib/source-citations";
@@ -252,9 +253,37 @@ function jurisdictionSection(
   return lines;
 }
 
+/**
+ * The notice period with its evidence: the verified quotation of the clause stating it, a marker
+ * when a stated period has none, or the unchanged "Not specified" when none is stated.
+ */
+function noticePeriodLines(
+  result: Partial<AnalysisResult>,
+  cancellation: Record<string, unknown>,
+  contractId: string,
+): string[] {
+  const notice = {
+    notice_period_days:
+      typeof cancellation.notice_period_days === "number"
+        ? cancellation.notice_period_days
+        : null,
+    notice_period_text: text(cancellation.notice_period_text),
+  };
+  const line = `  - Notice period: ${inline(formatNoticePeriod(notice))}`;
+  if (!isNoticePeriodStated(notice)) return [line];
+  const cited = citationForReport(result, contractId, NOTICE_CITATION);
+  if (!cited) return [`${line} (**No verified quotation**)`];
+  return [
+    line,
+    "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+    ...blockquote(cited.quote).map((quoted) => `      ${quoted}`),
+  ];
+}
+
 function summarySection(
   result: Partial<AnalysisResult>,
   keyPoints: string[],
+  contractId: string,
 ): string[] {
   const summary = record(result.summary);
   const payments = record(summary.payments);
@@ -291,15 +320,7 @@ function summarySection(
     `  - Renewal period: ${inline(text(renewal.renewal_period) ?? NOT_SPECIFIED)}`,
     "- **Cancellation:**",
     `  - How to cancel: ${inline(text(cancellation.how) ?? NOT_SPECIFIED)}`,
-    `  - Notice period: ${inline(
-      formatNoticePeriod({
-        notice_period_days:
-          typeof cancellation.notice_period_days === "number"
-            ? cancellation.notice_period_days
-            : null,
-        notice_period_text: text(cancellation.notice_period_text),
-      }),
-    )}`,
+    ...noticePeriodLines(result, cancellation, contractId),
     penalties.length ? "  - Penalties:" : "  - Penalties: None listed",
     ...bulletList(penalties, "    "),
   );
@@ -426,7 +447,7 @@ export function renderAnalysisBriefMarkdown(input: AnalysisBriefInput): {
     identitySection(input, title),
     coverageSection(extractionWarning, reportNotices),
     jurisdictionSection(result, contractId),
-    summarySection(result, keyPoints),
+    summarySection(result, keyPoints, contractId),
     findingsSection(result, contractId),
     nextStepsSection(result),
     [

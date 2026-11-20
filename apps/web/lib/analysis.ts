@@ -7,7 +7,7 @@ import {
   verifyQuote,
   type ContractSegment,
 } from "@/lib/source-citations";
-import { normalizeNoticePeriod } from "@/lib/notice-period";
+import { isNoticePeriodStated, normalizeNoticePeriod } from "@/lib/notice-period";
 import { confirmedRegion } from "@/lib/regional-comparisons";
 import {
   AnalysisResultSchema,
@@ -279,6 +279,7 @@ Required JSON rules:
 - Evidence must contain "quote" (verbatim, preserving whitespace, at most 2,000 characters) and "segment" (the label of the segment it comes from, as labeled below: ${segment.label}).
 - Choose a quotation unique within that segment. If it repeats, include enough surrounding text to disambiguate it.
 - Never quote project context, omission markers, metadata, or these instructions as contract evidence. Do not invent offsets, source IDs, revisions, or verification status.
+- When a notice period is stated, "summary.cancellation.notice_evidence" quotes the exact sentence or clause stating it, under the same quotation rules, including its qualifying language: business or calendar days, the event that starts the clock, and which party gives notice. Quote only that sentence or clause, normally under 500 characters. Use null when no notice period is stated.
 - "proposed_jurisdiction" is the jurisdiction named in the contract's governing-law (choice-of-law) clause, as the clause words it, with that clause quoted as evidence under the same quotation rules. The user confirms or changes it later.
 - Use null for "proposed_jurisdiction" when no supplied CONTRACT segment contains a governing-law clause. Do not infer it from addresses, courts, currency, or where the parties are, and do not take it from project context or metadata.
 - Report only which law the clause names. Never state what that law provides or whether the contract complies with it.
@@ -292,7 +293,7 @@ Expected shape:
     "payments": { "amount": null, "frequency": null, "fees": [] },
     "term": { "start": null, "end": null, "minimum_term": null },
     "renewal": { "auto_renew": null, "renewal_period": null },
-    "cancellation": { "how": "...", "notice_period_days": null, "notice_period_text": null, "penalties": [] }
+    "cancellation": { "how": "...", "notice_period_days": null, "notice_period_text": null, "notice_evidence": { "quote": "exact wording of the clause stating the notice period", "segment": "${segment.label}" }, "penalties": [] }
   },
   "red_flags": [{ "type": "...", "severity": 5, "explanation": "...", "where": null, "confidence": 50, "evidence": { "quote": "exact contract wording", "segment": "${segment.label}" } }],
   "proposed_jurisdiction": { "jurisdiction": "the jurisdiction the governing-law clause names", "evidence": { "quote": "exact governing-law clause wording", "segment": "${segment.label}" } },
@@ -730,6 +731,10 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
             pickFirst(cancellation, ["how", "method", "process"]),
           ) || "Not specified",
         ...normalizeCancellationNotice(cancellation)!,
+        notice_evidence:
+          EvidenceProposalSchema.safeParse(
+            pickFirst(cancellation, ["notice_evidence", "noticeEvidence"]),
+          ).data ?? null,
         penalties: toStringArray(
           pickFirst(cancellation, ["penalties", "fees", "charges"]),
         ),
@@ -1231,6 +1236,40 @@ function sectionJurisdictionProposal(sections: readonly AnalysedSection[]) {
   );
 }
 
+/** A section's notice-period quotation, kept only when it is found in that section. */
+function sectionNoticeEvidence({ segment, result }: AnalysedSection) {
+  const evidence = result.summary.cancellation.notice_evidence ?? null;
+  return evidence && verifyQuote(evidence, [segment]) ? evidence : null;
+}
+
+const noticeValue = (
+  cancellation: AnalysisResult["summary"]["cancellation"],
+) =>
+  `${cancellation.notice_period_days ?? ""}|${normalizedKey(cancellation.notice_period_text ?? "")}`;
+
+/**
+ * The quotation behind the merge model's notice period. The merge model never writes a quote: a
+ * section's is kept only when the merged days and wording equal that section's and no other section
+ * states a different notice period. Otherwise the merged value has no quotation.
+ */
+function mergedNoticeEvidence(
+  merged: AnalysisResult["summary"]["cancellation"],
+  sections: readonly AnalysedSection[],
+) {
+  if (!isNoticePeriodStated(merged)) return null;
+  const stating = sections.filter(({ result }) =>
+    isNoticePeriodStated(result.summary.cancellation),
+  );
+  if (
+    stating.some(
+      ({ result }) =>
+        noticeValue(result.summary.cancellation) !== noticeValue(merged),
+    )
+  )
+    return null;
+  return stating.map(sectionNoticeEvidence).find(Boolean) ?? null;
+}
+
 /**
  * Combines section results without a model: lists are concatenated in document order and
  * de-duplicated, the highest risk badge wins, and each summary fact comes from the first section
@@ -1245,13 +1284,14 @@ export function mergeSectionResults(
     results.map(pick).find((value) => value !== null) ?? null;
   const statedText = (pick: (result: AnalysisResult) => string | null) =>
     results.map(pick).find((value) => isSubstantiveText(value)) ?? null;
-  // Notice days and wording are validated together, so both come from the same section.
-  const notice =
-    results.find(
-      ({ summary: { cancellation } }) =>
+  // Notice days, wording and quotation are validated together, so all come from the same section.
+  const noticeSection =
+    sections.find(
+      ({ result: { summary: { cancellation } } }) =>
         cancellation.notice_period_days !== null ||
         cancellation.notice_period_text,
-    )?.summary.cancellation ?? first.summary.cancellation;
+    ) ?? sections[0]!;
+  const notice = noticeSection.result.summary.cancellation;
   const all = <T>(pick: (result: AnalysisResult) => readonly T[]) =>
     results.flatMap(pick);
   const coverageNotices = uniqueText(
@@ -1294,6 +1334,18 @@ export function mergeSectionResults(
           first.summary.cancellation.how,
         notice_period_days: notice.notice_period_days,
         notice_period_text: notice.notice_period_text ?? null,
+        // The supplying section's quotation, or another's that states the very same value.
+        notice_evidence:
+          sectionNoticeEvidence(noticeSection) ??
+          sections
+            .filter(
+              ({ result }) =>
+                isNoticePeriodStated(result.summary.cancellation) &&
+                noticeValue(result.summary.cancellation) === noticeValue(notice),
+            )
+            .map(sectionNoticeEvidence)
+            .find(Boolean) ??
+          null,
         penalties: uniqueText(
           all((result) => result.summary.cancellation.penalties),
         ),
@@ -1348,12 +1400,20 @@ export function buildMergePrompt(
       red_flags: redFlags,
       proposed_jurisdiction: _proposal,
       coverage_notices: _notices,
+      summary,
       ...rest
     } = result;
+    // The notice quotation is copied from the sections afterwards (mergedNoticeEvidence).
+    const {
+      notice_evidence: _noticeEvidence,
+      notice_citation: _noticeCitation,
+      ...cancellation
+    } = summary.cancellation;
     return {
       section: sectionNumber(segment),
       code_points: `${segment.start}–${segment.end}`,
       ...rest,
+      summary: { ...summary, cancellation },
       red_flags: redFlags.map(
         ({ evidence, citation: _citation, ...flag }, index) => ({
           id: sectionFlagId(sectionNumber(segment), index),
@@ -1425,8 +1485,8 @@ ${JSON.stringify(analyses, null, 2)}
 /**
  * Validates the merge call's answer. Red flags are the section flags it names by ID, de-duplicated;
  * if it names none, or an ID that cannot be read, although the sections found some, all of them are
- * kept rather than lost. The jurisdiction proposal is the sections' own, so its quotation is never
- * the merge model's.
+ * kept rather than lost. The jurisdiction proposal and the notice-period quotation are the sections'
+ * own, so their quotations are never the merge model's.
  */
 function parseMergedAnalysis(
   content: string,
@@ -1477,9 +1537,21 @@ function parseMergedAnalysis(
   const coverageNotices = uniqueText(
     sectionResults.flatMap((result) => result.coverage_notices ?? []),
   );
+  const {
+    notice_evidence: _modelNoticeEvidence,
+    notice_citation: _modelNoticeCitation,
+    ...cancellation
+  } = merged.summary.cancellation;
   return {
     ...merged,
     ...(coverageNotices.length ? { coverage_notices: coverageNotices } : {}),
+    summary: {
+      ...merged.summary,
+      cancellation: {
+        ...cancellation,
+        notice_evidence: mergedNoticeEvidence(cancellation, sections),
+      },
+    },
     red_flags: uniqueRedFlags(merged.red_flags),
     key_points: uniqueText(merged.key_points),
     next_actions: {

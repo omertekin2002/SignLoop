@@ -7,6 +7,7 @@ import {
   STUB_ANALYSIS_SUMMARY,
   STUB_CONTRACT_FIXTURE,
   STUB_MODEL,
+  STUB_NOTICE_QUOTE,
   type StubModelRequest,
 } from "../stub-model-server";
 import { openDashboard, openSidebar } from "./dashboard";
@@ -47,7 +48,10 @@ type StoredContract = {
   analyses: {
     llmModel: string | null;
     llmProvider: string | null;
-    resultJson: { red_flags?: { citation?: { status?: string; quote?: string } | null }[] };
+    resultJson: {
+      red_flags?: { citation?: { status?: string; quote?: string } | null }[];
+      summary?: { cancellation?: { notice_citation?: { status?: string; quote?: string } | null } };
+    };
   }[];
 };
 
@@ -86,8 +90,8 @@ function onScreen(locator: Locator): Locator {
   return locator.filter({ visible: true });
 }
 
-// The stub's report as the contract page renders it: its summary and key points, every finding
-// with the quotation the server verified, and the stub named as the model.
+// The stub's report as the contract page renders it: its summary and key points, the notice period
+// and every finding with the quotation the server verified, and the stub named as the model.
 async function expectStubAnalysis(page: Page) {
   await expect(onScreen(page.getByText(STUB_ANALYSIS_SUMMARY, { exact: true }))).toBeVisible();
   await expect(
@@ -99,6 +103,10 @@ async function expectStubAnalysis(page: Page) {
     await expect(onScreen(page.locator("blockquote").filter({ hasText: quote }))).toHaveText(`“${quote}”`);
   }
   await expect(onScreen(page.getByText("Verified source quotation unavailable."))).toHaveCount(0);
+  await expect(onScreen(page.locator("blockquote").filter({ hasText: STUB_NOTICE_QUOTE }))).toHaveText(
+    `“${STUB_NOTICE_QUOTE}”`,
+  );
+  await expect(onScreen(page.getByText("No verified quotation", { exact: true }))).toHaveCount(0);
   await expect(onScreen(page.getByText(`LLM: Primary provider • ${STUB_MODEL}`, { exact: true }))).toBeVisible();
   await expect(page.getByRole("button", { name: "Re-run Analysis" })).toBeEnabled();
 }
@@ -145,6 +153,13 @@ for (const theme of THEMES) {
     await page.keyboard.press("Escape");
     await expect(source).toBeHidden();
 
+    // So does the notice period's quotation of the clause stating it.
+    await page.getByRole("button", { name: "View matched quotation of the notice-period clause" }).click();
+    await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
+    await expect(source.getByRole("region", { name: "Source passage" }).locator("mark")).toHaveText(STUB_NOTICE_QUOTE);
+    await page.keyboard.press("Escape");
+    await expect(source).toBeHidden();
+
     // A fresh load reads the stored report back from the database.
     await page.reload();
     await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
@@ -162,6 +177,10 @@ for (const theme of THEMES) {
     expect(stored.analyses[0]!.resultJson.red_flags?.map((flag) => flag.citation)).toEqual(
       STUB_ANALYSIS_FLAGS.map(({ quote }) => expect.objectContaining({ status: "verified", quote })),
     );
+    expect(stored.analyses[0]!.resultJson.summary?.cancellation?.notice_citation).toMatchObject({
+      status: "verified",
+      quote: STUB_NOTICE_QUOTE,
+    });
 
     // The stub received exactly one analysis request for this contract, carrying its text.
     const received = (await stubRequests(page)).filter((request) => request.question.includes(reference));

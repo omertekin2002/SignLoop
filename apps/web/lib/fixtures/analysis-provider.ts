@@ -32,6 +32,8 @@ export function sectionOutput(
     autoRenew?: boolean | null;
     noticeDays?: number | null;
     noticeText?: string | null;
+    /** The section's quotation of the clause stating its notice period. */
+    noticeQuote?: string;
     jurisdiction?: string;
   } = {},
 ) {
@@ -47,6 +49,9 @@ export function sectionOutput(
         how: "Not specified",
         notice_period_days: options.noticeDays ?? null,
         notice_period_text: options.noticeText ?? null,
+        notice_evidence: options.noticeQuote
+          ? { quote: options.noticeQuote, segment: segment.label }
+          : null,
         penalties: [],
       },
     },
