@@ -105,7 +105,7 @@ const TEST_OWNERS = [
   "chat-search-intruder", "chat-search-owner", "chat-search-paging-owner",
   "content-receipt-owner", "empty-lookup-intruder", "empty-lookup-owner", "file-owner",
   "filter-intruder", "filter-owner", "filter-paging-owner",
-  "intruder", "late-reply-owner", "legacy-receipt-owner", "other", "owner", "OWNER",
+  "interrupted-turn-owner", "intruder", "late-reply-owner", "legacy-receipt-owner", "other", "owner", "OWNER",
   "project-analysis-owner", "project-search-intruder", "project-search-owner",
   "project-search-paging-owner", "quota-owner", "replay-failure-owner", "replay-intruder",
   "replay-owner", "replay-project-owner", "revision-chat-owner", "scope-user", "search-intruder",
@@ -718,6 +718,121 @@ describe.skipIf(!connectionString)("database integration", () => {
     // The id lives in existing metadata, so export still reads every message.
     const exported = await getAccountExportForUser(userId);
     expect(exported.chatMessages.filter((message) => message.threadId === thread.id)).toHaveLength(7);
+  });
+
+  it("keeps an interrupted turn readable, retries it into one finished turn, and exports and deletes it", async () => {
+    const userId = "interrupted-turn-owner";
+    const thread = await createChatThreadForUser({ userId });
+    const [, earlier] = await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
+      { role: "user", content: "An earlier question" },
+      { role: "assistant", content: `An earlier answer ![Generated image](data:image/png;base64,${chatImage.data})` },
+    ] });
+    const earlierImage = earlier!.content.match(/!\[Generated image\]\([^)]+\)/)![0];
+    const turnId = crypto.randomUUID();
+    const interrupted = { interrupted: true, interruptedReason: "stopped" };
+    // The partial reply carries a generated image, which is stored as an attachment.
+    await appendChatMessagesToThread({ userId, threadId: thread.id, turnId, messages: [
+      { role: "user", content: "Summarize the fees" },
+      {
+        role: "assistant",
+        // Its own new image, plus a repeat of the earlier answer's image link.
+        content: `Fees are ![Generated image](data:image/png;base64,${chatImage.data}) as in ${earlierImage}`,
+        metadata: interrupted,
+      },
+    ] });
+    const attachments = async () =>
+      Number((await pool.current!.query(
+        "SELECT count(*) AS n FROM chat_attachments WHERE thread_id = $1", [thread.id],
+      )).rows[0].n);
+    expect(await attachments()).toBe(2);
+
+    // Reloading shows the question and partial answer, marked; it is not a saved answer to replay.
+    expect(await getChatTurnByTurnId(userId, thread.id, turnId)).toBeNull();
+    const shown = (await getChatThreadByIdForUser(userId, thread.id))!.messages;
+    expect(shown.map(({ role, turnId: id, interrupted: reason }) => ({ role, id, reason }))).toEqual([
+      { role: "user", id: undefined, reason: undefined },
+      { role: "assistant", id: undefined, reason: undefined },
+      { role: "user", id: turnId, reason: undefined },
+      { role: "assistant", id: undefined, reason: "stopped" },
+    ]);
+    const history = (await getRecentChatMessagesForThreadForUser(userId, thread.id, 10))!;
+    expect(history.at(-2)?.turnId).toBe(turnId);
+    expect(history.at(-1)?.interrupted).toBe("stopped");
+
+    // Account export includes the interrupted turn through the existing path.
+    const exported = (await getAccountExportForUser(userId)).chatMessages
+      .filter((message) => message.threadId === thread.id);
+    expect(exported).toHaveLength(4);
+    expect(exported[3]).toMatchObject({ role: "assistant", interrupted: "stopped" });
+
+    // Two retries racing on the thread lock leave exactly one question and one finished answer.
+    const raced = await Promise.all([1, 2].map((attempt) =>
+      appendChatMessagesToThread({ userId, threadId: thread.id, turnId, messages: [
+        { role: "user", content: "Summarize the fees" },
+        { role: "assistant", content: `Fees are 2% (attempt ${attempt}).` },
+      ] }),
+    ));
+    expect(raced[0]).toEqual(raced[1]);
+    const retried = (await getChatThreadByIdForUser(userId, thread.id))!.messages;
+    expect(retried.map((message) => message.content)).toEqual([
+      "An earlier question", earlier!.content, "Summarize the fees", raced[0]![1]!.content,
+    ]);
+    expect(retried.some((message) => message.interrupted)).toBe(false);
+    // The partial reply's own image is gone; the earlier answer's image it repeated is kept.
+    expect(await attachments()).toBe(1);
+    const earlierImageId = earlierImage.match(/images\/([0-9a-f-]{36})\)/)![1]!;
+    expect(await getChatImageForUser(userId, thread.id, earlierImageId)).not.toBeNull();
+    expect(await getChatTurnByTurnId(userId, thread.id, turnId)).toEqual(raced[0]);
+
+    // A late interrupted save of a turn that has since finished writes nothing.
+    expect(await appendChatMessagesToThread({ userId, threadId: thread.id, turnId, messages: [
+      { role: "user", content: "Summarize the fees" },
+      { role: "assistant", content: "Fees", metadata: interrupted },
+    ] })).toEqual(raced[0]);
+
+    // A turn cut off before any reply text keeps the question alone, marked, until it is retried.
+    const unanswered = crypto.randomUUID();
+    await appendChatMessagesToThread({ userId, threadId: thread.id, turnId: unanswered, messages: [
+      { role: "user", content: "Any penalties?", metadata: { ...interrupted, interruptedReason: "error" } },
+    ] });
+    expect(await getChatTurnByTurnId(userId, thread.id, unanswered)).toBeNull();
+    expect((await getChatThreadByIdForUser(userId, thread.id))!.messages.at(-1))
+      .toMatchObject({ content: "Any penalties?", turnId: unanswered, interrupted: "error" });
+    await appendChatMessagesToThread({ userId, threadId: thread.id, turnId: unanswered, messages: [
+      { role: "user", content: "Any penalties?" },
+      { role: "assistant", content: "No penalties apply." },
+    ] });
+    const final = (await getChatThreadByIdForUser(userId, thread.id))!.messages;
+    expect(final.map((message) => message.content).slice(-2)).toEqual(["Any penalties?", "No penalties apply."]);
+    expect(final).toHaveLength(6);
+    expect(final.some((message) => message.interrupted)).toBe(false);
+
+    // A save its caller abandoned rolls back, whether it is stopped before it starts or just
+    // before it would commit.
+    const abandoned = crypto.randomUUID();
+    const save = (signal: AbortSignal) =>
+      appendChatMessagesToThread({ userId, threadId: thread.id, turnId: abandoned, signal, messages: [
+        { role: "user", content: "Abandoned question", metadata: interrupted },
+      ] });
+    await expect(save(AbortSignal.abort(new Error("gave up")))).rejects.toThrow("gave up");
+    let checks = 0;
+    const abortsBeforeCommit = {
+      throwIfAborted() {
+        if (++checks === 2) throw new Error("gave up before commit");
+      },
+    } as AbortSignal;
+    await expect(save(abortsBeforeCommit)).rejects.toThrow("gave up before commit");
+    expect(checks).toBe(2);
+    expect((await getChatThreadByIdForUser(userId, thread.id))!.messages).toHaveLength(6);
+
+    // Account deletion removes interrupted turns along with every other message.
+    await appendChatMessagesToThread({ userId, threadId: thread.id, turnId: crypto.randomUUID(), messages: [
+      { role: "user", content: "One more", metadata: interrupted },
+    ] });
+    await deleteAccountForUser(userId, { keepLogin: true });
+    expect(Number((await pool.current!.query(
+      "SELECT count(*) AS n FROM chat_messages WHERE thread_id = $1", [thread.id],
+    )).rows[0].n)).toBe(0);
   });
 
   it("preserves custom titles and saves replies even when title generation failed", async () => {

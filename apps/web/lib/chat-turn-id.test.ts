@@ -20,4 +20,13 @@ describe("createChatTurnIds", () => {
     );
     expect(turnIdFor("other")).not.toBe(turnIdFor("message"));
   });
+
+  it("restores the turn id a saved question was sent with", () => {
+    let next = 0;
+    const turnIdFor = createChatTurnIds(() => `turn-${++next}`);
+
+    turnIdFor.remember("saved-question", "saved-turn");
+    expect(turnIdFor("saved-question")).toBe("saved-turn");
+    expect(turnIdFor("new-question")).toBe("turn-1");
+  });
 });

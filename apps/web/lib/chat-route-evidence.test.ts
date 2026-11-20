@@ -15,6 +15,10 @@ const mocks = vi.hoisted(() => ({
   getContractWindowForUser: vi.fn(),
   responses: vi.fn(),
 }));
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after: vi.fn(),
+}));
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/server-db", () => ({
   claimGenerationOperation: mocks.claimGenerationOperation,

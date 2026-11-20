@@ -413,6 +413,59 @@ for (const theme of THEMES) {
   });
 }
 
+// The thread is real; its history is fulfilled here, since producing an interrupted turn needs a
+// model reply cut off mid-stream.
+for (const theme of THEMES) {
+  test(`an interrupted reply shows its marker and Retry with no serious accessibility violations (${theme} theme)`, async ({
+    page,
+  }) => {
+    const pageErrors = collectPageErrors(page);
+    await startInTheme(page, theme);
+    const title = `E2E interrupted chat ${theme} ${Date.now()}`;
+    const created = await page.request.post("/api/chat/threads", { data: { title } });
+    expect(created.status()).toBe(201);
+    const { data } = (await created.json()) as { data: { id: string } };
+    const createdAt = new Date().toISOString();
+    await page.route(
+      (url) => url.pathname === `/api/chat/threads/${data.id}` && !url.search,
+      (route) =>
+        route.request().method() === "GET"
+          ? route.fulfill({
+              json: {
+                data: {
+                  id: data.id,
+                  title,
+                  hasMore: false,
+                  messages: [
+                    {
+                      id: crypto.randomUUID(), threadId: data.id, role: "user",
+                      content: "Explain my lease renewal.", position: 1, createdAt,
+                      model: null, provider: null, turnId: crypto.randomUUID(),
+                    },
+                    {
+                      id: crypto.randomUUID(), threadId: data.id, role: "assistant",
+                      content: "Renewal extends the", position: 2, createdAt,
+                      model: null, provider: null, interrupted: "stopped",
+                    },
+                  ],
+                },
+              },
+            })
+          : route.fallback(),
+    );
+
+    await openDashboard(page);
+    await openSidebar(page);
+    await page.locator("aside").getByRole("button", { name: new RegExp(`^${title}`) }).click();
+    const notice = page.getByRole("status").filter({ hasText: "Reply interrupted." });
+    await expect(notice).toBeVisible();
+    await expect(page.getByText("Renewal extends the")).toBeVisible();
+    await expect(notice.getByRole("button", { name: "Retry" })).toBeEnabled();
+    await expectNoA11yViolations(page, { theme });
+    expect(pageErrors).toEqual([]);
+  });
+}
+
 test("the usage API reports the account's unused hourly quota", async ({ page }) => {
   const response = await page.request.get("/api/usage");
   expect(response.status()).toBe(200);

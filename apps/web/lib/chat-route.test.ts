@@ -14,6 +14,7 @@ const {
   generateChatReply,
   generateChatReplyStream,
   hasImageInputProvider,
+  after,
 } = vi.hoisted(() => ({
   auth: vi.fn(),
   claimGenerationOperation: vi.fn(),
@@ -28,8 +29,13 @@ const {
   generateChatReply: vi.fn(),
   generateChatReplyStream: vi.fn(),
   hasImageInputProvider: vi.fn(),
+  after: vi.fn(),
 }));
 
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after,
+}));
 vi.mock("@/lib/auth", () => ({ auth }));
 vi.mock("@/lib/server-db", () => ({
   claimGenerationOperation,
@@ -64,6 +70,13 @@ import {
 } from "./chat-history-bounds";
 
 const resetAt = "2026-10-19T15:00:00.000Z";
+
+/** Run the work the route deferred with after(), as the runtime does once the response ends. */
+async function runAfterTasks() {
+  await Promise.all(
+    after.mock.calls.map(([task]) => (typeof task === "function" ? task() : task)),
+  );
+}
 const quota = (used: number) => ({
   limit: 30,
   used,
@@ -700,12 +713,27 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
       );
       controller.abort();
       expect((await reader.read()).done).toBe(true);
+      await runAfterTasks();
+      // The streamed reply never got its done event, so it is kept as an interrupted turn rather
+      // than a finished one.
+      expect(appendChatMessagesToThread).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          messages: [
+            expect.objectContaining({ role: "user", metadata: {} }),
+            {
+              role: "assistant",
+              content: reply.message,
+              metadata: { interrupted: true, interruptedReason: "stopped" },
+            },
+          ],
+        }),
+      );
     } else {
       expect(generateChatReply).toHaveBeenCalled();
       controller.abort();
       await response;
+      expect(appendChatMessagesToThread).not.toHaveBeenCalled();
     }
-    expect(appendChatMessagesToThread).not.toHaveBeenCalled();
   });
 
   it("cancels pending naming and does not save when the reply fails", async () => {
@@ -730,7 +758,25 @@ describe.each([false, true])("automatic chat titles (stream=%s)", (stream) => {
     const body = await response.text();
     expect(body).toContain("Chat request failed");
     expect(titleSignal?.aborted).toBe(true);
-    expect(appendChatMessagesToThread).not.toHaveBeenCalled();
+    await runAfterTasks();
+    if (stream) {
+      // The partial answer is kept, marked as cut off by an error, without the abandoned title.
+      expect(appendChatMessagesToThread).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          generatedTitle: null,
+          messages: [
+            expect.objectContaining({ role: "user" }),
+            {
+              role: "assistant",
+              content: "Partial reply",
+              metadata: { interrupted: true, interruptedReason: "error" },
+            },
+          ],
+        }),
+      );
+    } else {
+      expect(appendChatMessagesToThread).not.toHaveBeenCalled();
+    }
   });
 });
 
@@ -890,6 +936,54 @@ describe.each([false, true])("saved chat turn retries (stream=%s)", (stream) => 
     },
   );
 
+  it("generates a new answer for an interrupted turn and leaves its earlier attempt out of history", async () => {
+    // The database reports no finished turn for an interrupted one, so the route generates.
+    getChatTurnByTurnId.mockResolvedValue(null);
+    getRecentChatMessagesForThreadForUser.mockResolvedValue([
+      { ...savedTurn[0], content: "An earlier question", position: 1 },
+      { ...savedTurn[1], content: "An earlier answer", position: 2, files: undefined },
+      { ...savedTurn[0], id: "q", position: 3, turnId },
+      { ...savedTurn[1], id: "partial", content: "Renewal ext", position: 4, interrupted: "stopped" },
+    ]);
+
+    const result = await completion(await POST(request({ turnId })));
+
+    expect(result.message).toBe(reply.message);
+    expect(admitChat).toHaveBeenCalledExactlyOnceWith("owner");
+    const generate = stream ? generateChatReplyStream : generateChatReply;
+    expect(generate).toHaveBeenCalledOnce();
+    const prompt = generate.mock.calls[0]![0] as { role: string; content: string }[];
+    expect(prompt.slice(1).map((message) => message.content)).toEqual([
+      "An earlier question",
+      "An earlier answer",
+      "Explain my lease renewal.",
+    ]);
+    // The database replaces the interrupted rows when it sees the same turn id.
+    expect(appendChatMessagesToThread).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ threadId, turnId }),
+    );
+  });
+
+  it("labels an earlier interrupted reply as unfinished when it is history for a new turn", async () => {
+    getRecentChatMessagesForThreadForUser.mockResolvedValue([
+      { ...savedTurn[0], turnId: "c3d4e5f6-0000-4000-8000-000000000000" },
+      { ...savedTurn[1], content: "Renewal ext", files: undefined, interrupted: "error" },
+    ]);
+
+    await completion(await POST(request({ turnId })));
+
+    const generate = stream ? generateChatReplyStream : generateChatReply;
+    const prompt = generate.mock.calls[0]![0] as { role: string; content: string }[];
+    expect(prompt.slice(1)).toEqual([
+      expect.objectContaining({ role: "user", content: "Explain my lease renewal." }),
+      expect.objectContaining({
+        role: "assistant",
+        content: "Renewal ext\n\n[This reply was interrupted before it finished.]",
+      }),
+      expect.objectContaining({ role: "user", content: "Explain my lease renewal." }),
+    ]);
+  });
+
   it("ignores a turn id in temporary chat, valid or not", async () => {
     for (const value of [turnId, "not-a-uuid"]) {
       const result = await completion(
@@ -900,5 +994,263 @@ describe.each([false, true])("saved chat turn retries (stream=%s)", (stream) => 
     expect(claimGenerationOperation).not.toHaveBeenCalled();
     expect(getChatTurnByTurnId).not.toHaveBeenCalled();
     expect(appendChatMessagesToThread).not.toHaveBeenCalled();
+  });
+});
+
+describe("interrupted saved-chat streams", () => {
+  const threadId = "11e3e947-f71f-4ecd-a901-adbf24edbb8a";
+  const turnId = "6f1c2b9e-8d4a-4b7c-9e2f-0a1b2c3d4e5f";
+  const file = {
+    id: "abcdef01-2345-4678-9abc-def012345678",
+    name: "terms.txt",
+    mediaType: "text/plain",
+    size: 12,
+    text: "Private terms",
+  };
+  const request = (extra: Record<string, unknown> = {}) =>
+    new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        threadId,
+        turnId,
+        stream: true,
+        messages: [{ role: "user", content: "Explain my lease renewal." }],
+        ...extra,
+      }),
+    });
+  let releaseLease: ReturnType<typeof vi.fn>;
+
+  /** Stream these deltas, then wait for the request to be cancelled, as a slow model would. */
+  function streamUntilAborted(texts: string[]) {
+    generateChatReplyStream.mockImplementation(async function* (
+      _messages: unknown,
+      options: { signal: AbortSignal },
+    ) {
+      for (const text of texts) yield { type: "delta", text };
+      await new Promise((_resolve, reject) =>
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+          once: true,
+        }),
+      );
+    });
+  }
+
+  /** Read the given number of events, then stop reading as Stop or a closed tab does. */
+  async function disconnectAfter(response: Response, events: number) {
+    const reader = response.body!.getReader();
+    for (let index = 0; index < events; index += 1) await reader.read();
+    await reader.cancel();
+    await runAfterTasks();
+  }
+
+  beforeEach(() => {
+    releaseLease = vi.fn().mockResolvedValue(undefined);
+    auth.mockResolvedValue({ userId: "owner" });
+    claimGenerationOperation.mockResolvedValue(releaseLease);
+    admitChat.mockResolvedValue({
+      release: vi.fn().mockResolvedValue(undefined),
+      quota: quota(1),
+    });
+    getUserSettingsByUserId.mockResolvedValue({ primaryModel: "selected-model" });
+    getModelAvailabilitySnapshot.mockResolvedValue({
+      availablePrimaryModels: ["selected-model"],
+      availableImageInputModels: [],
+      imageGenerationAvailable: false,
+    });
+    getRecentChatMessagesForThreadForUser.mockResolvedValue([]);
+    getChatTurnByTurnId.mockResolvedValue(null);
+    generateChatTitle.mockResolvedValue(null);
+    appendChatMessagesToThread.mockResolvedValue([]);
+  });
+
+  it("saves the question, its files and the streamed text, marked interrupted, when the client disconnects", async () => {
+    getChatDocumentsForUser.mockResolvedValue([file]);
+    streamUntilAborted(["Renewal ", "extends"]);
+
+    await disconnectAfter(
+      await POST(
+        request({
+          messages: [{ role: "user", content: "Explain my lease renewal.", fileIds: [file.id] }],
+        }),
+      ),
+      2,
+    );
+
+    expect(appendChatMessagesToThread).toHaveBeenCalledExactlyOnceWith({
+      userId: "owner",
+      threadId,
+      turnId,
+      generatedTitle: null,
+      signal: expect.any(AbortSignal),
+      messages: [
+        {
+          role: "user",
+          content: "Explain my lease renewal.",
+          metadata: { files: [savedChatFile(file, threadId)] },
+        },
+        {
+          role: "assistant",
+          content: "Renewal extends",
+          metadata: { interrupted: true, interruptedReason: "stopped" },
+        },
+      ],
+    });
+    // Saved under the thread's lease, so a retry cannot start before the turn is on record.
+    expect(appendChatMessagesToThread.mock.invocationCallOrder[0]).toBeLessThan(
+      releaseLease.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("saves only the question, marked interrupted, when no reply text had streamed", async () => {
+    streamUntilAborted([]);
+
+    await disconnectAfter(await POST(request()), 0);
+
+    expect(appendChatMessagesToThread).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        turnId,
+        messages: [
+          {
+            role: "user",
+            content: "Explain my lease renewal.",
+            metadata: { interrupted: true, interruptedReason: "stopped" },
+          },
+        ],
+      }),
+    );
+    expect(releaseLease).toHaveBeenCalledOnce();
+  });
+
+  it("stores a partial reply as unverifiable when it may restate contract text", async () => {
+    // Read this turn: a contract tool ran before the reply was cut off.
+    generateChatReplyStream.mockImplementation(async function* (
+      _messages: unknown,
+      options: { signal: AbortSignal },
+    ) {
+      yield {
+        type: "tool",
+        activity: { id: "c1", tool: "read_contract", status: "complete", query: "Lease" },
+      };
+      yield { type: "delta", text: "Clause 4 says" };
+      await new Promise((_resolve, reject) =>
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+          once: true,
+        }),
+      );
+    });
+    await disconnectAfter(await POST(request()), 2);
+    // Inherited: the history it builds on carries contract receipts.
+    getRecentChatMessagesForThreadForUser.mockResolvedValue([
+      {
+        id: "a1", threadId, role: "assistant", content: "Clause 4 renews yearly.", position: 2,
+        createdAt: "2026-11-19T00:00:00.000Z", model: null, provider: null,
+        contractEvidence: [{ id: "c0000000-0000-4000-8000-000000000001", revision: "rev" }],
+      },
+    ]);
+    after.mockClear();
+    streamUntilAborted(["It renews"]);
+    await disconnectAfter(await POST(request()), 1);
+
+    expect(appendChatMessagesToThread).toHaveBeenCalledTimes(2);
+    for (const [call] of appendChatMessagesToThread.mock.calls)
+      expect(call.messages[1].metadata).toEqual({
+        interrupted: true,
+        interruptedReason: "stopped",
+        contractEvidenceInvalid: true,
+      });
+  });
+
+  it("writes nothing for an interrupted temporary chat", async () => {
+    streamUntilAborted(["Renewal "]);
+
+    await disconnectAfter(
+      await POST(request({ temporary: true, threadId: undefined })),
+      1,
+    );
+
+    expect(generateChatReplyStream).toHaveBeenCalledOnce();
+    expect(claimGenerationOperation).not.toHaveBeenCalled();
+    expect(appendChatMessagesToThread).not.toHaveBeenCalled();
+  });
+
+  it("does not save the turn again after the finished reply was saved", async () => {
+    const reply = { message: "Renewal extends the term.", model: "m", provider: "p", webSearch: null };
+    generateChatReplyStream.mockImplementation(async function* () {
+      yield { type: "delta", text: reply.message };
+      yield { type: "done", reply };
+    });
+
+    const response = await POST(request());
+    await response.text();
+    await runAfterTasks();
+
+    expect(appendChatMessagesToThread).toHaveBeenCalledOnce();
+    expect(appendChatMessagesToThread.mock.calls[0]![0].messages[1].metadata).not.toHaveProperty(
+      "interrupted",
+    );
+  });
+
+  it("logs a failed interrupted-turn save without changing the response or holding the lease", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    appendChatMessagesToThread.mockRejectedValue(new Error("db down"));
+    generateChatReplyStream.mockImplementation(async function* () {
+      yield { type: "delta", text: "Renewal " };
+      throw new Error("Provider failed");
+    });
+
+    const response = await POST(request());
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    await runAfterTasks();
+
+    expect(events).toEqual([
+      { type: "delta", text: "Renewal " },
+      { type: "error", error: "Chat request failed. Please try again." },
+    ]);
+    expect(appendChatMessagesToThread).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({ role: "user" }),
+          {
+            role: "assistant",
+            content: "Renewal",
+            metadata: { interrupted: true, interruptedReason: "error" },
+          },
+        ],
+      }),
+    );
+    expect(error).toHaveBeenCalledWith(
+      "Chat persist (interrupted) failed:",
+      expect.objectContaining({ message: "db down" }),
+    );
+    expect(releaseLease).toHaveBeenCalledOnce();
+  });
+
+  it("gives up waiting on a stalled interrupted-turn save and still releases the lease", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    appendChatMessagesToThread.mockReturnValue(new Promise(() => {}));
+    streamUntilAborted(["Renewal "]);
+
+    const reader = (await POST(request())).body!.getReader();
+    await reader.read();
+    await reader.cancel();
+    await vi.waitFor(() => expect(appendChatMessagesToThread).toHaveBeenCalledOnce());
+    expect(releaseLease).not.toHaveBeenCalled();
+    const { signal } = appendChatMessagesToThread.mock.calls[0]![0] as { signal: AbortSignal };
+    expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await runAfterTasks();
+
+    // The save is cancelled as well, so it cannot commit once the lease is gone.
+    expect(signal.aborted).toBe(true);
+    expect(releaseLease).toHaveBeenCalledOnce();
+    expect(error).toHaveBeenCalledWith(
+      "Chat persist (interrupted) failed:",
+      expect.objectContaining({ message: "Timed out saving the interrupted chat turn." }),
+    );
   });
 });
