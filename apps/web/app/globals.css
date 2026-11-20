@@ -156,10 +156,10 @@
     --subtle-foreground: #4d4d4d;
     --accent: #f2f2f2;
     --accent-foreground: #0a0a0a;
-    --highlight: #a35f00; /* Saffron, deepened to 5.0:1 on white */
+    --highlight: #8f5300; /* Saffron, deepened to 6.2:1 on white, 4.9:1 on its 15% tint (the medium-risk badge) */
     --destructive: #b42318; /* 6.6:1 on white, 5.1:1 on its 15% tint (the high-risk badge) */
     --destructive-foreground: #ffffff;
-    --success: var(--color-deep-verdant); /* 4.6:1 on white */
+    --success: #106f5c; /* Deep Verdant, deepened to 6.1:1 on white, 4.9:1 on its 15% tint (the low-risk badge) */
     --code-background: #f5f5f5;
     --border: #e6e6e6;
     --input: #cfcfcf;

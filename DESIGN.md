@@ -375,7 +375,7 @@ PPNeueMontreal is a licensed face and is not bundled. `--font-ppneuemontreal` li
 
 ### Theme
 
-Dark is the reference theme and the default. A light theme is a SignLoop extension: `next-themes` sets `.light` or `.dark` on `<html>` (default `dark`, `system` available), and the `.light` block in `globals.css` re-points only the **semantic** tokens (`--background`, `--foreground`, `--muted-foreground`, `--highlight`, …) at a white canvas. Electric Iris stays the single accent; greys, Saffron (`#a35f00`), red and verdant are deepened so text keeps 4.5:1 on white. Users switch from the sidebar toggle or Settings → Appearance. Style with semantic token classes so both themes follow; do not add `dark:` variants or raw Dala palette classes for surfaces or text. WorkOS hosts the authentication forms; configure their branding in the WorkOS dashboard.
+Dark is the reference theme and the default. A light theme is a SignLoop extension: `next-themes` sets `.light` or `.dark` on `<html>` (default `dark`, `system` available), and the `.light` block in `globals.css` re-points only the **semantic** tokens (`--background`, `--foreground`, `--muted-foreground`, `--highlight`, …) at a white canvas. Electric Iris stays the single accent; greys, Saffron (`#8f5300`), red and verdant are deepened so text keeps 4.5:1 on white. Users switch from the sidebar toggle or Settings → Appearance. Style with semantic token classes so both themes follow; do not add `dark:` variants or raw Dala palette classes for surfaces or text. WorkOS hosts the authentication forms; configure their branding in the WorkOS dashboard.
 
 ### SignLoop extensions (not in the Dala source)
 
