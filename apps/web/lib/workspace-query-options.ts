@@ -65,6 +65,9 @@ export type ChatThreadMessage = {
   createdAt: string;
   model?: string | null;
   provider?: string | null;
+  turnId?: string;
+  /** Set on the record that ends a turn whose reply was cut off (see ChatMessageRecord). */
+  interrupted?: "stopped" | "error";
 };
 
 export type ChatThreadDetail = {

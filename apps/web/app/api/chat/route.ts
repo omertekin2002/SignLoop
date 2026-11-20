@@ -36,6 +36,7 @@ import {
 } from "@/lib/model-settings";
 import {
   type ChatMessageRecord,
+  type ChatTurnInterruption,
   claimGenerationOperation,
   appendChatMessagesToThread,
   getChatTurnByTurnId,
@@ -93,6 +94,12 @@ export const maxDuration = 300;
 const ROUTE_TIMEOUT_MS = 275_000;
 // The lease must outlive the longest possible request so a stuck run cannot be double-started.
 const CHAT_LEASE_SECONDS = 360;
+// Saving an interrupted turn runs after the client has gone, so it gets its own short deadline
+// rather than the aborted request signal, and the lease is released once it settles or times out.
+const INTERRUPTED_TURN_SAVE_TIMEOUT_MS = 10_000;
+// Later turns read a partial reply as history; label it so the model never takes it as finished.
+const INTERRUPTED_REPLY_NOTE =
+  "[This reply was interrupted before it finished.]";
 const ADMISSION_REJECTIONS: Record<AdmissionReason, string> = {
   busy: "Chat is busy with other replies. Please try again shortly.",
   hourly: "Chat is at its hourly request limit. Please try again later.",
@@ -195,6 +202,62 @@ async function persistChatMessages(input: {
 }
 
 /**
+ * Save the question, and whatever reply text had streamed, of a saved-chat turn that ended without
+ * its done event (Stop, a closed tab, a dropped connection, or a failure after admission). The record
+ * that ends the turn is marked interrupted, so the thread can offer Retry and a retry with the same
+ * turn id replaces it. Failures are logged and never reach the response.
+ */
+async function persistInterruptedTurn(input: {
+  userId: string;
+  threadId: string;
+  turnId: string | null;
+  latestUserMessage: ChatMessage;
+  partialMessage: string;
+  reason: ChatTurnInterruption;
+  inputFiles: ChatFileInfo[];
+  generatedTitle: Promise<string | null>;
+}): Promise<void> {
+  const interrupted = { interrupted: true, interruptedReason: input.reason };
+  const partial = input.partialMessage.trim();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const save = (async () =>
+      appendChatMessagesToThread({
+        userId: input.userId,
+        threadId: input.threadId,
+        turnId: input.turnId,
+        generatedTitle: await input.generatedTitle,
+        messages: [
+          {
+            role: "user",
+            content: input.latestUserMessage.content,
+            metadata: {
+              ...(input.inputFiles.length ? { files: input.inputFiles } : {}),
+              ...(partial ? {} : interrupted),
+            },
+          },
+          ...(partial
+            ? [{ role: "assistant" as const, content: partial, metadata: interrupted }]
+            : []),
+        ],
+      }))();
+    await Promise.race([
+      save,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Timed out saving the interrupted chat turn.")),
+          INTERRUPTED_TURN_SAVE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } catch (error) {
+    console.error("Chat persist (interrupted) failed:", error);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Saved threads reload their tool exchanges from the database, so only temporary chat needs them
  * echoed back — it has no server-side history, and without this the next turn sees a transcript
  * with no record that any tool ran. Oversized transcripts are dropped here rather than sent for
@@ -282,6 +345,26 @@ function toReplayedTurnResult(
     webSources: [],
     ...(reply?.files?.length ? { files: reply.files } : {}),
   };
+}
+
+/**
+ * Drop the earlier attempt at the turn being retried: its question, and its reply when that reply
+ * was cut off. Only an interrupted turn reaches generation again (a finished one is replayed).
+ */
+function withoutInterruptedTurn(
+  messages: ChatMessageRecord[],
+  turnId: string,
+): ChatMessageRecord[] {
+  const index = messages.findIndex(
+    (message) => message.role === "user" && message.turnId === turnId,
+  );
+  if (index === -1) return messages;
+  const next = messages[index + 1];
+  const removeReply = next?.role === "assistant" && next.interrupted;
+  return [
+    ...messages.slice(0, index),
+    ...messages.slice(index + (removeReply ? 2 : 1)),
+  ];
 }
 
 /** Authenticate before bounded parsing, then run a temporary or owner-scoped saved chat turn. */
@@ -433,7 +516,11 @@ export async function POST(req: Request) {
           { error: "Chat thread not found" },
           { status: 404 },
         );
-      persistedMessages = recentMessages;
+      // A retry of an interrupted turn answers that question afresh: leave its earlier attempt out
+      // of the history, since the new answer replaces it.
+      persistedMessages = turnId
+        ? withoutInterruptedTurn(recentMessages, turnId)
+        : recentMessages;
       // A retry of a turn that is already saved gets the saved answer back, before admission, so
       // it neither calls the model nor spends quota again.
       const savedTurn = turnId
@@ -540,7 +627,10 @@ export async function POST(req: Request) {
           )
           .map((message): ChatMessage => ({
             role: message.role,
-            content: message.content,
+            content:
+              message.role === "assistant" && message.interrupted
+                ? `${message.content}\n\n${INTERRUPTED_REPLY_NOTE}`
+                : message.content,
             agentMessages: message.agentMessages,
             contractEvidence: message.contractEvidence,
             webSources: message.webSources,
@@ -662,12 +752,22 @@ export async function POST(req: Request) {
     const wantsStream = isRecord(body) && body.stream === true;
     if (wantsStream) {
       streaming = true;
+      // Keep the function alive until the stream's cleanup (interrupted-turn save, lease release)
+      // has finished, even when the client went away and the response ended early.
+      let settleStream = () => {};
+      const streamSettled = new Promise<void>((resolve) => {
+        settleStream = resolve;
+      });
+      after(() => streamSettled);
       const stream = new ReadableStream<Uint8Array>({
         cancel() {
           disconnect.abort();
         },
         async start(controller) {
           let sentDone = false;
+          let streamedText = "";
+          let turnSaved = false;
+          let interruption: ChatTurnInterruption = "stopped";
 
           try {
             for await (const chunk of generateChatReplyStream(promptMessages, {
@@ -691,6 +791,7 @@ export async function POST(req: Request) {
 
               if (chunk.type === "delta") {
                 if (chunk.text) timings.mark("first_output");
+                streamedText += chunk.text;
                 controller.enqueue(
                   streamEvent({ type: "delta", text: chunk.text }),
                 );
@@ -745,6 +846,7 @@ export async function POST(req: Request) {
                       signal: operationSignal,
                     }),
                 );
+                turnSaved = !isTemporaryChat;
               } catch (persistError) {
                 if (
                   req.signal.aborted ||
@@ -782,6 +884,7 @@ export async function POST(req: Request) {
               !req.signal.aborted &&
               !disconnect.signal.aborted
             ) {
+              interruption = "error";
               controller.enqueue(
                 streamEvent({
                   type: "error",
@@ -799,6 +902,7 @@ export async function POST(req: Request) {
             }
 
             console.error("Chat stream error:", streamError);
+            interruption = "error";
             controller.enqueue(
               streamEvent({
                 type: "error",
@@ -808,6 +912,20 @@ export async function POST(req: Request) {
           } finally {
             endGeneration();
             titleController.abort();
+            // Save what the user would otherwise lose, while this request still holds the thread's
+            // lease, so a retry cannot start until the interrupted turn is on record.
+            if (!sentDone && !turnSaved && userId && !isTemporaryChat) {
+              await persistInterruptedTurn({
+                userId,
+                threadId,
+                turnId,
+                latestUserMessage,
+                partialMessage: streamedText,
+                reason: interruption,
+                inputFiles,
+                generatedTitle,
+              });
+            }
             const endRelease = timings.start("release");
             await release?.().catch((error) =>
               console.error("Chat lease release failed", error),
@@ -819,6 +937,7 @@ export async function POST(req: Request) {
             // The client cancels its reader after done, possibly while release is pending.
             timings.finish(!sentDone && operationSignal.aborted);
             if (!disconnect.signal.aborted) controller.close();
+            settleStream();
           }
         },
       });

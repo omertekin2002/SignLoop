@@ -383,7 +383,25 @@ describe("generation request lifecycle", () => {
       const body = await response.text();
       expect(body).toContain('"type":"delta"');
       expect(body.includes('"type":"error"')).toBe(!cancelled);
-      expect(mocks.append).not.toHaveBeenCalled();
+      // The question and partial answer are kept as an interrupted turn before the lease is released.
+      expect(mocks.append).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          messages: [
+            expect.objectContaining({ role: "user" }),
+            {
+              role: "assistant",
+              content: "Synthetic partial",
+              metadata: {
+                interrupted: true,
+                interruptedReason: cancelled ? "stopped" : "error",
+              },
+            },
+          ],
+        }),
+      );
+      expect(mocks.append.mock.invocationCallOrder[0]).toBeLessThan(
+        release.mock.invocationCallOrder[0]!,
+      );
       expect(release).toHaveBeenCalledOnce();
       expect(releaseAdmission).toHaveBeenCalledOnce();
       expect(log).toHaveBeenCalledExactlyOnceWith(
@@ -439,10 +457,9 @@ describe("generation request lifecycle", () => {
     await reader.read();
     await reader.cancel();
     await stopped.promise;
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(release).toHaveBeenCalledOnce();
+    // The interrupted turn is saved before the lease is released.
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+    expect(mocks.append).toHaveBeenCalledOnce();
     expect(releaseAdmission).toHaveBeenCalledOnce();
     expect(log).toHaveBeenCalledExactlyOnceWith(
       "Generation timings",
