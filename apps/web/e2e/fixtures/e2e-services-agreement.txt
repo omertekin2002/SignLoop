@@ -1,0 +1,20 @@
+WEBSITE SERVICES AGREEMENT
+
+This agreement is between Example Studio Ltd (the "Provider") and the client named in the order form (the "Client"). It is a fictional contract for SignLoop's end-to-end tests.
+
+1. Services
+The Provider will design, host and maintain the Client's website as described in the order form.
+
+2. Fees
+The Client will pay a monthly fee of 1,200 GBP, invoiced on the first day of each month.
+Late payments accrue interest at 4% per month until paid in full.
+
+3. Term and renewal
+This agreement starts on the date of the order form and lasts for twelve months.
+This agreement renews automatically for successive twelve-month terms unless either party gives 60 days' written notice before the end of the current term.
+
+4. Liability
+The Provider's total liability under this agreement is limited to the fees paid in the previous month.
+
+5. Governing law
+This agreement is governed by the laws of England and Wales.

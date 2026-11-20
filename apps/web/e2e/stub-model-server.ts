@@ -9,8 +9,8 @@ export type StubModelServer = {
 /** What the stub keeps of each POST /responses it answered, for the tests' assertions. */
 export type StubModelRequest = {
   model: string;
-  kind: "title" | "reply";
-  /** The text of the last user message in the request. */
+  kind: "title" | "reply" | "analysis";
+  /** The text of the last user message in the request; for an analysis, its whole prompt. */
   question: string;
   /** Names of the tools the request offered; the stub never calls one. */
   tools: string[];
@@ -38,6 +38,79 @@ export function stubReply(question: string): string {
   ].join("\n");
 }
 
+/**
+ * The contract the analysis fixture describes (e2e/fixtures/e2e-services-agreement.txt). Every
+ * quotation in stubAnalysis() appears in it exactly once, word for word, so the app's citation check
+ * (lib/source-citations.ts) verifies them when the stub analyses this text.
+ */
+export const STUB_CONTRACT_FIXTURE = new URL("./fixtures/e2e-services-agreement.txt", import.meta.url);
+
+/** The findings the stub's analysis reports, each with the contract sentence it quotes. */
+export const STUB_ANALYSIS_FLAGS = [
+  {
+    type: "Automatic renewal",
+    explanation: "Stub finding: the agreement renews for another year unless notice is given 60 days before the term ends.",
+    quote:
+      "This agreement renews automatically for successive twelve-month terms unless either party gives 60 days' written notice before the end of the current term.",
+  },
+  {
+    type: "Late payment interest",
+    explanation: "Stub finding: unpaid invoices accrue interest at 4% a month, which compounds quickly.",
+    quote: "Late payments accrue interest at 4% per month until paid in full.",
+  },
+  {
+    type: "Liability cap",
+    explanation: "Stub finding: the Provider's liability is capped at one month of fees.",
+    quote: "The Provider's total liability under this agreement is limited to the fees paid in the previous month.",
+  },
+] as const;
+
+export const STUB_ANALYSIS_SUMMARY = "Stub analysis: a twelve-month website services agreement.";
+
+/**
+ * The fixed analysis, in the JSON shape lib/analysis.ts asks a model for (buildAnalysisPrompt) and
+ * parses (AnalysisResultSchema). The fixture is short enough to be one "full" segment.
+ */
+export function stubAnalysis() {
+  return {
+    risk_badge: "MEDIUM",
+    key_points: [
+      "Stub key point: the agreement renews automatically each year.",
+      "Stub key point: late payments accrue interest every month.",
+    ],
+    summary: {
+      what_it_is: STUB_ANALYSIS_SUMMARY,
+      payments: { amount: "1,200 GBP", frequency: "Monthly", fees: [] },
+      term: { start: "The date of the order form", end: null, minimum_term: "12 months" },
+      renewal: { auto_renew: true, renewal_period: "12 months" },
+      cancellation: {
+        how: "Written notice before the end of the current term.",
+        notice_period_days: 60,
+        notice_period_text: "60 days",
+        penalties: [],
+      },
+    },
+    red_flags: STUB_ANALYSIS_FLAGS.map(({ type, explanation, quote }, index) => ({
+      type,
+      severity: 7 - index,
+      explanation,
+      where: null,
+      confidence: 90,
+      evidence: { quote, segment: "full" },
+    })),
+    proposed_jurisdiction: null,
+    normal_in_region: [],
+    next_actions: {
+      questions_to_ask: ["Stub question: can the late-payment interest be reduced?"],
+      email_templates: [],
+    },
+    key_dates: [],
+    obligations: ["Pay the monthly fee on the first day of each month."],
+    parties: ["Example Studio Ltd", "The Client"],
+    disclaimer: "This is an AI analysis, not legal advice.",
+  };
+}
+
 /** The fixed title for a conversation that starts with `question`, as the app stores it. */
 export function stubTitle(question: string): string {
   // The app drops a title's ending punctuation (lib/chat-title.ts).
@@ -48,12 +121,18 @@ export function stubTitle(question: string): string {
 // PRIMARY_LLM_BASE_URL. GET /models lists one text model, the shape lib/model-settings.ts reads.
 // POST /responses streams a fixed reply as the Responses API's server-sent events, limited to the
 // ones @ai-sdk/openai parses into text (packages/chat-engine/src/routing.ts uses
-// createOpenAI(...).responses(model)). GET /__e2e/requests returns what it received, since the
+// createOpenAI(...).responses(model)). A request that is not streamed and asks for a JSON object,
+// as contract analysis does (createResponsesPreferringJson in lib/analysis.ts), gets a completed
+// Responses object whose text is stubAnalysis(); any other unstreamed request is refused. GET /__e2e/requests returns what it received, since the
 // specs run in worker processes and the stub in the runner's global setup. It listens on
 // 127.0.0.1 only and makes no outbound calls.
 export async function startStubModelServer(port: number): Promise<StubModelServer> {
   const received: StubModelRequest[] = [];
   let responseCount = 0;
+  const record = (request: StubModelRequest) => {
+    received.push(request);
+    if (received.length > MAX_RECORDED_REQUESTS) received.shift();
+  };
 
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
@@ -66,17 +145,32 @@ export async function startStubModelServer(port: number): Promise<StubModelServe
     } else if (request.method === "POST" && path === "/responses") {
       void readJson(request)
         .then((body) => {
-          if (!isRecord(body) || body.stream !== true) {
-            sendJson(response, 400, { error: { message: "The stub only streams responses." } });
+          if (!isRecord(body)) {
+            sendJson(response, 400, { error: { message: "The request body must be a JSON object." } });
             return;
           }
           const model = typeof body.model === "string" ? body.model : "";
           const question = lastUserText(body.input);
+          if (body.stream !== true) {
+            if (!asksForJsonObject(body.text)) {
+              sendJson(response, 400, {
+                error: { message: "The stub streams chat replies and answers only JSON analysis requests without streaming." },
+              });
+              return;
+            }
+            record({ model, kind: "analysis", question, tools: toolNames(body.tools) });
+            responseCount += 1;
+            sendJson(
+              response,
+              200,
+              completedResponse(`resp_e2e_${responseCount}`, model || STUB_MODEL, JSON.stringify(stubAnalysis())),
+            );
+            return;
+          }
           // System messages travel in `input` (or, with some settings, in `instructions`).
           const isTitle = JSON.stringify([body.instructions, body.input]).includes(TITLE_PROMPT);
           const kind = isTitle ? "title" : "reply";
-          received.push({ model, kind, question, tools: toolNames(body.tools) });
-          if (received.length > MAX_RECORDED_REQUESTS) received.shift();
+          record({ model, kind, question, tools: toolNames(body.tools) });
           responseCount += 1;
           // The title request quotes the message as JSON (lib/chat-title.ts).
           const text = kind === "title" ? stubTitle(unquote(question)) : stubReply(question);
@@ -144,6 +238,32 @@ function streamResponse(response: ServerResponse, id: string, model: string, tex
     response.write(`event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number: sequence })}\n\n`);
   }
   response.end();
+}
+
+// A finished, non-streamed Responses API object with one assistant message, the shape the openai
+// SDK's responses.create returns (it derives output_text from `output`).
+function completedResponse(id: string, model: string, text: string) {
+  return {
+    id,
+    object: "response",
+    created_at: Math.floor(Date.now() / 1000),
+    model,
+    status: "completed",
+    error: null,
+    incomplete_details: null,
+    output: [
+      {
+        type: "message", id: `msg_${id}`, role: "assistant", status: "completed",
+        content: [{ type: "output_text", text, annotations: [] }],
+      },
+    ],
+    usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
+  };
+}
+
+// `text: { format: { type: "json_object" } }`, the Responses API's JSON mode.
+function asksForJsonObject(text: unknown): boolean {
+  return isRecord(text) && isRecord(text.format) && text.format.type === "json_object";
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {

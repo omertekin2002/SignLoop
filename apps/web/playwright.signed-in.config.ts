@@ -96,6 +96,14 @@ export default defineConfig({
       use: { storageState: AUTH_STATE_PATH },
     },
     {
+      // Also after the workspace checks: it uploads contracts and analyses them with the stub
+      // model, which adds analyses and uses the account's shared chat and analysis quota.
+      name: "contract-analysis",
+      testMatch: "contract-analysis.spec.ts",
+      dependencies: ["workspace"],
+      use: { storageState: AUTH_STATE_PATH },
+    },
+    {
       name: "sign-out",
       testMatch: "sign-out.spec.ts",
       dependencies: [
@@ -105,6 +113,7 @@ export default defineConfig({
         "account-export",
         "project-context",
         "saved-chat",
+        "contract-analysis",
       ],
       use: { storageState: AUTH_STATE_PATH },
     },
