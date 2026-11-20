@@ -31,5 +31,8 @@ export function toPublicChatMessage(message: ChatMessageRecord) {
     provider: message.provider,
     toolActivity: message.toolActivity,
     ...(message.files?.length ? { files: message.files } : {}),
+    // A reloaded thread needs the turn id to retry an interrupted turn, and the flag to mark it.
+    ...(message.turnId ? { turnId: message.turnId } : {}),
+    ...(message.interrupted ? { interrupted: message.interrupted } : {}),
   };
 }
