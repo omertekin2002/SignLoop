@@ -2732,6 +2732,8 @@ export async function appendChatMessagesToThread(input: {
           [input.threadId, existing.map((message) => message.id)],
         );
         // A partial reply's generated images were moved into chat_attachments when it was saved.
+        // Its text can also repeat an earlier answer's image link, so delete only images that no
+        // remaining message in the thread still shows.
         const imageIds = existing.flatMap((message) =>
           message.role === "assistant"
             ? [...message.content.matchAll(
@@ -2741,7 +2743,13 @@ export async function appendChatMessagesToThread(input: {
         );
         if (imageIds.length) {
           await client.query(
-            "DELETE FROM chat_attachments WHERE thread_id = $1 AND id = ANY($2::uuid[])",
+            `DELETE FROM chat_attachments a
+             WHERE a.thread_id = $1 AND a.id = ANY($2::uuid[])
+               AND NOT EXISTS (
+                 SELECT 1 FROM chat_messages m
+                 WHERE m.thread_id = $1 AND m.role = 'assistant'
+                   AND strpos(m.content, '/images/' || a.id::text || ')') > 0
+               )`,
             [input.threadId, imageIds],
           );
         }

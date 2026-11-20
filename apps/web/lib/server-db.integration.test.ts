@@ -723,10 +723,11 @@ describe.skipIf(!connectionString)("database integration", () => {
   it("keeps an interrupted turn readable, retries it into one finished turn, and exports and deletes it", async () => {
     const userId = "interrupted-turn-owner";
     const thread = await createChatThreadForUser({ userId });
-    await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
+    const [, earlier] = await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
       { role: "user", content: "An earlier question" },
-      { role: "assistant", content: "An earlier answer" },
+      { role: "assistant", content: `An earlier answer ![Generated image](data:image/png;base64,${chatImage.data})` },
     ] });
+    const earlierImage = earlier!.content.match(/!\[Generated image\]\([^)]+\)/)![0];
     const turnId = crypto.randomUUID();
     const interrupted = { interrupted: true, interruptedReason: "stopped" };
     // The partial reply carries a generated image, which is stored as an attachment.
@@ -734,7 +735,8 @@ describe.skipIf(!connectionString)("database integration", () => {
       { role: "user", content: "Summarize the fees" },
       {
         role: "assistant",
-        content: `Fees are ![Generated image](data:image/png;base64,${chatImage.data})`,
+        // Its own new image, plus a repeat of the earlier answer's image link.
+        content: `Fees are ![Generated image](data:image/png;base64,${chatImage.data}) as in ${earlierImage}`,
         metadata: interrupted,
       },
     ] });
@@ -742,7 +744,7 @@ describe.skipIf(!connectionString)("database integration", () => {
       Number((await pool.current!.query(
         "SELECT count(*) AS n FROM chat_attachments WHERE thread_id = $1", [thread.id],
       )).rows[0].n);
-    expect(await attachments()).toBe(1);
+    expect(await attachments()).toBe(2);
 
     // Reloading shows the question and partial answer, marked; it is not a saved answer to replay.
     expect(await getChatTurnByTurnId(userId, thread.id, turnId)).toBeNull();
@@ -773,10 +775,13 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(raced[0]).toEqual(raced[1]);
     const retried = (await getChatThreadByIdForUser(userId, thread.id))!.messages;
     expect(retried.map((message) => message.content)).toEqual([
-      "An earlier question", "An earlier answer", "Summarize the fees", raced[0]![1]!.content,
+      "An earlier question", earlier!.content, "Summarize the fees", raced[0]![1]!.content,
     ]);
     expect(retried.some((message) => message.interrupted)).toBe(false);
-    expect(await attachments()).toBe(0);
+    // The partial reply's own image is gone; the earlier answer's image it repeated is kept.
+    expect(await attachments()).toBe(1);
+    const earlierImageId = earlierImage.match(/images\/([0-9a-f-]{36})\)/)![1]!;
+    expect(await getChatImageForUser(userId, thread.id, earlierImageId)).not.toBeNull();
     expect(await getChatTurnByTurnId(userId, thread.id, turnId)).toEqual(raced[0]);
 
     // A late interrupted save of a turn that has since finished writes nothing.
