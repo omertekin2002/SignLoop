@@ -246,6 +246,60 @@ describe("renderAnalysisBriefMarkdown", () => {
     expect(brief({}).markdown).not.toMatch(/\bnull\b|\bundefined\b/);
   });
 
+  it("shows the notice period's verified quotation, marks a stated period without one, and leaves an unknown one", () => {
+    const withNotice = (cancellation: Record<string, unknown>) =>
+      section(
+        brief({
+          ...FULL_RESULT,
+          summary: {
+            ...FULL_RESULT.summary,
+            cancellation: { how: "Write to the club.", penalties: [], ...cancellation },
+          },
+        }).markdown,
+        "Summary",
+      );
+    const clause = "Either party may end this agreement on 10 business days' *written* notice.";
+
+    const quoted = withNotice({
+      notice_period_days: null,
+      notice_period_text: "10 business days",
+      notice_citation: citation(clause, 400),
+    });
+    expect(quoted).toContain(
+      [
+        "  - Notice period: 10 business days",
+        "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        "      > Either party may end this agreement on 10 business days' \\*written\\* notice.",
+      ].join("\n"),
+    );
+    expect(quoted).not.toContain("No verified quotation");
+    // The quotation renders inside the notice period's list item as a block quote.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(1);
+
+    // A report stored before notice quotations, an unverified one, and one for another contract.
+    for (const cancellation of [
+      { notice_period_days: 60 },
+      { notice_period_days: 60, notice_period_text: "60 days", notice_citation: null },
+      {
+        notice_period_days: 60,
+        notice_citation: { ...citation(clause), contract_id: "99999999-2222-4333-8444-555555555555" },
+      },
+    ]) {
+      const marked = withNotice(cancellation);
+      expect(marked).toContain("  - Notice period: 60 days (**No verified quotation**)");
+      expect(marked).not.toContain("Verified quotation");
+    }
+
+    const unknown = withNotice({
+      notice_period_days: null,
+      notice_period_text: null,
+      notice_citation: citation(clause),
+    });
+    expect(unknown).toContain("  - Notice period: Not specified\n");
+    expect(unknown).not.toMatch(/verified quotation/i);
+  });
+
   it("renders an unknown auto-renewal as unknown, not as no", () => {
     const { markdown } = brief({
       ...FULL_RESULT,

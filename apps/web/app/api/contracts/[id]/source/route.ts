@@ -4,6 +4,7 @@ import { getAnalysisForUser, getContractSourceForUser } from "@/lib/server-db";
 import {
   citationForReport,
   JURISDICTION_CITATION,
+  NOTICE_CITATION,
   SOURCE_PAGE_SIZE,
   SourceRevisionSchema,
 } from "@/lib/source-citations";
@@ -38,8 +39,12 @@ export async function GET(
     (revision !== null && !SourceRevisionSchema.safeParse(revision).success) ||
     (analysisId !== null && !isUuid(analysisId)) ||
     (analysisId === null) !== (flag === null) ||
-    // A red flag's index, or the governing-law quotation behind the jurisdiction proposal.
-    (flag !== null && flag !== JURISDICTION_CITATION && !/^\d{1,5}$/.test(flag))
+    // A red flag's index, the governing-law quotation behind the jurisdiction proposal, or the
+    // clause stating the cancellation notice period.
+    (flag !== null &&
+      flag !== JURISDICTION_CITATION &&
+      flag !== NOTICE_CITATION &&
+      !/^\d{1,5}$/.test(flag))
   )
     return reply({ error: "Invalid source request" }, 400);
 
@@ -51,7 +56,9 @@ export async function GET(
     citation = citationForReport(
       analysis.resultJson,
       id,
-      flag === JURISDICTION_CITATION ? JURISDICTION_CITATION : Number(flag),
+      flag === JURISDICTION_CITATION || flag === NOTICE_CITATION
+        ? flag
+        : Number(flag),
     );
     if (!citation || citation.revision !== revision)
       return reply(

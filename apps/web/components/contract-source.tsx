@@ -12,10 +12,12 @@ import { apiClient, getApiErrorMessage, type ApiError } from "@/lib/api-client";
 import {
   citationForReport,
   JURISDICTION_CITATION,
+  NOTICE_CITATION,
   SourcePageSchema,
   type CitationRef,
   type SourceCitation,
 } from "@/lib/source-citations";
+import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -139,7 +141,7 @@ export function ContractSourceProvider({
               Text extracted from your upload. Formatting, tables, or scanned
               content may be missing.
               {request?.flag !== undefined &&
-                " A matched quotation confirms text provenance, not the finding’s interpretation."}
+                " A matched quotation confirms text provenance, not the analysis’s interpretation."}
             </DialogDescription>
           </DialogHeader>
           {sourceQuery.isFetching && (
@@ -305,5 +307,44 @@ export function FindingSource({ index }: { index: number }) {
     <p className="mt-2 text-xs text-muted-foreground">
       Verified source quotation unavailable.
     </p>
+  );
+}
+
+/**
+ * A report's notice period in one of three states: with the verified quotation of the clause that
+ * states it, stated with a visible "No verified quotation" marker (as in reports analysed before
+ * quotations existed), or the unchanged "Not specified" when no period is stated.
+ */
+export function NoticePeriodSource({
+  cancellation,
+}: {
+  cancellation: {
+    notice_period_days?: number | null;
+    notice_period_text?: string | null;
+  };
+}) {
+  const source = useContext(SourceContext);
+  const stated = isNoticePeriodStated(cancellation);
+  const cited = stated && Boolean(source?.citation(NOTICE_CITATION));
+  return (
+    <>
+      <p className="text-sm">{formatNoticePeriod(cancellation)}</p>
+      {cited ? (
+        <>
+          <QuotedSource
+            citationRef={NOTICE_CITATION}
+            label="View matched quotation of the notice-period clause"
+          />
+          <p className="mt-2 text-xs text-muted-foreground">
+            The quotation shows where this value comes from, not that this
+            reading of it is correct.
+          </p>
+        </>
+      ) : stated ? (
+        <p className="mt-2 inline-block rounded border border-border px-2 py-0.5 text-xs text-muted-foreground">
+          No verified quotation
+        </p>
+      ) : null}
+    </>
   );
 }

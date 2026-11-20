@@ -556,6 +556,135 @@ describe("analysis of contracts longer than one request", () => {
     }
   });
 
+  describe("notice-period quotations", () => {
+    const notice =
+      "200.1 Notice. Either party may end this Agreement on sixty (60) days' written notice.\n";
+    const noticeQuote = "Either party may end this Agreement on sixty (60) days' written notice.";
+    const text = contractOf(400, { 200: notice });
+    const segments = contractAnalysisSegments(text);
+    const cited = segments.find((part) => part.text.includes(notice))!;
+    const citedNumber = Number(cited.label.slice("section-".length));
+
+    // Section `citedNumber` states 60 days with its quotation; `others` sets the rest.
+    async function analyse(
+      merge: "fails" | Record<string, unknown>,
+      others: { noticeDays?: number | null; noticeText?: string | null; noticeQuote?: string } = {},
+    ) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return merge === "fails" ? failure() : completed(mergeOutput(merge));
+        return completed(
+          sectionOutput(
+            double.segment(call),
+            call.section === citedNumber
+              ? { noticeDays: 60, noticeText: "60 days", noticeQuote }
+              : others,
+          ),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      return {
+        answer,
+        stored: finalizeAnalysisResult(answer.result, { id: CONTRACT_ID, text }),
+      };
+    }
+
+    it("carries the quotation with the duration of the section that supplied it when the merge call fails", async () => {
+      expect(citedNumber).toBeGreaterThan(1);
+      const { answer, stored } = await analyse("fails", {
+        noticeDays: null,
+        noticeText: null,
+        // A section stating no notice period never lends its quotation.
+        noticeQuote: "Records. Each party",
+      });
+      expect(answer.result.summary.cancellation).toMatchObject({
+        notice_period_days: 60,
+        notice_period_text: "60 days",
+        notice_evidence: { quote: noticeQuote, segment: cited.label },
+      });
+      const start = text.indexOf(noticeQuote);
+      expect(stored.summary.cancellation.notice_citation).toMatchObject({
+        status: "verified",
+        quote: noticeQuote,
+        start: Array.from(text.slice(0, start)).length,
+      });
+    });
+
+    it("keeps a section's quotation when the merged value equals it, never the merge model's", async () => {
+      const { answer, stored } = await analyse({
+        summary: {
+          ...mergeOutput().summary,
+          cancellation: {
+            how: "Written notice",
+            notice_period_days: 60,
+            notice_period_text: "60 days",
+            penalties: [],
+            notice_evidence: { quote: "Records. Each party", segment: "section-1" },
+            notice_citation: { status: "verified", quote: "Records", start: 0, end: 7 },
+          },
+        },
+      });
+      expect(answer.result.summary.cancellation.notice_evidence).toEqual({
+        quote: noticeQuote,
+        segment: cited.label,
+      });
+      expect(stored.summary.cancellation.notice_citation?.quote).toBe(noticeQuote);
+    });
+
+    it("drops the quotation when another section states a different notice period", async () => {
+      const { answer, stored } = await analyse({}, {
+        noticeDays: 30,
+        noticeText: "30 days",
+      });
+      expect(answer.result.summary.cancellation.notice_period_text).toBe("60 days");
+      expect(answer.result.summary.cancellation.notice_evidence).toBeNull();
+      expect(stored.summary.cancellation.notice_citation).toBeNull();
+    });
+
+    it("has no quotation for a merged value that differs from every cited section", async () => {
+      const { answer, stored } = await analyse({
+        summary: {
+          ...mergeOutput().summary,
+          cancellation: {
+            how: "Written notice",
+            notice_period_days: 90,
+            notice_period_text: "90 days",
+            penalties: [],
+          },
+        },
+      });
+      expect(answer.result.summary.cancellation.notice_period_days).toBe(90);
+      expect(answer.result.summary.cancellation.notice_evidence).toBeNull();
+      expect(stored.summary.cancellation.notice_citation).toBeNull();
+      expect(stored.summary.cancellation.notice_period_text).toBe("90 days");
+    });
+
+    it("ignores a section's quotation that is not in that section", async () => {
+      // Every section states 60 days and claims the clause, but only one section contains it.
+      const double = provider(segments, (call) =>
+        call.section === "merge"
+          ? failure()
+          : completed(
+              sectionOutput(double.segment(call), {
+                noticeDays: 60,
+                noticeText: "60 days",
+                noticeQuote,
+              }),
+            ),
+      );
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      // The first section supplies the value but cannot quote it; the section stating the same value
+      // that does contain the clause supplies the quotation.
+      expect(answer.result.summary.cancellation.notice_evidence).toEqual({
+        quote: noticeQuote,
+        segment: cited.label,
+      });
+    });
+  });
+
   it("uses a single surviving section as the result without a merge call", async () => {
     const text = contractOf(175);
     const segments = contractAnalysisSegments(text);

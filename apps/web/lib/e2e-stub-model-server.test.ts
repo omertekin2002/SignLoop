@@ -5,6 +5,7 @@ import {
   STUB_ANALYSIS_SUMMARY,
   STUB_CONTRACT_FIXTURE,
   STUB_MODEL,
+  STUB_NOTICE_QUOTE,
   startStubModelServer,
   stubAnalysis,
   stubReply,
@@ -138,6 +139,14 @@ describe("the end-to-end stub model", () => {
         }),
       ),
     );
+
+    // The notice period keeps its duration and gains a verified citation of the clause stating it.
+    expect(stored.summary.cancellation).toMatchObject({
+      notice_period_days: 60,
+      notice_period_text: "60 days",
+      notice_citation: { status: "verified", contract_id: contractId, quote: STUB_NOTICE_QUOTE },
+    });
+    expect(stored.summary.cancellation).not.toHaveProperty("notice_evidence");
 
     const requests = stub.requests();
     expect(requests).toEqual([expect.objectContaining({ model: STUB_MODEL, kind: "analysis", tools: [] })]);

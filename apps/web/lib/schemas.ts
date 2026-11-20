@@ -24,6 +24,10 @@ const ProposedJurisdictionSchema = z
   .nullable()
   .optional()
   .catch(null);
+// The model's quotation of the clause stating the notice period; attachAnalysisSources replaces it
+// with a server-verified `notice_citation`, or null. Malformed values are dropped, never fatal.
+const NoticeEvidenceSchema = EvidenceProposalSchema.nullable().optional().catch(null);
+const NoticeCitationSchema = CitationSchema.nullable().optional().catch(null);
 
 const BaseAnalysisResultSchema = z.object({
   source: SourceIdentitySchema.nullable().optional().catch(null),
@@ -55,6 +59,8 @@ const BaseAnalysisResultSchema = z.object({
       how: z.string().trim().min(1),
       notice_period_days: z.number().int().nonnegative().nullable(),
       notice_period_text: z.string().trim().min(1).nullable().optional(),
+      notice_evidence: NoticeEvidenceSchema,
+      notice_citation: NoticeCitationSchema,
       penalties: z.array(z.string()),
     }),
   }),
@@ -215,6 +221,8 @@ export const PartialAnalysisResultSchema = z
         how: z.string().trim().min(1),
         notice_period_days: z.number().int().nonnegative().nullable(),
         notice_period_text: z.string().trim().min(1).nullable().optional(),
+        notice_evidence: NoticeEvidenceSchema,
+        notice_citation: NoticeCitationSchema,
         penalties: z.array(z.string()).optional().default([]),
       }),
     }),

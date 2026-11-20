@@ -8,13 +8,17 @@ import {
   verifyQuote,
   type SourceCitation,
 } from "@/lib/source-citations";
+import { isNoticePeriodStated } from "@/lib/notice-period";
 import { isRecord } from "@/lib/utils";
 
 export function contractSourceRevision(text: string): string {
   return `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`;
 }
 
-/** Always discard model-supplied receipts, even if they claim to be verified. */
+/**
+ * Always discard model-supplied receipts, even if they claim to be verified. Red flags, the
+ * jurisdiction proposal and the cancellation notice period get server-verified citations instead.
+ */
 export function attachAnalysisSources<T extends Record<string, unknown>>(
   result: T,
   contractId: string,
@@ -60,10 +64,36 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
   const proposalCitation = jurisdiction
     ? verifiedCitation(proposal?.evidence)
     : null;
+  // The notice period keeps its value either way; only a verified quotation of the clause stating
+  // it becomes its citation. A model-sent `notice_citation` is never kept.
+  const summary = isRecord(result.summary) ? result.summary : null;
+  const cancellation = isRecord(summary?.cancellation)
+    ? summary.cancellation
+    : null;
+  const citedSummary =
+    summary && cancellation
+      ? (() => {
+          const {
+            notice_evidence: noticeEvidence,
+            notice_citation: _untrustedNotice,
+            ...rest
+          } = cancellation;
+          return {
+            ...summary,
+            cancellation: {
+              ...rest,
+              notice_citation: isNoticePeriodStated(rest)
+                ? verifiedCitation(noticeEvidence)
+                : null,
+            },
+          };
+        })()
+      : null;
   return {
     ...result,
     source,
     ...(flags ? { red_flags: flags } : {}),
+    ...(citedSummary ? { summary: citedSummary as T["summary"] } : {}),
     proposed_jurisdiction:
       jurisdiction && proposalCitation
         ? { jurisdiction, citation: proposalCitation }

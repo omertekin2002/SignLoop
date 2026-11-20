@@ -212,9 +212,27 @@ export function verifyQuote(
   return { quote, start, end };
 }
 
-/** A cited passage in a stored report: a red flag by index, or the jurisdiction proposal. */
-export type CitationRef = number | "jurisdiction";
+/**
+ * A cited passage in a stored report: a red flag by index, the jurisdiction proposal, or the
+ * cancellation notice period.
+ */
+export type CitationRef = number | "jurisdiction" | "notice";
 export const JURISDICTION_CITATION = "jurisdiction";
+export const NOTICE_CITATION = "notice";
+
+function storedCitation(report: Record<string, unknown>, ref: CitationRef): unknown {
+  const field = (value: unknown, key: string) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)[key]
+      : null;
+  if (ref === JURISDICTION_CITATION)
+    return field(report.proposed_jurisdiction, "citation");
+  if (ref === NOTICE_CITATION)
+    return field(field(report.summary, "cancellation"), "notice_citation");
+  return Array.isArray(report.red_flags)
+    ? field(report.red_flags[ref], "citation")
+    : null;
+}
 
 export function citationForReport(
   result: unknown,
@@ -224,17 +242,7 @@ export function citationForReport(
   if (!result || typeof result !== "object") return null;
   const report = result as Record<string, unknown>;
   const source = SourceIdentitySchema.safeParse(report.source);
-  const cited =
-    ref === JURISDICTION_CITATION
-      ? report.proposed_jurisdiction
-      : Array.isArray(report.red_flags)
-        ? report.red_flags[ref]
-        : null;
-  const parsed = CitationSchema.safeParse(
-    cited && typeof cited === "object"
-      ? (cited as Record<string, unknown>).citation
-      : null,
-  );
+  const parsed = CitationSchema.safeParse(storedCitation(report, ref));
   if (
     !source.success ||
     !parsed.success ||

@@ -94,6 +94,8 @@ describe("owner-scoped bounded source endpoint", () => {
     "?analysisId=bad&flag=0",
     `?analysisId=${analysisId}&flag=Jurisdiction`,
     `?analysisId=${analysisId}&flag=jurisdiction0`,
+    `?analysisId=${analysisId}&flag=Notice`,
+    `?analysisId=${analysisId}&flag=notice_citation`,
   ])("rejects malformed/unbounded requests: %s", async (query) => {
     expect((await get(query)).status).toBe(400);
     expect(getContractSourceForUser).not.toHaveBeenCalled();
@@ -149,6 +151,48 @@ describe("owner-scoped bounded source endpoint", () => {
         )
       ).status,
     ).toBe(422);
+  });
+  it("highlights the clause stating the cancellation notice period", async () => {
+    const text = "Either party may end this agreement on 10 business days' written notice.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (quote: string) =>
+      attachAnalysisSources(
+        {
+          summary: {
+            cancellation: {
+              how: "Written notice",
+              notice_period_days: null,
+              notice_period_text: "10 business days",
+              notice_evidence: { quote, segment: "full" },
+            },
+          },
+        },
+        id,
+        text,
+      );
+    const notice = `?revision=${sourceRevision}&analysisId=${analysisId}&flag=notice`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed("on 10 business days' written notice"),
+    });
+    const response = await get(notice);
+    expect(response.status).toBe(200);
+    expect((await response.json()).highlight).toMatchObject({
+      quote: "on 10 business days' written notice",
+      start: 36,
+      end: 71,
+    });
+    // A paraphrase is not verified, so there is nothing to highlight.
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed("ten business days of notice"),
+    });
+    expect((await get(notice)).status).toBe(422);
   });
   it("returns the same 404 for missing, deleted, or unowned contracts", async () => {
     auth.mockResolvedValue({ userId: "intruder" });
