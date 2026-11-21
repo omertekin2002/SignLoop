@@ -8,6 +8,7 @@ import {
   STUB_CONTRACT_FIXTURE,
   STUB_MODEL,
   STUB_NOTICE_QUOTE,
+  STUB_PAYMENT_QUOTE,
   STUB_RENEWAL_QUOTE,
   type StubModelRequest,
 } from "../stub-model-server";
@@ -52,6 +53,7 @@ type StoredContract = {
     resultJson: {
       red_flags?: { citation?: { status?: string; quote?: string } | null }[];
       summary?: {
+        payments?: { payment_citation?: { status?: string; quote?: string } | null };
         renewal?: { renewal_citation?: { status?: string; quote?: string } | null };
         cancellation?: { notice_citation?: { status?: string; quote?: string } | null };
       };
@@ -98,8 +100,9 @@ function onScreen(locator: Locator): Locator {
   return locator.filter({ visible: true });
 }
 
-// The stub's report as the contract page renders it: its summary and key points, renewal, the notice
-// period and every finding with the quotation the server verified, and the stub named as the model.
+// The stub's report as the contract page renders it: its summary and key points, the payment,
+// renewal, the notice period and every finding with the quotation the server verified, and the stub
+// named as the model.
 async function expectStubAnalysis(page: Page) {
   await expect(onScreen(page.getByText(STUB_ANALYSIS_SUMMARY, { exact: true }))).toBeVisible();
   await expect(
@@ -122,6 +125,12 @@ async function expectStubAnalysis(page: Page) {
   await expect(onScreen(page.getByText("Period: 12 months", { exact: true }))).toBeVisible();
   await expect(
     onScreen(page.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_RENEWAL_QUOTE)}”$`) })),
+  ).toHaveCount(1);
+  // The late-interest finding quotes the line after the payment clause, which also mentions
+  // payments, so match the payment quotation's own element too.
+  await expect(onScreen(page.getByText("1,200 GBP", { exact: true }))).toBeVisible();
+  await expect(
+    onScreen(page.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_PAYMENT_QUOTE)}”$`) })),
   ).toHaveCount(1);
   await expect(onScreen(page.getByText("No verified quotation", { exact: true }))).toHaveCount(0);
   await expect(onScreen(page.getByText(`LLM: Primary provider • ${STUB_MODEL}`, { exact: true }))).toBeVisible();
@@ -184,6 +193,13 @@ for (const theme of THEMES) {
     await page.keyboard.press("Escape");
     await expect(source).toBeHidden();
 
+    // So does the payment's quotation of the clause stating its amount and frequency.
+    await page.getByRole("button", { name: "View matched quotation of the payment clause" }).click();
+    await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
+    await expect(source.getByRole("region", { name: "Source passage" }).locator("mark")).toHaveText(STUB_PAYMENT_QUOTE);
+    await page.keyboard.press("Escape");
+    await expect(source).toBeHidden();
+
     // A fresh load reads the stored report back from the database.
     await page.reload();
     await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
@@ -208,6 +224,10 @@ for (const theme of THEMES) {
     expect(stored.analyses[0]!.resultJson.summary?.renewal?.renewal_citation).toMatchObject({
       status: "verified",
       quote: STUB_RENEWAL_QUOTE,
+    });
+    expect(stored.analyses[0]!.resultJson.summary?.payments?.payment_citation).toMatchObject({
+      status: "verified",
+      quote: STUB_PAYMENT_QUOTE,
     });
 
     // The stub received exactly one analysis request for this contract, carrying its text.

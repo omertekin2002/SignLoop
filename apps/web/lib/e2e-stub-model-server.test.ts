@@ -6,6 +6,7 @@ import {
   STUB_CONTRACT_FIXTURE,
   STUB_MODEL,
   STUB_NOTICE_QUOTE,
+  STUB_PAYMENT_QUOTE,
   STUB_RENEWAL_QUOTE,
   startStubModelServer,
   stubAnalysis,
@@ -156,6 +157,14 @@ describe("the end-to-end stub model", () => {
       renewal_citation: { status: "verified", contract_id: contractId, quote: STUB_RENEWAL_QUOTE },
     });
     expect(stored.summary.renewal).not.toHaveProperty("renewal_evidence");
+
+    // So does the payment, from the clause stating its amount and frequency.
+    expect(stored.summary.payments).toMatchObject({
+      amount: "1,200 GBP",
+      frequency: "Monthly",
+      payment_citation: { status: "verified", contract_id: contractId, quote: STUB_PAYMENT_QUOTE },
+    });
+    expect(stored.summary.payments).not.toHaveProperty("payment_evidence");
 
     const requests = stub.requests();
     expect(requests).toEqual([expect.objectContaining({ model: STUB_MODEL, kind: "analysis", tools: [] })]);

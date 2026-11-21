@@ -31,6 +31,10 @@ export function sectionOutput(
     badge?: "LOW" | "MEDIUM" | "HIGH";
     autoRenew?: boolean | null;
     renewalPeriod?: string | null;
+    amount?: string | null;
+    frequency?: string | null;
+    /** The section's quotation of the clause stating its payment amount and frequency. */
+    paymentQuote?: string;
     /** The section's quotation of the clause stating its renewal. */
     renewalQuote?: string;
     noticeDays?: number | null;
@@ -45,7 +49,14 @@ export function sectionOutput(
     key_points: [`Covers ${segment.label}.`],
     summary: {
       what_it_is: "A services agreement.",
-      payments: { amount: null, frequency: null, fees: [] },
+      payments: {
+        amount: options.amount ?? null,
+        frequency: options.frequency ?? null,
+        fees: [],
+        payment_evidence: options.paymentQuote
+          ? { quote: options.paymentQuote, segment: segment.label }
+          : null,
+      },
       term: { start: null, end: null, minimum_term: null },
       renewal: {
         auto_renew: options.autoRenew ?? null,
