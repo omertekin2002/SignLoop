@@ -4,9 +4,14 @@ import { getAnalysisForUser, getContractSourceForUser } from "@/lib/server-db";
 import {
   citationForReport,
   JURISDICTION_CITATION,
+  NOTICE_CITATION,
+  PAYMENT_CITATION,
+  RENEWAL_CITATION,
   SOURCE_PAGE_SIZE,
   SourceRevisionSchema,
+  TERM_CITATION,
 } from "@/lib/source-citations";
+import { isListedCitationRef } from "@/lib/listed-citations";
 import { isUuid } from "@/lib/utils";
 
 export async function GET(
@@ -38,8 +43,17 @@ export async function GET(
     (revision !== null && !SourceRevisionSchema.safeParse(revision).success) ||
     (analysisId !== null && !isUuid(analysisId)) ||
     (analysisId === null) !== (flag === null) ||
-    // A red flag's index, or the governing-law quotation behind the jurisdiction proposal.
-    (flag !== null && flag !== JURISDICTION_CITATION && !/^\d{1,5}$/.test(flag))
+    // A red flag's index, the governing-law quotation behind the jurisdiction proposal, the clause
+    // stating the cancellation notice period, renewal, the payment amount and frequency or the term,
+    // or a cancellation penalty or an extra fee by its index (`penalty-<n>`, `fee-<n>`).
+    (flag !== null &&
+      flag !== JURISDICTION_CITATION &&
+      flag !== NOTICE_CITATION &&
+      flag !== RENEWAL_CITATION &&
+      flag !== PAYMENT_CITATION &&
+      flag !== TERM_CITATION &&
+      !isListedCitationRef(flag) &&
+      !/^\d{1,5}$/.test(flag))
   )
     return reply({ error: "Invalid source request" }, 400);
 
@@ -51,7 +65,15 @@ export async function GET(
     citation = citationForReport(
       analysis.resultJson,
       id,
-      flag === JURISDICTION_CITATION ? JURISDICTION_CITATION : Number(flag),
+      flag === JURISDICTION_CITATION ||
+        flag === NOTICE_CITATION ||
+        flag === RENEWAL_CITATION ||
+        flag === PAYMENT_CITATION ||
+        flag === TERM_CITATION
+        ? flag
+        : isListedCitationRef(flag)
+          ? flag
+          : Number(flag),
     );
     if (!citation || citation.revision !== revision)
       return reply(

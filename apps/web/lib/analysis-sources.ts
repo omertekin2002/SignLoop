@@ -8,13 +8,26 @@ import {
   verifyQuote,
   type SourceCitation,
 } from "@/lib/source-citations";
+import { isNoticePeriodStated } from "@/lib/notice-period";
+import { isRenewalStated } from "@/lib/renewal";
+import { isPaymentStated } from "@/lib/payment";
+import { isTermStated } from "@/lib/term";
+import {
+  LISTED_FEES,
+  LISTED_PENALTIES,
+  type ListedFact,
+} from "@/lib/listed-citations";
 import { isRecord } from "@/lib/utils";
 
 export function contractSourceRevision(text: string): string {
   return `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`;
 }
 
-/** Always discard model-supplied receipts, even if they claim to be verified. */
+/**
+ * Always discard model-supplied receipts, even if they claim to be verified. Red flags, the
+ * jurisdiction proposal, the cancellation notice period, each cancellation penalty, renewal,
+ * payment, each extra fee and the term get server-verified citations instead.
+ */
 export function attachAnalysisSources<T extends Record<string, unknown>>(
   result: T,
   contractId: string,
@@ -60,10 +73,93 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
   const proposalCitation = jurisdiction
     ? verifiedCitation(proposal?.evidence)
     : null;
+  // Summary facts keep their values either way; only a verified quotation of the clause stating one
+  // becomes its citation, and only while the fact is stated. A model-sent citation is never kept.
+  const summary = isRecord(result.summary) ? result.summary : null;
+  const citeFact = (
+    group: string,
+    evidenceKey: string,
+    citationKey: string,
+    stated: (fact: Record<string, unknown>) => boolean,
+  ): Record<string, Record<string, unknown>> => {
+    const fact = isRecord(summary?.[group]) ? summary[group] : null;
+    if (!fact) return {};
+    const {
+      [evidenceKey]: evidence,
+      [citationKey]: _untrusted,
+      ...rest
+    } = fact;
+    return {
+      [group]: {
+        ...rest,
+        [citationKey]: stated(rest) ? verifiedCitation(evidence) : null,
+      },
+    };
+  };
+  // Each item of a cited list (penalties, fees) gets the first proposal naming exactly its text
+  // whose quotation verifies. Proposals for any other text are discarded, a model-sent citation is
+  // never kept, and the items themselves are always kept.
+  const citeListed = (
+    fact: ListedFact,
+    cited: Record<string, Record<string, unknown>>,
+  ) => {
+    const group = cited[fact.group];
+    if (!group) return cited;
+    const {
+      [fact.evidence]: proposals,
+      [fact.citations]: _untrusted,
+      ...rest
+    } = group;
+    const listed = rest[fact.list];
+    const items = Array.isArray(listed)
+      ? listed.filter((item): item is string => typeof item === "string")
+      : [];
+    const offered = Array.isArray(proposals) ? proposals.filter(isRecord) : [];
+    const citations = [...new Set(items)].flatMap((item) => {
+      const citation =
+        offered
+          .filter((proposal) => proposal[fact.item] === item)
+          .map(verifiedCitation)
+          .find(Boolean) ?? null;
+      return citation ? [{ [fact.item]: item, citation }] : [];
+    });
+    return { ...cited, [fact.group]: { ...rest, [fact.citations]: citations } };
+  };
+  const citedSummary = summary
+    ? {
+        ...summary,
+        ...citeListed(
+          LISTED_PENALTIES,
+          citeFact(
+            "cancellation",
+            "notice_evidence",
+            "notice_citation",
+            isNoticePeriodStated,
+          ),
+        ),
+        ...citeFact(
+          "renewal",
+          "renewal_evidence",
+          "renewal_citation",
+          isRenewalStated,
+        ),
+        ...citeListed(
+          LISTED_FEES,
+          citeFact(
+            "payments",
+            "payment_evidence",
+            "payment_citation",
+            isPaymentStated,
+          ),
+        ),
+        ...citeFact("term", "term_evidence", "term_citation", isTermStated),
+      }
+    : null;
   return {
     ...result,
     source,
     ...(flags ? { red_flags: flags } : {}),
+    ...(citedSummary ? { summary: citedSummary as T["summary"] } : {}),
     proposed_jurisdiction:
       jurisdiction && proposalCitation
         ? { jurisdiction, citation: proposalCitation }

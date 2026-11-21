@@ -5,8 +5,6 @@ import { OperationStatus } from "@/components/operation-status";
 import { postOperation } from "@/lib/operation-progress-client";
 import { isAnalysisOperationResult } from "@/lib/operation-progress";
 
-import { formatNoticePeriod } from "@/lib/notice-period";
-
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -59,7 +57,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ContractSourceProvider, FindingSource, OpenContractSource } from "@/components/contract-source";
+import { ContractSourceProvider, FindingSource, NoticePeriodSource, OpenContractSource, PaymentSource, PenaltiesSource, RenewalSource, TermSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
 import { DownloadBriefButton } from "@/components/download-brief-button";
 import { PrintBrief } from "@/components/print-brief";
@@ -339,11 +337,6 @@ const ContractDetails = () => {
     "MMM d, HH:mm",
     "Unknown time",
   );
-  const renewalLabel = typeof summaryRenewal?.auto_renew === "boolean"
-    ? summaryRenewal.auto_renew
-      ? "Auto-renews"
-      : "Manual renewal"
-    : "Not specified";
   const contractTitle =
     typeof contract?.title === "string" && contract.title.trim()
       ? contract.title
@@ -720,14 +713,7 @@ const ContractDetails = () => {
                       <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
                         <DollarSign className="h-4 w-4" /> Payments
                       </h4>
-                      <p className="text-sm font-medium">
-                        {summaryPayments?.amount || "Not specified"}
-                      </p>
-                      {summaryPayments?.frequency && (
-                        <p className="text-xs text-muted-foreground">
-                          {summaryPayments.frequency}
-                        </p>
-                      )}
+                      <PaymentSource payments={summaryPayments ?? {}} />
                     </div>
 
                     {/* Term */}
@@ -735,9 +721,7 @@ const ContractDetails = () => {
                       <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
                         <Clock className="h-4 w-4" /> Term
                       </h4>
-                      <p className="text-sm">
-                        {summaryTerm?.minimum_term || "Not specified"}
-                      </p>
+                      <TermSource term={summaryTerm ?? {}} />
                     </div>
 
                     {/* Renewal */}
@@ -745,12 +729,7 @@ const ContractDetails = () => {
                       <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
                         <RefreshCw className="h-4 w-4" /> Renewal
                       </h4>
-                      <p className="text-sm">{renewalLabel}</p>
-                      {summaryRenewal?.renewal_period && (
-                        <p className="text-xs text-muted-foreground">
-                          Period: {summaryRenewal.renewal_period}
-                        </p>
-                      )}
+                      <RenewalSource renewal={summaryRenewal ?? {}} />
                     </div>
                   </div>
                 ) : (
@@ -788,26 +767,13 @@ const ContractDetails = () => {
                       <h4 className="text-sm font-medium text-muted-foreground mb-1">
                         Notice period
                       </h4>
-                      <p className="text-sm">
-                        {formatNoticePeriod(summaryCancellation)}
-                      </p>
+                      <NoticePeriodSource cancellation={summaryCancellation} />
                     </div>
                     <div className="p-4 rounded-lg bg-muted/40">
                       <h4 className="text-sm font-medium text-muted-foreground mb-1">
                         Penalties
                       </h4>
-                      {Array.isArray(summaryCancellation.penalties) &&
-                      summaryCancellation.penalties.length > 0 ? (
-                        <ul className="text-sm list-disc list-inside space-y-1">
-                          {summaryCancellation.penalties.map(
-                            (penalty: string, idx: number) => (
-                              <li key={idx}>{penalty}</li>
-                            ),
-                          )}
-                        </ul>
-                      ) : (
-                        <p className="text-sm">None listed</p>
-                      )}
+                      <PenaltiesSource penalties={summaryCancellation.penalties} />
                     </div>
                   </div>
                 </CardContent>

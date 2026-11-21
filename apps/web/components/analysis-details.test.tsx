@@ -1,6 +1,16 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({ get: vi.fn() }));
+vi.mock("@/lib/api-client", () => ({
+  apiClient: { get: mocks.get },
+  getApiErrorMessage: (_error: unknown, fallback: string) => fallback,
+}));
+
 import { AnalysisDetails } from "@/components/analysis-details";
+import { ContractSourceProvider } from "@/components/contract-source";
 import type { AnalysisResult } from "@/lib/schemas";
 
 const EMPTY_LIST = "None identified in this analysis.";
@@ -158,4 +168,135 @@ describe("AnalysisDetails", () => {
     expect(blankParagraphs(container)).toHaveLength(0);
     expect(screen.queryByText("42")).not.toBeInTheDocument();
   });
+});
+
+describe("AnalysisDetails payment fees", () => {
+  const CONTRACT_ID = "11111111-2222-4333-8444-555555555555";
+  const ANALYSIS_ID = "22222222-3333-4444-8555-666666666666";
+  const REVISION = `sha256:${"a".repeat(64)}`;
+  const SOURCE = {
+    contract_id: CONTRACT_ID,
+    revision: REVISION,
+    index_unit: "unicode-code-points" as const,
+  };
+  const TEXT =
+    "2. Fees. The Client pays 1,200 GBP monthly. A late payment fee of 50 GBP applies to invoices paid late. Set-up costs 300 GBP.";
+  const LATE = "Late payment fee of 50 GBP";
+  const LATE_QUOTE = "A late payment fee of 50 GBP applies to invoices paid late.";
+  const SETUP = "Set-up fee of 300 GBP";
+  const SETUP_QUOTE = "Set-up costs 300 GBP.";
+
+  function citation(quote: string) {
+    const start = TEXT.indexOf(quote);
+    return { ...SOURCE, status: "verified" as const, quote, start, end: start + quote.length };
+  }
+
+  function renderFees(payments: Record<string, unknown>) {
+    const result = { source: SOURCE, summary: { payments } };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <ContractSourceProvider contractId={CONTRACT_ID} analysisId={ANALYSIS_ID} result={result}>
+          <AnalysisDetails result={result as Partial<AnalysisResult>} />
+        </ContractSourceProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  const view = (index: number) => ({ name: `View matched quotation of fee ${index + 1}` });
+
+  beforeEach(() => {
+    mocks.get.mockReset();
+  });
+
+  it("shows each fee with its own verified quotation, and opens it in the source", async () => {
+    mocks.get.mockResolvedValue({
+      data: {
+        contractId: CONTRACT_ID,
+        revision: REVISION,
+        text: TEXT,
+        offset: 0,
+        totalCharacters: TEXT.length,
+        nextOffset: null,
+        previousOffset: null,
+        extractionWarning: null,
+        highlight: citation(SETUP_QUOTE),
+      },
+    });
+    renderFees({
+      fees: [LATE, SETUP],
+      // Listed in the other order, so nothing depends on position.
+      fee_citations: [
+        { fee: SETUP, citation: citation(SETUP_QUOTE) },
+        { fee: LATE, citation: citation(LATE_QUOTE) },
+      ],
+      payment_citation: citation("The Client pays 1,200 GBP monthly."),
+    });
+
+    const [first, second] = section("Payment fees").getAllByRole("listitem");
+    expect(within(first!).getByText(LATE)).toBeInTheDocument();
+    expect(within(first!).getByText(`“${LATE_QUOTE}”`).tagName).toBe("BLOCKQUOTE");
+    expect(within(first!).getByRole("button", view(0))).toBeInTheDocument();
+    expect(within(second!).getByText(SETUP)).toBeInTheDocument();
+    expect(within(second!).getByText(`“${SETUP_QUOTE}”`).tagName).toBe("BLOCKQUOTE");
+    expect(screen.queryByText("No verified quotation")).not.toBeInTheDocument();
+    // The payment amount's quotation is shown with the payment, never among the fees.
+    expect(section("Payment fees").queryByText(/1,200 GBP/)).toBeNull();
+
+    await userEvent.click(within(second!).getByRole("button", view(1)));
+    const dialog = await screen.findByRole("dialog", { name: "Extracted contract text" });
+    expect(
+      await within(dialog).findByText("Quotation matched in the analyzed text. Highlighted below."),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("region", { name: "Source passage" }).querySelector("mark"),
+    ).toHaveTextContent(SETUP_QUOTE);
+    expect(mocks.get).toHaveBeenCalledWith(
+      `/contracts/${CONTRACT_ID}/source`,
+      expect.objectContaining({
+        params: { offset: 0, revision: REVISION, analysisId: ANALYSIS_ID, flag: "fee-1" },
+      }),
+    );
+  });
+
+  it("marks a fee without a verified quotation, never showing another fee's", () => {
+    renderFees({
+      fees: [LATE, SETUP],
+      fee_citations: [{ fee: SETUP, citation: citation(SETUP_QUOTE) }],
+    });
+    const [first, second] = section("Payment fees").getAllByRole("listitem");
+    expect(within(first!).getByText("No verified quotation")).toBeInTheDocument();
+    expect(within(first!).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(first!).queryByText(/300 GBP\.”/)).toBeNull();
+    expect(within(second!).getByRole("button", view(1))).toBeInTheDocument();
+    expect(document.querySelectorAll("blockquote")).toHaveLength(1);
+  });
+
+  it.each([
+    ["a report stored before fee quotations", undefined],
+    ["no verified entries", []],
+    ["a citation keyed by different text", [{ fee: LATE.toLowerCase(), citation: citation(LATE_QUOTE) }]],
+    ["a citation stored as a penalty's", [{ penalty: LATE, citation: citation(LATE_QUOTE) }]],
+    [
+      "a citation for another revision",
+      [{ fee: LATE, citation: { ...citation(LATE_QUOTE), revision: `sha256:${"b".repeat(64)}` } }],
+    ],
+  ])("marks a listed fee without a verified quotation: %s", (_label, citations) => {
+    renderFees({ fees: [LATE], fee_citations: citations });
+    expect(section("Payment fees").getByText(LATE)).toBeInTheDocument();
+    expect(section("Payment fees").getByText("No verified quotation")).toBeInTheDocument();
+    expect(screen.queryByRole("button", view(0))).not.toBeInTheDocument();
+    expect(document.querySelector("blockquote")).toBeNull();
+  });
+
+  it.each([[[]], [undefined], [["  "]], ["not a list"]])(
+    "keeps None identified with no fees: %j",
+    (fees) => {
+      renderFees({ fees, fee_citations: [{ fee: LATE, citation: citation(LATE_QUOTE) }] });
+      expect(section("Payment fees").getByText(EMPTY_LIST)).toBeInTheDocument();
+      expect(section("Payment fees").queryByRole("list")).not.toBeInTheDocument();
+      expect(screen.queryByText("No verified quotation")).not.toBeInTheDocument();
+      expect(document.querySelector("blockquote")).toBeNull();
+    },
+  );
 });

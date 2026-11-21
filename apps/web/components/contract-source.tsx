@@ -12,10 +12,25 @@ import { apiClient, getApiErrorMessage, type ApiError } from "@/lib/api-client";
 import {
   citationForReport,
   JURISDICTION_CITATION,
+  NOTICE_CITATION,
+  PAYMENT_CITATION,
+  RENEWAL_CITATION,
   SourcePageSchema,
+  TERM_CITATION,
   type CitationRef,
   type SourceCitation,
 } from "@/lib/source-citations";
+import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
+import { formatAutoRenew, isRenewalStated } from "@/lib/renewal";
+import { isPaymentStated } from "@/lib/payment";
+import { isTermStated } from "@/lib/term";
+import { isSubstantiveText } from "@/lib/substantive-text";
+import {
+  LISTED_FEES,
+  LISTED_PENALTIES,
+  listedCitationRef,
+  type KnownListedFact,
+} from "@/lib/listed-citations";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -139,7 +154,7 @@ export function ContractSourceProvider({
               Text extracted from your upload. Formatting, tables, or scanned
               content may be missing.
               {request?.flag !== undefined &&
-                " A matched quotation confirms text provenance, not the finding’s interpretation."}
+                " A matched quotation confirms text provenance, not the analysis’s interpretation."}
             </DialogDescription>
           </DialogHeader>
           {sourceQuery.isFetching && (
@@ -305,5 +320,221 @@ export function FindingSource({ index }: { index: number }) {
     <p className="mt-2 text-xs text-muted-foreground">
       Verified source quotation unavailable.
     </p>
+  );
+}
+
+/**
+ * A stated summary fact's evidence: the verified quotation of the clause stating it, or a visible
+ * "No verified quotation" marker (as in reports analysed before quotations existed). Unknown facts
+ * get neither and keep their unchanged "Not specified" text.
+ */
+function StatedFactSource({
+  stated,
+  citationRef,
+  label,
+}: {
+  stated: boolean;
+  citationRef: CitationRef;
+  label: string;
+}) {
+  const source = useContext(SourceContext);
+  if (!stated) return null;
+  return source?.citation(citationRef) ? (
+    <>
+      <QuotedSource citationRef={citationRef} label={label} />
+      <p className="mt-2 text-xs text-muted-foreground">
+        The quotation shows where this value comes from, not that this
+        reading of it is correct.
+      </p>
+    </>
+  ) : (
+    <p className="mt-2 inline-block rounded border border-border px-2 py-0.5 text-xs text-muted-foreground">
+      No verified quotation
+    </p>
+  );
+}
+
+/**
+ * A report's notice period in one of three states: with the verified quotation of the clause that
+ * states it, stated with a visible "No verified quotation" marker, or the unchanged "Not specified"
+ * when no period is stated.
+ */
+export function NoticePeriodSource({
+  cancellation,
+}: {
+  cancellation: {
+    notice_period_days?: number | null;
+    notice_period_text?: string | null;
+  };
+}) {
+  return (
+    <>
+      <p className="text-sm">{formatNoticePeriod(cancellation)}</p>
+      <StatedFactSource
+        stated={isNoticePeriodStated(cancellation)}
+        citationRef={NOTICE_CITATION}
+        label="View matched quotation of the notice-period clause"
+      />
+    </>
+  );
+}
+
+/**
+ * A report's renewal in one of three states: whether it auto-renews and its period with the
+ * verified quotation of the clause stating them, stated with a visible "No verified quotation"
+ * marker, or the unchanged "Not specified" when renewal is not stated.
+ */
+export function RenewalSource({
+  renewal,
+}: {
+  renewal: { auto_renew?: boolean | null; renewal_period?: string | null };
+}) {
+  return (
+    <>
+      <p className="text-sm">
+        {formatAutoRenew(renewal.auto_renew, "Not specified")}
+      </p>
+      {renewal.renewal_period && (
+        <p className="text-xs text-muted-foreground">
+          Period: {renewal.renewal_period}
+        </p>
+      )}
+      <StatedFactSource
+        stated={isRenewalStated(renewal)}
+        citationRef={RENEWAL_CITATION}
+        label="View matched quotation of the renewal clause"
+      />
+    </>
+  );
+}
+
+/**
+ * A report's payment amount and frequency in one of three states: with the verified quotation of
+ * the clause stating them, stated with a visible "No verified quotation" marker, or the unchanged
+ * "Not specified" when neither is stated.
+ */
+export function PaymentSource({
+  payments,
+}: {
+  payments: { amount?: string | null; frequency?: string | null };
+}) {
+  return (
+    <>
+      <p className="text-sm font-medium">
+        {payments.amount || "Not specified"}
+      </p>
+      {payments.frequency && (
+        <p className="text-xs text-muted-foreground">{payments.frequency}</p>
+      )}
+      <StatedFactSource
+        stated={isPaymentStated(payments)}
+        citationRef={PAYMENT_CITATION}
+        label="View matched quotation of the payment clause"
+      />
+    </>
+  );
+}
+
+/**
+ * A report's term in one of three states: its minimum term, then its start and end when stated,
+ * with the verified quotation of the clause stating them; stated with a visible "No verified
+ * quotation" marker; or the unchanged "Not specified" when none is stated. The start and end are
+ * listed whenever stated, so the quotation never backs a value the card hides.
+ */
+export function TermSource({
+  term,
+}: {
+  term: {
+    start?: string | null;
+    end?: string | null;
+    minimum_term?: string | null;
+  };
+}) {
+  return (
+    <>
+      <p className="text-sm">{term.minimum_term || "Not specified"}</p>
+      {isSubstantiveText(term.start) && (
+        <p className="text-xs text-muted-foreground">Starts: {term.start}</p>
+      )}
+      {isSubstantiveText(term.end) && (
+        <p className="text-xs text-muted-foreground">Ends: {term.end}</p>
+      )}
+      <StatedFactSource
+        stated={isTermStated(term)}
+        citationRef={TERM_CITATION}
+        label="View matched quotation of the term clause"
+      />
+    </>
+  );
+}
+
+/**
+ * A cited list's items in one of three states: each item with the verified quotation of the clause
+ * stating it, a listed item with a visible "No verified quotation" marker, or the list's unchanged
+ * empty text when there are none. Each quotation is looked up by its own item's position in the
+ * stored list, which `listedCitation` matches on the exact text.
+ */
+function ListedSources({
+  fact,
+  items,
+  noun,
+  empty,
+  className,
+}: {
+  fact: KnownListedFact;
+  items: unknown;
+  noun: string;
+  empty: ReactNode;
+  className: string;
+}) {
+  const listed = Array.isArray(items)
+    ? items.flatMap((item, index) =>
+        typeof item === "string" && item.trim() ? [{ item, index }] : [],
+      )
+    : [];
+  if (!listed.length) return <>{empty}</>;
+  return (
+    <ul className={className}>
+      {listed.map(({ item, index }) => (
+        <li key={index}>
+          <p>{item}</p>
+          <StatedFactSource
+            stated
+            citationRef={listedCitationRef(fact, index)}
+            label={`View matched quotation of ${noun} ${index + 1}`}
+          />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** A report's cancellation penalties, each with its own quotation (`ListedSources`). */
+export function PenaltiesSource({ penalties }: { penalties: unknown }) {
+  return (
+    <ListedSources
+      fact={LISTED_PENALTIES}
+      items={penalties}
+      noun="penalty"
+      empty={<p className="text-sm">None listed</p>}
+      className="list-disc space-y-3 pl-5 text-sm"
+    />
+  );
+}
+
+/** A report's extra fees, each with its own quotation (`ListedSources`). */
+export function FeesSource({ fees }: { fees: unknown }) {
+  return (
+    <ListedSources
+      fact={LISTED_FEES}
+      items={fees}
+      noun="fee"
+      empty={
+        <p className="text-muted-foreground">
+          None identified in this analysis.
+        </p>
+      }
+      className="list-disc space-y-3 pl-5"
+    />
   );
 }

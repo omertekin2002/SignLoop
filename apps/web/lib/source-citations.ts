@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  isListedCitationRef,
+  storedListedCitation,
+  type ListedCitationRef,
+} from "@/lib/listed-citations";
 
 /**
  * Code points one analysis call reads. A longer contract is split into consecutive sections of at
@@ -212,9 +217,45 @@ export function verifyQuote(
   return { quote, start, end };
 }
 
-/** A cited passage in a stored report: a red flag by index, or the jurisdiction proposal. */
-export type CitationRef = number | "jurisdiction";
+/**
+ * A cited passage in a stored report: a red flag by index, the jurisdiction proposal, the
+ * cancellation notice period, renewal, the payment amount and frequency, the term, or a cancellation
+ * penalty or an extra fee by its index in the stored `penalties` (`penalty-<n>`) or `fees` (`fee-<n>`).
+ */
+export type CitationRef =
+  | number
+  | "jurisdiction"
+  | "notice"
+  | "renewal"
+  | "payment"
+  | "term"
+  | ListedCitationRef;
 export const JURISDICTION_CITATION = "jurisdiction";
+export const NOTICE_CITATION = "notice";
+export const RENEWAL_CITATION = "renewal";
+export const PAYMENT_CITATION = "payment";
+export const TERM_CITATION = "term";
+
+function storedCitation(report: Record<string, unknown>, ref: CitationRef): unknown {
+  const field = (value: unknown, key: string) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)[key]
+      : null;
+  if (ref === JURISDICTION_CITATION)
+    return field(report.proposed_jurisdiction, "citation");
+  if (ref === NOTICE_CITATION)
+    return field(field(report.summary, "cancellation"), "notice_citation");
+  if (ref === RENEWAL_CITATION)
+    return field(field(report.summary, "renewal"), "renewal_citation");
+  if (ref === PAYMENT_CITATION)
+    return field(field(report.summary, "payments"), "payment_citation");
+  if (ref === TERM_CITATION)
+    return field(field(report.summary, "term"), "term_citation");
+  if (isListedCitationRef(ref)) return storedListedCitation(report.summary, ref);
+  return Array.isArray(report.red_flags)
+    ? field(report.red_flags[ref], "citation")
+    : null;
+}
 
 export function citationForReport(
   result: unknown,
@@ -224,17 +265,7 @@ export function citationForReport(
   if (!result || typeof result !== "object") return null;
   const report = result as Record<string, unknown>;
   const source = SourceIdentitySchema.safeParse(report.source);
-  const cited =
-    ref === JURISDICTION_CITATION
-      ? report.proposed_jurisdiction
-      : Array.isArray(report.red_flags)
-        ? report.red_flags[ref]
-        : null;
-  const parsed = CitationSchema.safeParse(
-    cited && typeof cited === "object"
-      ? (cited as Record<string, unknown>).citation
-      : null,
-  );
+  const parsed = CitationSchema.safeParse(storedCitation(report, ref));
   if (
     !source.success ||
     !parsed.success ||

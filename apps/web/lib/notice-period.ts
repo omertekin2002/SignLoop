@@ -48,6 +48,20 @@ export function normalizeNoticePeriod(days: unknown, wording: unknown) {
     : { notice_period_days: parsed, notice_period_text: null };
 }
 
+/**
+ * True when the report states a notice period: wording, or a day count. Only a stated period can
+ * carry a source quotation; an unknown one keeps the "Not specified" text and no citation.
+ */
+export function isNoticePeriodStated(notice: {
+  notice_period_days?: unknown;
+  notice_period_text?: unknown;
+}): boolean {
+  return (
+    substantiveWording(notice.notice_period_text) !== null ||
+    typeof notice.notice_period_days === "number"
+  );
+}
+
 export function formatNoticePeriod(notice: {
   notice_period_days?: number | null;
   notice_period_text?: string | null;

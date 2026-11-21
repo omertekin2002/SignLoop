@@ -246,6 +246,441 @@ describe("renderAnalysisBriefMarkdown", () => {
     expect(brief({}).markdown).not.toMatch(/\bnull\b|\bundefined\b/);
   });
 
+  it("shows the notice period's verified quotation, marks a stated period without one, and leaves an unknown one", () => {
+    const withNotice = (cancellation: Record<string, unknown>) =>
+      section(
+        brief({
+          ...FULL_RESULT,
+          summary: {
+            ...FULL_RESULT.summary,
+            cancellation: { how: "Write to the club.", penalties: [], ...cancellation },
+          },
+        }).markdown,
+        "Summary",
+      );
+    const clause = "Either party may end this agreement on 10 business days' *written* notice.";
+
+    const quoted = withNotice({
+      notice_period_days: null,
+      notice_period_text: "10 business days",
+      notice_citation: citation(clause, 400),
+    });
+    expect(quoted).toContain(
+      [
+        "  - Notice period: 10 business days",
+        "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        "      > Either party may end this agreement on 10 business days' \\*written\\* notice.",
+      ].join("\n"),
+    );
+    expect(quoted).not.toContain("10 business days (**No verified quotation**)");
+    // The quotation renders inside the notice period's list item as a block quote.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(1);
+
+    // A report stored before notice quotations, an unverified one, and one for another contract.
+    for (const cancellation of [
+      { notice_period_days: 60 },
+      { notice_period_days: 60, notice_period_text: "60 days", notice_citation: null },
+      {
+        notice_period_days: 60,
+        notice_citation: { ...citation(clause), contract_id: "99999999-2222-4333-8444-555555555555" },
+      },
+    ]) {
+      const marked = withNotice(cancellation);
+      expect(marked).toContain("  - Notice period: 60 days (**No verified quotation**)");
+      expect(marked).not.toContain("Verified quotation");
+    }
+
+    const unknown = withNotice({
+      notice_period_days: null,
+      notice_period_text: null,
+      notice_citation: citation(clause),
+    });
+    expect(unknown).toContain("  - Notice period: Not specified\n");
+    expect(unknown).not.toContain("Either party may end this agreement");
+  });
+
+  it("shows renewal's verified quotation, marks stated renewal without one, and leaves unknown renewal", () => {
+    const withRenewal = (renewal: Record<string, unknown>) =>
+      section(
+        brief({
+          ...FULL_RESULT,
+          summary: { ...FULL_RESULT.summary, renewal },
+        }).markdown,
+        "Summary",
+      );
+    const clause = "This membership renews *automatically* for further 12-month terms.";
+
+    const quoted = withRenewal({
+      auto_renew: true,
+      renewal_period: "12 months",
+      renewal_citation: citation(clause, 300),
+    });
+    expect(quoted).toContain(
+      [
+        "- **Renewal:**",
+        "  - Automatic renewal: Auto-renews",
+        "  - Renewal period: 12 months",
+        "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        "      > This membership renews \\*automatically\\* for further 12-month terms.",
+        "- **Cancellation:**",
+      ].join("\n"),
+    );
+    expect(quoted).not.toContain("Renewal period: 12 months (**No verified quotation**)");
+    // The quotation renders inside the renewal period's list item as a block quote.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(1);
+
+    // A report stored before renewal quotations, an unverified one, one for another contract, and
+    // renewal stated only as not automatic or only by its period.
+    for (const [renewal, lines] of [
+      [{ auto_renew: true, renewal_period: "12 months" }, ["Auto-renews", "12 months"]],
+      [
+        { auto_renew: true, renewal_period: "12 months", renewal_citation: null },
+        ["Auto-renews", "12 months"],
+      ],
+      [
+        {
+          auto_renew: true,
+          renewal_period: "12 months",
+          renewal_citation: { ...citation(clause), contract_id: "99999999-2222-4333-8444-555555555555" },
+        },
+        ["Auto-renews", "12 months"],
+      ],
+      [{ auto_renew: false, renewal_period: null }, ["Does not auto-renew", "Not specified"]],
+      [{ auto_renew: null, renewal_period: "Monthly" }, ["Unknown", "Monthly"]],
+    ] as const) {
+      const marked = withRenewal(renewal);
+      expect(marked).toContain(
+        `  - Automatic renewal: ${lines[0]}\n  - Renewal period: ${lines[1]} (**No verified quotation**)\n`,
+      );
+      expect(marked).not.toContain("Verified quotation** (");
+    }
+
+    const unknown = withRenewal({
+      auto_renew: null,
+      renewal_period: null,
+      renewal_citation: citation(clause),
+    });
+    expect(unknown).toContain(
+      "  - Automatic renewal: Unknown\n  - Renewal period: Not specified\n",
+    );
+    expect(unknown).not.toContain(clause);
+    expect(unknown).not.toContain("Renewal period: Not specified (");
+  });
+
+  it("shows the payment's verified quotation, marks stated payment without one, and leaves unknown payment", () => {
+    const withPayments = (payments: Record<string, unknown>) =>
+      section(
+        brief({
+          ...FULL_RESULT,
+          summary: { ...FULL_RESULT.summary, payments: { fees: [], ...payments } },
+        }).markdown,
+        "Summary",
+      );
+    const clause = "Members pay *£45* each month by direct debit.";
+
+    const quoted = withPayments({
+      amount: "£45",
+      frequency: "Monthly",
+      fees: ["Joining fee of £20"],
+      payment_citation: citation(clause, 200),
+    });
+    expect(quoted).toContain(
+      [
+        "- **Payments:**",
+        "  - Amount: £45",
+        "  - Frequency: Monthly",
+        "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        "      > Members pay \\*£45\\* each month by direct debit.",
+        "  - Fees:",
+        // Reports analysed before fee quotations mark each listed fee.
+        "    - Joining fee of £20 (**No verified quotation**)",
+        "- **Term:**",
+      ].join("\n"),
+    );
+    expect(quoted).not.toContain("Monthly (**No verified quotation**)");
+    // The quotation renders inside the frequency's list item as a block quote.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(1);
+
+    // A report stored before payment quotations, an unverified one, one for another contract, and
+    // payment stated only by its amount or only by its frequency.
+    for (const [payments, lines] of [
+      [{ amount: "£45", frequency: "Monthly" }, ["£45", "Monthly"]],
+      [{ amount: "£45", frequency: "Monthly", payment_citation: null }, ["£45", "Monthly"]],
+      [
+        {
+          amount: "£45",
+          frequency: "Monthly",
+          payment_citation: { ...citation(clause), contract_id: "99999999-2222-4333-8444-555555555555" },
+        },
+        ["£45", "Monthly"],
+      ],
+      [{ amount: "£45", frequency: null }, ["£45", "Not specified"]],
+      [{ amount: null, frequency: "Yearly" }, ["Not specified", "Yearly"]],
+    ] as const) {
+      const marked = withPayments(payments);
+      expect(marked).toContain(
+        `  - Amount: ${lines[0]}\n  - Frequency: ${lines[1]} (**No verified quotation**)\n  - Fees: None listed\n`,
+      );
+      expect(marked).not.toContain("Verified quotation** (");
+    }
+
+    for (const unknown of [
+      { amount: null, frequency: null },
+      { amount: "Not specified", frequency: "Unknown" },
+    ]) {
+      const marked = withPayments({ ...unknown, payment_citation: citation(clause) });
+      expect(marked).toContain(
+        `  - Amount: ${unknown.amount ?? "Not specified"}\n  - Frequency: ${unknown.frequency ?? "Not specified"}\n  - Fees: None listed\n`,
+      );
+      expect(marked).not.toContain("direct debit");
+      expect(marked).not.toMatch(/Frequency: [^\n]*\(/);
+    }
+  });
+
+  it("shows the term's verified quotation, marks a stated term without one, and leaves an unknown term", () => {
+    const withTerm = (term: Record<string, unknown>) =>
+      section(
+        brief({
+          ...FULL_RESULT,
+          summary: { ...FULL_RESULT.summary, term },
+        }).markdown,
+        "Summary",
+      );
+    const clause = "Membership starts on *1 January 2026* and lasts at least 12 months.";
+
+    const quoted = withTerm({
+      start: "2026-01-01",
+      end: "2026-12-31",
+      minimum_term: "12 months",
+      term_citation: citation(clause, 300),
+    });
+    expect(quoted).toContain(
+      [
+        "- **Term:**",
+        "  - Start: 2026-01-01",
+        "  - End: 2026-12-31",
+        "  - Minimum term: 12 months",
+        "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        "      > Membership starts on \\*1 January 2026\\* and lasts at least 12 months.",
+        "- **Renewal:**",
+      ].join("\n"),
+    );
+    expect(quoted).not.toContain("Minimum term: 12 months (**No verified quotation**)");
+    // The quotation renders inside the minimum term's list item as a block quote.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(1);
+
+    // A report stored before term quotations, an unverified one, one for another contract, and a
+    // term stated only by its start, only by its end, or only by its minimum term.
+    for (const [term, lines] of [
+      [
+        { start: "2026-01-01", end: "2026-12-31", minimum_term: "12 months" },
+        ["2026-01-01", "2026-12-31", "12 months"],
+      ],
+      [
+        { start: "2026-01-01", end: "2026-12-31", minimum_term: "12 months", term_citation: null },
+        ["2026-01-01", "2026-12-31", "12 months"],
+      ],
+      [
+        {
+          start: "2026-01-01",
+          end: "2026-12-31",
+          minimum_term: "12 months",
+          term_citation: { ...citation(clause), contract_id: "99999999-2222-4333-8444-555555555555" },
+        },
+        ["2026-01-01", "2026-12-31", "12 months"],
+      ],
+      [{ start: "2026-01-01", end: null, minimum_term: null }, ["2026-01-01", "Not specified", "Not specified"]],
+      [{ start: null, end: "2026-12-31", minimum_term: null }, ["Not specified", "2026-12-31", "Not specified"]],
+      [{ start: null, end: null, minimum_term: "12 months" }, ["Not specified", "Not specified", "12 months"]],
+    ] as const) {
+      const marked = withTerm(term);
+      expect(marked).toContain(
+        `- **Term:**\n  - Start: ${lines[0]}\n  - End: ${lines[1]}\n  - Minimum term: ${lines[2]} (**No verified quotation**)\n- **Renewal:**`,
+      );
+      expect(marked).not.toContain("lasts at least");
+    }
+
+    for (const unknown of [
+      { start: null, end: null, minimum_term: null },
+      { start: "Not specified", end: "Unknown", minimum_term: "N/A" },
+    ]) {
+      const marked = withTerm({ ...unknown, term_citation: citation(clause) });
+      expect(marked).toContain(
+        `- **Term:**\n  - Start: ${unknown.start ?? "Not specified"}\n  - End: ${unknown.end ?? "Not specified"}\n  - Minimum term: ${unknown.minimum_term ?? "Not specified"}\n- **Renewal:**`,
+      );
+      expect(marked).not.toContain("lasts at least");
+    }
+  });
+
+  it("shows each penalty's own verified quotation, marks a penalty without one, and leaves none listed", () => {
+    const withCancellation = (cancellation: Record<string, unknown>) =>
+      section(
+        brief({
+          ...FULL_RESULT,
+          summary: {
+            ...FULL_RESULT.summary,
+            cancellation: { how: "Write to the club.", notice_period_days: null, ...cancellation },
+          },
+        }).markdown,
+        "Summary",
+      );
+    const earlyExit = "Early exit fee of two months' dues";
+    const kit = "Unreturned kit is charged at *cost*";
+    const earlyExitClause = "Leaving before the end of the term costs two months' dues.";
+    const kitClause = "Kit not returned within 30 days is charged at cost.";
+
+    const quoted = withCancellation({
+      penalties: [earlyExit, kit],
+      penalty_citations: [
+        { penalty: kit, citation: citation(kitClause, 300) },
+        { penalty: earlyExit, citation: citation(earlyExitClause, 200) },
+      ],
+    });
+    expect(quoted).toContain(
+      [
+        "  - Penalties:",
+        "    - Early exit fee of two months' dues",
+        "      - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        `        > ${earlyExitClause}`,
+        "    - Unreturned kit is charged at \\*cost\\*",
+        "      - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        `        > ${kitClause}`,
+      ].join("\n"),
+    );
+    expect(quoted).not.toMatch(/Penalties:[\s\S]*No verified quotation/);
+    // Each quotation renders inside its own penalty's list item as a block quote.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(2);
+
+    // One penalty quoted and the other not: the other is marked, never given its neighbour's quote.
+    const one = withCancellation({
+      penalties: [earlyExit, kit],
+      penalty_citations: [{ penalty: kit, citation: citation(kitClause, 300) }],
+    });
+    expect(one).toContain(
+      `  - Penalties:\n    - ${earlyExit} (**No verified quotation**)\n    - Unreturned kit`,
+    );
+    expect(one).not.toContain(earlyExitClause);
+
+    // A report stored before penalty quotations, a citation for another contract, and one keyed by
+    // different text.
+    for (const cancellation of [
+      { penalties: [earlyExit] },
+      {
+        penalties: [earlyExit],
+        penalty_citations: [
+          {
+            penalty: earlyExit,
+            citation: { ...citation(earlyExitClause), contract_id: "99999999-2222-4333-8444-555555555555" },
+          },
+        ],
+      },
+      {
+        penalties: [earlyExit],
+        penalty_citations: [{ penalty: earlyExit.toLowerCase(), citation: citation(earlyExitClause) }],
+      },
+    ]) {
+      const marked = withCancellation(cancellation);
+      expect(marked).toContain(`  - Penalties:\n    - ${earlyExit} (**No verified quotation**)\n`);
+      expect(marked).not.toContain(earlyExitClause);
+    }
+
+    for (const none of [{ penalties: [] }, {}]) {
+      const marked = withCancellation(none);
+      expect(marked).toContain("  - Penalties: None listed");
+      expect(marked).not.toMatch(/Penalties:[\s\S]*No verified quotation/);
+    }
+  });
+
+  it("shows each fee's own verified quotation beside the payment's, marks a fee without one, and leaves none listed", () => {
+    const withPayments = (payments: Record<string, unknown>) =>
+      section(
+        brief({
+          ...FULL_RESULT,
+          summary: { ...FULL_RESULT.summary, payments },
+        }).markdown,
+        "Summary",
+      );
+    const late = "Late payment fee of *£10*";
+    const joining = "Joining fee of £20";
+    const lateClause = "Payments received after the 5th are charged a £10 late fee.";
+    const joiningClause = "New members pay a one-off joining fee of £20.";
+    const paymentClause = "Members pay £45 each month by direct debit.";
+
+    const quoted = withPayments({
+      amount: "£45",
+      frequency: "Monthly",
+      payment_citation: citation(paymentClause, 50),
+      fees: [joining, late],
+      fee_citations: [
+        { fee: late, citation: citation(lateClause, 300) },
+        { fee: joining, citation: citation(joiningClause, 200) },
+      ],
+    });
+    expect(quoted).toContain(
+      [
+        "- **Payments:**",
+        "  - Amount: £45",
+        "  - Frequency: Monthly",
+        "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        `      > ${paymentClause}`,
+        "  - Fees:",
+        `    - ${joining}`,
+        "      - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        `        > ${joiningClause}`,
+        "    - Late payment fee of \\*£10\\*",
+        "      - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        `        > ${lateClause}`,
+        "- **Term:**",
+      ].join("\n"),
+    );
+    expect(quoted).not.toMatch(/Payments:[\s\S]*No verified quotation[\s\S]*Term:/);
+    // The payment's and each fee's quotation render as their own block quotes.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(3);
+
+    // One fee quoted and the other not: the other is marked, never given its neighbour's quote.
+    const one = withPayments({
+      amount: "£45",
+      frequency: "Monthly",
+      fees: [joining, late],
+      fee_citations: [{ fee: late, citation: citation(lateClause, 300) }],
+    });
+    expect(one).toContain(`  - Fees:\n    - ${joining} (**No verified quotation**)\n    - Late payment fee`);
+    expect(one).not.toContain(joiningClause);
+
+    // A report stored before fee quotations, a citation for another contract, one keyed by
+    // different text, and one stored under the penalties' key.
+    for (const payments of [
+      { fees: [joining] },
+      {
+        fees: [joining],
+        fee_citations: [
+          {
+            fee: joining,
+            citation: { ...citation(joiningClause), contract_id: "99999999-2222-4333-8444-555555555555" },
+          },
+        ],
+      },
+      { fees: [joining], fee_citations: [{ fee: joining.toLowerCase(), citation: citation(joiningClause) }] },
+      { fees: [joining], fee_citations: [{ penalty: joining, citation: citation(joiningClause) }] },
+    ]) {
+      const marked = withPayments({ amount: null, frequency: null, ...payments });
+      expect(marked).toContain(`  - Fees:\n    - ${joining} (**No verified quotation**)\n`);
+      expect(marked).not.toContain(joiningClause);
+    }
+
+    for (const none of [{ fees: [] }, {}]) {
+      const marked = withPayments({ amount: null, frequency: null, ...none });
+      expect(marked).toContain("  - Fees: None listed");
+      expect(marked).not.toMatch(/Fees:[^\n]*No verified quotation/);
+    }
+  });
+
   it("renders an unknown auto-renewal as unknown, not as no", () => {
     const { markdown } = brief({
       ...FULL_RESULT,

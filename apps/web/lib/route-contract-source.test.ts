@@ -94,6 +94,30 @@ describe("owner-scoped bounded source endpoint", () => {
     "?analysisId=bad&flag=0",
     `?analysisId=${analysisId}&flag=Jurisdiction`,
     `?analysisId=${analysisId}&flag=jurisdiction0`,
+    `?analysisId=${analysisId}&flag=Notice`,
+    `?analysisId=${analysisId}&flag=notice_citation`,
+    `?analysisId=${analysisId}&flag=Renewal`,
+    `?analysisId=${analysisId}&flag=renewal_citation`,
+    `?analysisId=${analysisId}&flag=Payment`,
+    `?analysisId=${analysisId}&flag=payments`,
+    `?analysisId=${analysisId}&flag=payment_citation`,
+    `?analysisId=${analysisId}&flag=Term`,
+    `?analysisId=${analysisId}&flag=terms`,
+    `?analysisId=${analysisId}&flag=term_citation`,
+    `?analysisId=${analysisId}&flag=penalty`,
+    `?analysisId=${analysisId}&flag=penalty-`,
+    `?analysisId=${analysisId}&flag=penalty-1000`,
+    `?analysisId=${analysisId}&flag=penalty--1`,
+    `?analysisId=${analysisId}&flag=penalty-0x1`,
+    `?analysisId=${analysisId}&flag=Penalty-0`,
+    `?analysisId=${analysisId}&flag=penalties-0`,
+    `?analysisId=${analysisId}&flag=fee`,
+    `?analysisId=${analysisId}&flag=fee-`,
+    `?analysisId=${analysisId}&flag=fee-1000`,
+    `?analysisId=${analysisId}&flag=fee--1`,
+    `?analysisId=${analysisId}&flag=fee-0x1`,
+    `?analysisId=${analysisId}&flag=Fee-0`,
+    `?analysisId=${analysisId}&flag=fees-0`,
   ])("rejects malformed/unbounded requests: %s", async (query) => {
     expect((await get(query)).status).toBe(400);
     expect(getContractSourceForUser).not.toHaveBeenCalled();
@@ -149,6 +173,308 @@ describe("owner-scoped bounded source endpoint", () => {
         )
       ).status,
     ).toBe(422);
+  });
+  it("highlights the clause stating the cancellation notice period", async () => {
+    const text = "Either party may end this agreement on 10 business days' written notice.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (quote: string) =>
+      attachAnalysisSources(
+        {
+          summary: {
+            cancellation: {
+              how: "Written notice",
+              notice_period_days: null,
+              notice_period_text: "10 business days",
+              notice_evidence: { quote, segment: "full" },
+            },
+          },
+        },
+        id,
+        text,
+      );
+    const notice = `?revision=${sourceRevision}&analysisId=${analysisId}&flag=notice`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed("on 10 business days' written notice"),
+    });
+    const response = await get(notice);
+    expect(response.status).toBe(200);
+    expect((await response.json()).highlight).toMatchObject({
+      quote: "on 10 business days' written notice",
+      start: 36,
+      end: 71,
+    });
+    // A paraphrase is not verified, so there is nothing to highlight.
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed("ten business days of notice"),
+    });
+    expect((await get(notice)).status).toBe(422);
+  });
+  it("highlights the clause stating renewal", async () => {
+    const text = "This agreement renews automatically for successive one-year terms.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (quote: string, autoRenew: boolean | null = true) =>
+      attachAnalysisSources(
+        {
+          summary: {
+            renewal: {
+              auto_renew: autoRenew,
+              renewal_period: null,
+              renewal_evidence: { quote, segment: "full" },
+            },
+          },
+        },
+        id,
+        text,
+      );
+    const renewal = `?revision=${sourceRevision}&analysisId=${analysisId}&flag=renewal`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed("renews automatically for successive one-year terms"),
+    });
+    const response = await get(renewal);
+    expect(response.status).toBe(200);
+    expect((await response.json()).highlight).toMatchObject({
+      quote: "renews automatically for successive one-year terms",
+      start: 15,
+      end: 65,
+    });
+    // A paraphrase is not verified, and unknown renewal is never cited.
+    for (const resultJson of [
+      analysed("renews every year"),
+      analysed("renews automatically for successive one-year terms", null),
+    ]) {
+      getAnalysisForUser.mockResolvedValue({ resultJson });
+      expect((await get(renewal)).status).toBe(422);
+    }
+  });
+  it("highlights the clause stating the payment amount and frequency", async () => {
+    const text = "The Client pays a monthly fee of 1,200 GBP. Late payments accrue interest.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (quote: string, amount: string | null = "1,200 GBP") =>
+      attachAnalysisSources(
+        {
+          summary: {
+            payments: {
+              amount,
+              frequency: null,
+              fees: [],
+              payment_evidence: { quote, segment: "full" },
+            },
+          },
+        },
+        id,
+        text,
+      );
+    const payment = `?revision=${sourceRevision}&analysisId=${analysisId}&flag=payment`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed("The Client pays a monthly fee of 1,200 GBP."),
+    });
+    const response = await get(payment);
+    expect(response.status).toBe(200);
+    expect((await response.json()).highlight).toMatchObject({
+      quote: "The Client pays a monthly fee of 1,200 GBP.",
+      start: 0,
+      end: 43,
+    });
+    // A paraphrase is not verified, and unknown payment is never cited.
+    for (const resultJson of [
+      analysed("The Client pays 1,200 GBP monthly."),
+      analysed("The Client pays a monthly fee of 1,200 GBP.", null),
+    ]) {
+      getAnalysisForUser.mockResolvedValue({ resultJson });
+      expect((await get(payment)).status).toBe(422);
+    }
+  });
+  it("highlights the clause stating the term", async () => {
+    const text = "This agreement starts on 1 March 2027 and lasts 24 months. It then renews yearly.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (quote: string, minimumTerm: string | null = "24 months") =>
+      attachAnalysisSources(
+        {
+          summary: {
+            term: {
+              start: null,
+              end: null,
+              minimum_term: minimumTerm,
+              term_evidence: { quote, segment: "full" },
+            },
+          },
+        },
+        id,
+        text,
+      );
+    const term = `?revision=${sourceRevision}&analysisId=${analysisId}&flag=term`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed("This agreement starts on 1 March 2027 and lasts 24 months."),
+    });
+    const response = await get(term);
+    expect(response.status).toBe(200);
+    expect((await response.json()).highlight).toMatchObject({
+      quote: "This agreement starts on 1 March 2027 and lasts 24 months.",
+      start: 0,
+      end: 58,
+    });
+    // A paraphrase is not verified, and an unknown term is never cited.
+    for (const resultJson of [
+      analysed("The agreement lasts 24 months from 1 March 2027."),
+      analysed("This agreement starts on 1 March 2027 and lasts 24 months.", null),
+    ]) {
+      getAnalysisForUser.mockResolvedValue({ resultJson });
+      expect((await get(term)).status).toBe(422);
+    }
+  });
+  it("highlights the clause stating a cancellation penalty, by the penalty's index", async () => {
+    const text = "Leaving early costs two months' fees. Unreturned kit is charged at cost.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (penaltyEvidence: { penalty: string; quote: string }[]) =>
+      attachAnalysisSources(
+        {
+          summary: {
+            cancellation: {
+              how: "In writing",
+              notice_period_days: null,
+              penalties: ["Two months' fees", "Kit charged at cost"],
+              penalty_evidence: penaltyEvidence.map((proposal) => ({ ...proposal, segment: "full" })),
+            },
+          },
+        },
+        id,
+        text,
+      );
+    const penalty = (index: number) =>
+      `?revision=${sourceRevision}&analysisId=${analysisId}&flag=penalty-${index}`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed([
+        { penalty: "Kit charged at cost", quote: "Unreturned kit is charged at cost." },
+        { penalty: "Two months' fees", quote: "Leaving early costs two months' fees." },
+      ]),
+    });
+    const first = await get(penalty(0));
+    expect(first.status).toBe(200);
+    expect((await first.json()).highlight).toMatchObject({
+      quote: "Leaving early costs two months' fees.",
+      start: 0,
+      end: 37,
+    });
+    const second = await get(penalty(1));
+    expect(second.status).toBe(200);
+    expect((await second.json()).highlight).toMatchObject({
+      quote: "Unreturned kit is charged at cost.",
+      start: 38,
+    });
+    // An index past the end has no citation.
+    expect((await get(penalty(2))).status).toBe(422);
+    // Nor does a penalty whose quotation is a paraphrase, or one quoted under other text.
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed([
+        { penalty: "Two months' fees", quote: "Leaving early costs 2 months' fees." },
+        { penalty: "Kit charged at Cost", quote: "Unreturned kit is charged at cost." },
+      ]),
+    });
+    expect((await get(penalty(0))).status).toBe(422);
+    expect((await get(penalty(1))).status).toBe(422);
+  });
+  it("highlights the clause stating an extra fee, by the fee's index", async () => {
+    const text = "Late invoices cost 50 GBP. Set-up costs 300 GBP. The Client pays 1,200 GBP monthly.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (feeEvidence: { fee: string; quote: string }[]) =>
+      attachAnalysisSources(
+        {
+          summary: {
+            payments: {
+              amount: "1,200 GBP",
+              frequency: "Monthly",
+              fees: ["Late fee of 50 GBP", "Set-up fee of 300 GBP"],
+              fee_evidence: feeEvidence.map((proposal) => ({ ...proposal, segment: "full" })),
+              payment_evidence: { quote: "The Client pays 1,200 GBP monthly.", segment: "full" },
+            },
+          },
+        },
+        id,
+        text,
+      );
+    const fee = (index: number) =>
+      `?revision=${sourceRevision}&analysisId=${analysisId}&flag=fee-${index}`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed([
+        { fee: "Set-up fee of 300 GBP", quote: "Set-up costs 300 GBP." },
+        { fee: "Late fee of 50 GBP", quote: "Late invoices cost 50 GBP." },
+      ]),
+    });
+    const first = await get(fee(0));
+    expect(first.status).toBe(200);
+    expect((await first.json()).highlight).toMatchObject({
+      quote: "Late invoices cost 50 GBP.",
+      start: 0,
+      end: 26,
+    });
+    const second = await get(fee(1));
+    expect(second.status).toBe(200);
+    expect((await second.json()).highlight).toMatchObject({
+      quote: "Set-up costs 300 GBP.",
+      start: 27,
+    });
+    // The payment's own quotation is still served beside the fees'.
+    const payment = await get(`?revision=${sourceRevision}&analysisId=${analysisId}&flag=payment`);
+    expect(payment.status).toBe(200);
+    expect((await payment.json()).highlight).toMatchObject({
+      quote: "The Client pays 1,200 GBP monthly.",
+    });
+    // An index past the end has no citation, nor does a fee index used as a penalty's.
+    expect((await get(fee(2))).status).toBe(422);
+    expect(
+      (await get(`?revision=${sourceRevision}&analysisId=${analysisId}&flag=penalty-0`)).status,
+    ).toBe(422);
+    // Nor does a fee whose quotation is a paraphrase, or one quoted under other text.
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed([
+        { fee: "Late fee of 50 GBP", quote: "Late invoices cost fifty GBP." },
+        { fee: "Set-up fee of 300 gbp", quote: "Set-up costs 300 GBP." },
+      ]),
+    });
+    expect((await get(fee(0))).status).toBe(422);
+    expect((await get(fee(1))).status).toBe(422);
   });
   it("returns the same 404 for missing, deleted, or unowned contracts", async () => {
     auth.mockResolvedValue({ userId: "intruder" });

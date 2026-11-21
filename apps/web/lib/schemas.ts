@@ -24,6 +24,54 @@ const ProposedJurisdictionSchema = z
   .nullable()
   .optional()
   .catch(null);
+// The model's quotation of the clause stating a summary fact (`notice_evidence`, `renewal_evidence`,
+// `payment_evidence`, `term_evidence`); attachAnalysisSources replaces it with a server-verified
+// citation (`notice_citation`, `renewal_citation`, `payment_citation`, `term_citation`), or null.
+// Malformed values are dropped, never fatal.
+const FactEvidenceSchema = EvidenceProposalSchema.nullable().optional().catch(null);
+const FactCitationSchema = CitationSchema.nullable().optional().catch(null);
+
+/**
+ * The model's quotation of the clause stating one item of a summary list (`ListedFact`), keyed by
+ * the item's exact text rather than its position, since list items are filtered, split and
+ * de-duplicated.
+ */
+const listedEvidenceSchema = <K extends string>(item: K) =>
+  EvidenceProposalSchema.extend(
+    { [item]: z.string().min(1).max(2_000) } as Record<K, z.ZodString>,
+  );
+/** A server-verified quotation of the clause stating one listed item (`listedCitation`). */
+const listedCitationSchema = <K extends string>(item: K) =>
+  z.object({ [item]: z.string().min(1) } as Record<K, z.ZodString>).extend({
+    citation: CitationSchema,
+  });
+/** One cancellation penalty's quotation (`summary.cancellation.penalty_evidence`). */
+export const PenaltyEvidenceSchema = listedEvidenceSchema("penalty");
+export type PenaltyEvidence = z.infer<typeof PenaltyEvidenceSchema>;
+export const PenaltyCitationSchema = listedCitationSchema("penalty");
+/** One extra fee's quotation (`summary.payments.fee_evidence`). */
+export const FeeEvidenceSchema = listedEvidenceSchema("fee");
+export type FeeEvidence = z.infer<typeof FeeEvidenceSchema>;
+export const FeeCitationSchema = listedCitationSchema("fee");
+/** A list whose malformed entries are dropped one by one; a malformed list is dropped whole. */
+const entriesOf = <T extends z.ZodType>(entry: T) =>
+  z
+    .array(z.unknown())
+    .transform((items) =>
+      items.flatMap((item) => {
+        const parsed = entry.safeParse(item);
+        return parsed.success ? [parsed.data as z.output<T>] : [];
+      }),
+    )
+    .optional()
+    .catch(undefined);
+// `penalty_evidence` and `fee_evidence` are the model's proposals; attachAnalysisSources replaces
+// them with `penalty_citations` and `fee_citations`, one entry per listed item whose proposal
+// verifies.
+const PenaltyEvidenceListSchema = entriesOf(PenaltyEvidenceSchema);
+const PenaltyCitationListSchema = entriesOf(PenaltyCitationSchema);
+const FeeEvidenceListSchema = entriesOf(FeeEvidenceSchema);
+const FeeCitationListSchema = entriesOf(FeeCitationSchema);
 
 const BaseAnalysisResultSchema = z.object({
   source: SourceIdentitySchema.nullable().optional().catch(null),
@@ -41,21 +89,33 @@ const BaseAnalysisResultSchema = z.object({
       amount: z.string().nullable(),
       frequency: z.string().nullable(),
       fees: z.array(z.string()),
+      fee_evidence: FeeEvidenceListSchema,
+      fee_citations: FeeCitationListSchema,
+      payment_evidence: FactEvidenceSchema,
+      payment_citation: FactCitationSchema,
     }),
     term: z.object({
       start: z.string().nullable(),
       end: z.string().nullable(),
       minimum_term: z.string().nullable(),
+      term_evidence: FactEvidenceSchema,
+      term_citation: FactCitationSchema,
     }),
     renewal: z.object({
       auto_renew: z.boolean().nullable(),
       renewal_period: z.string().nullable(),
+      renewal_evidence: FactEvidenceSchema,
+      renewal_citation: FactCitationSchema,
     }),
     cancellation: z.object({
       how: z.string().trim().min(1),
       notice_period_days: z.number().int().nonnegative().nullable(),
       notice_period_text: z.string().trim().min(1).nullable().optional(),
+      notice_evidence: FactEvidenceSchema,
+      notice_citation: FactCitationSchema,
       penalties: z.array(z.string()),
+      penalty_evidence: PenaltyEvidenceListSchema,
+      penalty_citations: PenaltyCitationListSchema,
     }),
   }),
 
@@ -196,6 +256,10 @@ export const PartialAnalysisResultSchema = z
           amount: z.string().nullable().optional().default(null),
           frequency: z.string().nullable().optional().default(null),
           fees: z.array(z.string()).optional().default([]),
+          fee_evidence: FeeEvidenceListSchema,
+          fee_citations: FeeCitationListSchema,
+          payment_evidence: FactEvidenceSchema,
+          payment_citation: FactCitationSchema,
         })
         .optional()
         .default({ amount: null, frequency: null, fees: [] }),
@@ -204,18 +268,26 @@ export const PartialAnalysisResultSchema = z
           start: z.string().nullable().optional().default(null),
           end: z.string().nullable().optional().default(null),
           minimum_term: z.string().nullable().optional().default(null),
+          term_evidence: FactEvidenceSchema,
+          term_citation: FactCitationSchema,
         })
         .optional()
         .default({ start: null, end: null, minimum_term: null }),
       renewal: z.object({
         auto_renew: z.boolean().nullable(),
         renewal_period: z.string().nullable().optional().default(null),
+        renewal_evidence: FactEvidenceSchema,
+        renewal_citation: FactCitationSchema,
       }),
       cancellation: z.object({
         how: z.string().trim().min(1),
         notice_period_days: z.number().int().nonnegative().nullable(),
         notice_period_text: z.string().trim().min(1).nullable().optional(),
+        notice_evidence: FactEvidenceSchema,
+        notice_citation: FactCitationSchema,
         penalties: z.array(z.string()).optional().default([]),
+        penalty_evidence: PenaltyEvidenceListSchema,
+        penalty_citations: PenaltyCitationListSchema,
       }),
     }),
     red_flags: z

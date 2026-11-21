@@ -1,10 +1,23 @@
 import type { AnalysisResult } from "@/lib/schemas";
-import { formatNoticePeriod } from "@/lib/notice-period";
+import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
+import { formatAutoRenew, isRenewalStated } from "@/lib/renewal";
+import { isPaymentStated } from "@/lib/payment";
+import { isTermStated } from "@/lib/term";
+import {
+  LISTED_FEES,
+  LISTED_PENALTIES,
+  listedCitationRef,
+  type KnownListedFact,
+} from "@/lib/listed-citations";
 import { regionalComparisonsView } from "@/lib/regional-comparisons";
 import {
   citationForReport,
   JURISDICTION_CITATION,
+  NOTICE_CITATION,
+  PAYMENT_CITATION,
+  RENEWAL_CITATION,
   SourceRevisionSchema,
+  TERM_CITATION,
   type CitationRef,
 } from "@/lib/source-citations";
 import { formatDate, isRecord } from "@/lib/utils";
@@ -252,23 +265,170 @@ function jurisdictionSection(
   return lines;
 }
 
+/**
+ * A summary fact's line with its evidence: the verified quotation of the clause stating it, a marker
+ * when a stated fact has none, or the line alone when the fact is unknown.
+ */
+function quotedFactLines(
+  line: string,
+  stated: boolean,
+  result: Partial<AnalysisResult>,
+  contractId: string,
+  ref: CitationRef,
+  indent = "    ",
+): string[] {
+  if (!stated) return [line];
+  const cited = citationForReport(result, contractId, ref);
+  if (!cited) return [`${line} (**No verified quotation**)`];
+  return [
+    line,
+    `${indent}- **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):`,
+    ...blockquote(cited.quote).map((quoted) => `${indent}  ${quoted}`),
+  ];
+}
+
+/**
+ * A cited list (cancellation penalties, fees) with its evidence: each item, then the verified
+ * quotation of the clause stating that item or a marker on its line. None listed keeps its
+ * unchanged line.
+ */
+function listedLines(
+  result: Partial<AnalysisResult>,
+  group: Record<string, unknown>,
+  fact: KnownListedFact,
+  heading: string,
+  contractId: string,
+): string[] {
+  const listed = group[fact.list];
+  const items = (Array.isArray(listed) ? listed : []).flatMap(
+    (item: unknown, index) => {
+      const value = text(item);
+      return value ? [{ value, index }] : [];
+    },
+  );
+  if (!items.length) return [`  - ${heading}: None listed`];
+  return [
+    `  - ${heading}:`,
+    ...items.flatMap(({ value, index }) =>
+      quotedFactLines(
+        `    - ${inline(value)}`,
+        true,
+        result,
+        contractId,
+        listedCitationRef(fact, index),
+        "      ",
+      ),
+    ),
+  ];
+}
+
+/** The notice period with its evidence, or the unchanged "Not specified" when none is stated. */
+function noticePeriodLines(
+  result: Partial<AnalysisResult>,
+  cancellation: Record<string, unknown>,
+  contractId: string,
+): string[] {
+  const notice = {
+    notice_period_days:
+      typeof cancellation.notice_period_days === "number"
+        ? cancellation.notice_period_days
+        : null,
+    notice_period_text: text(cancellation.notice_period_text),
+  };
+  return quotedFactLines(
+    `  - Notice period: ${inline(formatNoticePeriod(notice))}`,
+    isNoticePeriodStated(notice),
+    result,
+    contractId,
+    NOTICE_CITATION,
+  );
+}
+
+/**
+ * Renewal with its evidence: both lines, then the verified quotation of the clause stating them or
+ * a marker on the period line. Unknown renewal keeps its unchanged lines.
+ */
+function renewalLines(
+  result: Partial<AnalysisResult>,
+  renewal: Record<string, unknown>,
+  contractId: string,
+): string[] {
+  const lines = [
+    `  - Automatic renewal: ${formatAutoRenew(renewal.auto_renew, "Unknown")}`,
+    `  - Renewal period: ${inline(text(renewal.renewal_period) ?? NOT_SPECIFIED)}`,
+  ];
+  return [
+    lines[0]!,
+    ...quotedFactLines(
+      lines[1]!,
+      isRenewalStated(renewal),
+      result,
+      contractId,
+      RENEWAL_CITATION,
+    ),
+  ];
+}
+
+/**
+ * The payment amount and frequency with their evidence: both lines, then the verified quotation of
+ * the clause stating them or a marker on the frequency line. Unknown payment keeps its unchanged
+ * lines. Each fee has its own quotation (`listedLines`).
+ */
+function paymentLines(
+  result: Partial<AnalysisResult>,
+  payments: Record<string, unknown>,
+  contractId: string,
+): string[] {
+  const amount = text(payments.amount);
+  const frequency = text(payments.frequency);
+  return [
+    `  - Amount: ${inline(amount ?? NOT_SPECIFIED)}`,
+    ...quotedFactLines(
+      `  - Frequency: ${inline(frequency ?? NOT_SPECIFIED)}`,
+      isPaymentStated({ amount, frequency }),
+      result,
+      contractId,
+      PAYMENT_CITATION,
+    ),
+  ];
+}
+
+/**
+ * The term with its evidence: start, end and minimum term, then the verified quotation of the
+ * clause stating the term or a marker on the minimum-term line. An unknown term keeps its unchanged
+ * lines.
+ */
+function termLines(
+  result: Partial<AnalysisResult>,
+  term: Record<string, unknown>,
+  contractId: string,
+): string[] {
+  const start = text(term.start);
+  const end = text(term.end);
+  const minimumTerm = text(term.minimum_term);
+  return [
+    `  - Start: ${inline(start ?? NOT_SPECIFIED)}`,
+    `  - End: ${inline(end ?? NOT_SPECIFIED)}`,
+    ...quotedFactLines(
+      `  - Minimum term: ${inline(minimumTerm ?? NOT_SPECIFIED)}`,
+      isTermStated({ start, end, minimum_term: minimumTerm }),
+      result,
+      contractId,
+      TERM_CITATION,
+    ),
+  ];
+}
+
 function summarySection(
   result: Partial<AnalysisResult>,
   keyPoints: string[],
+  contractId: string,
 ): string[] {
   const summary = record(result.summary);
   const payments = record(summary.payments);
   const term = record(summary.term);
   const renewal = record(summary.renewal);
   const cancellation = record(summary.cancellation);
-  const fees = texts(payments.fees);
-  const penalties = texts(cancellation.penalties);
-  const autoRenew =
-    renewal.auto_renew === true
-      ? "Auto-renews"
-      : renewal.auto_renew === false
-        ? "Does not auto-renew"
-        : "Unknown";
   const keyDates = (Array.isArray(result.key_dates) ? result.key_dates : [])
     .map(record)
     .filter((date) => text(date.date));
@@ -278,30 +438,16 @@ function summarySection(
   const lines = ["## Summary", "", labelled("What it is", text(summary.what_it_is))];
   lines.push(
     "- **Payments:**",
-    `  - Amount: ${inline(text(payments.amount) ?? NOT_SPECIFIED)}`,
-    `  - Frequency: ${inline(text(payments.frequency) ?? NOT_SPECIFIED)}`,
-    fees.length ? "  - Fees:" : "  - Fees: None listed",
-    ...bulletList(fees, "    "),
+    ...paymentLines(result, payments, contractId),
+    ...listedLines(result, payments, LISTED_FEES, "Fees", contractId),
     "- **Term:**",
-    `  - Start: ${inline(text(term.start) ?? NOT_SPECIFIED)}`,
-    `  - End: ${inline(text(term.end) ?? NOT_SPECIFIED)}`,
-    `  - Minimum term: ${inline(text(term.minimum_term) ?? NOT_SPECIFIED)}`,
+    ...termLines(result, term, contractId),
     "- **Renewal:**",
-    `  - Automatic renewal: ${autoRenew}`,
-    `  - Renewal period: ${inline(text(renewal.renewal_period) ?? NOT_SPECIFIED)}`,
+    ...renewalLines(result, renewal, contractId),
     "- **Cancellation:**",
     `  - How to cancel: ${inline(text(cancellation.how) ?? NOT_SPECIFIED)}`,
-    `  - Notice period: ${inline(
-      formatNoticePeriod({
-        notice_period_days:
-          typeof cancellation.notice_period_days === "number"
-            ? cancellation.notice_period_days
-            : null,
-        notice_period_text: text(cancellation.notice_period_text),
-      }),
-    )}`,
-    penalties.length ? "  - Penalties:" : "  - Penalties: None listed",
-    ...bulletList(penalties, "    "),
+    ...noticePeriodLines(result, cancellation, contractId),
+    ...listedLines(result, cancellation, LISTED_PENALTIES, "Penalties", contractId),
   );
 
   if (keyPoints.length) {
@@ -426,7 +572,7 @@ export function renderAnalysisBriefMarkdown(input: AnalysisBriefInput): {
     identitySection(input, title),
     coverageSection(extractionWarning, reportNotices),
     jurisdictionSection(result, contractId),
-    summarySection(result, keyPoints),
+    summarySection(result, keyPoints, contractId),
     findingsSection(result, contractId),
     nextStepsSection(result),
     [

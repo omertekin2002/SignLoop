@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { finalizeAnalysisResult } from "./analysis-sources";
 import {
+  citationForReport,
   CONTRACT_ANALYSIS_LIMIT,
   contractAnalysisCoverage,
   contractAnalysisSegments,
+  PAYMENT_CITATION,
+  TERM_CITATION,
 } from "./source-citations";
 import {
   completed,
@@ -554,6 +557,1033 @@ describe("analysis of contracts longer than one request", () => {
       });
       expect(stored.proposed_jurisdiction?.citation?.quote).toBe(lawQuote);
     }
+  });
+
+  describe("notice-period quotations", () => {
+    const notice =
+      "200.1 Notice. Either party may end this Agreement on sixty (60) days' written notice.\n";
+    const noticeQuote = "Either party may end this Agreement on sixty (60) days' written notice.";
+    const text = contractOf(400, { 200: notice });
+    const segments = contractAnalysisSegments(text);
+    const cited = segments.find((part) => part.text.includes(notice))!;
+    const citedNumber = Number(cited.label.slice("section-".length));
+
+    // Section `citedNumber` states 60 days with its quotation; `others` sets the rest.
+    async function analyse(
+      merge: "fails" | Record<string, unknown>,
+      others: { noticeDays?: number | null; noticeText?: string | null; noticeQuote?: string } = {},
+    ) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return merge === "fails" ? failure() : completed(mergeOutput(merge));
+        return completed(
+          sectionOutput(
+            double.segment(call),
+            call.section === citedNumber
+              ? { noticeDays: 60, noticeText: "60 days", noticeQuote }
+              : others,
+          ),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      return {
+        answer,
+        stored: finalizeAnalysisResult(answer.result, { id: CONTRACT_ID, text }),
+      };
+    }
+
+    it("carries the quotation with the duration of the section that supplied it when the merge call fails", async () => {
+      expect(citedNumber).toBeGreaterThan(1);
+      const { answer, stored } = await analyse("fails", {
+        noticeDays: null,
+        noticeText: null,
+        // A section stating no notice period never lends its quotation.
+        noticeQuote: "Records. Each party",
+      });
+      expect(answer.result.summary.cancellation).toMatchObject({
+        notice_period_days: 60,
+        notice_period_text: "60 days",
+        notice_evidence: { quote: noticeQuote, segment: cited.label },
+      });
+      const start = text.indexOf(noticeQuote);
+      expect(stored.summary.cancellation.notice_citation).toMatchObject({
+        status: "verified",
+        quote: noticeQuote,
+        start: Array.from(text.slice(0, start)).length,
+      });
+    });
+
+    it("keeps a section's quotation when the merged value equals it, never the merge model's", async () => {
+      const { answer, stored } = await analyse({
+        summary: {
+          ...mergeOutput().summary,
+          cancellation: {
+            how: "Written notice",
+            notice_period_days: 60,
+            notice_period_text: "60 days",
+            penalties: [],
+            notice_evidence: { quote: "Records. Each party", segment: "section-1" },
+            notice_citation: { status: "verified", quote: "Records", start: 0, end: 7 },
+          },
+        },
+      });
+      expect(answer.result.summary.cancellation.notice_evidence).toEqual({
+        quote: noticeQuote,
+        segment: cited.label,
+      });
+      expect(stored.summary.cancellation.notice_citation?.quote).toBe(noticeQuote);
+    });
+
+    it("drops the quotation when another section states a different notice period", async () => {
+      const { answer, stored } = await analyse({}, {
+        noticeDays: 30,
+        noticeText: "30 days",
+      });
+      expect(answer.result.summary.cancellation.notice_period_text).toBe("60 days");
+      expect(answer.result.summary.cancellation.notice_evidence).toBeNull();
+      expect(stored.summary.cancellation.notice_citation).toBeNull();
+    });
+
+    it("has no quotation for a merged value that differs from every cited section", async () => {
+      const { answer, stored } = await analyse({
+        summary: {
+          ...mergeOutput().summary,
+          cancellation: {
+            how: "Written notice",
+            notice_period_days: 90,
+            notice_period_text: "90 days",
+            penalties: [],
+          },
+        },
+      });
+      expect(answer.result.summary.cancellation.notice_period_days).toBe(90);
+      expect(answer.result.summary.cancellation.notice_evidence).toBeNull();
+      expect(stored.summary.cancellation.notice_citation).toBeNull();
+      expect(stored.summary.cancellation.notice_period_text).toBe("90 days");
+    });
+
+    it("ignores a section's quotation that is not in that section", async () => {
+      // Every section states 60 days and claims the clause, but only one section contains it.
+      const double = provider(segments, (call) =>
+        call.section === "merge"
+          ? failure()
+          : completed(
+              sectionOutput(double.segment(call), {
+                noticeDays: 60,
+                noticeText: "60 days",
+                noticeQuote,
+              }),
+            ),
+      );
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      // The first section supplies the value but cannot quote it; the section stating the same value
+      // that does contain the clause supplies the quotation.
+      expect(answer.result.summary.cancellation.notice_evidence).toEqual({
+        quote: noticeQuote,
+        segment: cited.label,
+      });
+    });
+  });
+
+  describe("renewal quotations", () => {
+    const clause =
+      "300.1 Renewal. This Agreement renews automatically for successive one-year terms.\n";
+    const renewalQuote = "This Agreement renews automatically for successive one-year terms.";
+    const text = contractOf(400, { 300: clause });
+    const segments = contractAnalysisSegments(text);
+    const cited = segments.find((part) => part.text.includes(clause))!;
+    const citedNumber = Number(cited.label.slice("section-".length));
+    type Renewal = { autoRenew?: boolean | null; renewalPeriod?: string | null; renewalQuote?: string };
+
+    // Section `citedNumber` states automatic one-year renewal with its quotation; `others` sets the
+    // sections before it and `later` the sections after it.
+    async function analyse(
+      merge: "fails" | Record<string, unknown>,
+      others: Renewal = {},
+      later: Renewal = {},
+    ) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return merge === "fails" ? failure() : completed(mergeOutput(merge));
+        return completed(
+          sectionOutput(
+            double.segment(call),
+            call.section === citedNumber
+              ? { autoRenew: true, renewalPeriod: "1 year", renewalQuote }
+              : call.section < citedNumber
+                ? others
+                : later,
+          ),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      return {
+        answer,
+        stored: finalizeAnalysisResult(answer.result, { id: CONTRACT_ID, text }),
+      };
+    }
+
+    const mergedRenewal = (renewal: Record<string, unknown>) => ({
+      summary: { ...mergeOutput().summary, renewal },
+    });
+
+    it("takes renewal's values and quotation from the same section when the merge call fails", async () => {
+      expect(citedNumber).toBeGreaterThan(1);
+      const { answer, stored } = await analyse(
+        "fails",
+        // A section stating no renewal never lends its quotation.
+        { autoRenew: null, renewalPeriod: "Not specified", renewalQuote: "Records. Each party" },
+        // A later section's different period never sits beside the cited section's values.
+        { autoRenew: null, renewalPeriod: "5 years" },
+      );
+      expect(answer.result.summary.renewal).toEqual({
+        auto_renew: true,
+        renewal_period: "1 year",
+        renewal_evidence: { quote: renewalQuote, segment: cited.label },
+      });
+      const start = text.indexOf(renewalQuote);
+      expect(stored.summary.renewal.renewal_citation).toMatchObject({
+        status: "verified",
+        quote: renewalQuote,
+        start: Array.from(text.slice(0, start)).length,
+      });
+    });
+
+    it("leaves renewal unknown, with no quotation, when no section states it and the merge call fails", async () => {
+      const double = provider(segments, (call) =>
+        call.section === "merge"
+          ? failure()
+          : completed(sectionOutput(double.segment(call), { renewalQuote })),
+      );
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(answer.result.summary.renewal).toEqual({
+        auto_renew: null,
+        renewal_period: null,
+        renewal_evidence: null,
+      });
+    });
+
+    it("takes the first stating section's values even when it cannot quote them, and quotes them from a section stating the same", async () => {
+      // An earlier section states the same renewal but claims a quotation it does not contain.
+      const { answer } = await analyse("fails", {
+        autoRenew: true,
+        renewalPeriod: "1 Year",
+        renewalQuote,
+      });
+      expect(answer.result.summary.renewal).toEqual({
+        auto_renew: true,
+        renewal_period: "1 Year",
+        renewal_evidence: { quote: renewalQuote, segment: cited.label },
+      });
+    });
+
+    it("has no quotation when the first stating section states different renewal values", async () => {
+      const { answer, stored } = await analyse("fails", {
+        autoRenew: false,
+        renewalPeriod: null,
+      });
+      expect(answer.result.summary.renewal).toEqual({
+        auto_renew: false,
+        renewal_period: null,
+        renewal_evidence: null,
+      });
+      expect(stored.summary.renewal.renewal_citation).toBeNull();
+    });
+
+    it("keeps a section's quotation when the merged values equal it, never the merge model's", async () => {
+      const { answer, stored } = await analyse(
+        mergedRenewal({
+          auto_renew: true,
+          renewal_period: "1 year",
+          renewal_evidence: { quote: "Records. Each party", segment: "section-1" },
+          renewal_citation: { status: "verified", quote: "Records", start: 0, end: 7 },
+        }),
+      );
+      expect(answer.result.summary.renewal.renewal_evidence).toEqual({
+        quote: renewalQuote,
+        segment: cited.label,
+      });
+      expect(stored.summary.renewal.renewal_citation?.quote).toBe(renewalQuote);
+    });
+
+    it("drops the quotation when another section states different renewal values", async () => {
+      for (const disagreeing of [
+        { autoRenew: false },
+        { autoRenew: true, renewalPeriod: "2 years" },
+        { autoRenew: null, renewalPeriod: "monthly" },
+      ]) {
+        const { answer, stored } = await analyse(
+          mergedRenewal({ auto_renew: true, renewal_period: "1 year" }),
+          {},
+          disagreeing,
+        );
+        expect(answer.result.summary.renewal).toMatchObject({
+          auto_renew: true,
+          renewal_period: "1 year",
+          renewal_evidence: null,
+        });
+        expect(stored.summary.renewal.renewal_citation).toBeNull();
+      }
+    });
+
+    it("has no quotation for merged values that differ from every cited section", async () => {
+      for (const renewal of [
+        { auto_renew: true, renewal_period: "2 years" },
+        { auto_renew: false, renewal_period: "1 year" },
+        { auto_renew: null, renewal_period: null },
+      ]) {
+        const { answer, stored } = await analyse(mergedRenewal(renewal));
+        expect(answer.result.summary.renewal).toEqual({
+          ...renewal,
+          renewal_evidence: null,
+        });
+        expect(stored.summary.renewal.renewal_citation).toBeNull();
+        expect(stored.summary.renewal.auto_renew).toBe(renewal.auto_renew);
+      }
+    });
+  });
+
+  describe("payment quotations", () => {
+    const clause =
+      "300.1 Fees. The Customer pays 500 EUR each month for the Services.\n";
+    const paymentQuote = "The Customer pays 500 EUR each month for the Services.";
+    const text = contractOf(400, { 300: clause });
+    const segments = contractAnalysisSegments(text);
+    const cited = segments.find((part) => part.text.includes(clause))!;
+    const citedNumber = Number(cited.label.slice("section-".length));
+    type Payment = { amount?: string | null; frequency?: string | null; paymentQuote?: string };
+
+    // Section `citedNumber` states 500 EUR monthly with its quotation; `others` sets the sections
+    // before it and `later` the sections after it.
+    async function analyse(
+      merge: "fails" | Record<string, unknown>,
+      others: Payment = {},
+      later: Payment = {},
+      citedPayment: Payment = { amount: "500 EUR", frequency: "Monthly", paymentQuote },
+    ) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return merge === "fails" ? failure() : completed(mergeOutput(merge));
+        return completed(
+          sectionOutput(
+            double.segment(call),
+            call.section === citedNumber
+              ? citedPayment
+              : call.section < citedNumber
+                ? others
+                : later,
+          ),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      return {
+        answer,
+        stored: finalizeAnalysisResult(answer.result, { id: CONTRACT_ID, text }),
+      };
+    }
+
+    const mergedPayments = (payments: Record<string, unknown>) => ({
+      summary: { ...mergeOutput().summary, payments: { fees: [], ...payments } },
+    });
+
+    it("quotes the merged amount and frequency from the section stating both when the merge call fails", async () => {
+      expect(citedNumber).toBeGreaterThan(1);
+      const { answer, stored } = await analyse(
+        "fails",
+        // A section stating no payment never lends its quotation.
+        { amount: "Not specified", frequency: null, paymentQuote: "Records. Each party" },
+        // A later section's different figure never sits beside the cited section's quotation.
+        { amount: "900 EUR", frequency: "Yearly" },
+      );
+      expect(answer.result.summary.payments).toEqual({
+        amount: "500 EUR",
+        frequency: "Monthly",
+        fees: [],
+        fee_evidence: [],
+        payment_evidence: { quote: paymentQuote, segment: cited.label },
+      });
+      const start = text.indexOf(paymentQuote);
+      expect(stored.summary.payments.payment_citation).toMatchObject({
+        status: "verified",
+        quote: paymentQuote,
+        start: Array.from(text.slice(0, start)).length,
+      });
+    });
+
+    it("leaves payment unknown, with no quotation, when no section states it and the merge call fails", async () => {
+      const double = provider(segments, (call) =>
+        call.section === "merge"
+          ? failure()
+          : completed(sectionOutput(double.segment(call), { paymentQuote })),
+      );
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(answer.result.summary.payments).toEqual({
+        amount: null,
+        frequency: null,
+        fees: [],
+        fee_evidence: [],
+        payment_evidence: null,
+      });
+    });
+
+    it("quotes the merged pair from a later section stating the same pair when the first cannot quote it", async () => {
+      // An earlier section states the same pair but claims a quotation it does not contain.
+      const { answer } = await analyse("fails", {
+        amount: "500 eur",
+        frequency: "monthly",
+        paymentQuote,
+      });
+      expect(answer.result.summary.payments).toEqual({
+        amount: "500 eur",
+        frequency: "monthly",
+        fees: [],
+        fee_evidence: [],
+        payment_evidence: { quote: paymentQuote, segment: cited.label },
+      });
+    });
+
+    it("has no quotation when the first stating section states a different amount", async () => {
+      const { answer, stored } = await analyse("fails", {
+        amount: "900 EUR",
+        frequency: "Monthly",
+      });
+      expect(answer.result.summary.payments).toMatchObject({
+        amount: "900 EUR",
+        frequency: "Monthly",
+        payment_evidence: null,
+      });
+      expect(stored.summary.payments.payment_citation).toBeNull();
+    });
+
+    it("has no quotation when the merged amount and frequency come from different sections", async () => {
+      // The cited section states only the amount; a later one states only the frequency.
+      const { answer, stored } = await analyse(
+        "fails",
+        {},
+        { frequency: "Monthly" },
+        { amount: "500 EUR", frequency: null, paymentQuote },
+      );
+      expect(answer.result.summary.payments).toEqual({
+        amount: "500 EUR",
+        frequency: "Monthly",
+        fees: [],
+        fee_evidence: [],
+        payment_evidence: null,
+      });
+      expect(stored.summary.payments.payment_citation).toBeNull();
+      expect(stored.summary.payments).toMatchObject({
+        amount: "500 EUR",
+        frequency: "Monthly",
+      });
+    });
+
+    it("keeps a section's quotation when the merged pair equals it, never the merge model's", async () => {
+      const { answer, stored } = await analyse(
+        mergedPayments({
+          amount: "500 EUR",
+          frequency: "Monthly",
+          payment_evidence: { quote: "Records. Each party", segment: "section-1" },
+          payment_citation: { status: "verified", quote: "Records", start: 0, end: 7 },
+        }),
+      );
+      expect(answer.result.summary.payments.payment_evidence).toEqual({
+        quote: paymentQuote,
+        segment: cited.label,
+      });
+      expect(stored.summary.payments.payment_citation?.quote).toBe(paymentQuote);
+    });
+
+    it("drops the quotation when another section states a different payment", async () => {
+      for (const disagreeing of [
+        { amount: "900 EUR", frequency: "Monthly" },
+        { amount: "500 EUR", frequency: "Yearly" },
+        { amount: null, frequency: "Quarterly" },
+        // Stating only part of the pair is a different pair too.
+        { amount: "500 EUR", frequency: null },
+      ]) {
+        const { answer, stored } = await analyse(
+          mergedPayments({ amount: "500 EUR", frequency: "Monthly" }),
+          {},
+          disagreeing,
+        );
+        expect(answer.result.summary.payments).toMatchObject({
+          amount: "500 EUR",
+          frequency: "Monthly",
+          payment_evidence: null,
+        });
+        expect(stored.summary.payments.payment_citation).toBeNull();
+      }
+    });
+
+    it("has no quotation for a merged pair that differs from every cited section", async () => {
+      for (const payments of [
+        { amount: "900 EUR", frequency: "Monthly" },
+        { amount: "500 EUR", frequency: null },
+        { amount: null, frequency: null },
+      ]) {
+        const { answer, stored } = await analyse(mergedPayments(payments));
+        expect(answer.result.summary.payments).toEqual({
+          ...payments,
+          fees: [],
+          fee_evidence: [],
+          payment_evidence: null,
+        });
+        expect(stored.summary.payments.payment_citation).toBeNull();
+        expect(stored.summary.payments).toMatchObject(payments);
+      }
+    });
+  });
+
+  describe("term quotations", () => {
+    const clause =
+      "300.1 Term. This agreement starts on 1 March 2027 and has a minimum term of 24 months.\n";
+    const termQuote = "This agreement starts on 1 March 2027 and has a minimum term of 24 months.";
+    const text = contractOf(400, { 300: clause });
+    const segments = contractAnalysisSegments(text);
+    const cited = segments.find((part) => part.text.includes(clause))!;
+    const citedNumber = Number(cited.label.slice("section-".length));
+    type Term = {
+      start?: string | null;
+      end?: string | null;
+      minimumTerm?: string | null;
+      termQuote?: string;
+    };
+    const citedTerm: Term = { start: "1 March 2027", minimumTerm: "24 months", termQuote };
+
+    // Section `citedNumber` states the start and minimum term with its quotation; `others` sets the
+    // sections before it and `later` the sections after it.
+    async function analyse(
+      merge: "fails" | Record<string, unknown>,
+      others: Term = {},
+      later: Term = {},
+      ownTerm: Term = citedTerm,
+    ) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return merge === "fails" ? failure() : completed(mergeOutput(merge));
+        return completed(
+          sectionOutput(
+            double.segment(call),
+            call.section === citedNumber
+              ? ownTerm
+              : call.section < citedNumber
+                ? others
+                : later,
+          ),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      return {
+        answer,
+        stored: finalizeAnalysisResult(answer.result, { id: CONTRACT_ID, text }),
+      };
+    }
+
+    const mergedTerm = (term: Record<string, unknown>) => ({
+      summary: {
+        ...mergeOutput().summary,
+        term: { start: null, end: null, minimum_term: null, ...term },
+      },
+    });
+
+    it("quotes the merged term from the section stating it when the merge call fails", async () => {
+      expect(citedNumber).toBeGreaterThan(1);
+      const { answer, stored } = await analyse(
+        "fails",
+        // A section stating no term never lends its quotation.
+        { minimumTerm: "Not specified", termQuote: "Records. Each party" },
+        // A later section's different term never sits beside the cited section's quotation.
+        { start: "1 April 2027", minimumTerm: "36 months" },
+      );
+      expect(answer.result.summary.term).toEqual({
+        start: "1 March 2027",
+        end: null,
+        minimum_term: "24 months",
+        term_evidence: { quote: termQuote, segment: cited.label },
+      });
+      const start = text.indexOf(termQuote);
+      expect(stored.summary.term.term_citation).toMatchObject({
+        status: "verified",
+        quote: termQuote,
+        start: Array.from(text.slice(0, start)).length,
+      });
+      expect(citationForReport(stored, CONTRACT_ID, TERM_CITATION)).toEqual(
+        stored.summary.term.term_citation,
+      );
+    });
+
+    it("leaves the term unknown, with no quotation, when no section states it and the merge call fails", async () => {
+      const double = provider(segments, (call) =>
+        call.section === "merge"
+          ? failure()
+          : completed(sectionOutput(double.segment(call), { termQuote })),
+      );
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(answer.result.summary.term).toEqual({
+        start: null,
+        end: null,
+        minimum_term: null,
+        term_evidence: null,
+      });
+    });
+
+    it("quotes the merged term from a later section stating the same triple when the first cannot quote it", async () => {
+      // An earlier section states the same term but claims a quotation it does not contain.
+      const { answer } = await analyse("fails", {
+        start: "1 march 2027",
+        minimumTerm: "24 MONTHS",
+        termQuote,
+      });
+      expect(answer.result.summary.term).toEqual({
+        start: "1 march 2027",
+        end: null,
+        minimum_term: "24 MONTHS",
+        term_evidence: { quote: termQuote, segment: cited.label },
+      });
+    });
+
+    it("has no quotation when the first stating section states a different term", async () => {
+      const { answer, stored } = await analyse("fails", {
+        start: "1 March 2027",
+        minimumTerm: "36 months",
+      });
+      expect(answer.result.summary.term).toMatchObject({
+        start: "1 March 2027",
+        minimum_term: "36 months",
+        term_evidence: null,
+      });
+      expect(stored.summary.term.term_citation).toBeNull();
+    });
+
+    it("has no quotation when the start and minimum term come from different sections", async () => {
+      // The cited section states only the minimum term; a later one states only the start.
+      const { answer, stored } = await analyse(
+        "fails",
+        {},
+        { start: "1 March 2027" },
+        { minimumTerm: "24 months", termQuote },
+      );
+      expect(answer.result.summary.term).toEqual({
+        start: "1 March 2027",
+        end: null,
+        minimum_term: "24 months",
+        term_evidence: null,
+      });
+      expect(stored.summary.term.term_citation).toBeNull();
+      expect(stored.summary.term).toMatchObject({
+        start: "1 March 2027",
+        minimum_term: "24 months",
+      });
+    });
+
+    it("keeps a section's quotation when the merged term equals it, never the merge model's", async () => {
+      const { answer, stored } = await analyse(
+        mergedTerm({
+          start: "1 March 2027",
+          minimum_term: "24 months",
+          term_evidence: { quote: "Records. Each party", segment: "section-1" },
+          term_citation: { status: "verified", quote: "Records", start: 0, end: 7 },
+        }),
+      );
+      expect(answer.result.summary.term).toEqual({
+        start: "1 March 2027",
+        end: null,
+        minimum_term: "24 months",
+        term_evidence: { quote: termQuote, segment: cited.label },
+      });
+      expect(stored.summary.term.term_citation?.quote).toBe(termQuote);
+    });
+
+    it("drops the quotation when another section states a different term", async () => {
+      for (const disagreeing of [
+        { start: "1 April 2027", minimumTerm: "24 months" },
+        { start: "1 March 2027", minimumTerm: "36 months" },
+        { end: "28 February 2029" },
+        // Stating only part of the triple is a different triple too.
+        { minimumTerm: "24 months" },
+      ]) {
+        const { answer, stored } = await analyse(
+          mergedTerm({ start: "1 March 2027", minimum_term: "24 months" }),
+          {},
+          disagreeing,
+        );
+        expect(answer.result.summary.term).toMatchObject({
+          start: "1 March 2027",
+          minimum_term: "24 months",
+          term_evidence: null,
+        });
+        expect(stored.summary.term.term_citation).toBeNull();
+      }
+    });
+
+    it("has no quotation for a merged term that differs from every cited section", async () => {
+      for (const term of [
+        { start: "1 March 2027", end: null, minimum_term: "36 months" },
+        { start: "1 March 2027", end: "28 February 2029", minimum_term: "24 months" },
+        { start: null, end: null, minimum_term: "24 months" },
+        { start: null, end: null, minimum_term: null },
+      ]) {
+        const { answer, stored } = await analyse(mergedTerm(term));
+        expect(answer.result.summary.term).toEqual({ ...term, term_evidence: null });
+        expect(stored.summary.term.term_citation).toBeNull();
+        expect(stored.summary.term).toMatchObject(term);
+      }
+    });
+  });
+
+  describe("penalty quotations", () => {
+    const earlyExit = "Early termination fee equal to two months' fees";
+    const earlyExitQuote = "Ending this agreement early costs two months' fees.";
+    const equipment = "Unreturned equipment charged at cost";
+    const equipmentQuote = "Equipment not returned within 30 days is charged at cost.";
+    const text = contractOf(400, {
+      200: `200.1 Early exit. ${earlyExitQuote}\n`,
+      380: `380.1 Equipment. ${equipmentQuote}\n`,
+    });
+    const segments = contractAnalysisSegments(text);
+    const sectionOf = (quote: string) =>
+      Number(
+        segments
+          .find((part) => part.text.includes(quote))!
+          .label.slice("section-".length),
+      );
+    const earlyExitSection = sectionOf(earlyExitQuote);
+    const equipmentSection = sectionOf(equipmentQuote);
+    type Penalties = { penalties?: string[]; penaltyQuotes?: Record<string, string> };
+    const quoting: Record<number, Penalties> = {
+      [earlyExitSection]: {
+        penalties: [earlyExit],
+        penaltyQuotes: { [earlyExit]: earlyExitQuote },
+      },
+      [equipmentSection]: {
+        penalties: [equipment],
+        penaltyQuotes: { [equipment]: equipmentQuote },
+      },
+    };
+
+    // Each section's penalties come from `bySection`, falling back to the two quoting sections.
+    async function analyse(
+      merge: "fails" | Record<string, unknown>,
+      bySection: Record<number, Penalties> = {},
+    ) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return merge === "fails" ? failure() : completed(mergeOutput(merge));
+        return completed(
+          sectionOutput(
+            double.segment(call),
+            bySection[call.section] ?? quoting[call.section] ?? {},
+          ),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      return {
+        answer,
+        stored: finalizeAnalysisResult(answer.result, { id: CONTRACT_ID, text }),
+      };
+    }
+
+    const mergedPenalties = (cancellation: Record<string, unknown>) => ({
+      summary: {
+        ...mergeOutput().summary,
+        cancellation: { ...mergeOutput().summary.cancellation, ...cancellation },
+      },
+    });
+    const citedQuotes = (stored: { summary: { cancellation: unknown } }) =>
+      (
+        (stored.summary.cancellation as Record<string, unknown>)
+          .penalty_citations as { penalty: string; citation: { quote: string } }[]
+      ).map(({ penalty, citation }) => [penalty, citation.quote]);
+
+    it("quotes each penalty from the section listing it when the merge call fails", async () => {
+      expect([earlyExitSection, equipmentSection]).toEqual([
+        expect.any(Number),
+        expect.any(Number),
+      ]);
+      expect(earlyExitSection).toBeGreaterThan(1);
+      expect(equipmentSection).toBeGreaterThan(earlyExitSection);
+      const { answer, stored } = await analyse("fails");
+      expect(answer.result.summary.cancellation.penalties).toEqual([
+        earlyExit,
+        equipment,
+      ]);
+      expect(answer.result.summary.cancellation.penalty_evidence).toEqual([
+        { penalty: earlyExit, quote: earlyExitQuote, segment: `section-${earlyExitSection}` },
+        { penalty: equipment, quote: equipmentQuote, segment: `section-${equipmentSection}` },
+      ]);
+      expect(citedQuotes(stored)).toEqual([
+        [earlyExit, earlyExitQuote],
+        [equipment, equipmentQuote],
+      ]);
+      const start = text.indexOf(equipmentQuote);
+      expect(citationForReport(stored, CONTRACT_ID, "penalty-1")).toMatchObject({
+        status: "verified",
+        quote: equipmentQuote,
+        start: Array.from(text.slice(0, start)).length,
+      });
+      expect(citationForReport(stored, CONTRACT_ID, "penalty-0")?.quote).toBe(
+        earlyExitQuote,
+      );
+    });
+
+    it("skips a section whose quotation is not in its own segment and uses a later one listing the same text", async () => {
+      const { answer } = await analyse("fails", {
+        1: { penalties: [earlyExit], penaltyQuotes: { [earlyExit]: earlyExitQuote } },
+      });
+      expect(answer.result.summary.cancellation.penalty_evidence).toContainEqual({
+        penalty: earlyExit,
+        quote: earlyExitQuote,
+        segment: `section-${earlyExitSection}`,
+      });
+    });
+
+    it("never borrows a quotation from a section that does not list that penalty", async () => {
+      // Section 1 lists the equipment charge without a quotation; the section that quotes it does
+      // not list it.
+      const { answer, stored } = await analyse("fails", {
+        1: { penalties: [equipment] },
+        [equipmentSection]: { penaltyQuotes: { [equipment]: equipmentQuote } },
+      });
+      expect(answer.result.summary.cancellation.penalties).toEqual([
+        equipment,
+        earlyExit,
+      ]);
+      expect(citedQuotes(stored)).toEqual([[earlyExit, earlyExitQuote]]);
+    });
+
+    it("has no quotation for a penalty an earlier section worded differently", async () => {
+      // De-duplication keeps the first section's wording, which no quoting section lists exactly.
+      const reworded = earlyExit.toLowerCase();
+      const { answer, stored } = await analyse("fails", {
+        1: { penalties: [reworded] },
+      });
+      expect(answer.result.summary.cancellation.penalties).toEqual([
+        reworded,
+        equipment,
+      ]);
+      expect(citedQuotes(stored)).toEqual([[equipment, equipmentQuote]]);
+      expect(citationForReport(stored, CONTRACT_ID, "penalty-0")).toBeNull();
+    });
+
+    it("keeps the sections' quotations for the merge model's penalties, never its own", async () => {
+      const { answer, stored } = await analyse(
+        mergedPenalties({
+          penalties: [equipment, earlyExit],
+          penalty_evidence: [
+            { penalty: equipment, quote: "Records. Each party", segment: "section-1" },
+          ],
+          penalty_citations: [
+            { penalty: equipment, citation: { status: "verified", quote: "Records", start: 0, end: 7 } },
+          ],
+        }),
+      );
+      expect(answer.result.summary.cancellation.penalty_evidence).toEqual([
+        { penalty: equipment, quote: equipmentQuote, segment: `section-${equipmentSection}` },
+        { penalty: earlyExit, quote: earlyExitQuote, segment: `section-${earlyExitSection}` },
+      ]);
+      expect(citedQuotes(stored)).toEqual([
+        [equipment, equipmentQuote],
+        [earlyExit, earlyExitQuote],
+      ]);
+    });
+
+    it("has no quotation for a penalty the merge model reworded", async () => {
+      const reworded = "Early exit costs two months of fees";
+      const { answer, stored } = await analyse(
+        mergedPenalties({ penalties: [reworded, equipment] }),
+      );
+      expect(answer.result.summary.cancellation.penalties).toEqual([
+        reworded,
+        equipment,
+      ]);
+      expect(citedQuotes(stored)).toEqual([[equipment, equipmentQuote]]);
+      expect(citationForReport(stored, CONTRACT_ID, "penalty-0")).toBeNull();
+      expect(citationForReport(stored, CONTRACT_ID, "penalty-1")?.quote).toBe(
+        equipmentQuote,
+      );
+    });
+
+    it("stores no penalty quotations when no penalties are merged", async () => {
+      const { answer, stored } = await analyse(mergedPenalties({ penalties: [] }));
+      expect(answer.result.summary.cancellation.penalty_evidence).toEqual([]);
+      expect(stored.summary.cancellation.penalty_citations).toEqual([]);
+    });
+  });
+
+  describe("fee quotations", () => {
+    const late = "Late payment fee of 50 GBP";
+    const lateQuote = "Invoices paid more than 14 days late incur a fee of 50 GBP.";
+    const setup = "One-off set-up fee of 300 GBP";
+    const setupQuote = "The Customer pays a one-off set-up fee of 300 GBP.";
+    const paymentQuote = "The Customer pays 500 EUR each month for the Services.";
+    const text = contractOf(400, {
+      200: `200.1 Late payment. ${lateQuote}\n200.2 Price. ${paymentQuote}\n`,
+      380: `380.1 Set-up. ${setupQuote}\n`,
+    });
+    const segments = contractAnalysisSegments(text);
+    const sectionOf = (quote: string) =>
+      Number(
+        segments
+          .find((part) => part.text.includes(quote))!
+          .label.slice("section-".length),
+      );
+    const lateSection = sectionOf(lateQuote);
+    const setupSection = sectionOf(setupQuote);
+    type Fees = {
+      fees?: string[];
+      feeQuotes?: Record<string, string>;
+      amount?: string | null;
+      frequency?: string | null;
+      paymentQuote?: string;
+    };
+    const quoting: Record<number, Fees> = {
+      [lateSection]: {
+        fees: [late],
+        feeQuotes: { [late]: lateQuote },
+        amount: "500 EUR",
+        frequency: "Monthly",
+        paymentQuote,
+      },
+      [setupSection]: { fees: [setup], feeQuotes: { [setup]: setupQuote } },
+    };
+
+    // Each section's fees come from `bySection`, falling back to the two quoting sections.
+    async function analyse(
+      merge: "fails" | Record<string, unknown>,
+      bySection: Record<number, Fees> = {},
+    ) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return merge === "fails" ? failure() : completed(mergeOutput(merge));
+        return completed(
+          sectionOutput(
+            double.segment(call),
+            bySection[call.section] ?? quoting[call.section] ?? {},
+          ),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      return {
+        answer,
+        stored: finalizeAnalysisResult(answer.result, { id: CONTRACT_ID, text }),
+      };
+    }
+
+    const mergedFees = (payments: Record<string, unknown>) => ({
+      summary: {
+        ...mergeOutput().summary,
+        payments: { ...mergeOutput().summary.payments, ...payments },
+      },
+    });
+    const citedQuotes = (stored: { summary: { payments: unknown } }) =>
+      (
+        (stored.summary.payments as Record<string, unknown>)
+          .fee_citations as { fee: string; citation: { quote: string } }[]
+      ).map(({ fee, citation }) => [fee, citation.quote]);
+
+    it("quotes each fee from the section listing it, beside the payment's own quotation, when the merge call fails", async () => {
+      expect(lateSection).toBeGreaterThan(1);
+      expect(setupSection).toBeGreaterThan(lateSection);
+      const { answer, stored } = await analyse("fails");
+      expect(answer.result.summary.payments.fees).toEqual([late, setup]);
+      expect(answer.result.summary.payments.fee_evidence).toEqual([
+        { fee: late, quote: lateQuote, segment: `section-${lateSection}` },
+        { fee: setup, quote: setupQuote, segment: `section-${setupSection}` },
+      ]);
+      expect(citedQuotes(stored)).toEqual([
+        [late, lateQuote],
+        [setup, setupQuote],
+      ]);
+      const start = text.indexOf(setupQuote);
+      expect(citationForReport(stored, CONTRACT_ID, "fee-1")).toMatchObject({
+        status: "verified",
+        quote: setupQuote,
+        start: Array.from(text.slice(0, start)).length,
+      });
+      expect(citationForReport(stored, CONTRACT_ID, "fee-0")?.quote).toBe(lateQuote);
+      expect(citationForReport(stored, CONTRACT_ID, PAYMENT_CITATION)?.quote).toBe(
+        paymentQuote,
+      );
+    });
+
+    it("skips a section whose quotation is not in its own segment and uses a later one listing the same text", async () => {
+      const { answer } = await analyse("fails", {
+        1: { fees: [late], feeQuotes: { [late]: lateQuote } },
+      });
+      expect(answer.result.summary.payments.fee_evidence).toContainEqual({
+        fee: late,
+        quote: lateQuote,
+        segment: `section-${lateSection}`,
+      });
+    });
+
+    it("never borrows a quotation from a section that does not list that fee", async () => {
+      const { answer, stored } = await analyse("fails", {
+        1: { fees: [setup] },
+        [setupSection]: { feeQuotes: { [setup]: setupQuote } },
+      });
+      expect(answer.result.summary.payments.fees).toEqual([setup, late]);
+      expect(citedQuotes(stored)).toEqual([[late, lateQuote]]);
+    });
+
+    it("has no quotation for a fee an earlier section worded differently", async () => {
+      const reworded = late.toLowerCase();
+      const { answer, stored } = await analyse("fails", { 1: { fees: [reworded] } });
+      expect(answer.result.summary.payments.fees).toEqual([reworded, setup]);
+      expect(citedQuotes(stored)).toEqual([[setup, setupQuote]]);
+      expect(citationForReport(stored, CONTRACT_ID, "fee-0")).toBeNull();
+    });
+
+    it("keeps the sections' quotations for the merge model's fees, never its own", async () => {
+      const { answer, stored } = await analyse(
+        mergedFees({
+          fees: [setup, late],
+          fee_evidence: [{ fee: setup, quote: "Records. Each party", segment: "section-1" }],
+          fee_citations: [
+            { fee: setup, citation: { status: "verified", quote: "Records", start: 0, end: 7 } },
+          ],
+        }),
+      );
+      expect(answer.result.summary.payments.fee_evidence).toEqual([
+        { fee: setup, quote: setupQuote, segment: `section-${setupSection}` },
+        { fee: late, quote: lateQuote, segment: `section-${lateSection}` },
+      ]);
+      expect(citedQuotes(stored)).toEqual([
+        [setup, setupQuote],
+        [late, lateQuote],
+      ]);
+    });
+
+    it("has no quotation for a fee the merge model reworded", async () => {
+      const reworded = "A 50 GBP fee for late payment";
+      const { answer, stored } = await analyse(mergedFees({ fees: [reworded, setup] }));
+      expect(answer.result.summary.payments.fees).toEqual([reworded, setup]);
+      expect(citedQuotes(stored)).toEqual([[setup, setupQuote]]);
+      expect(citationForReport(stored, CONTRACT_ID, "fee-0")).toBeNull();
+      expect(citationForReport(stored, CONTRACT_ID, "fee-1")?.quote).toBe(setupQuote);
+    });
+
+    it("stores no fee quotations when no fees are merged", async () => {
+      const { answer, stored } = await analyse(mergedFees({ fees: [] }));
+      expect(answer.result.summary.payments.fee_evidence).toEqual([]);
+      expect(stored.summary.payments.fee_citations).toEqual([]);
+    });
   });
 
   it("uses a single surviving section as the result without a merge call", async () => {

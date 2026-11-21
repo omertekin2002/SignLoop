@@ -30,8 +30,28 @@ export function sectionOutput(
     questions?: string[];
     badge?: "LOW" | "MEDIUM" | "HIGH";
     autoRenew?: boolean | null;
+    renewalPeriod?: string | null;
+    amount?: string | null;
+    frequency?: string | null;
+    /** The section's quotation of the clause stating its payment amount and frequency. */
+    paymentQuote?: string;
+    start?: string | null;
+    end?: string | null;
+    minimumTerm?: string | null;
+    /** The section's quotation of the clause stating its term. */
+    termQuote?: string;
+    fees?: string[];
+    /** The section's quotations of the clauses stating its fees, keyed by fee text. */
+    feeQuotes?: Record<string, string>;
+    /** The section's quotation of the clause stating its renewal. */
+    renewalQuote?: string;
     noticeDays?: number | null;
     noticeText?: string | null;
+    /** The section's quotation of the clause stating its notice period. */
+    noticeQuote?: string;
+    penalties?: string[];
+    /** The section's quotations of the clauses stating its penalties, keyed by penalty text. */
+    penaltyQuotes?: Record<string, string>;
     jurisdiction?: string;
   } = {},
 ) {
@@ -40,14 +60,43 @@ export function sectionOutput(
     key_points: [`Covers ${segment.label}.`],
     summary: {
       what_it_is: "A services agreement.",
-      payments: { amount: null, frequency: null, fees: [] },
-      term: { start: null, end: null, minimum_term: null },
-      renewal: { auto_renew: options.autoRenew ?? null, renewal_period: null },
+      payments: {
+        amount: options.amount ?? null,
+        frequency: options.frequency ?? null,
+        fees: options.fees ?? [],
+        fee_evidence: Object.entries(options.feeQuotes ?? {}).map(
+          ([fee, quote]) => ({ fee, quote, segment: segment.label }),
+        ),
+        payment_evidence: options.paymentQuote
+          ? { quote: options.paymentQuote, segment: segment.label }
+          : null,
+      },
+      term: {
+        start: options.start ?? null,
+        end: options.end ?? null,
+        minimum_term: options.minimumTerm ?? null,
+        term_evidence: options.termQuote
+          ? { quote: options.termQuote, segment: segment.label }
+          : null,
+      },
+      renewal: {
+        auto_renew: options.autoRenew ?? null,
+        renewal_period: options.renewalPeriod ?? null,
+        renewal_evidence: options.renewalQuote
+          ? { quote: options.renewalQuote, segment: segment.label }
+          : null,
+      },
       cancellation: {
         how: "Not specified",
         notice_period_days: options.noticeDays ?? null,
         notice_period_text: options.noticeText ?? null,
-        penalties: [],
+        notice_evidence: options.noticeQuote
+          ? { quote: options.noticeQuote, segment: segment.label }
+          : null,
+        penalties: options.penalties ?? [],
+        penalty_evidence: Object.entries(options.penaltyQuotes ?? {}).map(
+          ([penalty, quote]) => ({ penalty, quote, segment: segment.label }),
+        ),
       },
     },
     red_flags: (options.flags ?? []).map((flag) => ({
