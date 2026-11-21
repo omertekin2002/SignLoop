@@ -10,7 +10,7 @@ import {
   SOURCE_PAGE_SIZE,
   SourceRevisionSchema,
 } from "@/lib/source-citations";
-import { PENALTY_CITATION_PATTERN, type PenaltyCitationRef } from "@/lib/penalties";
+import { isListedCitationRef } from "@/lib/listed-citations";
 import { isUuid } from "@/lib/utils";
 
 export async function GET(
@@ -44,13 +44,13 @@ export async function GET(
     (analysisId === null) !== (flag === null) ||
     // A red flag's index, the governing-law quotation behind the jurisdiction proposal, the clause
     // stating the cancellation notice period, renewal, or the payment amount and frequency, or a
-    // cancellation penalty by its index (`penalty-<n>`).
+    // cancellation penalty or an extra fee by its index (`penalty-<n>`, `fee-<n>`).
     (flag !== null &&
       flag !== JURISDICTION_CITATION &&
       flag !== NOTICE_CITATION &&
       flag !== RENEWAL_CITATION &&
       flag !== PAYMENT_CITATION &&
-      !PENALTY_CITATION_PATTERN.test(flag) &&
+      !isListedCitationRef(flag) &&
       !/^\d{1,5}$/.test(flag))
   )
     return reply({ error: "Invalid source request" }, 400);
@@ -68,8 +68,8 @@ export async function GET(
         flag === RENEWAL_CITATION ||
         flag === PAYMENT_CITATION
         ? flag
-        : PENALTY_CITATION_PATTERN.test(flag)
-          ? (flag as PenaltyCitationRef)
+        : isListedCitationRef(flag)
+          ? flag
           : Number(flag),
     );
     if (!citation || citation.revision !== revision)

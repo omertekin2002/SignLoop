@@ -2,7 +2,12 @@ import type { AnalysisResult } from "@/lib/schemas";
 import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
 import { formatAutoRenew, isRenewalStated } from "@/lib/renewal";
 import { isPaymentStated } from "@/lib/payment";
-import { penaltyCitationRef } from "@/lib/penalties";
+import {
+  LISTED_FEES,
+  LISTED_PENALTIES,
+  listedCitationRef,
+  type KnownListedFact,
+} from "@/lib/listed-citations";
 import { regionalComparisonsView } from "@/lib/regional-comparisons";
 import {
   citationForReport,
@@ -281,30 +286,34 @@ function quotedFactLines(
 }
 
 /**
- * The cancellation penalties with their evidence: each penalty, then the verified quotation of the
- * clause stating that penalty or a marker on its line. None listed keeps its unchanged line.
+ * A cited list (cancellation penalties, fees) with its evidence: each item, then the verified
+ * quotation of the clause stating that item or a marker on its line. None listed keeps its
+ * unchanged line.
  */
-function penaltyLines(
+function listedLines(
   result: Partial<AnalysisResult>,
-  cancellation: Record<string, unknown>,
+  group: Record<string, unknown>,
+  fact: KnownListedFact,
+  heading: string,
   contractId: string,
 ): string[] {
-  const penalties = (
-    Array.isArray(cancellation.penalties) ? cancellation.penalties : []
-  ).flatMap((penalty: unknown, index) => {
-    const value = text(penalty);
-    return value ? [{ value, index }] : [];
-  });
-  if (!penalties.length) return ["  - Penalties: None listed"];
+  const listed = group[fact.list];
+  const items = (Array.isArray(listed) ? listed : []).flatMap(
+    (item: unknown, index) => {
+      const value = text(item);
+      return value ? [{ value, index }] : [];
+    },
+  );
+  if (!items.length) return [`  - ${heading}: None listed`];
   return [
-    "  - Penalties:",
-    ...penalties.flatMap(({ value, index }) =>
+    `  - ${heading}:`,
+    ...items.flatMap(({ value, index }) =>
       quotedFactLines(
         `    - ${inline(value)}`,
         true,
         result,
         contractId,
-        penaltyCitationRef(index),
+        listedCitationRef(fact, index),
         "      ",
       ),
     ),
@@ -361,7 +370,7 @@ function renewalLines(
 /**
  * The payment amount and frequency with their evidence: both lines, then the verified quotation of
  * the clause stating them or a marker on the frequency line. Unknown payment keeps its unchanged
- * lines; fees stay unquoted.
+ * lines. Each fee has its own quotation (`listedLines`).
  */
 function paymentLines(
   result: Partial<AnalysisResult>,
@@ -392,7 +401,6 @@ function summarySection(
   const term = record(summary.term);
   const renewal = record(summary.renewal);
   const cancellation = record(summary.cancellation);
-  const fees = texts(payments.fees);
   const keyDates = (Array.isArray(result.key_dates) ? result.key_dates : [])
     .map(record)
     .filter((date) => text(date.date));
@@ -403,8 +411,7 @@ function summarySection(
   lines.push(
     "- **Payments:**",
     ...paymentLines(result, payments, contractId),
-    fees.length ? "  - Fees:" : "  - Fees: None listed",
-    ...bulletList(fees, "    "),
+    ...listedLines(result, payments, LISTED_FEES, "Fees", contractId),
     "- **Term:**",
     `  - Start: ${inline(text(term.start) ?? NOT_SPECIFIED)}`,
     `  - End: ${inline(text(term.end) ?? NOT_SPECIFIED)}`,
@@ -414,7 +421,7 @@ function summarySection(
     "- **Cancellation:**",
     `  - How to cancel: ${inline(text(cancellation.how) ?? NOT_SPECIFIED)}`,
     ...noticePeriodLines(result, cancellation, contractId),
-    ...penaltyLines(result, cancellation, contractId),
+    ...listedLines(result, cancellation, LISTED_PENALTIES, "Penalties", contractId),
   );
 
   if (keyPoints.length) {

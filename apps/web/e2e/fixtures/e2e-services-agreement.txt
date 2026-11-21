@@ -8,6 +8,7 @@ The Provider will design, host and maintain the Client's website as described in
 2. Fees
 The Client will pay a monthly fee of 1,200 GBP, invoiced on the first day of each month.
 Late payments accrue interest at 4% per month until paid in full.
+A late payment fee of 50 GBP applies to any invoice paid more than 14 days after its due date.
 
 3. Term and renewal
 This agreement starts on the date of the order form and lasts for twelve months.

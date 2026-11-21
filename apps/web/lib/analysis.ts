@@ -14,10 +14,15 @@ import { confirmedRegion } from "@/lib/regional-comparisons";
 import {
   AnalysisResultSchema,
   PartialAnalysisResultSchema,
+  FeeEvidenceSchema,
   PenaltyEvidenceSchema,
   AnalysisResult,
-  type PenaltyEvidence,
 } from "@/lib/schemas";
+import {
+  LISTED_FEES,
+  LISTED_PENALTIES,
+  type KnownListedFact,
+} from "@/lib/listed-citations";
 import {
   extractResponseOutputText,
   LlmResponseValidationError,
@@ -287,6 +292,7 @@ Required JSON rules:
 - When the contract states whether it renews automatically (auto_renew is true or false because the contract says so) or states a renewal period, "summary.renewal.renewal_evidence" quotes the exact sentence or clause that says so, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. Use null when renewal is not stated.
 - When the contract states a payment amount or frequency, "summary.payments.payment_evidence" quotes the exact sentence or clause that says so, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. Use null when neither a payment amount nor a frequency is stated.
 - For each entry in "summary.cancellation.penalties", add one entry to "summary.cancellation.penalty_evidence": its "penalty" repeats that penalty's text exactly, character for character, and its "quote" is the exact sentence or clause stating that penalty, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. When no penalties are listed, "penalty_evidence" is an empty array.
+- For each entry in "summary.payments.fees", add one entry to "summary.payments.fee_evidence": its "fee" repeats that fee's text exactly, character for character, and its "quote" is the exact sentence or clause stating that fee, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. When no fees are listed, "fee_evidence" is an empty array.
 - "proposed_jurisdiction" is the jurisdiction named in the contract's governing-law (choice-of-law) clause, as the clause words it, with that clause quoted as evidence under the same quotation rules. The user confirms or changes it later.
 - Use null for "proposed_jurisdiction" when no supplied CONTRACT segment contains a governing-law clause. Do not infer it from addresses, courts, currency, or where the parties are, and do not take it from project context or metadata.
 - Report only which law the clause names. Never state what that law provides or whether the contract complies with it.
@@ -297,7 +303,7 @@ Expected shape:
   "key_points": ["..."],
   "summary": {
     "what_it_is": "...",
-    "payments": { "amount": null, "frequency": null, "fees": [], "payment_evidence": { "quote": "exact wording of the clause stating the payment amount or frequency", "segment": "${segment.label}" } },
+    "payments": { "amount": null, "frequency": null, "fees": ["..."], "fee_evidence": [{ "fee": "the fee's text exactly as listed in fees", "quote": "exact wording of the clause stating that fee", "segment": "${segment.label}" }], "payment_evidence": { "quote": "exact wording of the clause stating the payment amount or frequency", "segment": "${segment.label}" } },
     "term": { "start": null, "end": null, "minimum_term": null },
     "renewal": { "auto_renew": null, "renewal_period": null, "renewal_evidence": { "quote": "exact wording of the clause stating whether and how the contract renews", "segment": "${segment.label}" } },
     "cancellation": { "how": "...", "notice_period_days": null, "notice_period_text": null, "notice_evidence": { "quote": "exact wording of the clause stating the notice period", "segment": "${segment.label}" }, "penalties": ["..."], "penalty_evidence": [{ "penalty": "the penalty's text exactly as listed in penalties", "quote": "exact wording of the clause stating that penalty", "segment": "${segment.label}" }] }
@@ -339,6 +345,17 @@ function pickFirst(record: JsonRecord, keys: string[]): unknown {
     if (key in record) return record[key];
   }
   return undefined;
+}
+
+/** The entries of a list that parse, each dropped on its own when malformed. */
+function parsedEntries<T>(
+  value: unknown,
+  schema: { safeParse: (entry: unknown) => { success: boolean; data?: T } },
+): T[] {
+  return toArray(value).flatMap((entry) => {
+    const parsed = schema.safeParse(entry);
+    return parsed.success ? [parsed.data as T] : [];
+  });
 }
 
 function toArray(value: unknown): unknown[] {
@@ -715,6 +732,10 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
         fees: toStringArray(
           pickFirst(payments, ["fees", "extra_fees", "additional_fees"]),
         ),
+        fee_evidence: parsedEntries(
+          pickFirst(payments, ["fee_evidence", "feeEvidence"]),
+          FeeEvidenceSchema,
+        ),
         payment_evidence:
           EvidenceProposalSchema.safeParse(
             pickFirst(payments, ["payment_evidence", "paymentEvidence"]),
@@ -753,12 +774,10 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
         penalties: toStringArray(
           pickFirst(cancellation, ["penalties", "fees", "charges"]),
         ),
-        penalty_evidence: toArray(
+        penalty_evidence: parsedEntries(
           pickFirst(cancellation, ["penalty_evidence", "penaltyEvidence"]),
-        ).flatMap((proposal) => {
-          const parsed = PenaltyEvidenceSchema.safeParse(proposal);
-          return parsed.success ? [parsed.data] : [];
-        }),
+          PenaltyEvidenceSchema,
+        ),
       },
     },
     proposed_jurisdiction:
@@ -1367,25 +1386,45 @@ function mergedFactEvidence(
   );
 }
 
+/** The model's quotation of one listed item, keyed by the item's exact text. */
+type ListedEvidence<F extends KnownListedFact> = FactEvidence &
+  Record<F["item"], string>;
+
+/** A section's list of items and its quotations of them. The schemas give every list both fields. */
+function sectionListed<F extends KnownListedFact>(
+  fact: F,
+  summary: Summary,
+): { items: readonly string[]; evidence: readonly ListedEvidence<F>[] } {
+  const group = summary[fact.group] as unknown as Record<string, unknown>;
+  return {
+    items: (group[fact.list] ?? []) as readonly string[],
+    evidence: (group[fact.evidence] ?? []) as readonly ListedEvidence<F>[],
+  };
+}
+
 /**
- * The quotations behind merged cancellation penalties. Each penalty keeps a quotation only from a
- * section that lists exactly that text and whose quotation of it is found in that section, so a
- * penalty the merge reworded has none, and no quotation sits beside a penalty another section
- * stated differently.
+ * The quotations behind a merged list's items (cancellation penalties, fees). Each item keeps a
+ * quotation only from a section that lists exactly that text and whose quotation of it is found in
+ * that section, so an item the merge reworded has none, and no quotation sits beside an item
+ * another section stated differently.
  */
-function penaltyEvidence(
-  penalties: readonly string[],
+function listedEvidence<F extends KnownListedFact>(
+  fact: F,
+  items: readonly string[],
   sections: readonly AnalysedSection[],
-): PenaltyEvidence[] {
-  return penalties.flatMap((penalty) => {
+): ListedEvidence<F>[] {
+  return items.flatMap((item) => {
     const evidence = sections
-      .filter(({ result }) =>
-        result.summary.cancellation.penalties.includes(penalty),
-      )
-      .flatMap(({ segment, result }) =>
-        (result.summary.cancellation.penalty_evidence ?? []).filter(
+      .map(({ segment, result }) => ({
+        segment,
+        ...sectionListed(fact, result.summary),
+      }))
+      .filter((section) => section.items.includes(item))
+      .flatMap(({ segment, evidence }) =>
+        evidence.filter(
           (proposal) =>
-            proposal.penalty === penalty && verifyQuote(proposal, [segment]),
+            (proposal as Record<string, unknown>)[fact.item] === item &&
+            verifyQuote(proposal, [segment]),
         ),
       )[0];
     return evidence ? [evidence] : [];
@@ -1431,6 +1470,7 @@ export function mergeSectionResults(
   const penalties = uniqueText(
     all((result) => result.summary.cancellation.penalties),
   );
+  const fees = uniqueText(all((result) => result.summary.payments.fees));
 
   return {
     ...(coverageNotices.length ? { coverage_notices: coverageNotices } : {}),
@@ -1448,7 +1488,8 @@ export function mergeSectionResults(
         first.summary.what_it_is,
       payments: {
         ...payments,
-        fees: uniqueText(all((result) => result.summary.payments.fees)),
+        fees,
+        fee_evidence: listedEvidence(LISTED_FEES, fees, sections),
         payment_evidence: isPaymentStated(payments)
           ? matchingFactEvidence(PAYMENT_FACT, paymentValue(payments), sections)
           : null,
@@ -1480,7 +1521,7 @@ export function mergeSectionResults(
           sections,
         ),
         penalties,
-        penalty_evidence: penaltyEvidence(penalties, sections),
+        penalty_evidence: listedEvidence(LISTED_PENALTIES, penalties, sections),
       },
     },
     red_flags: uniqueRedFlags(all((result) => result.red_flags)),
@@ -1551,6 +1592,8 @@ export function buildMergePrompt(
     const {
       payment_evidence: _paymentEvidence,
       payment_citation: _paymentCitation,
+      fee_evidence: _feeEvidence,
+      fee_citations: _feeCitations,
       ...payments
     } = summary.payments;
     return {
@@ -1629,8 +1672,9 @@ ${JSON.stringify(analyses, null, 2)}
 /**
  * Validates the merge call's answer. Red flags are the section flags it names by ID, de-duplicated;
  * if it names none, or an ID that cannot be read, although the sections found some, all of them are
- * kept rather than lost. The jurisdiction proposal and the notice-period, penalty, renewal and
- * payment quotations are the sections' own, so their quotations are never the merge model's.
+ * kept rather than lost. The jurisdiction proposal and the notice-period, penalty, renewal,
+ * payment and fee quotations are the sections' own, so their quotations are never the merge
+ * model's.
  */
 function parseMergedAnalysis(
   content: string,
@@ -1696,6 +1740,8 @@ function parseMergedAnalysis(
   const {
     payment_evidence: _modelPaymentEvidence,
     payment_citation: _modelPaymentCitation,
+    fee_evidence: _modelFeeEvidence,
+    fee_citations: _modelFeeCitations,
     ...payments
   } = merged.summary.payments;
   const summary = { ...merged.summary, payments, renewal, cancellation };
@@ -1707,6 +1753,7 @@ function parseMergedAnalysis(
       payments: {
         ...payments,
         payment_evidence: mergedFactEvidence(PAYMENT_FACT, summary, sections),
+        fee_evidence: listedEvidence(LISTED_FEES, payments.fees, sections),
       },
       renewal: {
         ...renewal,
@@ -1715,7 +1762,11 @@ function parseMergedAnalysis(
       cancellation: {
         ...cancellation,
         notice_evidence: mergedFactEvidence(NOTICE_FACT, summary, sections),
-        penalty_evidence: penaltyEvidence(cancellation.penalties, sections),
+        penalty_evidence: listedEvidence(
+          LISTED_PENALTIES,
+          cancellation.penalties,
+          sections,
+        ),
       },
     },
     red_flags: uniqueRedFlags(merged.red_flags),

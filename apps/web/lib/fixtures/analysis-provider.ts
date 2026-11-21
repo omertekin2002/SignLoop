@@ -35,6 +35,9 @@ export function sectionOutput(
     frequency?: string | null;
     /** The section's quotation of the clause stating its payment amount and frequency. */
     paymentQuote?: string;
+    fees?: string[];
+    /** The section's quotations of the clauses stating its fees, keyed by fee text. */
+    feeQuotes?: Record<string, string>;
     /** The section's quotation of the clause stating its renewal. */
     renewalQuote?: string;
     noticeDays?: number | null;
@@ -55,7 +58,10 @@ export function sectionOutput(
       payments: {
         amount: options.amount ?? null,
         frequency: options.frequency ?? null,
-        fees: [],
+        fees: options.fees ?? [],
+        fee_evidence: Object.entries(options.feeQuotes ?? {}).map(
+          ([fee, quote]) => ({ fee, quote, segment: segment.label }),
+        ),
         payment_evidence: options.paymentQuote
           ? { quote: options.paymentQuote, segment: segment.label }
           : null,

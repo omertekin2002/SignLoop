@@ -11,6 +11,11 @@ import {
 import { isNoticePeriodStated } from "@/lib/notice-period";
 import { isRenewalStated } from "@/lib/renewal";
 import { isPaymentStated } from "@/lib/payment";
+import {
+  LISTED_FEES,
+  LISTED_PENALTIES,
+  type ListedFact,
+} from "@/lib/listed-citations";
 import { isRecord } from "@/lib/utils";
 
 export function contractSourceRevision(text: string): string {
@@ -19,8 +24,8 @@ export function contractSourceRevision(text: string): string {
 
 /**
  * Always discard model-supplied receipts, even if they claim to be verified. Red flags, the
- * jurisdiction proposal, the cancellation notice period, each cancellation penalty, renewal and
- * payment get server-verified citations instead.
+ * jurisdiction proposal, the cancellation notice period, each cancellation penalty, renewal,
+ * payment and each extra fee get server-verified citations instead.
  */
 export function attachAnalysisSources<T extends Record<string, unknown>>(
   result: T,
@@ -75,7 +80,7 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
     evidenceKey: string,
     citationKey: string,
     stated: (fact: Record<string, unknown>) => boolean,
-  ) => {
+  ): Record<string, Record<string, unknown>> => {
     const fact = isRecord(summary?.[group]) ? summary[group] : null;
     if (!fact) return {};
     const {
@@ -90,37 +95,40 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
       },
     };
   };
-  // Each listed penalty gets the first proposal naming exactly its text whose quotation verifies.
-  // Proposals for any other text are discarded; the penalties themselves are always kept.
-  const citePenalties = (group: { cancellation?: Record<string, unknown> }) => {
-    if (!group.cancellation) return group;
+  // Each item of a cited list (penalties, fees) gets the first proposal naming exactly its text
+  // whose quotation verifies. Proposals for any other text are discarded, a model-sent citation is
+  // never kept, and the items themselves are always kept.
+  const citeListed = (
+    fact: ListedFact,
+    cited: Record<string, Record<string, unknown>>,
+  ) => {
+    const group = cited[fact.group];
+    if (!group) return cited;
     const {
-      penalty_evidence: proposals,
-      penalty_citations: _untrusted,
-      ...cancellation
-    } = group.cancellation;
-    const penalties = Array.isArray(cancellation.penalties)
-      ? cancellation.penalties.filter(
-          (penalty): penalty is string => typeof penalty === "string",
-        )
+      [fact.evidence]: proposals,
+      [fact.citations]: _untrusted,
+      ...rest
+    } = group;
+    const listed = rest[fact.list];
+    const items = Array.isArray(listed)
+      ? listed.filter((item): item is string => typeof item === "string")
       : [];
     const offered = Array.isArray(proposals) ? proposals.filter(isRecord) : [];
-    const penaltyCitations = [...new Set(penalties)].flatMap((penalty) => {
+    const citations = [...new Set(items)].flatMap((item) => {
       const citation =
         offered
-          .filter((proposal) => proposal.penalty === penalty)
+          .filter((proposal) => proposal[fact.item] === item)
           .map(verifiedCitation)
           .find(Boolean) ?? null;
-      return citation ? [{ penalty, citation }] : [];
+      return citation ? [{ [fact.item]: item, citation }] : [];
     });
-    return {
-      cancellation: { ...cancellation, penalty_citations: penaltyCitations },
-    };
+    return { ...cited, [fact.group]: { ...rest, [fact.citations]: citations } };
   };
   const citedSummary = summary
     ? {
         ...summary,
-        ...citePenalties(
+        ...citeListed(
+          LISTED_PENALTIES,
           citeFact(
             "cancellation",
             "notice_evidence",
@@ -134,11 +142,14 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
           "renewal_citation",
           isRenewalStated,
         ),
-        ...citeFact(
-          "payments",
-          "payment_evidence",
-          "payment_citation",
-          isPaymentStated,
+        ...citeListed(
+          LISTED_FEES,
+          citeFact(
+            "payments",
+            "payment_evidence",
+            "payment_citation",
+            isPaymentStated,
+          ),
         ),
       }
     : null;

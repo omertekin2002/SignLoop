@@ -89,6 +89,13 @@ export const STUB_PENALTY = "Early termination fee equal to two months' fees";
 export const STUB_PENALTY_QUOTE =
   "If the Client ends this agreement before the end of the current term, the Client must pay an early termination fee equal to two months' fees.";
 
+/** The stub's one extra fee, as the Payment fees section lists it. */
+export const STUB_FEE = "Late payment fee of 50 GBP";
+
+/** The stub's quotation of the clause stating that fee. */
+export const STUB_FEE_QUOTE =
+  "A late payment fee of 50 GBP applies to any invoice paid more than 14 days after its due date.";
+
 export const STUB_ANALYSIS_SUMMARY = "Stub analysis: a twelve-month website services agreement.";
 
 /**
@@ -107,7 +114,8 @@ export function stubAnalysis() {
       payments: {
         amount: "1,200 GBP",
         frequency: "Monthly",
-        fees: [],
+        fees: [STUB_FEE],
+        fee_evidence: [{ fee: STUB_FEE, quote: STUB_FEE_QUOTE, segment: "full" }],
         payment_evidence: { quote: STUB_PAYMENT_QUOTE, segment: "full" },
       },
       term: { start: "The date of the order form", end: null, minimum_term: "12 months" },

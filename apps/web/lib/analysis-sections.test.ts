@@ -5,6 +5,7 @@ import {
   CONTRACT_ANALYSIS_LIMIT,
   contractAnalysisCoverage,
   contractAnalysisSegments,
+  PAYMENT_CITATION,
 } from "./source-citations";
 import {
   completed,
@@ -905,6 +906,7 @@ describe("analysis of contracts longer than one request", () => {
         amount: "500 EUR",
         frequency: "Monthly",
         fees: [],
+        fee_evidence: [],
         payment_evidence: { quote: paymentQuote, segment: cited.label },
       });
       const start = text.indexOf(paymentQuote);
@@ -927,6 +929,7 @@ describe("analysis of contracts longer than one request", () => {
         amount: null,
         frequency: null,
         fees: [],
+        fee_evidence: [],
         payment_evidence: null,
       });
     });
@@ -942,6 +945,7 @@ describe("analysis of contracts longer than one request", () => {
         amount: "500 eur",
         frequency: "monthly",
         fees: [],
+        fee_evidence: [],
         payment_evidence: { quote: paymentQuote, segment: cited.label },
       });
     });
@@ -971,6 +975,7 @@ describe("analysis of contracts longer than one request", () => {
         amount: "500 EUR",
         frequency: "Monthly",
         fees: [],
+        fee_evidence: [],
         payment_evidence: null,
       });
       expect(stored.summary.payments.payment_citation).toBeNull();
@@ -1028,6 +1033,7 @@ describe("analysis of contracts longer than one request", () => {
         expect(answer.result.summary.payments).toEqual({
           ...payments,
           fees: [],
+          fee_evidence: [],
           payment_evidence: null,
         });
         expect(stored.summary.payments.payment_citation).toBeNull();
@@ -1214,6 +1220,168 @@ describe("analysis of contracts longer than one request", () => {
       const { answer, stored } = await analyse(mergedPenalties({ penalties: [] }));
       expect(answer.result.summary.cancellation.penalty_evidence).toEqual([]);
       expect(stored.summary.cancellation.penalty_citations).toEqual([]);
+    });
+  });
+
+  describe("fee quotations", () => {
+    const late = "Late payment fee of 50 GBP";
+    const lateQuote = "Invoices paid more than 14 days late incur a fee of 50 GBP.";
+    const setup = "One-off set-up fee of 300 GBP";
+    const setupQuote = "The Customer pays a one-off set-up fee of 300 GBP.";
+    const paymentQuote = "The Customer pays 500 EUR each month for the Services.";
+    const text = contractOf(400, {
+      200: `200.1 Late payment. ${lateQuote}\n200.2 Price. ${paymentQuote}\n`,
+      380: `380.1 Set-up. ${setupQuote}\n`,
+    });
+    const segments = contractAnalysisSegments(text);
+    const sectionOf = (quote: string) =>
+      Number(
+        segments
+          .find((part) => part.text.includes(quote))!
+          .label.slice("section-".length),
+      );
+    const lateSection = sectionOf(lateQuote);
+    const setupSection = sectionOf(setupQuote);
+    type Fees = {
+      fees?: string[];
+      feeQuotes?: Record<string, string>;
+      amount?: string | null;
+      frequency?: string | null;
+      paymentQuote?: string;
+    };
+    const quoting: Record<number, Fees> = {
+      [lateSection]: {
+        fees: [late],
+        feeQuotes: { [late]: lateQuote },
+        amount: "500 EUR",
+        frequency: "Monthly",
+        paymentQuote,
+      },
+      [setupSection]: { fees: [setup], feeQuotes: { [setup]: setupQuote } },
+    };
+
+    // Each section's fees come from `bySection`, falling back to the two quoting sections.
+    async function analyse(
+      merge: "fails" | Record<string, unknown>,
+      bySection: Record<number, Fees> = {},
+    ) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return merge === "fails" ? failure() : completed(mergeOutput(merge));
+        return completed(
+          sectionOutput(
+            double.segment(call),
+            bySection[call.section] ?? quoting[call.section] ?? {},
+          ),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      return {
+        answer,
+        stored: finalizeAnalysisResult(answer.result, { id: CONTRACT_ID, text }),
+      };
+    }
+
+    const mergedFees = (payments: Record<string, unknown>) => ({
+      summary: {
+        ...mergeOutput().summary,
+        payments: { ...mergeOutput().summary.payments, ...payments },
+      },
+    });
+    const citedQuotes = (stored: { summary: { payments: unknown } }) =>
+      (
+        (stored.summary.payments as Record<string, unknown>)
+          .fee_citations as { fee: string; citation: { quote: string } }[]
+      ).map(({ fee, citation }) => [fee, citation.quote]);
+
+    it("quotes each fee from the section listing it, beside the payment's own quotation, when the merge call fails", async () => {
+      expect(lateSection).toBeGreaterThan(1);
+      expect(setupSection).toBeGreaterThan(lateSection);
+      const { answer, stored } = await analyse("fails");
+      expect(answer.result.summary.payments.fees).toEqual([late, setup]);
+      expect(answer.result.summary.payments.fee_evidence).toEqual([
+        { fee: late, quote: lateQuote, segment: `section-${lateSection}` },
+        { fee: setup, quote: setupQuote, segment: `section-${setupSection}` },
+      ]);
+      expect(citedQuotes(stored)).toEqual([
+        [late, lateQuote],
+        [setup, setupQuote],
+      ]);
+      const start = text.indexOf(setupQuote);
+      expect(citationForReport(stored, CONTRACT_ID, "fee-1")).toMatchObject({
+        status: "verified",
+        quote: setupQuote,
+        start: Array.from(text.slice(0, start)).length,
+      });
+      expect(citationForReport(stored, CONTRACT_ID, "fee-0")?.quote).toBe(lateQuote);
+      expect(citationForReport(stored, CONTRACT_ID, PAYMENT_CITATION)?.quote).toBe(
+        paymentQuote,
+      );
+    });
+
+    it("skips a section whose quotation is not in its own segment and uses a later one listing the same text", async () => {
+      const { answer } = await analyse("fails", {
+        1: { fees: [late], feeQuotes: { [late]: lateQuote } },
+      });
+      expect(answer.result.summary.payments.fee_evidence).toContainEqual({
+        fee: late,
+        quote: lateQuote,
+        segment: `section-${lateSection}`,
+      });
+    });
+
+    it("never borrows a quotation from a section that does not list that fee", async () => {
+      const { answer, stored } = await analyse("fails", {
+        1: { fees: [setup] },
+        [setupSection]: { feeQuotes: { [setup]: setupQuote } },
+      });
+      expect(answer.result.summary.payments.fees).toEqual([setup, late]);
+      expect(citedQuotes(stored)).toEqual([[late, lateQuote]]);
+    });
+
+    it("has no quotation for a fee an earlier section worded differently", async () => {
+      const reworded = late.toLowerCase();
+      const { answer, stored } = await analyse("fails", { 1: { fees: [reworded] } });
+      expect(answer.result.summary.payments.fees).toEqual([reworded, setup]);
+      expect(citedQuotes(stored)).toEqual([[setup, setupQuote]]);
+      expect(citationForReport(stored, CONTRACT_ID, "fee-0")).toBeNull();
+    });
+
+    it("keeps the sections' quotations for the merge model's fees, never its own", async () => {
+      const { answer, stored } = await analyse(
+        mergedFees({
+          fees: [setup, late],
+          fee_evidence: [{ fee: setup, quote: "Records. Each party", segment: "section-1" }],
+          fee_citations: [
+            { fee: setup, citation: { status: "verified", quote: "Records", start: 0, end: 7 } },
+          ],
+        }),
+      );
+      expect(answer.result.summary.payments.fee_evidence).toEqual([
+        { fee: setup, quote: setupQuote, segment: `section-${setupSection}` },
+        { fee: late, quote: lateQuote, segment: `section-${lateSection}` },
+      ]);
+      expect(citedQuotes(stored)).toEqual([
+        [setup, setupQuote],
+        [late, lateQuote],
+      ]);
+    });
+
+    it("has no quotation for a fee the merge model reworded", async () => {
+      const reworded = "A 50 GBP fee for late payment";
+      const { answer, stored } = await analyse(mergedFees({ fees: [reworded, setup] }));
+      expect(answer.result.summary.payments.fees).toEqual([reworded, setup]);
+      expect(citedQuotes(stored)).toEqual([[setup, setupQuote]]);
+      expect(citationForReport(stored, CONTRACT_ID, "fee-0")).toBeNull();
+      expect(citationForReport(stored, CONTRACT_ID, "fee-1")?.quote).toBe(setupQuote);
+    });
+
+    it("stores no fee quotations when no fees are merged", async () => {
+      const { answer, stored } = await analyse(mergedFees({ fees: [] }));
+      expect(answer.result.summary.payments.fee_evidence).toEqual([]);
+      expect(stored.summary.payments.fee_citations).toEqual([]);
     });
   });
 

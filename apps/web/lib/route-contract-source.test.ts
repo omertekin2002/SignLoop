@@ -108,6 +108,13 @@ describe("owner-scoped bounded source endpoint", () => {
     `?analysisId=${analysisId}&flag=penalty-0x1`,
     `?analysisId=${analysisId}&flag=Penalty-0`,
     `?analysisId=${analysisId}&flag=penalties-0`,
+    `?analysisId=${analysisId}&flag=fee`,
+    `?analysisId=${analysisId}&flag=fee-`,
+    `?analysisId=${analysisId}&flag=fee-1000`,
+    `?analysisId=${analysisId}&flag=fee--1`,
+    `?analysisId=${analysisId}&flag=fee-0x1`,
+    `?analysisId=${analysisId}&flag=Fee-0`,
+    `?analysisId=${analysisId}&flag=fees-0`,
   ])("rejects malformed/unbounded requests: %s", async (query) => {
     expect((await get(query)).status).toBe(400);
     expect(getContractSourceForUser).not.toHaveBeenCalled();
@@ -352,6 +359,74 @@ describe("owner-scoped bounded source endpoint", () => {
     });
     expect((await get(penalty(0))).status).toBe(422);
     expect((await get(penalty(1))).status).toBe(422);
+  });
+  it("highlights the clause stating an extra fee, by the fee's index", async () => {
+    const text = "Late invoices cost 50 GBP. Set-up costs 300 GBP. The Client pays 1,200 GBP monthly.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (feeEvidence: { fee: string; quote: string }[]) =>
+      attachAnalysisSources(
+        {
+          summary: {
+            payments: {
+              amount: "1,200 GBP",
+              frequency: "Monthly",
+              fees: ["Late fee of 50 GBP", "Set-up fee of 300 GBP"],
+              fee_evidence: feeEvidence.map((proposal) => ({ ...proposal, segment: "full" })),
+              payment_evidence: { quote: "The Client pays 1,200 GBP monthly.", segment: "full" },
+            },
+          },
+        },
+        id,
+        text,
+      );
+    const fee = (index: number) =>
+      `?revision=${sourceRevision}&analysisId=${analysisId}&flag=fee-${index}`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed([
+        { fee: "Set-up fee of 300 GBP", quote: "Set-up costs 300 GBP." },
+        { fee: "Late fee of 50 GBP", quote: "Late invoices cost 50 GBP." },
+      ]),
+    });
+    const first = await get(fee(0));
+    expect(first.status).toBe(200);
+    expect((await first.json()).highlight).toMatchObject({
+      quote: "Late invoices cost 50 GBP.",
+      start: 0,
+      end: 26,
+    });
+    const second = await get(fee(1));
+    expect(second.status).toBe(200);
+    expect((await second.json()).highlight).toMatchObject({
+      quote: "Set-up costs 300 GBP.",
+      start: 27,
+    });
+    // The payment's own quotation is still served beside the fees'.
+    const payment = await get(`?revision=${sourceRevision}&analysisId=${analysisId}&flag=payment`);
+    expect(payment.status).toBe(200);
+    expect((await payment.json()).highlight).toMatchObject({
+      quote: "The Client pays 1,200 GBP monthly.",
+    });
+    // An index past the end has no citation, nor does a fee index used as a penalty's.
+    expect((await get(fee(2))).status).toBe(422);
+    expect(
+      (await get(`?revision=${sourceRevision}&analysisId=${analysisId}&flag=penalty-0`)).status,
+    ).toBe(422);
+    // Nor does a fee whose quotation is a paraphrase, or one quoted under other text.
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed([
+        { fee: "Late fee of 50 GBP", quote: "Late invoices cost fifty GBP." },
+        { fee: "Set-up fee of 300 gbp", quote: "Set-up costs 300 GBP." },
+      ]),
+    });
+    expect((await get(fee(0))).status).toBe(422);
+    expect((await get(fee(1))).status).toBe(422);
   });
   it("returns the same 404 for missing, deleted, or unowned contracts", async () => {
     auth.mockResolvedValue({ userId: "intruder" });
