@@ -69,6 +69,12 @@ export const STUB_ANALYSIS_FLAGS = [
 export const STUB_NOTICE_QUOTE =
   "unless either party gives 60 days' written notice before the end of the current term.";
 
+/**
+ * The stub's quotation of the clause stating that the agreement renews and for how long. The first
+ * finding quotes the whole sentence, which starts with it.
+ */
+export const STUB_RENEWAL_QUOTE = "This agreement renews automatically for successive twelve-month terms";
+
 export const STUB_ANALYSIS_SUMMARY = "Stub analysis: a twelve-month website services agreement.";
 
 /**
@@ -86,7 +92,11 @@ export function stubAnalysis() {
       what_it_is: STUB_ANALYSIS_SUMMARY,
       payments: { amount: "1,200 GBP", frequency: "Monthly", fees: [] },
       term: { start: "The date of the order form", end: null, minimum_term: "12 months" },
-      renewal: { auto_renew: true, renewal_period: "12 months" },
+      renewal: {
+        auto_renew: true,
+        renewal_period: "12 months",
+        renewal_evidence: { quote: STUB_RENEWAL_QUOTE, segment: "full" },
+      },
       cancellation: {
         how: "Written notice before the end of the current term.",
         notice_period_days: 60,

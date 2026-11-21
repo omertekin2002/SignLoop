@@ -8,6 +8,7 @@ import {
   STUB_CONTRACT_FIXTURE,
   STUB_MODEL,
   STUB_NOTICE_QUOTE,
+  STUB_RENEWAL_QUOTE,
   type StubModelRequest,
 } from "../stub-model-server";
 import { openDashboard, openSidebar } from "./dashboard";
@@ -50,7 +51,10 @@ type StoredContract = {
     llmProvider: string | null;
     resultJson: {
       red_flags?: { citation?: { status?: string; quote?: string } | null }[];
-      summary?: { cancellation?: { notice_citation?: { status?: string; quote?: string } | null } };
+      summary?: {
+        renewal?: { renewal_citation?: { status?: string; quote?: string } | null };
+        cancellation?: { notice_citation?: { status?: string; quote?: string } | null };
+      };
     };
   }[];
 };
@@ -86,12 +90,16 @@ async function uploadThroughDashboard(page: Page, title: string, contents: strin
 
 // The contract page has no <main> landmark, and its printable brief repeats the report in a hidden
 // element, so the checks below look only at what is on screen.
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function onScreen(locator: Locator): Locator {
   return locator.filter({ visible: true });
 }
 
-// The stub's report as the contract page renders it: its summary and key points, the notice period
-// and every finding with the quotation the server verified, and the stub named as the model.
+// The stub's report as the contract page renders it: its summary and key points, renewal, the notice
+// period and every finding with the quotation the server verified, and the stub named as the model.
 async function expectStubAnalysis(page: Page) {
   await expect(onScreen(page.getByText(STUB_ANALYSIS_SUMMARY, { exact: true }))).toBeVisible();
   await expect(
@@ -108,6 +116,13 @@ async function expectStubAnalysis(page: Page) {
   await expect(onScreen(page.locator("blockquote").filter({ hasText: `“${STUB_NOTICE_QUOTE}` }))).toHaveText(
     `“${STUB_NOTICE_QUOTE}”`,
   );
+  // The first finding's quotation starts with the renewal clause, so match the renewal quotation's
+  // own element: the block quote holding exactly that clause.
+  await expect(onScreen(page.getByText("Auto-renews", { exact: true }))).toBeVisible();
+  await expect(onScreen(page.getByText("Period: 12 months", { exact: true }))).toBeVisible();
+  await expect(
+    onScreen(page.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_RENEWAL_QUOTE)}”$`) })),
+  ).toHaveCount(1);
   await expect(onScreen(page.getByText("No verified quotation", { exact: true }))).toHaveCount(0);
   await expect(onScreen(page.getByText(`LLM: Primary provider • ${STUB_MODEL}`, { exact: true }))).toBeVisible();
   await expect(page.getByRole("button", { name: "Re-run Analysis" })).toBeEnabled();
@@ -162,6 +177,13 @@ for (const theme of THEMES) {
     await page.keyboard.press("Escape");
     await expect(source).toBeHidden();
 
+    // So does renewal's quotation of the clause stating it.
+    await page.getByRole("button", { name: "View matched quotation of the renewal clause" }).click();
+    await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
+    await expect(source.getByRole("region", { name: "Source passage" }).locator("mark")).toHaveText(STUB_RENEWAL_QUOTE);
+    await page.keyboard.press("Escape");
+    await expect(source).toBeHidden();
+
     // A fresh load reads the stored report back from the database.
     await page.reload();
     await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
@@ -182,6 +204,10 @@ for (const theme of THEMES) {
     expect(stored.analyses[0]!.resultJson.summary?.cancellation?.notice_citation).toMatchObject({
       status: "verified",
       quote: STUB_NOTICE_QUOTE,
+    });
+    expect(stored.analyses[0]!.resultJson.summary?.renewal?.renewal_citation).toMatchObject({
+      status: "verified",
+      quote: STUB_RENEWAL_QUOTE,
     });
 
     // The stub received exactly one analysis request for this contract, carrying its text.

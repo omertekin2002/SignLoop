@@ -213,12 +213,13 @@ export function verifyQuote(
 }
 
 /**
- * A cited passage in a stored report: a red flag by index, the jurisdiction proposal, or the
- * cancellation notice period.
+ * A cited passage in a stored report: a red flag by index, the jurisdiction proposal, the
+ * cancellation notice period, or renewal.
  */
-export type CitationRef = number | "jurisdiction" | "notice";
+export type CitationRef = number | "jurisdiction" | "notice" | "renewal";
 export const JURISDICTION_CITATION = "jurisdiction";
 export const NOTICE_CITATION = "notice";
+export const RENEWAL_CITATION = "renewal";
 
 function storedCitation(report: Record<string, unknown>, ref: CitationRef): unknown {
   const field = (value: unknown, key: string) =>
@@ -229,6 +230,8 @@ function storedCitation(report: Record<string, unknown>, ref: CitationRef): unkn
     return field(report.proposed_jurisdiction, "citation");
   if (ref === NOTICE_CITATION)
     return field(field(report.summary, "cancellation"), "notice_citation");
+  if (ref === RENEWAL_CITATION)
+    return field(field(report.summary, "renewal"), "renewal_citation");
   return Array.isArray(report.red_flags)
     ? field(report.red_flags[ref], "citation")
     : null;

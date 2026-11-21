@@ -30,6 +30,9 @@ export function sectionOutput(
     questions?: string[];
     badge?: "LOW" | "MEDIUM" | "HIGH";
     autoRenew?: boolean | null;
+    renewalPeriod?: string | null;
+    /** The section's quotation of the clause stating its renewal. */
+    renewalQuote?: string;
     noticeDays?: number | null;
     noticeText?: string | null;
     /** The section's quotation of the clause stating its notice period. */
@@ -44,7 +47,13 @@ export function sectionOutput(
       what_it_is: "A services agreement.",
       payments: { amount: null, frequency: null, fees: [] },
       term: { start: null, end: null, minimum_term: null },
-      renewal: { auto_renew: options.autoRenew ?? null, renewal_period: null },
+      renewal: {
+        auto_renew: options.autoRenew ?? null,
+        renewal_period: options.renewalPeriod ?? null,
+        renewal_evidence: options.renewalQuote
+          ? { quote: options.renewalQuote, segment: segment.label }
+          : null,
+      },
       cancellation: {
         how: "Not specified",
         notice_period_days: options.noticeDays ?? null,

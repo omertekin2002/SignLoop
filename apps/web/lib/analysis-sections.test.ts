@@ -685,6 +685,167 @@ describe("analysis of contracts longer than one request", () => {
     });
   });
 
+  describe("renewal quotations", () => {
+    const clause =
+      "300.1 Renewal. This Agreement renews automatically for successive one-year terms.\n";
+    const renewalQuote = "This Agreement renews automatically for successive one-year terms.";
+    const text = contractOf(400, { 300: clause });
+    const segments = contractAnalysisSegments(text);
+    const cited = segments.find((part) => part.text.includes(clause))!;
+    const citedNumber = Number(cited.label.slice("section-".length));
+    type Renewal = { autoRenew?: boolean | null; renewalPeriod?: string | null; renewalQuote?: string };
+
+    // Section `citedNumber` states automatic one-year renewal with its quotation; `others` sets the
+    // sections before it and `later` the sections after it.
+    async function analyse(
+      merge: "fails" | Record<string, unknown>,
+      others: Renewal = {},
+      later: Renewal = {},
+    ) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return merge === "fails" ? failure() : completed(mergeOutput(merge));
+        return completed(
+          sectionOutput(
+            double.segment(call),
+            call.section === citedNumber
+              ? { autoRenew: true, renewalPeriod: "1 year", renewalQuote }
+              : call.section < citedNumber
+                ? others
+                : later,
+          ),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      return {
+        answer,
+        stored: finalizeAnalysisResult(answer.result, { id: CONTRACT_ID, text }),
+      };
+    }
+
+    const mergedRenewal = (renewal: Record<string, unknown>) => ({
+      summary: { ...mergeOutput().summary, renewal },
+    });
+
+    it("takes renewal's values and quotation from the same section when the merge call fails", async () => {
+      expect(citedNumber).toBeGreaterThan(1);
+      const { answer, stored } = await analyse(
+        "fails",
+        // A section stating no renewal never lends its quotation.
+        { autoRenew: null, renewalPeriod: "Not specified", renewalQuote: "Records. Each party" },
+        // A later section's different period never sits beside the cited section's values.
+        { autoRenew: null, renewalPeriod: "5 years" },
+      );
+      expect(answer.result.summary.renewal).toEqual({
+        auto_renew: true,
+        renewal_period: "1 year",
+        renewal_evidence: { quote: renewalQuote, segment: cited.label },
+      });
+      const start = text.indexOf(renewalQuote);
+      expect(stored.summary.renewal.renewal_citation).toMatchObject({
+        status: "verified",
+        quote: renewalQuote,
+        start: Array.from(text.slice(0, start)).length,
+      });
+    });
+
+    it("leaves renewal unknown, with no quotation, when no section states it and the merge call fails", async () => {
+      const double = provider(segments, (call) =>
+        call.section === "merge"
+          ? failure()
+          : completed(sectionOutput(double.segment(call), { renewalQuote })),
+      );
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(answer.result.summary.renewal).toEqual({
+        auto_renew: null,
+        renewal_period: null,
+        renewal_evidence: null,
+      });
+    });
+
+    it("takes the first stating section's values even when it cannot quote them, and quotes them from a section stating the same", async () => {
+      // An earlier section states the same renewal but claims a quotation it does not contain.
+      const { answer } = await analyse("fails", {
+        autoRenew: true,
+        renewalPeriod: "1 Year",
+        renewalQuote,
+      });
+      expect(answer.result.summary.renewal).toEqual({
+        auto_renew: true,
+        renewal_period: "1 Year",
+        renewal_evidence: { quote: renewalQuote, segment: cited.label },
+      });
+    });
+
+    it("has no quotation when the first stating section states different renewal values", async () => {
+      const { answer, stored } = await analyse("fails", {
+        autoRenew: false,
+        renewalPeriod: null,
+      });
+      expect(answer.result.summary.renewal).toEqual({
+        auto_renew: false,
+        renewal_period: null,
+        renewal_evidence: null,
+      });
+      expect(stored.summary.renewal.renewal_citation).toBeNull();
+    });
+
+    it("keeps a section's quotation when the merged values equal it, never the merge model's", async () => {
+      const { answer, stored } = await analyse(
+        mergedRenewal({
+          auto_renew: true,
+          renewal_period: "1 year",
+          renewal_evidence: { quote: "Records. Each party", segment: "section-1" },
+          renewal_citation: { status: "verified", quote: "Records", start: 0, end: 7 },
+        }),
+      );
+      expect(answer.result.summary.renewal.renewal_evidence).toEqual({
+        quote: renewalQuote,
+        segment: cited.label,
+      });
+      expect(stored.summary.renewal.renewal_citation?.quote).toBe(renewalQuote);
+    });
+
+    it("drops the quotation when another section states different renewal values", async () => {
+      for (const disagreeing of [
+        { autoRenew: false },
+        { autoRenew: true, renewalPeriod: "2 years" },
+        { autoRenew: null, renewalPeriod: "monthly" },
+      ]) {
+        const { answer, stored } = await analyse(
+          mergedRenewal({ auto_renew: true, renewal_period: "1 year" }),
+          {},
+          disagreeing,
+        );
+        expect(answer.result.summary.renewal).toMatchObject({
+          auto_renew: true,
+          renewal_period: "1 year",
+          renewal_evidence: null,
+        });
+        expect(stored.summary.renewal.renewal_citation).toBeNull();
+      }
+    });
+
+    it("has no quotation for merged values that differ from every cited section", async () => {
+      for (const renewal of [
+        { auto_renew: true, renewal_period: "2 years" },
+        { auto_renew: false, renewal_period: "1 year" },
+        { auto_renew: null, renewal_period: null },
+      ]) {
+        const { answer, stored } = await analyse(mergedRenewal(renewal));
+        expect(answer.result.summary.renewal).toEqual({
+          ...renewal,
+          renewal_evidence: null,
+        });
+        expect(stored.summary.renewal.renewal_citation).toBeNull();
+        expect(stored.summary.renewal.auto_renew).toBe(renewal.auto_renew);
+      }
+    });
+  });
+
   it("uses a single surviving section as the result without a merge call", async () => {
     const text = contractOf(175);
     const segments = contractAnalysisSegments(text);

@@ -1,10 +1,12 @@
 import type { AnalysisResult } from "@/lib/schemas";
 import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
+import { formatAutoRenew, isRenewalStated } from "@/lib/renewal";
 import { regionalComparisonsView } from "@/lib/regional-comparisons";
 import {
   citationForReport,
   JURISDICTION_CITATION,
   NOTICE_CITATION,
+  RENEWAL_CITATION,
   SourceRevisionSchema,
   type CitationRef,
 } from "@/lib/source-citations";
@@ -254,9 +256,27 @@ function jurisdictionSection(
 }
 
 /**
- * The notice period with its evidence: the verified quotation of the clause stating it, a marker
- * when a stated period has none, or the unchanged "Not specified" when none is stated.
+ * A summary fact's line with its evidence: the verified quotation of the clause stating it, a marker
+ * when a stated fact has none, or the line alone when the fact is unknown.
  */
+function quotedFactLines(
+  line: string,
+  stated: boolean,
+  result: Partial<AnalysisResult>,
+  contractId: string,
+  ref: CitationRef,
+): string[] {
+  if (!stated) return [line];
+  const cited = citationForReport(result, contractId, ref);
+  if (!cited) return [`${line} (**No verified quotation**)`];
+  return [
+    line,
+    "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+    ...blockquote(cited.quote).map((quoted) => `      ${quoted}`),
+  ];
+}
+
+/** The notice period with its evidence, or the unchanged "Not specified" when none is stated. */
 function noticePeriodLines(
   result: Partial<AnalysisResult>,
   cancellation: Record<string, unknown>,
@@ -269,14 +289,37 @@ function noticePeriodLines(
         : null,
     notice_period_text: text(cancellation.notice_period_text),
   };
-  const line = `  - Notice period: ${inline(formatNoticePeriod(notice))}`;
-  if (!isNoticePeriodStated(notice)) return [line];
-  const cited = citationForReport(result, contractId, NOTICE_CITATION);
-  if (!cited) return [`${line} (**No verified quotation**)`];
+  return quotedFactLines(
+    `  - Notice period: ${inline(formatNoticePeriod(notice))}`,
+    isNoticePeriodStated(notice),
+    result,
+    contractId,
+    NOTICE_CITATION,
+  );
+}
+
+/**
+ * Renewal with its evidence: both lines, then the verified quotation of the clause stating them or
+ * a marker on the period line. Unknown renewal keeps its unchanged lines.
+ */
+function renewalLines(
+  result: Partial<AnalysisResult>,
+  renewal: Record<string, unknown>,
+  contractId: string,
+): string[] {
+  const lines = [
+    `  - Automatic renewal: ${formatAutoRenew(renewal.auto_renew, "Unknown")}`,
+    `  - Renewal period: ${inline(text(renewal.renewal_period) ?? NOT_SPECIFIED)}`,
+  ];
   return [
-    line,
-    "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
-    ...blockquote(cited.quote).map((quoted) => `      ${quoted}`),
+    lines[0]!,
+    ...quotedFactLines(
+      lines[1]!,
+      isRenewalStated(renewal),
+      result,
+      contractId,
+      RENEWAL_CITATION,
+    ),
   ];
 }
 
@@ -292,12 +335,6 @@ function summarySection(
   const cancellation = record(summary.cancellation);
   const fees = texts(payments.fees);
   const penalties = texts(cancellation.penalties);
-  const autoRenew =
-    renewal.auto_renew === true
-      ? "Auto-renews"
-      : renewal.auto_renew === false
-        ? "Does not auto-renew"
-        : "Unknown";
   const keyDates = (Array.isArray(result.key_dates) ? result.key_dates : [])
     .map(record)
     .filter((date) => text(date.date));
@@ -316,8 +353,7 @@ function summarySection(
     `  - End: ${inline(text(term.end) ?? NOT_SPECIFIED)}`,
     `  - Minimum term: ${inline(text(term.minimum_term) ?? NOT_SPECIFIED)}`,
     "- **Renewal:**",
-    `  - Automatic renewal: ${autoRenew}`,
-    `  - Renewal period: ${inline(text(renewal.renewal_period) ?? NOT_SPECIFIED)}`,
+    ...renewalLines(result, renewal, contractId),
     "- **Cancellation:**",
     `  - How to cancel: ${inline(text(cancellation.how) ?? NOT_SPECIFIED)}`,
     ...noticePeriodLines(result, cancellation, contractId),

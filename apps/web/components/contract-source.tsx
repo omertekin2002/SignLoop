@@ -13,11 +13,13 @@ import {
   citationForReport,
   JURISDICTION_CITATION,
   NOTICE_CITATION,
+  RENEWAL_CITATION,
   SourcePageSchema,
   type CitationRef,
   type SourceCitation,
 } from "@/lib/source-citations";
 import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
+import { formatAutoRenew, isRenewalStated } from "@/lib/renewal";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -311,9 +313,40 @@ export function FindingSource({ index }: { index: number }) {
 }
 
 /**
+ * A stated summary fact's evidence: the verified quotation of the clause stating it, or a visible
+ * "No verified quotation" marker (as in reports analysed before quotations existed). Unknown facts
+ * get neither and keep their unchanged "Not specified" text.
+ */
+function StatedFactSource({
+  stated,
+  citationRef,
+  label,
+}: {
+  stated: boolean;
+  citationRef: CitationRef;
+  label: string;
+}) {
+  const source = useContext(SourceContext);
+  if (!stated) return null;
+  return source?.citation(citationRef) ? (
+    <>
+      <QuotedSource citationRef={citationRef} label={label} />
+      <p className="mt-2 text-xs text-muted-foreground">
+        The quotation shows where this value comes from, not that this
+        reading of it is correct.
+      </p>
+    </>
+  ) : (
+    <p className="mt-2 inline-block rounded border border-border px-2 py-0.5 text-xs text-muted-foreground">
+      No verified quotation
+    </p>
+  );
+}
+
+/**
  * A report's notice period in one of three states: with the verified quotation of the clause that
- * states it, stated with a visible "No verified quotation" marker (as in reports analysed before
- * quotations existed), or the unchanged "Not specified" when no period is stated.
+ * states it, stated with a visible "No verified quotation" marker, or the unchanged "Not specified"
+ * when no period is stated.
  */
 export function NoticePeriodSource({
   cancellation,
@@ -323,28 +356,43 @@ export function NoticePeriodSource({
     notice_period_text?: string | null;
   };
 }) {
-  const source = useContext(SourceContext);
-  const stated = isNoticePeriodStated(cancellation);
-  const cited = stated && Boolean(source?.citation(NOTICE_CITATION));
   return (
     <>
       <p className="text-sm">{formatNoticePeriod(cancellation)}</p>
-      {cited ? (
-        <>
-          <QuotedSource
-            citationRef={NOTICE_CITATION}
-            label="View matched quotation of the notice-period clause"
-          />
-          <p className="mt-2 text-xs text-muted-foreground">
-            The quotation shows where this value comes from, not that this
-            reading of it is correct.
-          </p>
-        </>
-      ) : stated ? (
-        <p className="mt-2 inline-block rounded border border-border px-2 py-0.5 text-xs text-muted-foreground">
-          No verified quotation
+      <StatedFactSource
+        stated={isNoticePeriodStated(cancellation)}
+        citationRef={NOTICE_CITATION}
+        label="View matched quotation of the notice-period clause"
+      />
+    </>
+  );
+}
+
+/**
+ * A report's renewal in one of three states: whether it auto-renews and its period with the
+ * verified quotation of the clause stating them, stated with a visible "No verified quotation"
+ * marker, or the unchanged "Not specified" when renewal is not stated.
+ */
+export function RenewalSource({
+  renewal,
+}: {
+  renewal: { auto_renew?: boolean | null; renewal_period?: string | null };
+}) {
+  return (
+    <>
+      <p className="text-sm">
+        {formatAutoRenew(renewal.auto_renew, "Not specified")}
+      </p>
+      {renewal.renewal_period && (
+        <p className="text-xs text-muted-foreground">
+          Period: {renewal.renewal_period}
         </p>
-      ) : null}
+      )}
+      <StatedFactSource
+        stated={isRenewalStated(renewal)}
+        citationRef={RENEWAL_CITATION}
+        label="View matched quotation of the renewal clause"
+      />
     </>
   );
 }
