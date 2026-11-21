@@ -57,7 +57,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ContractSourceProvider, FindingSource, NoticePeriodSource, OpenContractSource, PaymentSource, PenaltiesSource, RenewalSource } from "@/components/contract-source";
+import { ContractSourceProvider, FindingSource, NoticePeriodSource, OpenContractSource, PaymentSource, PenaltiesSource, RenewalSource, TermSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
 import { DownloadBriefButton } from "@/components/download-brief-button";
 import { PrintBrief } from "@/components/print-brief";
@@ -721,9 +721,7 @@ const ContractDetails = () => {
                       <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
                         <Clock className="h-4 w-4" /> Term
                       </h4>
-                      <p className="text-sm">
-                        {summaryTerm?.minimum_term || "Not specified"}
-                      </p>
+                      <TermSource term={summaryTerm ?? {}} />
                     </div>
 
                     {/* Renewal */}

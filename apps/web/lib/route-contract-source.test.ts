@@ -101,6 +101,9 @@ describe("owner-scoped bounded source endpoint", () => {
     `?analysisId=${analysisId}&flag=Payment`,
     `?analysisId=${analysisId}&flag=payments`,
     `?analysisId=${analysisId}&flag=payment_citation`,
+    `?analysisId=${analysisId}&flag=Term`,
+    `?analysisId=${analysisId}&flag=terms`,
+    `?analysisId=${analysisId}&flag=term_citation`,
     `?analysisId=${analysisId}&flag=penalty`,
     `?analysisId=${analysisId}&flag=penalty-`,
     `?analysisId=${analysisId}&flag=penalty-1000`,
@@ -300,6 +303,51 @@ describe("owner-scoped bounded source endpoint", () => {
     ]) {
       getAnalysisForUser.mockResolvedValue({ resultJson });
       expect((await get(payment)).status).toBe(422);
+    }
+  });
+  it("highlights the clause stating the term", async () => {
+    const text = "This agreement starts on 1 March 2027 and lasts 24 months. It then renews yearly.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (quote: string, minimumTerm: string | null = "24 months") =>
+      attachAnalysisSources(
+        {
+          summary: {
+            term: {
+              start: null,
+              end: null,
+              minimum_term: minimumTerm,
+              term_evidence: { quote, segment: "full" },
+            },
+          },
+        },
+        id,
+        text,
+      );
+    const term = `?revision=${sourceRevision}&analysisId=${analysisId}&flag=term`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed("This agreement starts on 1 March 2027 and lasts 24 months."),
+    });
+    const response = await get(term);
+    expect(response.status).toBe(200);
+    expect((await response.json()).highlight).toMatchObject({
+      quote: "This agreement starts on 1 March 2027 and lasts 24 months.",
+      start: 0,
+      end: 58,
+    });
+    // A paraphrase is not verified, and an unknown term is never cited.
+    for (const resultJson of [
+      analysed("The agreement lasts 24 months from 1 March 2027."),
+      analysed("This agreement starts on 1 March 2027 and lasts 24 months.", null),
+    ]) {
+      getAnalysisForUser.mockResolvedValue({ resultJson });
+      expect((await get(term)).status).toBe(422);
     }
   });
   it("highlights the clause stating a cancellation penalty, by the penalty's index", async () => {

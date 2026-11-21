@@ -12,6 +12,7 @@ import {
   STUB_PENALTY,
   STUB_PENALTY_QUOTE,
   STUB_RENEWAL_QUOTE,
+  STUB_TERM_QUOTE,
   startStubModelServer,
   stubAnalysis,
   stubReply,
@@ -169,6 +170,15 @@ describe("the end-to-end stub model", () => {
       payment_citation: { status: "verified", contract_id: contractId, quote: STUB_PAYMENT_QUOTE },
     });
     expect(stored.summary.payments).not.toHaveProperty("payment_evidence");
+
+    // So does the term, from the clause stating when it starts and how long it lasts.
+    expect(stored.summary.term).toMatchObject({
+      start: "The date of the order form",
+      end: null,
+      minimum_term: "12 months",
+      term_citation: { status: "verified", contract_id: contractId, quote: STUB_TERM_QUOTE },
+    });
+    expect(stored.summary.term).not.toHaveProperty("term_evidence");
 
     // And its one cancellation penalty, keyed by the penalty's exact text.
     expect(stored.summary.cancellation.penalties).toEqual([STUB_PENALTY]);

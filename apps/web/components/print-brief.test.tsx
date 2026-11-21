@@ -215,6 +215,44 @@ describe("PrintBrief", () => {
     expect(joining!.querySelector("blockquote")).toBeNull();
   });
 
+  it("prints the term's quotation under Term, or marks a stated term without one", () => {
+    const termClause = "This membership starts on joining and lasts at least 12 months.";
+    const withTerm = (term: AnalysisResult["summary"]["term"]) => ({
+      ...ANALYSIS,
+      resultJson: { ...RESULT, summary: { ...RESULT.summary!, term } },
+    });
+    const termItem = () =>
+      Array.from(printedBrief().querySelectorAll("li")).find((item) =>
+        item.firstChild?.textContent?.startsWith("Term:"),
+      );
+
+    const { unmount } = render(
+      <PrintBrief
+        contract={CONTRACT}
+        analysis={withTerm({
+          start: "On joining",
+          end: null,
+          minimum_term: "12 months",
+          term_citation: { ...SOURCE, status: "verified" as const, quote: termClause, start: 400, end: 463 },
+        })}
+      />,
+    );
+    const quoted = termItem();
+    expect(quoted).toBeDefined();
+    const minimum = Array.from(quoted!.querySelectorAll(":scope > ul > li")).find((item) =>
+      item.textContent?.startsWith("Minimum term:"),
+    );
+    expect(minimum).toHaveTextContent("Minimum term: 12 months");
+    expect(minimum!.querySelector("blockquote")).toHaveTextContent(termClause);
+    expect(quoted).not.toHaveTextContent("No verified quotation");
+    unmount();
+
+    // A report stored before term quotations.
+    render(<PrintBrief contract={CONTRACT} analysis={ANALYSIS} />);
+    expect(termItem()).toHaveTextContent("Minimum term: 12 months (No verified quotation)");
+    expect(termItem()!.querySelector("blockquote")).toBeNull();
+  });
+
   it("marks an earlier analysis as historical", () => {
     render(<PrintBrief contract={CONTRACT} analysis={ANALYSIS} historical />);
     expect(printedBrief()).toHaveTextContent(

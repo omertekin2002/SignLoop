@@ -11,6 +11,7 @@ import {
 import { isNoticePeriodStated } from "@/lib/notice-period";
 import { isRenewalStated } from "@/lib/renewal";
 import { isPaymentStated } from "@/lib/payment";
+import { isTermStated } from "@/lib/term";
 import {
   LISTED_FEES,
   LISTED_PENALTIES,
@@ -25,7 +26,7 @@ export function contractSourceRevision(text: string): string {
 /**
  * Always discard model-supplied receipts, even if they claim to be verified. Red flags, the
  * jurisdiction proposal, the cancellation notice period, each cancellation penalty, renewal,
- * payment and each extra fee get server-verified citations instead.
+ * payment, each extra fee and the term get server-verified citations instead.
  */
 export function attachAnalysisSources<T extends Record<string, unknown>>(
   result: T,
@@ -151,6 +152,7 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
             isPaymentStated,
           ),
         ),
+        ...citeFact("term", "term_evidence", "term_citation", isTermStated),
       }
     : null;
   return {
