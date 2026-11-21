@@ -369,6 +369,76 @@ describe("renderAnalysisBriefMarkdown", () => {
     expect(unknown).not.toContain("Renewal period: Not specified (");
   });
 
+  it("shows the payment's verified quotation, marks stated payment without one, and leaves unknown payment", () => {
+    const withPayments = (payments: Record<string, unknown>) =>
+      section(
+        brief({
+          ...FULL_RESULT,
+          summary: { ...FULL_RESULT.summary, payments: { fees: [], ...payments } },
+        }).markdown,
+        "Summary",
+      );
+    const clause = "Members pay *£45* each month by direct debit.";
+
+    const quoted = withPayments({
+      amount: "£45",
+      frequency: "Monthly",
+      fees: ["Joining fee of £20"],
+      payment_citation: citation(clause, 200),
+    });
+    expect(quoted).toContain(
+      [
+        "- **Payments:**",
+        "  - Amount: £45",
+        "  - Frequency: Monthly",
+        "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        "      > Members pay \\*£45\\* each month by direct debit.",
+        "  - Fees:",
+        "    - Joining fee of £20",
+        "- **Term:**",
+      ].join("\n"),
+    );
+    expect(quoted).not.toContain("Monthly (**No verified quotation**)");
+    // The quotation renders inside the frequency's list item as a block quote.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(1);
+
+    // A report stored before payment quotations, an unverified one, one for another contract, and
+    // payment stated only by its amount or only by its frequency.
+    for (const [payments, lines] of [
+      [{ amount: "£45", frequency: "Monthly" }, ["£45", "Monthly"]],
+      [{ amount: "£45", frequency: "Monthly", payment_citation: null }, ["£45", "Monthly"]],
+      [
+        {
+          amount: "£45",
+          frequency: "Monthly",
+          payment_citation: { ...citation(clause), contract_id: "99999999-2222-4333-8444-555555555555" },
+        },
+        ["£45", "Monthly"],
+      ],
+      [{ amount: "£45", frequency: null }, ["£45", "Not specified"]],
+      [{ amount: null, frequency: "Yearly" }, ["Not specified", "Yearly"]],
+    ] as const) {
+      const marked = withPayments(payments);
+      expect(marked).toContain(
+        `  - Amount: ${lines[0]}\n  - Frequency: ${lines[1]} (**No verified quotation**)\n  - Fees: None listed\n`,
+      );
+      expect(marked).not.toContain("Verified quotation** (");
+    }
+
+    for (const unknown of [
+      { amount: null, frequency: null },
+      { amount: "Not specified", frequency: "Unknown" },
+    ]) {
+      const marked = withPayments({ ...unknown, payment_citation: citation(clause) });
+      expect(marked).toContain(
+        `  - Amount: ${unknown.amount ?? "Not specified"}\n  - Frequency: ${unknown.frequency ?? "Not specified"}\n  - Fees: None listed\n`,
+      );
+      expect(marked).not.toContain("direct debit");
+      expect(marked).not.toMatch(/Frequency: [^\n]*\(/);
+    }
+  });
+
   it("renders an unknown auto-renewal as unknown, not as no", () => {
     const { markdown } = brief({
       ...FULL_RESULT,

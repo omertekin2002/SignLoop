@@ -846,6 +846,195 @@ describe("analysis of contracts longer than one request", () => {
     });
   });
 
+  describe("payment quotations", () => {
+    const clause =
+      "300.1 Fees. The Customer pays 500 EUR each month for the Services.\n";
+    const paymentQuote = "The Customer pays 500 EUR each month for the Services.";
+    const text = contractOf(400, { 300: clause });
+    const segments = contractAnalysisSegments(text);
+    const cited = segments.find((part) => part.text.includes(clause))!;
+    const citedNumber = Number(cited.label.slice("section-".length));
+    type Payment = { amount?: string | null; frequency?: string | null; paymentQuote?: string };
+
+    // Section `citedNumber` states 500 EUR monthly with its quotation; `others` sets the sections
+    // before it and `later` the sections after it.
+    async function analyse(
+      merge: "fails" | Record<string, unknown>,
+      others: Payment = {},
+      later: Payment = {},
+      citedPayment: Payment = { amount: "500 EUR", frequency: "Monthly", paymentQuote },
+    ) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return merge === "fails" ? failure() : completed(mergeOutput(merge));
+        return completed(
+          sectionOutput(
+            double.segment(call),
+            call.section === citedNumber
+              ? citedPayment
+              : call.section < citedNumber
+                ? others
+                : later,
+          ),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      return {
+        answer,
+        stored: finalizeAnalysisResult(answer.result, { id: CONTRACT_ID, text }),
+      };
+    }
+
+    const mergedPayments = (payments: Record<string, unknown>) => ({
+      summary: { ...mergeOutput().summary, payments: { fees: [], ...payments } },
+    });
+
+    it("quotes the merged amount and frequency from the section stating both when the merge call fails", async () => {
+      expect(citedNumber).toBeGreaterThan(1);
+      const { answer, stored } = await analyse(
+        "fails",
+        // A section stating no payment never lends its quotation.
+        { amount: "Not specified", frequency: null, paymentQuote: "Records. Each party" },
+        // A later section's different figure never sits beside the cited section's quotation.
+        { amount: "900 EUR", frequency: "Yearly" },
+      );
+      expect(answer.result.summary.payments).toEqual({
+        amount: "500 EUR",
+        frequency: "Monthly",
+        fees: [],
+        payment_evidence: { quote: paymentQuote, segment: cited.label },
+      });
+      const start = text.indexOf(paymentQuote);
+      expect(stored.summary.payments.payment_citation).toMatchObject({
+        status: "verified",
+        quote: paymentQuote,
+        start: Array.from(text.slice(0, start)).length,
+      });
+    });
+
+    it("leaves payment unknown, with no quotation, when no section states it and the merge call fails", async () => {
+      const double = provider(segments, (call) =>
+        call.section === "merge"
+          ? failure()
+          : completed(sectionOutput(double.segment(call), { paymentQuote })),
+      );
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(answer.result.summary.payments).toEqual({
+        amount: null,
+        frequency: null,
+        fees: [],
+        payment_evidence: null,
+      });
+    });
+
+    it("quotes the merged pair from a later section stating the same pair when the first cannot quote it", async () => {
+      // An earlier section states the same pair but claims a quotation it does not contain.
+      const { answer } = await analyse("fails", {
+        amount: "500 eur",
+        frequency: "monthly",
+        paymentQuote,
+      });
+      expect(answer.result.summary.payments).toEqual({
+        amount: "500 eur",
+        frequency: "monthly",
+        fees: [],
+        payment_evidence: { quote: paymentQuote, segment: cited.label },
+      });
+    });
+
+    it("has no quotation when the first stating section states a different amount", async () => {
+      const { answer, stored } = await analyse("fails", {
+        amount: "900 EUR",
+        frequency: "Monthly",
+      });
+      expect(answer.result.summary.payments).toMatchObject({
+        amount: "900 EUR",
+        frequency: "Monthly",
+        payment_evidence: null,
+      });
+      expect(stored.summary.payments.payment_citation).toBeNull();
+    });
+
+    it("has no quotation when the merged amount and frequency come from different sections", async () => {
+      // The cited section states only the amount; a later one states only the frequency.
+      const { answer, stored } = await analyse(
+        "fails",
+        {},
+        { frequency: "Monthly" },
+        { amount: "500 EUR", frequency: null, paymentQuote },
+      );
+      expect(answer.result.summary.payments).toEqual({
+        amount: "500 EUR",
+        frequency: "Monthly",
+        fees: [],
+        payment_evidence: null,
+      });
+      expect(stored.summary.payments.payment_citation).toBeNull();
+      expect(stored.summary.payments).toMatchObject({
+        amount: "500 EUR",
+        frequency: "Monthly",
+      });
+    });
+
+    it("keeps a section's quotation when the merged pair equals it, never the merge model's", async () => {
+      const { answer, stored } = await analyse(
+        mergedPayments({
+          amount: "500 EUR",
+          frequency: "Monthly",
+          payment_evidence: { quote: "Records. Each party", segment: "section-1" },
+          payment_citation: { status: "verified", quote: "Records", start: 0, end: 7 },
+        }),
+      );
+      expect(answer.result.summary.payments.payment_evidence).toEqual({
+        quote: paymentQuote,
+        segment: cited.label,
+      });
+      expect(stored.summary.payments.payment_citation?.quote).toBe(paymentQuote);
+    });
+
+    it("drops the quotation when another section states a different payment", async () => {
+      for (const disagreeing of [
+        { amount: "900 EUR", frequency: "Monthly" },
+        { amount: "500 EUR", frequency: "Yearly" },
+        { amount: null, frequency: "Quarterly" },
+        // Stating only part of the pair is a different pair too.
+        { amount: "500 EUR", frequency: null },
+      ]) {
+        const { answer, stored } = await analyse(
+          mergedPayments({ amount: "500 EUR", frequency: "Monthly" }),
+          {},
+          disagreeing,
+        );
+        expect(answer.result.summary.payments).toMatchObject({
+          amount: "500 EUR",
+          frequency: "Monthly",
+          payment_evidence: null,
+        });
+        expect(stored.summary.payments.payment_citation).toBeNull();
+      }
+    });
+
+    it("has no quotation for a merged pair that differs from every cited section", async () => {
+      for (const payments of [
+        { amount: "900 EUR", frequency: "Monthly" },
+        { amount: "500 EUR", frequency: null },
+        { amount: null, frequency: null },
+      ]) {
+        const { answer, stored } = await analyse(mergedPayments(payments));
+        expect(answer.result.summary.payments).toEqual({
+          ...payments,
+          fees: [],
+          payment_evidence: null,
+        });
+        expect(stored.summary.payments.payment_citation).toBeNull();
+        expect(stored.summary.payments).toMatchObject(payments);
+      }
+    });
+  });
+
   it("uses a single surviving section as the result without a merge call", async () => {
     const text = contractOf(175);
     const segments = contractAnalysisSegments(text);

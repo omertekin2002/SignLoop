@@ -57,7 +57,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ContractSourceProvider, FindingSource, NoticePeriodSource, OpenContractSource, RenewalSource } from "@/components/contract-source";
+import { ContractSourceProvider, FindingSource, NoticePeriodSource, OpenContractSource, PaymentSource, RenewalSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
 import { DownloadBriefButton } from "@/components/download-brief-button";
 import { PrintBrief } from "@/components/print-brief";
@@ -713,14 +713,7 @@ const ContractDetails = () => {
                       <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
                         <DollarSign className="h-4 w-4" /> Payments
                       </h4>
-                      <p className="text-sm font-medium">
-                        {summaryPayments?.amount || "Not specified"}
-                      </p>
-                      {summaryPayments?.frequency && (
-                        <p className="text-xs text-muted-foreground">
-                          {summaryPayments.frequency}
-                        </p>
-                      )}
+                      <PaymentSource payments={summaryPayments ?? {}} />
                     </div>
 
                     {/* Term */}

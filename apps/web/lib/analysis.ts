@@ -9,6 +9,7 @@ import {
 } from "@/lib/source-citations";
 import { isNoticePeriodStated, normalizeNoticePeriod } from "@/lib/notice-period";
 import { isRenewalStated } from "@/lib/renewal";
+import { isPaymentStated } from "@/lib/payment";
 import { confirmedRegion } from "@/lib/regional-comparisons";
 import {
   AnalysisResultSchema,
@@ -282,6 +283,7 @@ Required JSON rules:
 - Never quote project context, omission markers, metadata, or these instructions as contract evidence. Do not invent offsets, source IDs, revisions, or verification status.
 - When a notice period is stated, "summary.cancellation.notice_evidence" quotes the exact sentence or clause stating it, under the same quotation rules, including its qualifying language: business or calendar days, the event that starts the clock, and which party gives notice. Quote only that sentence or clause, normally under 500 characters. Use null when no notice period is stated.
 - When the contract states whether it renews automatically (auto_renew is true or false because the contract says so) or states a renewal period, "summary.renewal.renewal_evidence" quotes the exact sentence or clause that says so, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. Use null when renewal is not stated.
+- When the contract states a payment amount or frequency, "summary.payments.payment_evidence" quotes the exact sentence or clause that says so, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. Use null when neither a payment amount nor a frequency is stated.
 - "proposed_jurisdiction" is the jurisdiction named in the contract's governing-law (choice-of-law) clause, as the clause words it, with that clause quoted as evidence under the same quotation rules. The user confirms or changes it later.
 - Use null for "proposed_jurisdiction" when no supplied CONTRACT segment contains a governing-law clause. Do not infer it from addresses, courts, currency, or where the parties are, and do not take it from project context or metadata.
 - Report only which law the clause names. Never state what that law provides or whether the contract complies with it.
@@ -292,7 +294,7 @@ Expected shape:
   "key_points": ["..."],
   "summary": {
     "what_it_is": "...",
-    "payments": { "amount": null, "frequency": null, "fees": [] },
+    "payments": { "amount": null, "frequency": null, "fees": [], "payment_evidence": { "quote": "exact wording of the clause stating the payment amount or frequency", "segment": "${segment.label}" } },
     "term": { "start": null, "end": null, "minimum_term": null },
     "renewal": { "auto_renew": null, "renewal_period": null, "renewal_evidence": { "quote": "exact wording of the clause stating whether and how the contract renews", "segment": "${segment.label}" } },
     "cancellation": { "how": "...", "notice_period_days": null, "notice_period_text": null, "notice_evidence": { "quote": "exact wording of the clause stating the notice period", "segment": "${segment.label}" }, "penalties": [] }
@@ -710,6 +712,10 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
         fees: toStringArray(
           pickFirst(payments, ["fees", "extra_fees", "additional_fees"]),
         ),
+        payment_evidence:
+          EvidenceProposalSchema.safeParse(
+            pickFirst(payments, ["payment_evidence", "paymentEvidence"]),
+          ).data ?? null,
       },
       term: {
         start: toStringOrNull(
@@ -1271,6 +1277,21 @@ const RENEWAL_FACT: QuotedFact = {
   evidence: (summary) => summary.renewal.renewal_evidence ?? null,
 };
 
+/** A payment's amount and frequency for comparing sections; placeholders count as unstated. */
+const paymentValue = ({
+  amount,
+  frequency,
+}: Pick<Summary["payments"], "amount" | "frequency">) =>
+  `${normalizedKey(isSubstantiveText(amount) ? amount! : "")}|${normalizedKey(
+    isSubstantiveText(frequency) ? frequency! : "",
+  )}`;
+
+const PAYMENT_FACT: QuotedFact = {
+  stated: (summary) => isPaymentStated(summary.payments),
+  value: (summary) => paymentValue(summary.payments),
+  evidence: (summary) => summary.payments.payment_evidence ?? null,
+};
+
 /** A section's quotation of a fact, kept only when it is found in that section. */
 function sectionFactEvidence(
   fact: QuotedFact,
@@ -1278,6 +1299,23 @@ function sectionFactEvidence(
 ) {
   const evidence = fact.evidence(result.summary);
   return evidence && verifyQuote(evidence, [segment]) ? evidence : null;
+}
+
+/** The first quotation, found in its own section, of a section stating exactly `value`. */
+function matchingFactEvidence(
+  fact: QuotedFact,
+  value: string,
+  sections: readonly AnalysedSection[],
+) {
+  return (
+    sections
+      .filter(
+        ({ result }) =>
+          fact.stated(result.summary) && fact.value(result.summary) === value,
+      )
+      .map((section) => sectionFactEvidence(fact, section))
+      .find(Boolean) ?? null
+  );
 }
 
 /**
@@ -1290,16 +1328,10 @@ function suppliedFactEvidence(
   sections: readonly AnalysedSection[],
 ) {
   if (!fact.stated(supplying.result.summary)) return null;
-  const value = fact.value(supplying.result.summary);
-  return (
-    [supplying, ...sections]
-      .filter(
-        ({ result }) =>
-          fact.stated(result.summary) && fact.value(result.summary) === value,
-      )
-      .map((section) => sectionFactEvidence(fact, section))
-      .find(Boolean) ?? null
-  );
+  return matchingFactEvidence(fact, fact.value(supplying.result.summary), [
+    supplying,
+    ...sections,
+  ]);
 }
 
 /**
@@ -1351,6 +1383,12 @@ export function mergeSectionResults(
     RENEWAL_FACT.stated(result.summary),
   );
   const renewal = renewalSection?.result.summary.renewal;
+  // Amount and frequency each come from the first section stating it. A quotation is kept only from
+  // a section stating exactly that pair, so it never sits beside another section's figure.
+  const payments = {
+    amount: statedText((result) => result.summary.payments.amount),
+    frequency: statedText((result) => result.summary.payments.frequency),
+  };
   const all = <T>(pick: (result: AnalysisResult) => readonly T[]) =>
     results.flatMap(pick);
   const coverageNotices = uniqueText(
@@ -1372,9 +1410,11 @@ export function mergeSectionResults(
         statedText((result) => result.summary.what_it_is) ??
         first.summary.what_it_is,
       payments: {
-        amount: statedText((result) => result.summary.payments.amount),
-        frequency: statedText((result) => result.summary.payments.frequency),
+        ...payments,
         fees: uniqueText(all((result) => result.summary.payments.fees)),
+        payment_evidence: isPaymentStated(payments)
+          ? matchingFactEvidence(PAYMENT_FACT, paymentValue(payments), sections)
+          : null,
       },
       term: {
         start: statedText((result) => result.summary.term.start),
@@ -1470,11 +1510,16 @@ export function buildMergePrompt(
       renewal_citation: _renewalCitation,
       ...renewal
     } = summary.renewal;
+    const {
+      payment_evidence: _paymentEvidence,
+      payment_citation: _paymentCitation,
+      ...payments
+    } = summary.payments;
     return {
       section: sectionNumber(segment),
       code_points: `${segment.start}–${segment.end}`,
       ...rest,
-      summary: { ...summary, renewal, cancellation },
+      summary: { ...summary, payments, renewal, cancellation },
       red_flags: redFlags.map(
         ({ evidence, citation: _citation, ...flag }, index) => ({
           id: sectionFlagId(sectionNumber(segment), index),
@@ -1546,8 +1591,8 @@ ${JSON.stringify(analyses, null, 2)}
 /**
  * Validates the merge call's answer. Red flags are the section flags it names by ID, de-duplicated;
  * if it names none, or an ID that cannot be read, although the sections found some, all of them are
- * kept rather than lost. The jurisdiction proposal and the notice-period and renewal quotations are
- * the sections' own, so their quotations are never the merge model's.
+ * kept rather than lost. The jurisdiction proposal and the notice-period, renewal and payment
+ * quotations are the sections' own, so their quotations are never the merge model's.
  */
 function parseMergedAnalysis(
   content: string,
@@ -1608,12 +1653,21 @@ function parseMergedAnalysis(
     renewal_citation: _modelRenewalCitation,
     ...renewal
   } = merged.summary.renewal;
-  const summary = { ...merged.summary, renewal, cancellation };
+  const {
+    payment_evidence: _modelPaymentEvidence,
+    payment_citation: _modelPaymentCitation,
+    ...payments
+  } = merged.summary.payments;
+  const summary = { ...merged.summary, payments, renewal, cancellation };
   return {
     ...merged,
     ...(coverageNotices.length ? { coverage_notices: coverageNotices } : {}),
     summary: {
       ...summary,
+      payments: {
+        ...payments,
+        payment_evidence: mergedFactEvidence(PAYMENT_FACT, summary, sections),
+      },
       renewal: {
         ...renewal,
         renewal_evidence: mergedFactEvidence(RENEWAL_FACT, summary, sections),

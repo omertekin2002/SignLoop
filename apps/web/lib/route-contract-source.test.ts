@@ -98,6 +98,9 @@ describe("owner-scoped bounded source endpoint", () => {
     `?analysisId=${analysisId}&flag=notice_citation`,
     `?analysisId=${analysisId}&flag=Renewal`,
     `?analysisId=${analysisId}&flag=renewal_citation`,
+    `?analysisId=${analysisId}&flag=Payment`,
+    `?analysisId=${analysisId}&flag=payments`,
+    `?analysisId=${analysisId}&flag=payment_citation`,
   ])("rejects malformed/unbounded requests: %s", async (query) => {
     expect((await get(query)).status).toBe(400);
     expect(getContractSourceForUser).not.toHaveBeenCalled();
@@ -238,6 +241,51 @@ describe("owner-scoped bounded source endpoint", () => {
     ]) {
       getAnalysisForUser.mockResolvedValue({ resultJson });
       expect((await get(renewal)).status).toBe(422);
+    }
+  });
+  it("highlights the clause stating the payment amount and frequency", async () => {
+    const text = "The Client pays a monthly fee of 1,200 GBP. Late payments accrue interest.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (quote: string, amount: string | null = "1,200 GBP") =>
+      attachAnalysisSources(
+        {
+          summary: {
+            payments: {
+              amount,
+              frequency: null,
+              fees: [],
+              payment_evidence: { quote, segment: "full" },
+            },
+          },
+        },
+        id,
+        text,
+      );
+    const payment = `?revision=${sourceRevision}&analysisId=${analysisId}&flag=payment`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed("The Client pays a monthly fee of 1,200 GBP."),
+    });
+    const response = await get(payment);
+    expect(response.status).toBe(200);
+    expect((await response.json()).highlight).toMatchObject({
+      quote: "The Client pays a monthly fee of 1,200 GBP.",
+      start: 0,
+      end: 43,
+    });
+    // A paraphrase is not verified, and unknown payment is never cited.
+    for (const resultJson of [
+      analysed("The Client pays 1,200 GBP monthly."),
+      analysed("The Client pays a monthly fee of 1,200 GBP.", null),
+    ]) {
+      getAnalysisForUser.mockResolvedValue({ resultJson });
+      expect((await get(payment)).status).toBe(422);
     }
   });
   it("returns the same 404 for missing, deleted, or unowned contracts", async () => {

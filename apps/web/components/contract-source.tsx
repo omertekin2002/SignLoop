@@ -13,6 +13,7 @@ import {
   citationForReport,
   JURISDICTION_CITATION,
   NOTICE_CITATION,
+  PAYMENT_CITATION,
   RENEWAL_CITATION,
   SourcePageSchema,
   type CitationRef,
@@ -20,6 +21,7 @@ import {
 } from "@/lib/source-citations";
 import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
 import { formatAutoRenew, isRenewalStated } from "@/lib/renewal";
+import { isPaymentStated } from "@/lib/payment";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -392,6 +394,33 @@ export function RenewalSource({
         stated={isRenewalStated(renewal)}
         citationRef={RENEWAL_CITATION}
         label="View matched quotation of the renewal clause"
+      />
+    </>
+  );
+}
+
+/**
+ * A report's payment amount and frequency in one of three states: with the verified quotation of
+ * the clause stating them, stated with a visible "No verified quotation" marker, or the unchanged
+ * "Not specified" when neither is stated.
+ */
+export function PaymentSource({
+  payments,
+}: {
+  payments: { amount?: string | null; frequency?: string | null };
+}) {
+  return (
+    <>
+      <p className="text-sm font-medium">
+        {payments.amount || "Not specified"}
+      </p>
+      {payments.frequency && (
+        <p className="text-xs text-muted-foreground">{payments.frequency}</p>
+      )}
+      <StatedFactSource
+        stated={isPaymentStated(payments)}
+        citationRef={PAYMENT_CITATION}
+        label="View matched quotation of the payment clause"
       />
     </>
   );

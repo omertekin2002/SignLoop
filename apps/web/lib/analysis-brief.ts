@@ -1,11 +1,13 @@
 import type { AnalysisResult } from "@/lib/schemas";
 import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
 import { formatAutoRenew, isRenewalStated } from "@/lib/renewal";
+import { isPaymentStated } from "@/lib/payment";
 import { regionalComparisonsView } from "@/lib/regional-comparisons";
 import {
   citationForReport,
   JURISDICTION_CITATION,
   NOTICE_CITATION,
+  PAYMENT_CITATION,
   RENEWAL_CITATION,
   SourceRevisionSchema,
   type CitationRef,
@@ -323,6 +325,30 @@ function renewalLines(
   ];
 }
 
+/**
+ * The payment amount and frequency with their evidence: both lines, then the verified quotation of
+ * the clause stating them or a marker on the frequency line. Unknown payment keeps its unchanged
+ * lines; fees stay unquoted.
+ */
+function paymentLines(
+  result: Partial<AnalysisResult>,
+  payments: Record<string, unknown>,
+  contractId: string,
+): string[] {
+  const amount = text(payments.amount);
+  const frequency = text(payments.frequency);
+  return [
+    `  - Amount: ${inline(amount ?? NOT_SPECIFIED)}`,
+    ...quotedFactLines(
+      `  - Frequency: ${inline(frequency ?? NOT_SPECIFIED)}`,
+      isPaymentStated({ amount, frequency }),
+      result,
+      contractId,
+      PAYMENT_CITATION,
+    ),
+  ];
+}
+
 function summarySection(
   result: Partial<AnalysisResult>,
   keyPoints: string[],
@@ -344,8 +370,7 @@ function summarySection(
   const lines = ["## Summary", "", labelled("What it is", text(summary.what_it_is))];
   lines.push(
     "- **Payments:**",
-    `  - Amount: ${inline(text(payments.amount) ?? NOT_SPECIFIED)}`,
-    `  - Frequency: ${inline(text(payments.frequency) ?? NOT_SPECIFIED)}`,
+    ...paymentLines(result, payments, contractId),
     fees.length ? "  - Fees:" : "  - Fees: None listed",
     ...bulletList(fees, "    "),
     "- **Term:**",

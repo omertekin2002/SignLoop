@@ -10,6 +10,7 @@ import {
 } from "@/lib/source-citations";
 import { isNoticePeriodStated } from "@/lib/notice-period";
 import { isRenewalStated } from "@/lib/renewal";
+import { isPaymentStated } from "@/lib/payment";
 import { isRecord } from "@/lib/utils";
 
 export function contractSourceRevision(text: string): string {
@@ -18,8 +19,8 @@ export function contractSourceRevision(text: string): string {
 
 /**
  * Always discard model-supplied receipts, even if they claim to be verified. Red flags, the
- * jurisdiction proposal, the cancellation notice period and renewal get server-verified citations
- * instead.
+ * jurisdiction proposal, the cancellation notice period, renewal and payment get server-verified
+ * citations instead.
  */
 export function attachAnalysisSources<T extends Record<string, unknown>>(
   result: T,
@@ -103,6 +104,12 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
           "renewal_evidence",
           "renewal_citation",
           isRenewalStated,
+        ),
+        ...citeFact(
+          "payments",
+          "payment_evidence",
+          "payment_citation",
+          isPaymentStated,
         ),
       }
     : null;

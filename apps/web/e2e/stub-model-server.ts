@@ -75,6 +75,13 @@ export const STUB_NOTICE_QUOTE =
  */
 export const STUB_RENEWAL_QUOTE = "This agreement renews automatically for successive twelve-month terms";
 
+/**
+ * The stub's quotation of the clause stating the payment amount and frequency. The late-interest
+ * finding quotes the next line, which also mentions payments.
+ */
+export const STUB_PAYMENT_QUOTE =
+  "The Client will pay a monthly fee of 1,200 GBP, invoiced on the first day of each month.";
+
 export const STUB_ANALYSIS_SUMMARY = "Stub analysis: a twelve-month website services agreement.";
 
 /**
@@ -90,7 +97,12 @@ export function stubAnalysis() {
     ],
     summary: {
       what_it_is: STUB_ANALYSIS_SUMMARY,
-      payments: { amount: "1,200 GBP", frequency: "Monthly", fees: [] },
+      payments: {
+        amount: "1,200 GBP",
+        frequency: "Monthly",
+        fees: [],
+        payment_evidence: { quote: STUB_PAYMENT_QUOTE, segment: "full" },
+      },
       term: { start: "The date of the order form", end: null, minimum_term: "12 months" },
       renewal: {
         auto_renew: true,

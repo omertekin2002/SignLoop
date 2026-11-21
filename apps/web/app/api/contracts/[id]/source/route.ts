@@ -5,6 +5,7 @@ import {
   citationForReport,
   JURISDICTION_CITATION,
   NOTICE_CITATION,
+  PAYMENT_CITATION,
   RENEWAL_CITATION,
   SOURCE_PAGE_SIZE,
   SourceRevisionSchema,
@@ -41,11 +42,12 @@ export async function GET(
     (analysisId !== null && !isUuid(analysisId)) ||
     (analysisId === null) !== (flag === null) ||
     // A red flag's index, the governing-law quotation behind the jurisdiction proposal, or the
-    // clause stating the cancellation notice period or renewal.
+    // clause stating the cancellation notice period, renewal, or the payment amount and frequency.
     (flag !== null &&
       flag !== JURISDICTION_CITATION &&
       flag !== NOTICE_CITATION &&
       flag !== RENEWAL_CITATION &&
+      flag !== PAYMENT_CITATION &&
       !/^\d{1,5}$/.test(flag))
   )
     return reply({ error: "Invalid source request" }, 400);
@@ -60,7 +62,8 @@ export async function GET(
       id,
       flag === JURISDICTION_CITATION ||
         flag === NOTICE_CITATION ||
-        flag === RENEWAL_CITATION
+        flag === RENEWAL_CITATION ||
+        flag === PAYMENT_CITATION
         ? flag
         : Number(flag),
     );
