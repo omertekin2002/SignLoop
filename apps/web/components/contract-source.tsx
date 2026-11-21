@@ -16,12 +16,15 @@ import {
   PAYMENT_CITATION,
   RENEWAL_CITATION,
   SourcePageSchema,
+  TERM_CITATION,
   type CitationRef,
   type SourceCitation,
 } from "@/lib/source-citations";
 import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
 import { formatAutoRenew, isRenewalStated } from "@/lib/renewal";
 import { isPaymentStated } from "@/lib/payment";
+import { isTermStated } from "@/lib/term";
+import { isSubstantiveText } from "@/lib/substantive-text";
 import {
   LISTED_FEES,
   LISTED_PENALTIES,
@@ -427,6 +430,39 @@ export function PaymentSource({
         stated={isPaymentStated(payments)}
         citationRef={PAYMENT_CITATION}
         label="View matched quotation of the payment clause"
+      />
+    </>
+  );
+}
+
+/**
+ * A report's term in one of three states: its minimum term, then its start and end when stated,
+ * with the verified quotation of the clause stating them; stated with a visible "No verified
+ * quotation" marker; or the unchanged "Not specified" when none is stated. The start and end are
+ * listed whenever stated, so the quotation never backs a value the card hides.
+ */
+export function TermSource({
+  term,
+}: {
+  term: {
+    start?: string | null;
+    end?: string | null;
+    minimum_term?: string | null;
+  };
+}) {
+  return (
+    <>
+      <p className="text-sm">{term.minimum_term || "Not specified"}</p>
+      {isSubstantiveText(term.start) && (
+        <p className="text-xs text-muted-foreground">Starts: {term.start}</p>
+      )}
+      {isSubstantiveText(term.end) && (
+        <p className="text-xs text-muted-foreground">Ends: {term.end}</p>
+      )}
+      <StatedFactSource
+        stated={isTermStated(term)}
+        citationRef={TERM_CITATION}
+        label="View matched quotation of the term clause"
       />
     </>
   );

@@ -14,6 +14,7 @@ import {
   STUB_PENALTY,
   STUB_PENALTY_QUOTE,
   STUB_RENEWAL_QUOTE,
+  STUB_TERM_QUOTE,
   type StubModelRequest,
 } from "../stub-model-server";
 import { openDashboard, openSidebar } from "./dashboard";
@@ -61,6 +62,7 @@ type StoredContract = {
           payment_citation?: { status?: string; quote?: string } | null;
           fee_citations?: { fee?: string; citation?: { status?: string; quote?: string } }[];
         };
+        term?: { term_citation?: { status?: string; quote?: string } | null };
         renewal?: { renewal_citation?: { status?: string; quote?: string } | null };
         cancellation?: {
           notice_citation?: { status?: string; quote?: string } | null;
@@ -111,8 +113,8 @@ function onScreen(locator: Locator): Locator {
 }
 
 // The stub's report as the contract page renders it: its summary and key points, the payment, the
-// extra fee, renewal, the notice period, the cancellation penalty and every finding with the
-// quotation the server verified, and the stub named as the model.
+// extra fee, the term, renewal, the notice period, the cancellation penalty and every finding with
+// the quotation the server verified, and the stub named as the model.
 async function expectStubAnalysis(page: Page) {
   await expect(onScreen(page.getByText(STUB_ANALYSIS_SUMMARY, { exact: true }))).toBeVisible();
   await expect(
@@ -141,6 +143,13 @@ async function expectStubAnalysis(page: Page) {
   await expect(onScreen(page.getByText("1,200 GBP", { exact: true }))).toBeVisible();
   await expect(
     onScreen(page.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_PAYMENT_QUOTE)}”$`) })),
+  ).toHaveCount(1);
+  // The term card lists the minimum term and the start. The renewal and penalty lines right after the
+  // term clause also speak of the term, so match the term quotation's own element.
+  await expect(onScreen(page.getByText("12 months", { exact: true }))).toBeVisible();
+  await expect(onScreen(page.getByText("Starts: The date of the order form", { exact: true }))).toBeVisible();
+  await expect(
+    onScreen(page.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_TERM_QUOTE)}”$`) })),
   ).toHaveCount(1);
   // The penalty is listed with its own quotation, in the same list item. The fixture's termination
   // line also ends with the notice clause's wording, so match the quotation's own element.
@@ -228,6 +237,13 @@ for (const theme of THEMES) {
     await page.keyboard.press("Escape");
     await expect(source).toBeHidden();
 
+    // So does the term's quotation of the clause stating it.
+    await page.getByRole("button", { name: "View matched quotation of the term clause" }).click();
+    await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
+    await expect(source.getByRole("region", { name: "Source passage" }).locator("mark")).toHaveText(STUB_TERM_QUOTE);
+    await page.keyboard.press("Escape");
+    await expect(source).toBeHidden();
+
     // So does the penalty's quotation of the clause stating it.
     await page.getByRole("button", { name: "View matched quotation of penalty 1" }).click();
     await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
@@ -270,6 +286,10 @@ for (const theme of THEMES) {
     expect(stored.analyses[0]!.resultJson.summary?.payments?.payment_citation).toMatchObject({
       status: "verified",
       quote: STUB_PAYMENT_QUOTE,
+    });
+    expect(stored.analyses[0]!.resultJson.summary?.term?.term_citation).toMatchObject({
+      status: "verified",
+      quote: STUB_TERM_QUOTE,
     });
     expect(stored.analyses[0]!.resultJson.summary?.cancellation?.penalty_citations).toEqual([
       {

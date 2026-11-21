@@ -25,9 +25,9 @@ const ProposedJurisdictionSchema = z
   .optional()
   .catch(null);
 // The model's quotation of the clause stating a summary fact (`notice_evidence`, `renewal_evidence`,
-// `payment_evidence`); attachAnalysisSources replaces it with a server-verified citation
-// (`notice_citation`, `renewal_citation`, `payment_citation`), or null. Malformed values are
-// dropped, never fatal.
+// `payment_evidence`, `term_evidence`); attachAnalysisSources replaces it with a server-verified
+// citation (`notice_citation`, `renewal_citation`, `payment_citation`, `term_citation`), or null.
+// Malformed values are dropped, never fatal.
 const FactEvidenceSchema = EvidenceProposalSchema.nullable().optional().catch(null);
 const FactCitationSchema = CitationSchema.nullable().optional().catch(null);
 
@@ -98,6 +98,8 @@ const BaseAnalysisResultSchema = z.object({
       start: z.string().nullable(),
       end: z.string().nullable(),
       minimum_term: z.string().nullable(),
+      term_evidence: FactEvidenceSchema,
+      term_citation: FactCitationSchema,
     }),
     renewal: z.object({
       auto_renew: z.boolean().nullable(),
@@ -266,6 +268,8 @@ export const PartialAnalysisResultSchema = z
           start: z.string().nullable().optional().default(null),
           end: z.string().nullable().optional().default(null),
           minimum_term: z.string().nullable().optional().default(null),
+          term_evidence: FactEvidenceSchema,
+          term_citation: FactCitationSchema,
         })
         .optional()
         .default({ start: null, end: null, minimum_term: null }),

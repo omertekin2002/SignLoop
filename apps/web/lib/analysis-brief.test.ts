@@ -326,7 +326,7 @@ describe("renderAnalysisBriefMarkdown", () => {
         "- **Cancellation:**",
       ].join("\n"),
     );
-    expect(quoted).not.toContain("12 months (**No verified quotation**)");
+    expect(quoted).not.toContain("Renewal period: 12 months (**No verified quotation**)");
     // The quotation renders inside the renewal period's list item as a block quote.
     const tokens = allTokens(marked.lexer(quoted));
     expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(1);
@@ -437,6 +437,82 @@ describe("renderAnalysisBriefMarkdown", () => {
       );
       expect(marked).not.toContain("direct debit");
       expect(marked).not.toMatch(/Frequency: [^\n]*\(/);
+    }
+  });
+
+  it("shows the term's verified quotation, marks a stated term without one, and leaves an unknown term", () => {
+    const withTerm = (term: Record<string, unknown>) =>
+      section(
+        brief({
+          ...FULL_RESULT,
+          summary: { ...FULL_RESULT.summary, term },
+        }).markdown,
+        "Summary",
+      );
+    const clause = "Membership starts on *1 January 2026* and lasts at least 12 months.";
+
+    const quoted = withTerm({
+      start: "2026-01-01",
+      end: "2026-12-31",
+      minimum_term: "12 months",
+      term_citation: citation(clause, 300),
+    });
+    expect(quoted).toContain(
+      [
+        "- **Term:**",
+        "  - Start: 2026-01-01",
+        "  - End: 2026-12-31",
+        "  - Minimum term: 12 months",
+        "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        "      > Membership starts on \\*1 January 2026\\* and lasts at least 12 months.",
+        "- **Renewal:**",
+      ].join("\n"),
+    );
+    expect(quoted).not.toContain("Minimum term: 12 months (**No verified quotation**)");
+    // The quotation renders inside the minimum term's list item as a block quote.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(1);
+
+    // A report stored before term quotations, an unverified one, one for another contract, and a
+    // term stated only by its start, only by its end, or only by its minimum term.
+    for (const [term, lines] of [
+      [
+        { start: "2026-01-01", end: "2026-12-31", minimum_term: "12 months" },
+        ["2026-01-01", "2026-12-31", "12 months"],
+      ],
+      [
+        { start: "2026-01-01", end: "2026-12-31", minimum_term: "12 months", term_citation: null },
+        ["2026-01-01", "2026-12-31", "12 months"],
+      ],
+      [
+        {
+          start: "2026-01-01",
+          end: "2026-12-31",
+          minimum_term: "12 months",
+          term_citation: { ...citation(clause), contract_id: "99999999-2222-4333-8444-555555555555" },
+        },
+        ["2026-01-01", "2026-12-31", "12 months"],
+      ],
+      [{ start: "2026-01-01", end: null, minimum_term: null }, ["2026-01-01", "Not specified", "Not specified"]],
+      [{ start: null, end: "2026-12-31", minimum_term: null }, ["Not specified", "2026-12-31", "Not specified"]],
+      [{ start: null, end: null, minimum_term: "12 months" }, ["Not specified", "Not specified", "12 months"]],
+    ] as const) {
+      const marked = withTerm(term);
+      expect(marked).toContain(
+        `- **Term:**\n  - Start: ${lines[0]}\n  - End: ${lines[1]}\n  - Minimum term: ${lines[2]} (**No verified quotation**)\n- **Renewal:**`,
+      );
+      expect(marked).not.toContain("lasts at least");
+    }
+
+    for (const unknown of [
+      { start: null, end: null, minimum_term: null },
+      { start: "Not specified", end: "Unknown", minimum_term: "N/A" },
+    ]) {
+      const marked = withTerm({ ...unknown, term_citation: citation(clause) });
+      expect(marked).toContain(
+        `- **Term:**\n  - Start: ${unknown.start ?? "Not specified"}\n  - End: ${unknown.end ?? "Not specified"}\n  - Minimum term: ${unknown.minimum_term ?? "Not specified"}\n- **Renewal:**`,
+      );
+      expect(marked).not.toContain("lasts at least");
     }
   });
 

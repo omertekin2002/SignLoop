@@ -2,6 +2,7 @@ import type { AnalysisResult } from "@/lib/schemas";
 import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
 import { formatAutoRenew, isRenewalStated } from "@/lib/renewal";
 import { isPaymentStated } from "@/lib/payment";
+import { isTermStated } from "@/lib/term";
 import {
   LISTED_FEES,
   LISTED_PENALTIES,
@@ -16,6 +17,7 @@ import {
   PAYMENT_CITATION,
   RENEWAL_CITATION,
   SourceRevisionSchema,
+  TERM_CITATION,
   type CitationRef,
 } from "@/lib/source-citations";
 import { formatDate, isRecord } from "@/lib/utils";
@@ -391,6 +393,32 @@ function paymentLines(
   ];
 }
 
+/**
+ * The term with its evidence: start, end and minimum term, then the verified quotation of the
+ * clause stating the term or a marker on the minimum-term line. An unknown term keeps its unchanged
+ * lines.
+ */
+function termLines(
+  result: Partial<AnalysisResult>,
+  term: Record<string, unknown>,
+  contractId: string,
+): string[] {
+  const start = text(term.start);
+  const end = text(term.end);
+  const minimumTerm = text(term.minimum_term);
+  return [
+    `  - Start: ${inline(start ?? NOT_SPECIFIED)}`,
+    `  - End: ${inline(end ?? NOT_SPECIFIED)}`,
+    ...quotedFactLines(
+      `  - Minimum term: ${inline(minimumTerm ?? NOT_SPECIFIED)}`,
+      isTermStated({ start, end, minimum_term: minimumTerm }),
+      result,
+      contractId,
+      TERM_CITATION,
+    ),
+  ];
+}
+
 function summarySection(
   result: Partial<AnalysisResult>,
   keyPoints: string[],
@@ -413,9 +441,7 @@ function summarySection(
     ...paymentLines(result, payments, contractId),
     ...listedLines(result, payments, LISTED_FEES, "Fees", contractId),
     "- **Term:**",
-    `  - Start: ${inline(text(term.start) ?? NOT_SPECIFIED)}`,
-    `  - End: ${inline(text(term.end) ?? NOT_SPECIFIED)}`,
-    `  - Minimum term: ${inline(text(term.minimum_term) ?? NOT_SPECIFIED)}`,
+    ...termLines(result, term, contractId),
     "- **Renewal:**",
     ...renewalLines(result, renewal, contractId),
     "- **Cancellation:**",

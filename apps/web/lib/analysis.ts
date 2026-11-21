@@ -10,6 +10,7 @@ import {
 import { isNoticePeriodStated, normalizeNoticePeriod } from "@/lib/notice-period";
 import { isRenewalStated } from "@/lib/renewal";
 import { isPaymentStated } from "@/lib/payment";
+import { isTermStated } from "@/lib/term";
 import { confirmedRegion } from "@/lib/regional-comparisons";
 import {
   AnalysisResultSchema,
@@ -291,6 +292,7 @@ Required JSON rules:
 - When a notice period is stated, "summary.cancellation.notice_evidence" quotes the exact sentence or clause stating it, under the same quotation rules, including its qualifying language: business or calendar days, the event that starts the clock, and which party gives notice. Quote only that sentence or clause, normally under 500 characters. Use null when no notice period is stated.
 - When the contract states whether it renews automatically (auto_renew is true or false because the contract says so) or states a renewal period, "summary.renewal.renewal_evidence" quotes the exact sentence or clause that says so, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. Use null when renewal is not stated.
 - When the contract states a payment amount or frequency, "summary.payments.payment_evidence" quotes the exact sentence or clause that says so, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. Use null when neither a payment amount nor a frequency is stated.
+- When the contract states when it starts, when it ends or a minimum term, "summary.term.term_evidence" quotes the exact sentence or clause that states the term, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. Use null when none of the start, end or minimum term is stated.
 - For each entry in "summary.cancellation.penalties", add one entry to "summary.cancellation.penalty_evidence": its "penalty" repeats that penalty's text exactly, character for character, and its "quote" is the exact sentence or clause stating that penalty, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. When no penalties are listed, "penalty_evidence" is an empty array.
 - For each entry in "summary.payments.fees", add one entry to "summary.payments.fee_evidence": its "fee" repeats that fee's text exactly, character for character, and its "quote" is the exact sentence or clause stating that fee, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. When no fees are listed, "fee_evidence" is an empty array.
 - "proposed_jurisdiction" is the jurisdiction named in the contract's governing-law (choice-of-law) clause, as the clause words it, with that clause quoted as evidence under the same quotation rules. The user confirms or changes it later.
@@ -304,7 +306,7 @@ Expected shape:
   "summary": {
     "what_it_is": "...",
     "payments": { "amount": null, "frequency": null, "fees": ["..."], "fee_evidence": [{ "fee": "the fee's text exactly as listed in fees", "quote": "exact wording of the clause stating that fee", "segment": "${segment.label}" }], "payment_evidence": { "quote": "exact wording of the clause stating the payment amount or frequency", "segment": "${segment.label}" } },
-    "term": { "start": null, "end": null, "minimum_term": null },
+    "term": { "start": null, "end": null, "minimum_term": null, "term_evidence": { "quote": "exact wording of the clause stating the term", "segment": "${segment.label}" } },
     "renewal": { "auto_renew": null, "renewal_period": null, "renewal_evidence": { "quote": "exact wording of the clause stating whether and how the contract renews", "segment": "${segment.label}" } },
     "cancellation": { "how": "...", "notice_period_days": null, "notice_period_text": null, "notice_evidence": { "quote": "exact wording of the clause stating the notice period", "segment": "${segment.label}" }, "penalties": ["..."], "penalty_evidence": [{ "penalty": "the penalty's text exactly as listed in penalties", "quote": "exact wording of the clause stating that penalty", "segment": "${segment.label}" }] }
   },
@@ -749,6 +751,10 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
         minimum_term: toStringOrNull(
           pickFirst(term, ["minimum_term", "minimumTerm", "minimum"]),
         ),
+        term_evidence:
+          EvidenceProposalSchema.safeParse(
+            pickFirst(term, ["term_evidence", "termEvidence"]),
+          ).data ?? null,
       },
       renewal: {
         auto_renew: pickFirst(renewal, ["auto_renew", "autoRenew"]) === null
@@ -1320,6 +1326,22 @@ const PAYMENT_FACT: QuotedFact = {
   evidence: (summary) => summary.payments.payment_evidence ?? null,
 };
 
+/** A term's start, end and minimum term for comparing sections; placeholders count as unstated. */
+const termValue = ({
+  start,
+  end,
+  minimum_term,
+}: Pick<Summary["term"], "start" | "end" | "minimum_term">) =>
+  [start, end, minimum_term]
+    .map((value) => normalizedKey(isSubstantiveText(value) ? value! : ""))
+    .join("|");
+
+const TERM_FACT: QuotedFact = {
+  stated: (summary) => isTermStated(summary.term),
+  value: (summary) => termValue(summary.term),
+  evidence: (summary) => summary.term.term_evidence ?? null,
+};
+
 /** A section's quotation of a fact, kept only when it is found in that section. */
 function sectionFactEvidence(
   fact: QuotedFact,
@@ -1462,6 +1484,13 @@ export function mergeSectionResults(
     amount: statedText((result) => result.summary.payments.amount),
     frequency: statedText((result) => result.summary.payments.frequency),
   };
+  // So do start, end and minimum term, and the quotation comes only from a section stating exactly
+  // that triple: when they come from different sections, no one quotation backs them all.
+  const term = {
+    start: statedText((result) => result.summary.term.start),
+    end: statedText((result) => result.summary.term.end),
+    minimum_term: statedText((result) => result.summary.term.minimum_term),
+  };
   const all = <T>(pick: (result: AnalysisResult) => readonly T[]) =>
     results.flatMap(pick);
   const coverageNotices = uniqueText(
@@ -1495,9 +1524,10 @@ export function mergeSectionResults(
           : null,
       },
       term: {
-        start: statedText((result) => result.summary.term.start),
-        end: statedText((result) => result.summary.term.end),
-        minimum_term: statedText((result) => result.summary.term.minimum_term),
+        ...term,
+        term_evidence: isTermStated(term)
+          ? matchingFactEvidence(TERM_FACT, termValue(term), sections)
+          : null,
       },
       renewal: {
         auto_renew: renewal?.auto_renew ?? null,
@@ -1596,11 +1626,16 @@ export function buildMergePrompt(
       fee_citations: _feeCitations,
       ...payments
     } = summary.payments;
+    const {
+      term_evidence: _termEvidence,
+      term_citation: _termCitation,
+      ...term
+    } = summary.term;
     return {
       section: sectionNumber(segment),
       code_points: `${segment.start}–${segment.end}`,
       ...rest,
-      summary: { ...summary, payments, renewal, cancellation },
+      summary: { ...summary, payments, term, renewal, cancellation },
       red_flags: redFlags.map(
         ({ evidence, citation: _citation, ...flag }, index) => ({
           id: sectionFlagId(sectionNumber(segment), index),
@@ -1673,7 +1708,7 @@ ${JSON.stringify(analyses, null, 2)}
  * Validates the merge call's answer. Red flags are the section flags it names by ID, de-duplicated;
  * if it names none, or an ID that cannot be read, although the sections found some, all of them are
  * kept rather than lost. The jurisdiction proposal and the notice-period, penalty, renewal,
- * payment and fee quotations are the sections' own, so their quotations are never the merge
+ * payment, fee and term quotations are the sections' own, so their quotations are never the merge
  * model's.
  */
 function parseMergedAnalysis(
@@ -1744,7 +1779,12 @@ function parseMergedAnalysis(
     fee_citations: _modelFeeCitations,
     ...payments
   } = merged.summary.payments;
-  const summary = { ...merged.summary, payments, renewal, cancellation };
+  const {
+    term_evidence: _modelTermEvidence,
+    term_citation: _modelTermCitation,
+    ...term
+  } = merged.summary.term;
+  const summary = { ...merged.summary, payments, term, renewal, cancellation };
   return {
     ...merged,
     ...(coverageNotices.length ? { coverage_notices: coverageNotices } : {}),
@@ -1754,6 +1794,10 @@ function parseMergedAnalysis(
         ...payments,
         payment_evidence: mergedFactEvidence(PAYMENT_FACT, summary, sections),
         fee_evidence: listedEvidence(LISTED_FEES, payments.fees, sections),
+      },
+      term: {
+        ...term,
+        term_evidence: mergedFactEvidence(TERM_FACT, summary, sections),
       },
       renewal: {
         ...renewal,

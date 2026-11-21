@@ -82,6 +82,13 @@ export const STUB_RENEWAL_QUOTE = "This agreement renews automatically for succe
 export const STUB_PAYMENT_QUOTE =
   "The Client will pay a monthly fee of 1,200 GBP, invoiced on the first day of each month.";
 
+/**
+ * The stub's quotation of the clause stating the term: when it starts and how long it lasts. The
+ * next two lines, quoted for renewal and the penalty, also speak of the term.
+ */
+export const STUB_TERM_QUOTE =
+  "This agreement starts on the date of the order form and lasts for twelve months.";
+
 /** The stub's one cancellation penalty, as the Penalties box lists it. */
 export const STUB_PENALTY = "Early termination fee equal to two months' fees";
 
@@ -118,7 +125,12 @@ export function stubAnalysis() {
         fee_evidence: [{ fee: STUB_FEE, quote: STUB_FEE_QUOTE, segment: "full" }],
         payment_evidence: { quote: STUB_PAYMENT_QUOTE, segment: "full" },
       },
-      term: { start: "The date of the order form", end: null, minimum_term: "12 months" },
+      term: {
+        start: "The date of the order form",
+        end: null,
+        minimum_term: "12 months",
+        term_evidence: { quote: STUB_TERM_QUOTE, segment: "full" },
+      },
       renewal: {
         auto_renew: true,
         renewal_period: "12 months",

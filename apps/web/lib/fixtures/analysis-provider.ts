@@ -35,6 +35,11 @@ export function sectionOutput(
     frequency?: string | null;
     /** The section's quotation of the clause stating its payment amount and frequency. */
     paymentQuote?: string;
+    start?: string | null;
+    end?: string | null;
+    minimumTerm?: string | null;
+    /** The section's quotation of the clause stating its term. */
+    termQuote?: string;
     fees?: string[];
     /** The section's quotations of the clauses stating its fees, keyed by fee text. */
     feeQuotes?: Record<string, string>;
@@ -66,7 +71,14 @@ export function sectionOutput(
           ? { quote: options.paymentQuote, segment: segment.label }
           : null,
       },
-      term: { start: null, end: null, minimum_term: null },
+      term: {
+        start: options.start ?? null,
+        end: options.end ?? null,
+        minimum_term: options.minimumTerm ?? null,
+        term_evidence: options.termQuote
+          ? { quote: options.termQuote, segment: segment.label }
+          : null,
+      },
       renewal: {
         auto_renew: options.autoRenew ?? null,
         renewal_period: options.renewalPeriod ?? null,

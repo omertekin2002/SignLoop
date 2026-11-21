@@ -219,8 +219,8 @@ export function verifyQuote(
 
 /**
  * A cited passage in a stored report: a red flag by index, the jurisdiction proposal, the
- * cancellation notice period, renewal, the payment amount and frequency, or a cancellation penalty
- * or an extra fee by its index in the stored `penalties` (`penalty-<n>`) or `fees` (`fee-<n>`).
+ * cancellation notice period, renewal, the payment amount and frequency, the term, or a cancellation
+ * penalty or an extra fee by its index in the stored `penalties` (`penalty-<n>`) or `fees` (`fee-<n>`).
  */
 export type CitationRef =
   | number
@@ -228,11 +228,13 @@ export type CitationRef =
   | "notice"
   | "renewal"
   | "payment"
+  | "term"
   | ListedCitationRef;
 export const JURISDICTION_CITATION = "jurisdiction";
 export const NOTICE_CITATION = "notice";
 export const RENEWAL_CITATION = "renewal";
 export const PAYMENT_CITATION = "payment";
+export const TERM_CITATION = "term";
 
 function storedCitation(report: Record<string, unknown>, ref: CitationRef): unknown {
   const field = (value: unknown, key: string) =>
@@ -247,6 +249,8 @@ function storedCitation(report: Record<string, unknown>, ref: CitationRef): unkn
     return field(field(report.summary, "renewal"), "renewal_citation");
   if (ref === PAYMENT_CITATION)
     return field(field(report.summary, "payments"), "payment_citation");
+  if (ref === TERM_CITATION)
+    return field(field(report.summary, "term"), "term_citation");
   if (isListedCitationRef(ref)) return storedListedCitation(report.summary, ref);
   return Array.isArray(report.red_flags)
     ? field(report.red_flags[ref], "citation")

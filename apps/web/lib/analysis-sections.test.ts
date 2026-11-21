@@ -6,6 +6,7 @@ import {
   contractAnalysisCoverage,
   contractAnalysisSegments,
   PAYMENT_CITATION,
+  TERM_CITATION,
 } from "./source-citations";
 import {
   completed,
@@ -1038,6 +1039,206 @@ describe("analysis of contracts longer than one request", () => {
         });
         expect(stored.summary.payments.payment_citation).toBeNull();
         expect(stored.summary.payments).toMatchObject(payments);
+      }
+    });
+  });
+
+  describe("term quotations", () => {
+    const clause =
+      "300.1 Term. This agreement starts on 1 March 2027 and has a minimum term of 24 months.\n";
+    const termQuote = "This agreement starts on 1 March 2027 and has a minimum term of 24 months.";
+    const text = contractOf(400, { 300: clause });
+    const segments = contractAnalysisSegments(text);
+    const cited = segments.find((part) => part.text.includes(clause))!;
+    const citedNumber = Number(cited.label.slice("section-".length));
+    type Term = {
+      start?: string | null;
+      end?: string | null;
+      minimumTerm?: string | null;
+      termQuote?: string;
+    };
+    const citedTerm: Term = { start: "1 March 2027", minimumTerm: "24 months", termQuote };
+
+    // Section `citedNumber` states the start and minimum term with its quotation; `others` sets the
+    // sections before it and `later` the sections after it.
+    async function analyse(
+      merge: "fails" | Record<string, unknown>,
+      others: Term = {},
+      later: Term = {},
+      ownTerm: Term = citedTerm,
+    ) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return merge === "fails" ? failure() : completed(mergeOutput(merge));
+        return completed(
+          sectionOutput(
+            double.segment(call),
+            call.section === citedNumber
+              ? ownTerm
+              : call.section < citedNumber
+                ? others
+                : later,
+          ),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      return {
+        answer,
+        stored: finalizeAnalysisResult(answer.result, { id: CONTRACT_ID, text }),
+      };
+    }
+
+    const mergedTerm = (term: Record<string, unknown>) => ({
+      summary: {
+        ...mergeOutput().summary,
+        term: { start: null, end: null, minimum_term: null, ...term },
+      },
+    });
+
+    it("quotes the merged term from the section stating it when the merge call fails", async () => {
+      expect(citedNumber).toBeGreaterThan(1);
+      const { answer, stored } = await analyse(
+        "fails",
+        // A section stating no term never lends its quotation.
+        { minimumTerm: "Not specified", termQuote: "Records. Each party" },
+        // A later section's different term never sits beside the cited section's quotation.
+        { start: "1 April 2027", minimumTerm: "36 months" },
+      );
+      expect(answer.result.summary.term).toEqual({
+        start: "1 March 2027",
+        end: null,
+        minimum_term: "24 months",
+        term_evidence: { quote: termQuote, segment: cited.label },
+      });
+      const start = text.indexOf(termQuote);
+      expect(stored.summary.term.term_citation).toMatchObject({
+        status: "verified",
+        quote: termQuote,
+        start: Array.from(text.slice(0, start)).length,
+      });
+      expect(citationForReport(stored, CONTRACT_ID, TERM_CITATION)).toEqual(
+        stored.summary.term.term_citation,
+      );
+    });
+
+    it("leaves the term unknown, with no quotation, when no section states it and the merge call fails", async () => {
+      const double = provider(segments, (call) =>
+        call.section === "merge"
+          ? failure()
+          : completed(sectionOutput(double.segment(call), { termQuote })),
+      );
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(answer.result.summary.term).toEqual({
+        start: null,
+        end: null,
+        minimum_term: null,
+        term_evidence: null,
+      });
+    });
+
+    it("quotes the merged term from a later section stating the same triple when the first cannot quote it", async () => {
+      // An earlier section states the same term but claims a quotation it does not contain.
+      const { answer } = await analyse("fails", {
+        start: "1 march 2027",
+        minimumTerm: "24 MONTHS",
+        termQuote,
+      });
+      expect(answer.result.summary.term).toEqual({
+        start: "1 march 2027",
+        end: null,
+        minimum_term: "24 MONTHS",
+        term_evidence: { quote: termQuote, segment: cited.label },
+      });
+    });
+
+    it("has no quotation when the first stating section states a different term", async () => {
+      const { answer, stored } = await analyse("fails", {
+        start: "1 March 2027",
+        minimumTerm: "36 months",
+      });
+      expect(answer.result.summary.term).toMatchObject({
+        start: "1 March 2027",
+        minimum_term: "36 months",
+        term_evidence: null,
+      });
+      expect(stored.summary.term.term_citation).toBeNull();
+    });
+
+    it("has no quotation when the start and minimum term come from different sections", async () => {
+      // The cited section states only the minimum term; a later one states only the start.
+      const { answer, stored } = await analyse(
+        "fails",
+        {},
+        { start: "1 March 2027" },
+        { minimumTerm: "24 months", termQuote },
+      );
+      expect(answer.result.summary.term).toEqual({
+        start: "1 March 2027",
+        end: null,
+        minimum_term: "24 months",
+        term_evidence: null,
+      });
+      expect(stored.summary.term.term_citation).toBeNull();
+      expect(stored.summary.term).toMatchObject({
+        start: "1 March 2027",
+        minimum_term: "24 months",
+      });
+    });
+
+    it("keeps a section's quotation when the merged term equals it, never the merge model's", async () => {
+      const { answer, stored } = await analyse(
+        mergedTerm({
+          start: "1 March 2027",
+          minimum_term: "24 months",
+          term_evidence: { quote: "Records. Each party", segment: "section-1" },
+          term_citation: { status: "verified", quote: "Records", start: 0, end: 7 },
+        }),
+      );
+      expect(answer.result.summary.term).toEqual({
+        start: "1 March 2027",
+        end: null,
+        minimum_term: "24 months",
+        term_evidence: { quote: termQuote, segment: cited.label },
+      });
+      expect(stored.summary.term.term_citation?.quote).toBe(termQuote);
+    });
+
+    it("drops the quotation when another section states a different term", async () => {
+      for (const disagreeing of [
+        { start: "1 April 2027", minimumTerm: "24 months" },
+        { start: "1 March 2027", minimumTerm: "36 months" },
+        { end: "28 February 2029" },
+        // Stating only part of the triple is a different triple too.
+        { minimumTerm: "24 months" },
+      ]) {
+        const { answer, stored } = await analyse(
+          mergedTerm({ start: "1 March 2027", minimum_term: "24 months" }),
+          {},
+          disagreeing,
+        );
+        expect(answer.result.summary.term).toMatchObject({
+          start: "1 March 2027",
+          minimum_term: "24 months",
+          term_evidence: null,
+        });
+        expect(stored.summary.term.term_citation).toBeNull();
+      }
+    });
+
+    it("has no quotation for a merged term that differs from every cited section", async () => {
+      for (const term of [
+        { start: "1 March 2027", end: null, minimum_term: "36 months" },
+        { start: "1 March 2027", end: "28 February 2029", minimum_term: "24 months" },
+        { start: null, end: null, minimum_term: "24 months" },
+        { start: null, end: null, minimum_term: null },
+      ]) {
+        const { answer, stored } = await analyse(mergedTerm(term));
+        expect(answer.result.summary.term).toEqual({ ...term, term_evidence: null });
+        expect(stored.summary.term.term_citation).toBeNull();
+        expect(stored.summary.term).toMatchObject(term);
       }
     });
   });

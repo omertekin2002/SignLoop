@@ -9,6 +9,7 @@ import {
   RENEWAL_CITATION,
   SOURCE_PAGE_SIZE,
   SourceRevisionSchema,
+  TERM_CITATION,
 } from "@/lib/source-citations";
 import { isListedCitationRef } from "@/lib/listed-citations";
 import { isUuid } from "@/lib/utils";
@@ -43,13 +44,14 @@ export async function GET(
     (analysisId !== null && !isUuid(analysisId)) ||
     (analysisId === null) !== (flag === null) ||
     // A red flag's index, the governing-law quotation behind the jurisdiction proposal, the clause
-    // stating the cancellation notice period, renewal, or the payment amount and frequency, or a
-    // cancellation penalty or an extra fee by its index (`penalty-<n>`, `fee-<n>`).
+    // stating the cancellation notice period, renewal, the payment amount and frequency or the term,
+    // or a cancellation penalty or an extra fee by its index (`penalty-<n>`, `fee-<n>`).
     (flag !== null &&
       flag !== JURISDICTION_CITATION &&
       flag !== NOTICE_CITATION &&
       flag !== RENEWAL_CITATION &&
       flag !== PAYMENT_CITATION &&
+      flag !== TERM_CITATION &&
       !isListedCitationRef(flag) &&
       !/^\d{1,5}$/.test(flag))
   )
@@ -66,7 +68,8 @@ export async function GET(
       flag === JURISDICTION_CITATION ||
         flag === NOTICE_CITATION ||
         flag === RENEWAL_CITATION ||
-        flag === PAYMENT_CITATION
+        flag === PAYMENT_CITATION ||
+        flag === TERM_CITATION
         ? flag
         : isListedCitationRef(flag)
           ? flag
