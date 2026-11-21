@@ -96,6 +96,8 @@ describe("owner-scoped bounded source endpoint", () => {
     `?analysisId=${analysisId}&flag=jurisdiction0`,
     `?analysisId=${analysisId}&flag=Notice`,
     `?analysisId=${analysisId}&flag=notice_citation`,
+    `?analysisId=${analysisId}&flag=Renewal`,
+    `?analysisId=${analysisId}&flag=renewal_citation`,
   ])("rejects malformed/unbounded requests: %s", async (query) => {
     expect((await get(query)).status).toBe(400);
     expect(getContractSourceForUser).not.toHaveBeenCalled();
@@ -193,6 +195,50 @@ describe("owner-scoped bounded source endpoint", () => {
       resultJson: analysed("ten business days of notice"),
     });
     expect((await get(notice)).status).toBe(422);
+  });
+  it("highlights the clause stating renewal", async () => {
+    const text = "This agreement renews automatically for successive one-year terms.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (quote: string, autoRenew: boolean | null = true) =>
+      attachAnalysisSources(
+        {
+          summary: {
+            renewal: {
+              auto_renew: autoRenew,
+              renewal_period: null,
+              renewal_evidence: { quote, segment: "full" },
+            },
+          },
+        },
+        id,
+        text,
+      );
+    const renewal = `?revision=${sourceRevision}&analysisId=${analysisId}&flag=renewal`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed("renews automatically for successive one-year terms"),
+    });
+    const response = await get(renewal);
+    expect(response.status).toBe(200);
+    expect((await response.json()).highlight).toMatchObject({
+      quote: "renews automatically for successive one-year terms",
+      start: 15,
+      end: 65,
+    });
+    // A paraphrase is not verified, and unknown renewal is never cited.
+    for (const resultJson of [
+      analysed("renews every year"),
+      analysed("renews automatically for successive one-year terms", null),
+    ]) {
+      getAnalysisForUser.mockResolvedValue({ resultJson });
+      expect((await get(renewal)).status).toBe(422);
+    }
   });
   it("returns the same 404 for missing, deleted, or unowned contracts", async () => {
     auth.mockResolvedValue({ userId: "intruder" });

@@ -9,6 +9,7 @@ import {
   type SourceCitation,
 } from "@/lib/source-citations";
 import { isNoticePeriodStated } from "@/lib/notice-period";
+import { isRenewalStated } from "@/lib/renewal";
 import { isRecord } from "@/lib/utils";
 
 export function contractSourceRevision(text: string): string {
@@ -17,7 +18,8 @@ export function contractSourceRevision(text: string): string {
 
 /**
  * Always discard model-supplied receipts, even if they claim to be verified. Red flags, the
- * jurisdiction proposal and the cancellation notice period get server-verified citations instead.
+ * jurisdiction proposal, the cancellation notice period and renewal get server-verified citations
+ * instead.
  */
 export function attachAnalysisSources<T extends Record<string, unknown>>(
   result: T,
@@ -64,31 +66,46 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
   const proposalCitation = jurisdiction
     ? verifiedCitation(proposal?.evidence)
     : null;
-  // The notice period keeps its value either way; only a verified quotation of the clause stating
-  // it becomes its citation. A model-sent `notice_citation` is never kept.
+  // Summary facts keep their values either way; only a verified quotation of the clause stating one
+  // becomes its citation, and only while the fact is stated. A model-sent citation is never kept.
   const summary = isRecord(result.summary) ? result.summary : null;
-  const cancellation = isRecord(summary?.cancellation)
-    ? summary.cancellation
+  const citeFact = (
+    group: string,
+    evidenceKey: string,
+    citationKey: string,
+    stated: (fact: Record<string, unknown>) => boolean,
+  ) => {
+    const fact = isRecord(summary?.[group]) ? summary[group] : null;
+    if (!fact) return {};
+    const {
+      [evidenceKey]: evidence,
+      [citationKey]: _untrusted,
+      ...rest
+    } = fact;
+    return {
+      [group]: {
+        ...rest,
+        [citationKey]: stated(rest) ? verifiedCitation(evidence) : null,
+      },
+    };
+  };
+  const citedSummary = summary
+    ? {
+        ...summary,
+        ...citeFact(
+          "cancellation",
+          "notice_evidence",
+          "notice_citation",
+          isNoticePeriodStated,
+        ),
+        ...citeFact(
+          "renewal",
+          "renewal_evidence",
+          "renewal_citation",
+          isRenewalStated,
+        ),
+      }
     : null;
-  const citedSummary =
-    summary && cancellation
-      ? (() => {
-          const {
-            notice_evidence: noticeEvidence,
-            notice_citation: _untrustedNotice,
-            ...rest
-          } = cancellation;
-          return {
-            ...summary,
-            cancellation: {
-              ...rest,
-              notice_citation: isNoticePeriodStated(rest)
-                ? verifiedCitation(noticeEvidence)
-                : null,
-            },
-          };
-        })()
-      : null;
   return {
     ...result,
     source,

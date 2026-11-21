@@ -272,7 +272,7 @@ describe("renderAnalysisBriefMarkdown", () => {
         "      > Either party may end this agreement on 10 business days' \\*written\\* notice.",
       ].join("\n"),
     );
-    expect(quoted).not.toContain("No verified quotation");
+    expect(quoted).not.toContain("10 business days (**No verified quotation**)");
     // The quotation renders inside the notice period's list item as a block quote.
     const tokens = allTokens(marked.lexer(quoted));
     expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(1);
@@ -297,7 +297,76 @@ describe("renderAnalysisBriefMarkdown", () => {
       notice_citation: citation(clause),
     });
     expect(unknown).toContain("  - Notice period: Not specified\n");
-    expect(unknown).not.toMatch(/verified quotation/i);
+    expect(unknown).not.toContain("Either party may end this agreement");
+  });
+
+  it("shows renewal's verified quotation, marks stated renewal without one, and leaves unknown renewal", () => {
+    const withRenewal = (renewal: Record<string, unknown>) =>
+      section(
+        brief({
+          ...FULL_RESULT,
+          summary: { ...FULL_RESULT.summary, renewal },
+        }).markdown,
+        "Summary",
+      );
+    const clause = "This membership renews *automatically* for further 12-month terms.";
+
+    const quoted = withRenewal({
+      auto_renew: true,
+      renewal_period: "12 months",
+      renewal_citation: citation(clause, 300),
+    });
+    expect(quoted).toContain(
+      [
+        "- **Renewal:**",
+        "  - Automatic renewal: Auto-renews",
+        "  - Renewal period: 12 months",
+        "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        "      > This membership renews \\*automatically\\* for further 12-month terms.",
+        "- **Cancellation:**",
+      ].join("\n"),
+    );
+    expect(quoted).not.toContain("12 months (**No verified quotation**)");
+    // The quotation renders inside the renewal period's list item as a block quote.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(1);
+
+    // A report stored before renewal quotations, an unverified one, one for another contract, and
+    // renewal stated only as not automatic or only by its period.
+    for (const [renewal, lines] of [
+      [{ auto_renew: true, renewal_period: "12 months" }, ["Auto-renews", "12 months"]],
+      [
+        { auto_renew: true, renewal_period: "12 months", renewal_citation: null },
+        ["Auto-renews", "12 months"],
+      ],
+      [
+        {
+          auto_renew: true,
+          renewal_period: "12 months",
+          renewal_citation: { ...citation(clause), contract_id: "99999999-2222-4333-8444-555555555555" },
+        },
+        ["Auto-renews", "12 months"],
+      ],
+      [{ auto_renew: false, renewal_period: null }, ["Does not auto-renew", "Not specified"]],
+      [{ auto_renew: null, renewal_period: "Monthly" }, ["Unknown", "Monthly"]],
+    ] as const) {
+      const marked = withRenewal(renewal);
+      expect(marked).toContain(
+        `  - Automatic renewal: ${lines[0]}\n  - Renewal period: ${lines[1]} (**No verified quotation**)\n`,
+      );
+      expect(marked).not.toContain("Verified quotation** (");
+    }
+
+    const unknown = withRenewal({
+      auto_renew: null,
+      renewal_period: null,
+      renewal_citation: citation(clause),
+    });
+    expect(unknown).toContain(
+      "  - Automatic renewal: Unknown\n  - Renewal period: Not specified\n",
+    );
+    expect(unknown).not.toContain(clause);
+    expect(unknown).not.toContain("Renewal period: Not specified (");
   });
 
   it("renders an unknown auto-renewal as unknown, not as no", () => {

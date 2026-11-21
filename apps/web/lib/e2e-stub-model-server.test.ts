@@ -6,6 +6,7 @@ import {
   STUB_CONTRACT_FIXTURE,
   STUB_MODEL,
   STUB_NOTICE_QUOTE,
+  STUB_RENEWAL_QUOTE,
   startStubModelServer,
   stubAnalysis,
   stubReply,
@@ -147,6 +148,14 @@ describe("the end-to-end stub model", () => {
       notice_citation: { status: "verified", contract_id: contractId, quote: STUB_NOTICE_QUOTE },
     });
     expect(stored.summary.cancellation).not.toHaveProperty("notice_evidence");
+
+    // So does renewal, from the clause stating that the agreement renews and for how long.
+    expect(stored.summary.renewal).toMatchObject({
+      auto_renew: true,
+      renewal_period: "12 months",
+      renewal_citation: { status: "verified", contract_id: contractId, quote: STUB_RENEWAL_QUOTE },
+    });
+    expect(stored.summary.renewal).not.toHaveProperty("renewal_evidence");
 
     const requests = stub.requests();
     expect(requests).toEqual([expect.objectContaining({ model: STUB_MODEL, kind: "analysis", tools: [] })]);

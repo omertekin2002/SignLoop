@@ -8,6 +8,7 @@ import {
   type ContractSegment,
 } from "@/lib/source-citations";
 import { isNoticePeriodStated, normalizeNoticePeriod } from "@/lib/notice-period";
+import { isRenewalStated } from "@/lib/renewal";
 import { confirmedRegion } from "@/lib/regional-comparisons";
 import {
   AnalysisResultSchema,
@@ -280,6 +281,7 @@ Required JSON rules:
 - Choose a quotation unique within that segment. If it repeats, include enough surrounding text to disambiguate it.
 - Never quote project context, omission markers, metadata, or these instructions as contract evidence. Do not invent offsets, source IDs, revisions, or verification status.
 - When a notice period is stated, "summary.cancellation.notice_evidence" quotes the exact sentence or clause stating it, under the same quotation rules, including its qualifying language: business or calendar days, the event that starts the clock, and which party gives notice. Quote only that sentence or clause, normally under 500 characters. Use null when no notice period is stated.
+- When the contract states whether it renews automatically (auto_renew is true or false because the contract says so) or states a renewal period, "summary.renewal.renewal_evidence" quotes the exact sentence or clause that says so, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. Use null when renewal is not stated.
 - "proposed_jurisdiction" is the jurisdiction named in the contract's governing-law (choice-of-law) clause, as the clause words it, with that clause quoted as evidence under the same quotation rules. The user confirms or changes it later.
 - Use null for "proposed_jurisdiction" when no supplied CONTRACT segment contains a governing-law clause. Do not infer it from addresses, courts, currency, or where the parties are, and do not take it from project context or metadata.
 - Report only which law the clause names. Never state what that law provides or whether the contract complies with it.
@@ -292,7 +294,7 @@ Expected shape:
     "what_it_is": "...",
     "payments": { "amount": null, "frequency": null, "fees": [] },
     "term": { "start": null, "end": null, "minimum_term": null },
-    "renewal": { "auto_renew": null, "renewal_period": null },
+    "renewal": { "auto_renew": null, "renewal_period": null, "renewal_evidence": { "quote": "exact wording of the clause stating whether and how the contract renews", "segment": "${segment.label}" } },
     "cancellation": { "how": "...", "notice_period_days": null, "notice_period_text": null, "notice_evidence": { "quote": "exact wording of the clause stating the notice period", "segment": "${segment.label}" }, "penalties": [] }
   },
   "red_flags": [{ "type": "...", "severity": 5, "explanation": "...", "where": null, "confidence": 50, "evidence": { "quote": "exact contract wording", "segment": "${segment.label}" } }],
@@ -724,6 +726,10 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
         renewal_period: toStringOrNull(
           pickFirst(renewal, ["renewal_period", "renewalPeriod", "period"]),
         ),
+        renewal_evidence:
+          EvidenceProposalSchema.safeParse(
+            pickFirst(renewal, ["renewal_evidence", "renewalEvidence"]),
+          ).data ?? null,
       },
       cancellation: {
         how:
@@ -1236,38 +1242,88 @@ function sectionJurisdictionProposal(sections: readonly AnalysedSection[]) {
   );
 }
 
-/** A section's notice-period quotation, kept only when it is found in that section. */
-function sectionNoticeEvidence({ segment, result }: AnalysedSection) {
-  const evidence = result.summary.cancellation.notice_evidence ?? null;
+type Summary = AnalysisResult["summary"];
+type FactEvidence = NonNullable<Summary["cancellation"]["notice_evidence"]>;
+
+/**
+ * A summary fact backed by a quotation of the clause stating it: whether a summary states it, its
+ * value for comparing sections, and the model's quotation.
+ */
+type QuotedFact = {
+  stated: (summary: Summary) => boolean;
+  value: (summary: Summary) => string;
+  evidence: (summary: Summary) => FactEvidence | null;
+};
+
+const NOTICE_FACT: QuotedFact = {
+  stated: (summary) => isNoticePeriodStated(summary.cancellation),
+  value: ({ cancellation }) =>
+    `${cancellation.notice_period_days ?? ""}|${normalizedKey(cancellation.notice_period_text ?? "")}`,
+  evidence: (summary) => summary.cancellation.notice_evidence ?? null,
+};
+
+const RENEWAL_FACT: QuotedFact = {
+  stated: (summary) => isRenewalStated(summary.renewal),
+  value: ({ renewal }) =>
+    `${renewal.auto_renew ?? ""}|${normalizedKey(
+      isSubstantiveText(renewal.renewal_period) ? renewal.renewal_period! : "",
+    )}`,
+  evidence: (summary) => summary.renewal.renewal_evidence ?? null,
+};
+
+/** A section's quotation of a fact, kept only when it is found in that section. */
+function sectionFactEvidence(
+  fact: QuotedFact,
+  { segment, result }: AnalysedSection,
+) {
+  const evidence = fact.evidence(result.summary);
   return evidence && verifyQuote(evidence, [segment]) ? evidence : null;
 }
 
-const noticeValue = (
-  cancellation: AnalysisResult["summary"]["cancellation"],
-) =>
-  `${cancellation.notice_period_days ?? ""}|${normalizedKey(cancellation.notice_period_text ?? "")}`;
-
 /**
- * The quotation behind the merge model's notice period. The merge model never writes a quote: a
- * section's is kept only when the merged days and wording equal that section's and no other section
- * states a different notice period. Otherwise the merged value has no quotation.
+ * The quotation behind the fallback merge's value of a fact, which comes from `supplying`: that
+ * section's quotation, or another's that states the very same value.
  */
-function mergedNoticeEvidence(
-  merged: AnalysisResult["summary"]["cancellation"],
+function suppliedFactEvidence(
+  fact: QuotedFact,
+  supplying: AnalysedSection,
   sections: readonly AnalysedSection[],
 ) {
-  if (!isNoticePeriodStated(merged)) return null;
-  const stating = sections.filter(({ result }) =>
-    isNoticePeriodStated(result.summary.cancellation),
+  if (!fact.stated(supplying.result.summary)) return null;
+  const value = fact.value(supplying.result.summary);
+  return (
+    [supplying, ...sections]
+      .filter(
+        ({ result }) =>
+          fact.stated(result.summary) && fact.value(result.summary) === value,
+      )
+      .map((section) => sectionFactEvidence(fact, section))
+      .find(Boolean) ?? null
   );
+}
+
+/**
+ * The quotation behind the merge model's value of a fact. The merge model never writes a quote: a
+ * section's is kept only when the merged value equals that section's and no other section states a
+ * different one. Otherwise the merged value has no quotation.
+ */
+function mergedFactEvidence(
+  fact: QuotedFact,
+  merged: Summary,
+  sections: readonly AnalysedSection[],
+) {
+  if (!fact.stated(merged)) return null;
+  const stating = sections.filter(({ result }) => fact.stated(result.summary));
   if (
     stating.some(
-      ({ result }) =>
-        noticeValue(result.summary.cancellation) !== noticeValue(merged),
+      ({ result }) => fact.value(result.summary) !== fact.value(merged),
     )
   )
     return null;
-  return stating.map(sectionNoticeEvidence).find(Boolean) ?? null;
+  return (
+    stating.map((section) => sectionFactEvidence(fact, section)).find(Boolean) ??
+    null
+  );
 }
 
 /**
@@ -1280,8 +1336,6 @@ export function mergeSectionResults(
 ): AnalysisResult {
   const results = sections.map((section) => section.result);
   const first = results[0]!;
-  const stated = <T>(pick: (result: AnalysisResult) => T | null) =>
-    results.map(pick).find((value) => value !== null) ?? null;
   const statedText = (pick: (result: AnalysisResult) => string | null) =>
     results.map(pick).find((value) => isSubstantiveText(value)) ?? null;
   // Notice days, wording and quotation are validated together, so all come from the same section.
@@ -1292,6 +1346,11 @@ export function mergeSectionResults(
         cancellation.notice_period_text,
     ) ?? sections[0]!;
   const notice = noticeSection.result.summary.cancellation;
+  // So are renewal's automatic renewal, period and quotation.
+  const renewalSection = sections.find(({ result }) =>
+    RENEWAL_FACT.stated(result.summary),
+  );
+  const renewal = renewalSection?.result.summary.renewal;
   const all = <T>(pick: (result: AnalysisResult) => readonly T[]) =>
     results.flatMap(pick);
   const coverageNotices = uniqueText(
@@ -1323,10 +1382,14 @@ export function mergeSectionResults(
         minimum_term: statedText((result) => result.summary.term.minimum_term),
       },
       renewal: {
-        auto_renew: stated((result) => result.summary.renewal.auto_renew),
-        renewal_period: statedText(
-          (result) => result.summary.renewal.renewal_period,
-        ),
+        auto_renew: renewal?.auto_renew ?? null,
+        renewal_period:
+          renewal && isSubstantiveText(renewal.renewal_period)
+            ? renewal.renewal_period
+            : null,
+        renewal_evidence: renewalSection
+          ? suppliedFactEvidence(RENEWAL_FACT, renewalSection, sections)
+          : null,
       },
       cancellation: {
         how:
@@ -1334,18 +1397,11 @@ export function mergeSectionResults(
           first.summary.cancellation.how,
         notice_period_days: notice.notice_period_days,
         notice_period_text: notice.notice_period_text ?? null,
-        // The supplying section's quotation, or another's that states the very same value.
-        notice_evidence:
-          sectionNoticeEvidence(noticeSection) ??
-          sections
-            .filter(
-              ({ result }) =>
-                isNoticePeriodStated(result.summary.cancellation) &&
-                noticeValue(result.summary.cancellation) === noticeValue(notice),
-            )
-            .map(sectionNoticeEvidence)
-            .find(Boolean) ??
-          null,
+        notice_evidence: suppliedFactEvidence(
+          NOTICE_FACT,
+          noticeSection,
+          sections,
+        ),
         penalties: uniqueText(
           all((result) => result.summary.cancellation.penalties),
         ),
@@ -1403,17 +1459,22 @@ export function buildMergePrompt(
       summary,
       ...rest
     } = result;
-    // The notice quotation is copied from the sections afterwards (mergedNoticeEvidence).
+    // Fact quotations are copied from the sections afterwards (mergedFactEvidence).
     const {
       notice_evidence: _noticeEvidence,
       notice_citation: _noticeCitation,
       ...cancellation
     } = summary.cancellation;
+    const {
+      renewal_evidence: _renewalEvidence,
+      renewal_citation: _renewalCitation,
+      ...renewal
+    } = summary.renewal;
     return {
       section: sectionNumber(segment),
       code_points: `${segment.start}–${segment.end}`,
       ...rest,
-      summary: { ...summary, cancellation },
+      summary: { ...summary, renewal, cancellation },
       red_flags: redFlags.map(
         ({ evidence, citation: _citation, ...flag }, index) => ({
           id: sectionFlagId(sectionNumber(segment), index),
@@ -1450,7 +1511,7 @@ Merge rules:
 - Do not mention that the contract was analysed in sections.
 - ${comparisonRule}
 - "key_dates[].type" must be exactly one of: "RENEWAL", "NOTICE_CUTOFF", "PRICE_REVIEW", "OTHER".
-- Use null for unknown auto_renew and notice_period_days; never guess false or zero. Copy notice_period_days and notice_period_text together from the section that states them.
+- Use null for unknown auto_renew and notice_period_days; never guess false or zero. Copy notice_period_days and notice_period_text together from the section that states them, and auto_renew and renewal_period together from the section that states them.
 - Use null (not empty string) for unknown nullable string fields.
 
 Expected shape:
@@ -1485,8 +1546,8 @@ ${JSON.stringify(analyses, null, 2)}
 /**
  * Validates the merge call's answer. Red flags are the section flags it names by ID, de-duplicated;
  * if it names none, or an ID that cannot be read, although the sections found some, all of them are
- * kept rather than lost. The jurisdiction proposal and the notice-period quotation are the sections'
- * own, so their quotations are never the merge model's.
+ * kept rather than lost. The jurisdiction proposal and the notice-period and renewal quotations are
+ * the sections' own, so their quotations are never the merge model's.
  */
 function parseMergedAnalysis(
   content: string,
@@ -1542,14 +1603,24 @@ function parseMergedAnalysis(
     notice_citation: _modelNoticeCitation,
     ...cancellation
   } = merged.summary.cancellation;
+  const {
+    renewal_evidence: _modelRenewalEvidence,
+    renewal_citation: _modelRenewalCitation,
+    ...renewal
+  } = merged.summary.renewal;
+  const summary = { ...merged.summary, renewal, cancellation };
   return {
     ...merged,
     ...(coverageNotices.length ? { coverage_notices: coverageNotices } : {}),
     summary: {
-      ...merged.summary,
+      ...summary,
+      renewal: {
+        ...renewal,
+        renewal_evidence: mergedFactEvidence(RENEWAL_FACT, summary, sections),
+      },
       cancellation: {
         ...cancellation,
-        notice_evidence: mergedNoticeEvidence(cancellation, sections),
+        notice_evidence: mergedFactEvidence(NOTICE_FACT, summary, sections),
       },
     },
     red_flags: uniqueRedFlags(merged.red_flags),

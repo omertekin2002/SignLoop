@@ -57,7 +57,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ContractSourceProvider, FindingSource, NoticePeriodSource, OpenContractSource } from "@/components/contract-source";
+import { ContractSourceProvider, FindingSource, NoticePeriodSource, OpenContractSource, RenewalSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
 import { DownloadBriefButton } from "@/components/download-brief-button";
 import { PrintBrief } from "@/components/print-brief";
@@ -337,11 +337,6 @@ const ContractDetails = () => {
     "MMM d, HH:mm",
     "Unknown time",
   );
-  const renewalLabel = typeof summaryRenewal?.auto_renew === "boolean"
-    ? summaryRenewal.auto_renew
-      ? "Auto-renews"
-      : "Manual renewal"
-    : "Not specified";
   const contractTitle =
     typeof contract?.title === "string" && contract.title.trim()
       ? contract.title
@@ -743,12 +738,7 @@ const ContractDetails = () => {
                       <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
                         <RefreshCw className="h-4 w-4" /> Renewal
                       </h4>
-                      <p className="text-sm">{renewalLabel}</p>
-                      {summaryRenewal?.renewal_period && (
-                        <p className="text-xs text-muted-foreground">
-                          Period: {summaryRenewal.renewal_period}
-                        </p>
-                      )}
+                      <RenewalSource renewal={summaryRenewal ?? {}} />
                     </div>
                   </div>
                 ) : (

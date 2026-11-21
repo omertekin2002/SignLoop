@@ -24,10 +24,11 @@ const ProposedJurisdictionSchema = z
   .nullable()
   .optional()
   .catch(null);
-// The model's quotation of the clause stating the notice period; attachAnalysisSources replaces it
-// with a server-verified `notice_citation`, or null. Malformed values are dropped, never fatal.
-const NoticeEvidenceSchema = EvidenceProposalSchema.nullable().optional().catch(null);
-const NoticeCitationSchema = CitationSchema.nullable().optional().catch(null);
+// The model's quotation of the clause stating a summary fact (`notice_evidence`, `renewal_evidence`);
+// attachAnalysisSources replaces it with a server-verified citation (`notice_citation`,
+// `renewal_citation`), or null. Malformed values are dropped, never fatal.
+const FactEvidenceSchema = EvidenceProposalSchema.nullable().optional().catch(null);
+const FactCitationSchema = CitationSchema.nullable().optional().catch(null);
 
 const BaseAnalysisResultSchema = z.object({
   source: SourceIdentitySchema.nullable().optional().catch(null),
@@ -54,13 +55,15 @@ const BaseAnalysisResultSchema = z.object({
     renewal: z.object({
       auto_renew: z.boolean().nullable(),
       renewal_period: z.string().nullable(),
+      renewal_evidence: FactEvidenceSchema,
+      renewal_citation: FactCitationSchema,
     }),
     cancellation: z.object({
       how: z.string().trim().min(1),
       notice_period_days: z.number().int().nonnegative().nullable(),
       notice_period_text: z.string().trim().min(1).nullable().optional(),
-      notice_evidence: NoticeEvidenceSchema,
-      notice_citation: NoticeCitationSchema,
+      notice_evidence: FactEvidenceSchema,
+      notice_citation: FactCitationSchema,
       penalties: z.array(z.string()),
     }),
   }),
@@ -216,13 +219,15 @@ export const PartialAnalysisResultSchema = z
       renewal: z.object({
         auto_renew: z.boolean().nullable(),
         renewal_period: z.string().nullable().optional().default(null),
+        renewal_evidence: FactEvidenceSchema,
+        renewal_citation: FactCitationSchema,
       }),
       cancellation: z.object({
         how: z.string().trim().min(1),
         notice_period_days: z.number().int().nonnegative().nullable(),
         notice_period_text: z.string().trim().min(1).nullable().optional(),
-        notice_evidence: NoticeEvidenceSchema,
-        notice_citation: NoticeCitationSchema,
+        notice_evidence: FactEvidenceSchema,
+        notice_citation: FactCitationSchema,
         penalties: z.array(z.string()).optional().default([]),
       }),
     }),
