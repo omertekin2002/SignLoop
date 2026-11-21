@@ -31,6 +31,36 @@ const ProposedJurisdictionSchema = z
 const FactEvidenceSchema = EvidenceProposalSchema.nullable().optional().catch(null);
 const FactCitationSchema = CitationSchema.nullable().optional().catch(null);
 
+/**
+ * The model's quotation of the clause stating one cancellation penalty, keyed by the penalty's exact
+ * text rather than its position, since list items are filtered, split and de-duplicated.
+ */
+export const PenaltyEvidenceSchema = EvidenceProposalSchema.extend({
+  penalty: z.string().min(1).max(2_000),
+});
+export type PenaltyEvidence = z.infer<typeof PenaltyEvidenceSchema>;
+/** A server-verified quotation of the clause stating one cancellation penalty (`penaltyCitation`). */
+export const PenaltyCitationSchema = z.object({
+  penalty: z.string().min(1),
+  citation: CitationSchema,
+});
+/** A list whose malformed entries are dropped one by one; a malformed list is dropped whole. */
+const entriesOf = <T extends z.ZodType>(entry: T) =>
+  z
+    .array(z.unknown())
+    .transform((items) =>
+      items.flatMap((item) => {
+        const parsed = entry.safeParse(item);
+        return parsed.success ? [parsed.data as z.output<T>] : [];
+      }),
+    )
+    .optional()
+    .catch(undefined);
+// `penalty_evidence` is the model's proposals; attachAnalysisSources replaces them with
+// `penalty_citations`, one entry per listed penalty whose proposal verifies.
+const PenaltyEvidenceListSchema = entriesOf(PenaltyEvidenceSchema);
+const PenaltyCitationListSchema = entriesOf(PenaltyCitationSchema);
+
 const BaseAnalysisResultSchema = z.object({
   source: SourceIdentitySchema.nullable().optional().catch(null),
   coverage_notices: CoverageNoticesSchema,
@@ -68,6 +98,8 @@ const BaseAnalysisResultSchema = z.object({
       notice_evidence: FactEvidenceSchema,
       notice_citation: FactCitationSchema,
       penalties: z.array(z.string()),
+      penalty_evidence: PenaltyEvidenceListSchema,
+      penalty_citations: PenaltyCitationListSchema,
     }),
   }),
 
@@ -234,6 +266,8 @@ export const PartialAnalysisResultSchema = z
         notice_evidence: FactEvidenceSchema,
         notice_citation: FactCitationSchema,
         penalties: z.array(z.string()).optional().default([]),
+        penalty_evidence: PenaltyEvidenceListSchema,
+        penalty_citations: PenaltyCitationListSchema,
       }),
     }),
     red_flags: z

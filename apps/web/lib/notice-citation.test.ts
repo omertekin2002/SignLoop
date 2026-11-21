@@ -167,6 +167,8 @@ describe("finalizing a notice-period quotation", () => {
       notice_period_days: null,
       notice_period_text: "10 business days",
       penalties: [],
+      // Server-owned, like notice_citation: no penalties are listed, so none is quoted.
+      penalty_citations: [],
       notice_citation: {
         contract_id: id,
         revision: contractSourceRevision(contract.text),

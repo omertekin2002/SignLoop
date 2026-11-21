@@ -7,6 +7,8 @@ import {
   STUB_MODEL,
   STUB_NOTICE_QUOTE,
   STUB_PAYMENT_QUOTE,
+  STUB_PENALTY,
+  STUB_PENALTY_QUOTE,
   STUB_RENEWAL_QUOTE,
   startStubModelServer,
   stubAnalysis,
@@ -165,6 +167,16 @@ describe("the end-to-end stub model", () => {
       payment_citation: { status: "verified", contract_id: contractId, quote: STUB_PAYMENT_QUOTE },
     });
     expect(stored.summary.payments).not.toHaveProperty("payment_evidence");
+
+    // And its one cancellation penalty, keyed by the penalty's exact text.
+    expect(stored.summary.cancellation.penalties).toEqual([STUB_PENALTY]);
+    expect(stored.summary.cancellation.penalty_citations).toEqual([
+      {
+        penalty: STUB_PENALTY,
+        citation: expect.objectContaining({ status: "verified", contract_id: contractId, quote: STUB_PENALTY_QUOTE }),
+      },
+    ]);
+    expect(stored.summary.cancellation).not.toHaveProperty("penalty_evidence");
 
     const requests = stub.requests();
     expect(requests).toEqual([expect.objectContaining({ model: STUB_MODEL, kind: "analysis", tools: [] })]);

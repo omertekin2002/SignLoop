@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { finalizeAnalysisResult } from "./analysis-sources";
 import {
+  citationForReport,
   CONTRACT_ANALYSIS_LIMIT,
   contractAnalysisCoverage,
   contractAnalysisSegments,
@@ -1032,6 +1033,187 @@ describe("analysis of contracts longer than one request", () => {
         expect(stored.summary.payments.payment_citation).toBeNull();
         expect(stored.summary.payments).toMatchObject(payments);
       }
+    });
+  });
+
+  describe("penalty quotations", () => {
+    const earlyExit = "Early termination fee equal to two months' fees";
+    const earlyExitQuote = "Ending this agreement early costs two months' fees.";
+    const equipment = "Unreturned equipment charged at cost";
+    const equipmentQuote = "Equipment not returned within 30 days is charged at cost.";
+    const text = contractOf(400, {
+      200: `200.1 Early exit. ${earlyExitQuote}\n`,
+      380: `380.1 Equipment. ${equipmentQuote}\n`,
+    });
+    const segments = contractAnalysisSegments(text);
+    const sectionOf = (quote: string) =>
+      Number(
+        segments
+          .find((part) => part.text.includes(quote))!
+          .label.slice("section-".length),
+      );
+    const earlyExitSection = sectionOf(earlyExitQuote);
+    const equipmentSection = sectionOf(equipmentQuote);
+    type Penalties = { penalties?: string[]; penaltyQuotes?: Record<string, string> };
+    const quoting: Record<number, Penalties> = {
+      [earlyExitSection]: {
+        penalties: [earlyExit],
+        penaltyQuotes: { [earlyExit]: earlyExitQuote },
+      },
+      [equipmentSection]: {
+        penalties: [equipment],
+        penaltyQuotes: { [equipment]: equipmentQuote },
+      },
+    };
+
+    // Each section's penalties come from `bySection`, falling back to the two quoting sections.
+    async function analyse(
+      merge: "fails" | Record<string, unknown>,
+      bySection: Record<number, Penalties> = {},
+    ) {
+      const double = provider(segments, (call) => {
+        if (call.section === "merge")
+          return merge === "fails" ? failure() : completed(mergeOutput(merge));
+        return completed(
+          sectionOutput(
+            double.segment(call),
+            bySection[call.section] ?? quoting[call.section] ?? {},
+          ),
+        );
+      });
+      const { analyzeText } = await import("./analysis");
+      const answer = await analyzeText(text);
+      expect(double.mergeCalls()).toHaveLength(1);
+      return {
+        answer,
+        stored: finalizeAnalysisResult(answer.result, { id: CONTRACT_ID, text }),
+      };
+    }
+
+    const mergedPenalties = (cancellation: Record<string, unknown>) => ({
+      summary: {
+        ...mergeOutput().summary,
+        cancellation: { ...mergeOutput().summary.cancellation, ...cancellation },
+      },
+    });
+    const citedQuotes = (stored: { summary: { cancellation: unknown } }) =>
+      (
+        (stored.summary.cancellation as Record<string, unknown>)
+          .penalty_citations as { penalty: string; citation: { quote: string } }[]
+      ).map(({ penalty, citation }) => [penalty, citation.quote]);
+
+    it("quotes each penalty from the section listing it when the merge call fails", async () => {
+      expect([earlyExitSection, equipmentSection]).toEqual([
+        expect.any(Number),
+        expect.any(Number),
+      ]);
+      expect(earlyExitSection).toBeGreaterThan(1);
+      expect(equipmentSection).toBeGreaterThan(earlyExitSection);
+      const { answer, stored } = await analyse("fails");
+      expect(answer.result.summary.cancellation.penalties).toEqual([
+        earlyExit,
+        equipment,
+      ]);
+      expect(answer.result.summary.cancellation.penalty_evidence).toEqual([
+        { penalty: earlyExit, quote: earlyExitQuote, segment: `section-${earlyExitSection}` },
+        { penalty: equipment, quote: equipmentQuote, segment: `section-${equipmentSection}` },
+      ]);
+      expect(citedQuotes(stored)).toEqual([
+        [earlyExit, earlyExitQuote],
+        [equipment, equipmentQuote],
+      ]);
+      const start = text.indexOf(equipmentQuote);
+      expect(citationForReport(stored, CONTRACT_ID, "penalty-1")).toMatchObject({
+        status: "verified",
+        quote: equipmentQuote,
+        start: Array.from(text.slice(0, start)).length,
+      });
+      expect(citationForReport(stored, CONTRACT_ID, "penalty-0")?.quote).toBe(
+        earlyExitQuote,
+      );
+    });
+
+    it("skips a section whose quotation is not in its own segment and uses a later one listing the same text", async () => {
+      const { answer } = await analyse("fails", {
+        1: { penalties: [earlyExit], penaltyQuotes: { [earlyExit]: earlyExitQuote } },
+      });
+      expect(answer.result.summary.cancellation.penalty_evidence).toContainEqual({
+        penalty: earlyExit,
+        quote: earlyExitQuote,
+        segment: `section-${earlyExitSection}`,
+      });
+    });
+
+    it("never borrows a quotation from a section that does not list that penalty", async () => {
+      // Section 1 lists the equipment charge without a quotation; the section that quotes it does
+      // not list it.
+      const { answer, stored } = await analyse("fails", {
+        1: { penalties: [equipment] },
+        [equipmentSection]: { penaltyQuotes: { [equipment]: equipmentQuote } },
+      });
+      expect(answer.result.summary.cancellation.penalties).toEqual([
+        equipment,
+        earlyExit,
+      ]);
+      expect(citedQuotes(stored)).toEqual([[earlyExit, earlyExitQuote]]);
+    });
+
+    it("has no quotation for a penalty an earlier section worded differently", async () => {
+      // De-duplication keeps the first section's wording, which no quoting section lists exactly.
+      const reworded = earlyExit.toLowerCase();
+      const { answer, stored } = await analyse("fails", {
+        1: { penalties: [reworded] },
+      });
+      expect(answer.result.summary.cancellation.penalties).toEqual([
+        reworded,
+        equipment,
+      ]);
+      expect(citedQuotes(stored)).toEqual([[equipment, equipmentQuote]]);
+      expect(citationForReport(stored, CONTRACT_ID, "penalty-0")).toBeNull();
+    });
+
+    it("keeps the sections' quotations for the merge model's penalties, never its own", async () => {
+      const { answer, stored } = await analyse(
+        mergedPenalties({
+          penalties: [equipment, earlyExit],
+          penalty_evidence: [
+            { penalty: equipment, quote: "Records. Each party", segment: "section-1" },
+          ],
+          penalty_citations: [
+            { penalty: equipment, citation: { status: "verified", quote: "Records", start: 0, end: 7 } },
+          ],
+        }),
+      );
+      expect(answer.result.summary.cancellation.penalty_evidence).toEqual([
+        { penalty: equipment, quote: equipmentQuote, segment: `section-${equipmentSection}` },
+        { penalty: earlyExit, quote: earlyExitQuote, segment: `section-${earlyExitSection}` },
+      ]);
+      expect(citedQuotes(stored)).toEqual([
+        [equipment, equipmentQuote],
+        [earlyExit, earlyExitQuote],
+      ]);
+    });
+
+    it("has no quotation for a penalty the merge model reworded", async () => {
+      const reworded = "Early exit costs two months of fees";
+      const { answer, stored } = await analyse(
+        mergedPenalties({ penalties: [reworded, equipment] }),
+      );
+      expect(answer.result.summary.cancellation.penalties).toEqual([
+        reworded,
+        equipment,
+      ]);
+      expect(citedQuotes(stored)).toEqual([[equipment, equipmentQuote]]);
+      expect(citationForReport(stored, CONTRACT_ID, "penalty-0")).toBeNull();
+      expect(citationForReport(stored, CONTRACT_ID, "penalty-1")?.quote).toBe(
+        equipmentQuote,
+      );
+    });
+
+    it("stores no penalty quotations when no penalties are merged", async () => {
+      const { answer, stored } = await analyse(mergedPenalties({ penalties: [] }));
+      expect(answer.result.summary.cancellation.penalty_evidence).toEqual([]);
+      expect(stored.summary.cancellation.penalty_citations).toEqual([]);
     });
   });
 

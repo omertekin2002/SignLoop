@@ -57,7 +57,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ContractSourceProvider, FindingSource, NoticePeriodSource, OpenContractSource, PaymentSource, RenewalSource } from "@/components/contract-source";
+import { ContractSourceProvider, FindingSource, NoticePeriodSource, OpenContractSource, PaymentSource, PenaltiesSource, RenewalSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
 import { DownloadBriefButton } from "@/components/download-brief-button";
 import { PrintBrief } from "@/components/print-brief";
@@ -775,18 +775,7 @@ const ContractDetails = () => {
                       <h4 className="text-sm font-medium text-muted-foreground mb-1">
                         Penalties
                       </h4>
-                      {Array.isArray(summaryCancellation.penalties) &&
-                      summaryCancellation.penalties.length > 0 ? (
-                        <ul className="text-sm list-disc list-inside space-y-1">
-                          {summaryCancellation.penalties.map(
-                            (penalty: string, idx: number) => (
-                              <li key={idx}>{penalty}</li>
-                            ),
-                          )}
-                        </ul>
-                      ) : (
-                        <p className="text-sm">None listed</p>
-                      )}
+                      <PenaltiesSource penalties={summaryCancellation.penalties} />
                     </div>
                   </div>
                 </CardContent>

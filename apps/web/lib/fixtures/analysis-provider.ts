@@ -41,6 +41,9 @@ export function sectionOutput(
     noticeText?: string | null;
     /** The section's quotation of the clause stating its notice period. */
     noticeQuote?: string;
+    penalties?: string[];
+    /** The section's quotations of the clauses stating its penalties, keyed by penalty text. */
+    penaltyQuotes?: Record<string, string>;
     jurisdiction?: string;
   } = {},
 ) {
@@ -72,7 +75,10 @@ export function sectionOutput(
         notice_evidence: options.noticeQuote
           ? { quote: options.noticeQuote, segment: segment.label }
           : null,
-        penalties: [],
+        penalties: options.penalties ?? [],
+        penalty_evidence: Object.entries(options.penaltyQuotes ?? {}).map(
+          ([penalty, quote]) => ({ penalty, quote, segment: segment.label }),
+        ),
       },
     },
     red_flags: (options.flags ?? []).map((flag) => ({

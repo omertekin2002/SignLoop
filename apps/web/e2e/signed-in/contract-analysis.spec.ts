@@ -9,6 +9,8 @@ import {
   STUB_MODEL,
   STUB_NOTICE_QUOTE,
   STUB_PAYMENT_QUOTE,
+  STUB_PENALTY,
+  STUB_PENALTY_QUOTE,
   STUB_RENEWAL_QUOTE,
   type StubModelRequest,
 } from "../stub-model-server";
@@ -55,7 +57,10 @@ type StoredContract = {
       summary?: {
         payments?: { payment_citation?: { status?: string; quote?: string } | null };
         renewal?: { renewal_citation?: { status?: string; quote?: string } | null };
-        cancellation?: { notice_citation?: { status?: string; quote?: string } | null };
+        cancellation?: {
+          notice_citation?: { status?: string; quote?: string } | null;
+          penalty_citations?: { penalty?: string; citation?: { status?: string; quote?: string } }[];
+        };
       };
     };
   }[];
@@ -101,7 +106,7 @@ function onScreen(locator: Locator): Locator {
 }
 
 // The stub's report as the contract page renders it: its summary and key points, the payment,
-// renewal, the notice period and every finding with the quotation the server verified, and the stub
+// renewal, the notice period, the cancellation penalty and every finding with the quotation the server verified, and the stub
 // named as the model.
 async function expectStubAnalysis(page: Page) {
   await expect(onScreen(page.getByText(STUB_ANALYSIS_SUMMARY, { exact: true }))).toBeVisible();
@@ -132,6 +137,14 @@ async function expectStubAnalysis(page: Page) {
   await expect(
     onScreen(page.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_PAYMENT_QUOTE)}”$`) })),
   ).toHaveCount(1);
+  // The penalty is listed with its own quotation, in the same list item. The fixture's termination
+  // line also ends with the notice clause's wording, so match the quotation's own element.
+  const penalty = onScreen(page.getByRole("listitem").filter({ hasText: STUB_PENALTY }));
+  await expect(penalty).toHaveCount(1);
+  await expect(
+    penalty.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_PENALTY_QUOTE)}”$`) }),
+  ).toHaveCount(1);
+  await expect(penalty.getByRole("button", { name: "View matched quotation of penalty 1" })).toBeVisible();
   await expect(onScreen(page.getByText("No verified quotation", { exact: true }))).toHaveCount(0);
   await expect(onScreen(page.getByText(`LLM: Primary provider • ${STUB_MODEL}`, { exact: true }))).toBeVisible();
   await expect(page.getByRole("button", { name: "Re-run Analysis" })).toBeEnabled();
@@ -200,6 +213,13 @@ for (const theme of THEMES) {
     await page.keyboard.press("Escape");
     await expect(source).toBeHidden();
 
+    // So does the penalty's quotation of the clause stating it.
+    await page.getByRole("button", { name: "View matched quotation of penalty 1" }).click();
+    await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
+    await expect(source.getByRole("region", { name: "Source passage" }).locator("mark")).toHaveText(STUB_PENALTY_QUOTE);
+    await page.keyboard.press("Escape");
+    await expect(source).toBeHidden();
+
     // A fresh load reads the stored report back from the database.
     await page.reload();
     await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
@@ -229,6 +249,12 @@ for (const theme of THEMES) {
       status: "verified",
       quote: STUB_PAYMENT_QUOTE,
     });
+    expect(stored.analyses[0]!.resultJson.summary?.cancellation?.penalty_citations).toEqual([
+      {
+        penalty: STUB_PENALTY,
+        citation: expect.objectContaining({ status: "verified", quote: STUB_PENALTY_QUOTE }),
+      },
+    ]);
 
     // The stub received exactly one analysis request for this contract, carrying its text.
     const received = (await stubRequests(page)).filter((request) => request.question.includes(reference));

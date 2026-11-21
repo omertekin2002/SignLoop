@@ -19,8 +19,8 @@ export function contractSourceRevision(text: string): string {
 
 /**
  * Always discard model-supplied receipts, even if they claim to be verified. Red flags, the
- * jurisdiction proposal, the cancellation notice period, renewal and payment get server-verified
- * citations instead.
+ * jurisdiction proposal, the cancellation notice period, each cancellation penalty, renewal and
+ * payment get server-verified citations instead.
  */
 export function attachAnalysisSources<T extends Record<string, unknown>>(
   result: T,
@@ -90,14 +90,43 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
       },
     };
   };
+  // Each listed penalty gets the first proposal naming exactly its text whose quotation verifies.
+  // Proposals for any other text are discarded; the penalties themselves are always kept.
+  const citePenalties = (group: { cancellation?: Record<string, unknown> }) => {
+    if (!group.cancellation) return group;
+    const {
+      penalty_evidence: proposals,
+      penalty_citations: _untrusted,
+      ...cancellation
+    } = group.cancellation;
+    const penalties = Array.isArray(cancellation.penalties)
+      ? cancellation.penalties.filter(
+          (penalty): penalty is string => typeof penalty === "string",
+        )
+      : [];
+    const offered = Array.isArray(proposals) ? proposals.filter(isRecord) : [];
+    const penaltyCitations = [...new Set(penalties)].flatMap((penalty) => {
+      const citation =
+        offered
+          .filter((proposal) => proposal.penalty === penalty)
+          .map(verifiedCitation)
+          .find(Boolean) ?? null;
+      return citation ? [{ penalty, citation }] : [];
+    });
+    return {
+      cancellation: { ...cancellation, penalty_citations: penaltyCitations },
+    };
+  };
   const citedSummary = summary
     ? {
         ...summary,
-        ...citeFact(
-          "cancellation",
-          "notice_evidence",
-          "notice_citation",
-          isNoticePeriodStated,
+        ...citePenalties(
+          citeFact(
+            "cancellation",
+            "notice_evidence",
+            "notice_citation",
+            isNoticePeriodStated,
+          ),
         ),
         ...citeFact(
           "renewal",
