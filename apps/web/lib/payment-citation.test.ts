@@ -187,6 +187,7 @@ describe("finalizing a payment quotation", () => {
       amount: "500 EUR",
       frequency: "Monthly",
       fees: [],
+      fee_citations: [],
       payment_citation: {
         contract_id: id,
         revision: contractSourceRevision(contract.text),
@@ -236,6 +237,7 @@ describe("finalizing a payment quotation", () => {
       amount: "500 EUR",
       frequency: "Monthly",
       fees: [],
+      fee_citations: [],
       payment_citation: null,
     });
     expect(citationForReport(stored, id, PAYMENT_CITATION)).toBeNull();

@@ -1,9 +1,9 @@
 import { z } from "zod";
 import {
-  penaltyCitation,
-  penaltyCitationIndex,
-  type PenaltyCitationRef,
-} from "@/lib/penalties";
+  isListedCitationRef,
+  storedListedCitation,
+  type ListedCitationRef,
+} from "@/lib/listed-citations";
 
 /**
  * Code points one analysis call reads. A longer contract is split into consecutive sections of at
@@ -220,7 +220,7 @@ export function verifyQuote(
 /**
  * A cited passage in a stored report: a red flag by index, the jurisdiction proposal, the
  * cancellation notice period, renewal, the payment amount and frequency, or a cancellation penalty
- * by its index in the stored `penalties` (`penalty-<n>`).
+ * or an extra fee by its index in the stored `penalties` (`penalty-<n>`) or `fees` (`fee-<n>`).
  */
 export type CitationRef =
   | number
@@ -228,7 +228,7 @@ export type CitationRef =
   | "notice"
   | "renewal"
   | "payment"
-  | PenaltyCitationRef;
+  | ListedCitationRef;
 export const JURISDICTION_CITATION = "jurisdiction";
 export const NOTICE_CITATION = "notice";
 export const RENEWAL_CITATION = "renewal";
@@ -247,14 +247,7 @@ function storedCitation(report: Record<string, unknown>, ref: CitationRef): unkn
     return field(field(report.summary, "renewal"), "renewal_citation");
   if (ref === PAYMENT_CITATION)
     return field(field(report.summary, "payments"), "payment_citation");
-  if (typeof ref === "string") {
-    const index = penaltyCitationIndex(ref);
-    const cancellation = field(report.summary, "cancellation");
-    const penalties = field(cancellation, "penalties");
-    return index !== null && Array.isArray(penalties)
-      ? penaltyCitation(cancellation, penalties[index])
-      : null;
-  }
+  if (isListedCitationRef(ref)) return storedListedCitation(report.summary, ref);
   return Array.isArray(report.red_flags)
     ? field(report.red_flags[ref], "citation")
     : null;

@@ -180,6 +180,41 @@ describe("PrintBrief", () => {
     expect(brief).not.toHaveTextContent("Earlier analysis.");
   });
 
+  it("prints each fee under Payments with its own quotation, or marks it", () => {
+    const lateClause = "A late fee of £10 applies to payments made after the 5th.";
+    const withFees = {
+      ...ANALYSIS,
+      resultJson: {
+        ...RESULT,
+        summary: {
+          ...RESULT.summary!,
+          payments: {
+            amount: "£45",
+            frequency: "Monthly",
+            fees: ["Late fee of £10", "Joining fee of £20"],
+            fee_citations: [
+              {
+                fee: "Late fee of £10",
+                citation: { ...SOURCE, status: "verified" as const, quote: lateClause, start: 300, end: 357 },
+              },
+            ],
+          },
+        },
+      },
+    };
+    render(<PrintBrief contract={CONTRACT} analysis={withFees} />);
+    const brief = printedBrief();
+    const fees = Array.from(brief.querySelectorAll("li")).find((item) =>
+      item.firstChild?.textContent?.startsWith("Fees:"),
+    );
+    expect(fees).toBeDefined();
+    const [late, joining] = Array.from(fees!.querySelectorAll(":scope > ul > li"));
+    expect(late).toHaveTextContent("Late fee of £10");
+    expect(late!.querySelector("blockquote")).toHaveTextContent(lateClause);
+    expect(joining).toHaveTextContent("Joining fee of £20 (No verified quotation)");
+    expect(joining!.querySelector("blockquote")).toBeNull();
+  });
+
   it("marks an earlier analysis as historical", () => {
     render(<PrintBrief contract={CONTRACT} analysis={ANALYSIS} historical />);
     expect(printedBrief()).toHaveTextContent(

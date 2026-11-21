@@ -22,7 +22,12 @@ import {
 import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
 import { formatAutoRenew, isRenewalStated } from "@/lib/renewal";
 import { isPaymentStated } from "@/lib/payment";
-import { penaltyCitationRef } from "@/lib/penalties";
+import {
+  LISTED_FEES,
+  LISTED_PENALTIES,
+  listedCitationRef,
+  type KnownListedFact,
+} from "@/lib/listed-citations";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -428,32 +433,72 @@ export function PaymentSource({
 }
 
 /**
- * A report's cancellation penalties in one of three states: each penalty with the verified
- * quotation of the clause stating it, a listed penalty with a visible "No verified quotation"
- * marker, or the unchanged "None listed" when there are none. Each quotation is looked up by its
- * own penalty's position in the stored list, which `penaltyCitation` matches on the exact text.
+ * A cited list's items in one of three states: each item with the verified quotation of the clause
+ * stating it, a listed item with a visible "No verified quotation" marker, or the list's unchanged
+ * empty text when there are none. Each quotation is looked up by its own item's position in the
+ * stored list, which `listedCitation` matches on the exact text.
  */
-export function PenaltiesSource({ penalties }: { penalties: unknown }) {
-  const listed = Array.isArray(penalties)
-    ? penalties.flatMap((penalty, index) =>
-        typeof penalty === "string" && penalty.trim()
-          ? [{ penalty, index }]
-          : [],
+function ListedSources({
+  fact,
+  items,
+  noun,
+  empty,
+  className,
+}: {
+  fact: KnownListedFact;
+  items: unknown;
+  noun: string;
+  empty: ReactNode;
+  className: string;
+}) {
+  const listed = Array.isArray(items)
+    ? items.flatMap((item, index) =>
+        typeof item === "string" && item.trim() ? [{ item, index }] : [],
       )
     : [];
-  if (!listed.length) return <p className="text-sm">None listed</p>;
+  if (!listed.length) return <>{empty}</>;
   return (
-    <ul className="list-disc space-y-3 pl-5 text-sm">
-      {listed.map(({ penalty, index }) => (
+    <ul className={className}>
+      {listed.map(({ item, index }) => (
         <li key={index}>
-          <p>{penalty}</p>
+          <p>{item}</p>
           <StatedFactSource
             stated
-            citationRef={penaltyCitationRef(index)}
-            label={`View matched quotation of penalty ${index + 1}`}
+            citationRef={listedCitationRef(fact, index)}
+            label={`View matched quotation of ${noun} ${index + 1}`}
           />
         </li>
       ))}
     </ul>
+  );
+}
+
+/** A report's cancellation penalties, each with its own quotation (`ListedSources`). */
+export function PenaltiesSource({ penalties }: { penalties: unknown }) {
+  return (
+    <ListedSources
+      fact={LISTED_PENALTIES}
+      items={penalties}
+      noun="penalty"
+      empty={<p className="text-sm">None listed</p>}
+      className="list-disc space-y-3 pl-5 text-sm"
+    />
+  );
+}
+
+/** A report's extra fees, each with its own quotation (`ListedSources`). */
+export function FeesSource({ fees }: { fees: unknown }) {
+  return (
+    <ListedSources
+      fact={LISTED_FEES}
+      items={fees}
+      noun="fee"
+      empty={
+        <p className="text-muted-foreground">
+          None identified in this analysis.
+        </p>
+      }
+      className="list-disc space-y-3 pl-5"
+    />
   );
 }

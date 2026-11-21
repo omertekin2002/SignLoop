@@ -6,6 +6,8 @@ import {
   STUB_ANALYSIS_FLAGS,
   STUB_ANALYSIS_SUMMARY,
   STUB_CONTRACT_FIXTURE,
+  STUB_FEE,
+  STUB_FEE_QUOTE,
   STUB_MODEL,
   STUB_NOTICE_QUOTE,
   STUB_PAYMENT_QUOTE,
@@ -55,7 +57,10 @@ type StoredContract = {
     resultJson: {
       red_flags?: { citation?: { status?: string; quote?: string } | null }[];
       summary?: {
-        payments?: { payment_citation?: { status?: string; quote?: string } | null };
+        payments?: {
+          payment_citation?: { status?: string; quote?: string } | null;
+          fee_citations?: { fee?: string; citation?: { status?: string; quote?: string } }[];
+        };
         renewal?: { renewal_citation?: { status?: string; quote?: string } | null };
         cancellation?: {
           notice_citation?: { status?: string; quote?: string } | null;
@@ -105,9 +110,9 @@ function onScreen(locator: Locator): Locator {
   return locator.filter({ visible: true });
 }
 
-// The stub's report as the contract page renders it: its summary and key points, the payment,
-// renewal, the notice period, the cancellation penalty and every finding with the quotation the server verified, and the stub
-// named as the model.
+// The stub's report as the contract page renders it: its summary and key points, the payment, the
+// extra fee, renewal, the notice period, the cancellation penalty and every finding with the
+// quotation the server verified, and the stub named as the model.
 async function expectStubAnalysis(page: Page) {
   await expect(onScreen(page.getByText(STUB_ANALYSIS_SUMMARY, { exact: true }))).toBeVisible();
   await expect(
@@ -145,6 +150,16 @@ async function expectStubAnalysis(page: Page) {
     penalty.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_PENALTY_QUOTE)}”$`) }),
   ).toHaveCount(1);
   await expect(penalty.getByRole("button", { name: "View matched quotation of penalty 1" })).toBeVisible();
+  // So is the fee, in the Payment fees section. Its clause sits right after the payment clause and
+  // the late-interest finding's line, so match the list item holding exactly the fee's text and the
+  // quotation's own element.
+  const fees = page.getByRole("heading", { level: 3, name: "Payment fees", exact: true }).locator("xpath=..");
+  const fee = onScreen(fees.getByRole("listitem").filter({ has: page.getByText(STUB_FEE, { exact: true }) }));
+  await expect(fee).toHaveCount(1);
+  await expect(
+    fee.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_FEE_QUOTE)}”$`) }),
+  ).toHaveCount(1);
+  await expect(fee.getByRole("button", { name: "View matched quotation of fee 1" })).toBeVisible();
   await expect(onScreen(page.getByText("No verified quotation", { exact: true }))).toHaveCount(0);
   await expect(onScreen(page.getByText(`LLM: Primary provider • ${STUB_MODEL}`, { exact: true }))).toBeVisible();
   await expect(page.getByRole("button", { name: "Re-run Analysis" })).toBeEnabled();
@@ -220,6 +235,13 @@ for (const theme of THEMES) {
     await page.keyboard.press("Escape");
     await expect(source).toBeHidden();
 
+    // And the fee's quotation of the clause stating it.
+    await page.getByRole("button", { name: "View matched quotation of fee 1" }).click();
+    await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
+    await expect(source.getByRole("region", { name: "Source passage" }).locator("mark")).toHaveText(STUB_FEE_QUOTE);
+    await page.keyboard.press("Escape");
+    await expect(source).toBeHidden();
+
     // A fresh load reads the stored report back from the database.
     await page.reload();
     await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible();
@@ -253,6 +275,13 @@ for (const theme of THEMES) {
       {
         penalty: STUB_PENALTY,
         citation: expect.objectContaining({ status: "verified", quote: STUB_PENALTY_QUOTE }),
+      },
+    ]);
+
+    expect(stored.analyses[0]!.resultJson.summary?.payments?.fee_citations).toEqual([
+      {
+        fee: STUB_FEE,
+        citation: expect.objectContaining({ status: "verified", quote: STUB_FEE_QUOTE }),
       },
     ]);
 

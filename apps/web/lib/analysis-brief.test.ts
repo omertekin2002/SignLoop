@@ -394,7 +394,8 @@ describe("renderAnalysisBriefMarkdown", () => {
         "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
         "      > Members pay \\*£45\\* each month by direct debit.",
         "  - Fees:",
-        "    - Joining fee of £20",
+        // Reports analysed before fee quotations mark each listed fee.
+        "    - Joining fee of £20 (**No verified quotation**)",
         "- **Term:**",
       ].join("\n"),
     );
@@ -516,6 +517,91 @@ describe("renderAnalysisBriefMarkdown", () => {
       const marked = withCancellation(none);
       expect(marked).toContain("  - Penalties: None listed");
       expect(marked).not.toMatch(/Penalties:[\s\S]*No verified quotation/);
+    }
+  });
+
+  it("shows each fee's own verified quotation beside the payment's, marks a fee without one, and leaves none listed", () => {
+    const withPayments = (payments: Record<string, unknown>) =>
+      section(
+        brief({
+          ...FULL_RESULT,
+          summary: { ...FULL_RESULT.summary, payments },
+        }).markdown,
+        "Summary",
+      );
+    const late = "Late payment fee of *£10*";
+    const joining = "Joining fee of £20";
+    const lateClause = "Payments received after the 5th are charged a £10 late fee.";
+    const joiningClause = "New members pay a one-off joining fee of £20.";
+    const paymentClause = "Members pay £45 each month by direct debit.";
+
+    const quoted = withPayments({
+      amount: "£45",
+      frequency: "Monthly",
+      payment_citation: citation(paymentClause, 50),
+      fees: [joining, late],
+      fee_citations: [
+        { fee: late, citation: citation(lateClause, 300) },
+        { fee: joining, citation: citation(joiningClause, 200) },
+      ],
+    });
+    expect(quoted).toContain(
+      [
+        "- **Payments:**",
+        "  - Amount: £45",
+        "  - Frequency: Monthly",
+        "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        `      > ${paymentClause}`,
+        "  - Fees:",
+        `    - ${joining}`,
+        "      - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        `        > ${joiningClause}`,
+        "    - Late payment fee of \\*£10\\*",
+        "      - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        `        > ${lateClause}`,
+        "- **Term:**",
+      ].join("\n"),
+    );
+    expect(quoted).not.toMatch(/Payments:[\s\S]*No verified quotation[\s\S]*Term:/);
+    // The payment's and each fee's quotation render as their own block quotes.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(3);
+
+    // One fee quoted and the other not: the other is marked, never given its neighbour's quote.
+    const one = withPayments({
+      amount: "£45",
+      frequency: "Monthly",
+      fees: [joining, late],
+      fee_citations: [{ fee: late, citation: citation(lateClause, 300) }],
+    });
+    expect(one).toContain(`  - Fees:\n    - ${joining} (**No verified quotation**)\n    - Late payment fee`);
+    expect(one).not.toContain(joiningClause);
+
+    // A report stored before fee quotations, a citation for another contract, one keyed by
+    // different text, and one stored under the penalties' key.
+    for (const payments of [
+      { fees: [joining] },
+      {
+        fees: [joining],
+        fee_citations: [
+          {
+            fee: joining,
+            citation: { ...citation(joiningClause), contract_id: "99999999-2222-4333-8444-555555555555" },
+          },
+        ],
+      },
+      { fees: [joining], fee_citations: [{ fee: joining.toLowerCase(), citation: citation(joiningClause) }] },
+      { fees: [joining], fee_citations: [{ penalty: joining, citation: citation(joiningClause) }] },
+    ]) {
+      const marked = withPayments({ amount: null, frequency: null, ...payments });
+      expect(marked).toContain(`  - Fees:\n    - ${joining} (**No verified quotation**)\n`);
+      expect(marked).not.toContain(joiningClause);
+    }
+
+    for (const none of [{ fees: [] }, {}]) {
+      const marked = withPayments({ amount: null, frequency: null, ...none });
+      expect(marked).toContain("  - Fees: None listed");
+      expect(marked).not.toMatch(/Fees:[^\n]*No verified quotation/);
     }
   });
 
