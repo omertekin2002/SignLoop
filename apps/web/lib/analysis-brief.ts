@@ -2,6 +2,7 @@ import type { AnalysisResult } from "@/lib/schemas";
 import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
 import { formatAutoRenew, isRenewalStated } from "@/lib/renewal";
 import { isPaymentStated } from "@/lib/payment";
+import { penaltyCitationRef } from "@/lib/penalties";
 import { regionalComparisonsView } from "@/lib/regional-comparisons";
 import {
   citationForReport,
@@ -267,14 +268,46 @@ function quotedFactLines(
   result: Partial<AnalysisResult>,
   contractId: string,
   ref: CitationRef,
+  indent = "    ",
 ): string[] {
   if (!stated) return [line];
   const cited = citationForReport(result, contractId, ref);
   if (!cited) return [`${line} (**No verified quotation**)`];
   return [
     line,
-    "    - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
-    ...blockquote(cited.quote).map((quoted) => `      ${quoted}`),
+    `${indent}- **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):`,
+    ...blockquote(cited.quote).map((quoted) => `${indent}  ${quoted}`),
+  ];
+}
+
+/**
+ * The cancellation penalties with their evidence: each penalty, then the verified quotation of the
+ * clause stating that penalty or a marker on its line. None listed keeps its unchanged line.
+ */
+function penaltyLines(
+  result: Partial<AnalysisResult>,
+  cancellation: Record<string, unknown>,
+  contractId: string,
+): string[] {
+  const penalties = (
+    Array.isArray(cancellation.penalties) ? cancellation.penalties : []
+  ).flatMap((penalty: unknown, index) => {
+    const value = text(penalty);
+    return value ? [{ value, index }] : [];
+  });
+  if (!penalties.length) return ["  - Penalties: None listed"];
+  return [
+    "  - Penalties:",
+    ...penalties.flatMap(({ value, index }) =>
+      quotedFactLines(
+        `    - ${inline(value)}`,
+        true,
+        result,
+        contractId,
+        penaltyCitationRef(index),
+        "      ",
+      ),
+    ),
   ];
 }
 
@@ -360,7 +393,6 @@ function summarySection(
   const renewal = record(summary.renewal);
   const cancellation = record(summary.cancellation);
   const fees = texts(payments.fees);
-  const penalties = texts(cancellation.penalties);
   const keyDates = (Array.isArray(result.key_dates) ? result.key_dates : [])
     .map(record)
     .filter((date) => text(date.date));
@@ -382,8 +414,7 @@ function summarySection(
     "- **Cancellation:**",
     `  - How to cancel: ${inline(text(cancellation.how) ?? NOT_SPECIFIED)}`,
     ...noticePeriodLines(result, cancellation, contractId),
-    penalties.length ? "  - Penalties:" : "  - Penalties: None listed",
-    ...bulletList(penalties, "    "),
+    ...penaltyLines(result, cancellation, contractId),
   );
 
   if (keyPoints.length) {

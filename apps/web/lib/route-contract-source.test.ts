@@ -101,6 +101,13 @@ describe("owner-scoped bounded source endpoint", () => {
     `?analysisId=${analysisId}&flag=Payment`,
     `?analysisId=${analysisId}&flag=payments`,
     `?analysisId=${analysisId}&flag=payment_citation`,
+    `?analysisId=${analysisId}&flag=penalty`,
+    `?analysisId=${analysisId}&flag=penalty-`,
+    `?analysisId=${analysisId}&flag=penalty-1000`,
+    `?analysisId=${analysisId}&flag=penalty--1`,
+    `?analysisId=${analysisId}&flag=penalty-0x1`,
+    `?analysisId=${analysisId}&flag=Penalty-0`,
+    `?analysisId=${analysisId}&flag=penalties-0`,
   ])("rejects malformed/unbounded requests: %s", async (query) => {
     expect((await get(query)).status).toBe(400);
     expect(getContractSourceForUser).not.toHaveBeenCalled();
@@ -287,6 +294,64 @@ describe("owner-scoped bounded source endpoint", () => {
       getAnalysisForUser.mockResolvedValue({ resultJson });
       expect((await get(payment)).status).toBe(422);
     }
+  });
+  it("highlights the clause stating a cancellation penalty, by the penalty's index", async () => {
+    const text = "Leaving early costs two months' fees. Unreturned kit is charged at cost.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (penaltyEvidence: { penalty: string; quote: string }[]) =>
+      attachAnalysisSources(
+        {
+          summary: {
+            cancellation: {
+              how: "In writing",
+              notice_period_days: null,
+              penalties: ["Two months' fees", "Kit charged at cost"],
+              penalty_evidence: penaltyEvidence.map((proposal) => ({ ...proposal, segment: "full" })),
+            },
+          },
+        },
+        id,
+        text,
+      );
+    const penalty = (index: number) =>
+      `?revision=${sourceRevision}&analysisId=${analysisId}&flag=penalty-${index}`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed([
+        { penalty: "Kit charged at cost", quote: "Unreturned kit is charged at cost." },
+        { penalty: "Two months' fees", quote: "Leaving early costs two months' fees." },
+      ]),
+    });
+    const first = await get(penalty(0));
+    expect(first.status).toBe(200);
+    expect((await first.json()).highlight).toMatchObject({
+      quote: "Leaving early costs two months' fees.",
+      start: 0,
+      end: 37,
+    });
+    const second = await get(penalty(1));
+    expect(second.status).toBe(200);
+    expect((await second.json()).highlight).toMatchObject({
+      quote: "Unreturned kit is charged at cost.",
+      start: 38,
+    });
+    // An index past the end has no citation.
+    expect((await get(penalty(2))).status).toBe(422);
+    // Nor does a penalty whose quotation is a paraphrase, or one quoted under other text.
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed([
+        { penalty: "Two months' fees", quote: "Leaving early costs 2 months' fees." },
+        { penalty: "Kit charged at Cost", quote: "Unreturned kit is charged at cost." },
+      ]),
+    });
+    expect((await get(penalty(0))).status).toBe(422);
+    expect((await get(penalty(1))).status).toBe(422);
   });
   it("returns the same 404 for missing, deleted, or unowned contracts", async () => {
     auth.mockResolvedValue({ userId: "intruder" });

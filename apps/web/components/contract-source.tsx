@@ -22,6 +22,7 @@ import {
 import { formatNoticePeriod, isNoticePeriodStated } from "@/lib/notice-period";
 import { formatAutoRenew, isRenewalStated } from "@/lib/renewal";
 import { isPaymentStated } from "@/lib/payment";
+import { penaltyCitationRef } from "@/lib/penalties";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -423,5 +424,36 @@ export function PaymentSource({
         label="View matched quotation of the payment clause"
       />
     </>
+  );
+}
+
+/**
+ * A report's cancellation penalties in one of three states: each penalty with the verified
+ * quotation of the clause stating it, a listed penalty with a visible "No verified quotation"
+ * marker, or the unchanged "None listed" when there are none. Each quotation is looked up by its
+ * own penalty's position in the stored list, which `penaltyCitation` matches on the exact text.
+ */
+export function PenaltiesSource({ penalties }: { penalties: unknown }) {
+  const listed = Array.isArray(penalties)
+    ? penalties.flatMap((penalty, index) =>
+        typeof penalty === "string" && penalty.trim()
+          ? [{ penalty, index }]
+          : [],
+      )
+    : [];
+  if (!listed.length) return <p className="text-sm">None listed</p>;
+  return (
+    <ul className="list-disc space-y-3 pl-5 text-sm">
+      {listed.map(({ penalty, index }) => (
+        <li key={index}>
+          <p>{penalty}</p>
+          <StatedFactSource
+            stated
+            citationRef={penaltyCitationRef(index)}
+            label={`View matched quotation of penalty ${index + 1}`}
+          />
+        </li>
+      ))}
+    </ul>
   );
 }

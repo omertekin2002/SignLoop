@@ -12,6 +12,7 @@ Late payments accrue interest at 4% per month until paid in full.
 3. Term and renewal
 This agreement starts on the date of the order form and lasts for twelve months.
 This agreement renews automatically for successive twelve-month terms unless either party gives 60 days' written notice before the end of the current term.
+If the Client ends this agreement before the end of the current term, the Client must pay an early termination fee equal to two months' fees.
 
 4. Liability
 The Provider's total liability under this agreement is limited to the fees paid in the previous month.

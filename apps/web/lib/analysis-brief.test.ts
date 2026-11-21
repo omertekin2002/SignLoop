@@ -439,6 +439,86 @@ describe("renderAnalysisBriefMarkdown", () => {
     }
   });
 
+  it("shows each penalty's own verified quotation, marks a penalty without one, and leaves none listed", () => {
+    const withCancellation = (cancellation: Record<string, unknown>) =>
+      section(
+        brief({
+          ...FULL_RESULT,
+          summary: {
+            ...FULL_RESULT.summary,
+            cancellation: { how: "Write to the club.", notice_period_days: null, ...cancellation },
+          },
+        }).markdown,
+        "Summary",
+      );
+    const earlyExit = "Early exit fee of two months' dues";
+    const kit = "Unreturned kit is charged at *cost*";
+    const earlyExitClause = "Leaving before the end of the term costs two months' dues.";
+    const kitClause = "Kit not returned within 30 days is charged at cost.";
+
+    const quoted = withCancellation({
+      penalties: [earlyExit, kit],
+      penalty_citations: [
+        { penalty: kit, citation: citation(kitClause, 300) },
+        { penalty: earlyExit, citation: citation(earlyExitClause, 200) },
+      ],
+    });
+    expect(quoted).toContain(
+      [
+        "  - Penalties:",
+        "    - Early exit fee of two months' dues",
+        "      - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        `        > ${earlyExitClause}`,
+        "    - Unreturned kit is charged at \\*cost\\*",
+        "      - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        `        > ${kitClause}`,
+      ].join("\n"),
+    );
+    expect(quoted).not.toMatch(/Penalties:[\s\S]*No verified quotation/);
+    // Each quotation renders inside its own penalty's list item as a block quote.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(2);
+
+    // One penalty quoted and the other not: the other is marked, never given its neighbour's quote.
+    const one = withCancellation({
+      penalties: [earlyExit, kit],
+      penalty_citations: [{ penalty: kit, citation: citation(kitClause, 300) }],
+    });
+    expect(one).toContain(
+      `  - Penalties:\n    - ${earlyExit} (**No verified quotation**)\n    - Unreturned kit`,
+    );
+    expect(one).not.toContain(earlyExitClause);
+
+    // A report stored before penalty quotations, a citation for another contract, and one keyed by
+    // different text.
+    for (const cancellation of [
+      { penalties: [earlyExit] },
+      {
+        penalties: [earlyExit],
+        penalty_citations: [
+          {
+            penalty: earlyExit,
+            citation: { ...citation(earlyExitClause), contract_id: "99999999-2222-4333-8444-555555555555" },
+          },
+        ],
+      },
+      {
+        penalties: [earlyExit],
+        penalty_citations: [{ penalty: earlyExit.toLowerCase(), citation: citation(earlyExitClause) }],
+      },
+    ]) {
+      const marked = withCancellation(cancellation);
+      expect(marked).toContain(`  - Penalties:\n    - ${earlyExit} (**No verified quotation**)\n`);
+      expect(marked).not.toContain(earlyExitClause);
+    }
+
+    for (const none of [{ penalties: [] }, {}]) {
+      const marked = withCancellation(none);
+      expect(marked).toContain("  - Penalties: None listed");
+      expect(marked).not.toMatch(/Penalties:[\s\S]*No verified quotation/);
+    }
+  });
+
   it("renders an unknown auto-renewal as unknown, not as no", () => {
     const { markdown } = brief({
       ...FULL_RESULT,

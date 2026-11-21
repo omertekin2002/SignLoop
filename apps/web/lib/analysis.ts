@@ -14,7 +14,9 @@ import { confirmedRegion } from "@/lib/regional-comparisons";
 import {
   AnalysisResultSchema,
   PartialAnalysisResultSchema,
+  PenaltyEvidenceSchema,
   AnalysisResult,
+  type PenaltyEvidence,
 } from "@/lib/schemas";
 import {
   extractResponseOutputText,
@@ -284,6 +286,7 @@ Required JSON rules:
 - When a notice period is stated, "summary.cancellation.notice_evidence" quotes the exact sentence or clause stating it, under the same quotation rules, including its qualifying language: business or calendar days, the event that starts the clock, and which party gives notice. Quote only that sentence or clause, normally under 500 characters. Use null when no notice period is stated.
 - When the contract states whether it renews automatically (auto_renew is true or false because the contract says so) or states a renewal period, "summary.renewal.renewal_evidence" quotes the exact sentence or clause that says so, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. Use null when renewal is not stated.
 - When the contract states a payment amount or frequency, "summary.payments.payment_evidence" quotes the exact sentence or clause that says so, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. Use null when neither a payment amount nor a frequency is stated.
+- For each entry in "summary.cancellation.penalties", add one entry to "summary.cancellation.penalty_evidence": its "penalty" repeats that penalty's text exactly, character for character, and its "quote" is the exact sentence or clause stating that penalty, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. When no penalties are listed, "penalty_evidence" is an empty array.
 - "proposed_jurisdiction" is the jurisdiction named in the contract's governing-law (choice-of-law) clause, as the clause words it, with that clause quoted as evidence under the same quotation rules. The user confirms or changes it later.
 - Use null for "proposed_jurisdiction" when no supplied CONTRACT segment contains a governing-law clause. Do not infer it from addresses, courts, currency, or where the parties are, and do not take it from project context or metadata.
 - Report only which law the clause names. Never state what that law provides or whether the contract complies with it.
@@ -297,7 +300,7 @@ Expected shape:
     "payments": { "amount": null, "frequency": null, "fees": [], "payment_evidence": { "quote": "exact wording of the clause stating the payment amount or frequency", "segment": "${segment.label}" } },
     "term": { "start": null, "end": null, "minimum_term": null },
     "renewal": { "auto_renew": null, "renewal_period": null, "renewal_evidence": { "quote": "exact wording of the clause stating whether and how the contract renews", "segment": "${segment.label}" } },
-    "cancellation": { "how": "...", "notice_period_days": null, "notice_period_text": null, "notice_evidence": { "quote": "exact wording of the clause stating the notice period", "segment": "${segment.label}" }, "penalties": [] }
+    "cancellation": { "how": "...", "notice_period_days": null, "notice_period_text": null, "notice_evidence": { "quote": "exact wording of the clause stating the notice period", "segment": "${segment.label}" }, "penalties": ["..."], "penalty_evidence": [{ "penalty": "the penalty's text exactly as listed in penalties", "quote": "exact wording of the clause stating that penalty", "segment": "${segment.label}" }] }
   },
   "red_flags": [{ "type": "...", "severity": 5, "explanation": "...", "where": null, "confidence": 50, "evidence": { "quote": "exact contract wording", "segment": "${segment.label}" } }],
   "proposed_jurisdiction": { "jurisdiction": "the jurisdiction the governing-law clause names", "evidence": { "quote": "exact governing-law clause wording", "segment": "${segment.label}" } },
@@ -750,6 +753,12 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
         penalties: toStringArray(
           pickFirst(cancellation, ["penalties", "fees", "charges"]),
         ),
+        penalty_evidence: toArray(
+          pickFirst(cancellation, ["penalty_evidence", "penaltyEvidence"]),
+        ).flatMap((proposal) => {
+          const parsed = PenaltyEvidenceSchema.safeParse(proposal);
+          return parsed.success ? [parsed.data] : [];
+        }),
       },
     },
     proposed_jurisdiction:
@@ -1359,6 +1368,31 @@ function mergedFactEvidence(
 }
 
 /**
+ * The quotations behind merged cancellation penalties. Each penalty keeps a quotation only from a
+ * section that lists exactly that text and whose quotation of it is found in that section, so a
+ * penalty the merge reworded has none, and no quotation sits beside a penalty another section
+ * stated differently.
+ */
+function penaltyEvidence(
+  penalties: readonly string[],
+  sections: readonly AnalysedSection[],
+): PenaltyEvidence[] {
+  return penalties.flatMap((penalty) => {
+    const evidence = sections
+      .filter(({ result }) =>
+        result.summary.cancellation.penalties.includes(penalty),
+      )
+      .flatMap(({ segment, result }) =>
+        (result.summary.cancellation.penalty_evidence ?? []).filter(
+          (proposal) =>
+            proposal.penalty === penalty && verifyQuote(proposal, [segment]),
+        ),
+      )[0];
+    return evidence ? [evidence] : [];
+  });
+}
+
+/**
  * Combines section results without a model: lists are concatenated in document order and
  * de-duplicated, the highest risk badge wins, and each summary fact comes from the first section
  * that states it. Used when the merge call fails or no time is left for it.
@@ -1393,6 +1427,9 @@ export function mergeSectionResults(
     results.flatMap(pick);
   const coverageNotices = uniqueText(
     all((result) => result.coverage_notices ?? []),
+  );
+  const penalties = uniqueText(
+    all((result) => result.summary.cancellation.penalties),
   );
 
   return {
@@ -1442,9 +1479,8 @@ export function mergeSectionResults(
           noticeSection,
           sections,
         ),
-        penalties: uniqueText(
-          all((result) => result.summary.cancellation.penalties),
-        ),
+        penalties,
+        penalty_evidence: penaltyEvidence(penalties, sections),
       },
     },
     red_flags: uniqueRedFlags(all((result) => result.red_flags)),
@@ -1503,6 +1539,8 @@ export function buildMergePrompt(
     const {
       notice_evidence: _noticeEvidence,
       notice_citation: _noticeCitation,
+      penalty_evidence: _penaltyEvidence,
+      penalty_citations: _penaltyCitations,
       ...cancellation
     } = summary.cancellation;
     const {
@@ -1591,8 +1629,8 @@ ${JSON.stringify(analyses, null, 2)}
 /**
  * Validates the merge call's answer. Red flags are the section flags it names by ID, de-duplicated;
  * if it names none, or an ID that cannot be read, although the sections found some, all of them are
- * kept rather than lost. The jurisdiction proposal and the notice-period, renewal and payment
- * quotations are the sections' own, so their quotations are never the merge model's.
+ * kept rather than lost. The jurisdiction proposal and the notice-period, penalty, renewal and
+ * payment quotations are the sections' own, so their quotations are never the merge model's.
  */
 function parseMergedAnalysis(
   content: string,
@@ -1646,6 +1684,8 @@ function parseMergedAnalysis(
   const {
     notice_evidence: _modelNoticeEvidence,
     notice_citation: _modelNoticeCitation,
+    penalty_evidence: _modelPenaltyEvidence,
+    penalty_citations: _modelPenaltyCitations,
     ...cancellation
   } = merged.summary.cancellation;
   const {
@@ -1675,6 +1715,7 @@ function parseMergedAnalysis(
       cancellation: {
         ...cancellation,
         notice_evidence: mergedFactEvidence(NOTICE_FACT, summary, sections),
+        penalty_evidence: penaltyEvidence(cancellation.penalties, sections),
       },
     },
     red_flags: uniqueRedFlags(merged.red_flags),

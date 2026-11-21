@@ -82,6 +82,13 @@ export const STUB_RENEWAL_QUOTE = "This agreement renews automatically for succe
 export const STUB_PAYMENT_QUOTE =
   "The Client will pay a monthly fee of 1,200 GBP, invoiced on the first day of each month.";
 
+/** The stub's one cancellation penalty, as the Penalties box lists it. */
+export const STUB_PENALTY = "Early termination fee equal to two months' fees";
+
+/** The stub's quotation of the clause stating that penalty. */
+export const STUB_PENALTY_QUOTE =
+  "If the Client ends this agreement before the end of the current term, the Client must pay an early termination fee equal to two months' fees.";
+
 export const STUB_ANALYSIS_SUMMARY = "Stub analysis: a twelve-month website services agreement.";
 
 /**
@@ -114,7 +121,8 @@ export function stubAnalysis() {
         notice_period_days: 60,
         notice_period_text: "60 days",
         notice_evidence: { quote: STUB_NOTICE_QUOTE, segment: "full" },
-        penalties: [],
+        penalties: [STUB_PENALTY],
+        penalty_evidence: [{ penalty: STUB_PENALTY, quote: STUB_PENALTY_QUOTE, segment: "full" }],
       },
     },
     red_flags: STUB_ANALYSIS_FLAGS.map(({ type, explanation, quote }, index) => ({
