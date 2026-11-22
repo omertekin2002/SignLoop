@@ -271,6 +271,32 @@ describe.each([false, true])("a saved chat about one contract (stream=%s)", (str
     expect(savedUserMetadata()).toEqual({ focusContractId: contractId });
   });
 
+  it("replays a retried first turn that another request saved while this one waited, instead of refusing it", async () => {
+    // Before the lease the thread had no focus yet; under the lease the overlapping request has
+    // saved the turn, with its focus, so the retry gets that saved answer back.
+    mocks.getChatThreadFocusForUser
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ contractId, contract });
+    mocks.getChatFocusContractForUser.mockResolvedValue(contract);
+    mocks.getRecentChatMessagesForThreadForUser.mockResolvedValue([
+      { ...savedRow(1, "user", "Can I end this early?"), turnId },
+      savedRow(2, "assistant", "Clause 9 allows it."),
+    ]);
+    mocks.getChatTurnByTurnId.mockResolvedValue([
+      { ...savedRow(1, "user", "Can I end this early?"), turnId },
+      savedRow(2, "assistant", "Clause 9 allows it."),
+    ]);
+
+    const response = await send({ turnId, focusContractId: contractId });
+
+    expect(response.status).toBe(200);
+    expect(response.text).toContain("Clause 9 allows it.");
+    expect(mocks.getChatThreadFocusForUser).toHaveBeenCalledTimes(2);
+    expect(mocks.admitChat).not.toHaveBeenCalled();
+    expect(model.doStreamCalls).toHaveLength(0);
+    expect(mocks.appendChatMessagesToThread).not.toHaveBeenCalled();
+  });
+
   it("refuses a client focus that conflicts with the thread's stored one, never merging them", async () => {
     mocks.getChatThreadFocusForUser.mockResolvedValue({ contractId, contract });
 

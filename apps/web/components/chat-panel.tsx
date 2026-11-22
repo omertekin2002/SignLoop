@@ -1014,6 +1014,8 @@ export function ChatPanel({
                   title: previous?.title ?? "Chat",
                   hasMore: previous?.hasMore ?? false,
                   messages,
+                  // Keep what the thread is about; the scope line reads it from here.
+                  focus: previous?.focus,
                 };
               },
             );

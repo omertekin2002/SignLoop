@@ -554,26 +554,27 @@ export async function POST(req: Request) {
 
     if (userId && !isTemporaryChat) {
       // The thread's focus comes from its stored turns, never from the client. A client value can
-      // only start a focus on a thread that has none, and only for a contract the user owns. All
-      // of this is settled before the lease, quota or model, so a foreign or missing contract gets
-      // the same 404 and costs nothing. Ownership is checked again on every turn: once the
+      // only start a focus on a thread that has none, and only for a contract the user owns. A
+      // client value is checked before the lease, quota or model, so a foreign or missing contract
+      // gets the same 404 and costs nothing. Ownership is checked again on every turn: once the
       // contract is deleted, the thread's later turns go unfocused.
-      const threadFocus = await timings.measure("history", () =>
-        getChatThreadFocusForUser(userId, threadId),
-      );
-      if (threadFocus) {
-        if (requestedFocusId && requestedFocusId !== threadFocus.contractId)
-          return NextResponse.json({ error: FOCUS_CONFLICT }, { status: 409 });
-        focusContract = threadFocus.contract;
-      } else if (requestedFocusId) {
-        focusContract = await timings.measure("history", () =>
-          getChatFocusContractForUser(userId, requestedFocusId),
+      let requestedContract: ChatFocusContractRecord | null = null;
+      if (requestedFocusId) {
+        const earlyFocus = await timings.measure("history", () =>
+          getChatThreadFocusForUser(userId, threadId),
         );
-        if (!focusContract)
-          return NextResponse.json(
-            { error: FOCUS_CONTRACT_NOT_FOUND },
-            { status: 404 },
+        if (earlyFocus && earlyFocus.contractId !== requestedFocusId)
+          return NextResponse.json({ error: FOCUS_CONFLICT }, { status: 409 });
+        if (!earlyFocus) {
+          requestedContract = await timings.measure("history", () =>
+            getChatFocusContractForUser(userId, requestedFocusId),
           );
+          if (!requestedContract)
+            return NextResponse.json(
+              { error: FOCUS_CONTRACT_NOT_FOUND },
+              { status: 404 },
+            );
+        }
       }
       release = await timings.measure("lease", () =>
         claimGenerationOperation(userId, "chat", threadId, CHAT_LEASE_SECONDS),
@@ -584,21 +585,42 @@ export async function POST(req: Request) {
           { status: 409 },
         );
       // Read the owner-scoped thread before admission, so a missing or foreign thread costs no quota.
-      const recentMessages = await timings.measure("history", () =>
-        getRecentChatMessagesForThreadForUser(
-          userId,
-          threadId,
-          MAX_CHAT_MESSAGES - 1,
-        ),
+      // Its focus is read again under the lease, so it describes the same turns as the history: a
+      // request that overlapped the turn that stored the focus sees that turn here.
+      const [recentMessages, threadFocus] = await timings.measure(
+        "history",
+        () =>
+          Promise.all([
+            getRecentChatMessagesForThreadForUser(
+              userId,
+              threadId,
+              MAX_CHAT_MESSAGES - 1,
+            ),
+            getChatThreadFocusForUser(userId, threadId),
+          ]),
       );
       if (!recentMessages)
         return NextResponse.json(
           { error: "Chat thread not found" },
           { status: 404 },
         );
-      // A focus starts with a thread's first turn; an ordinary chat never becomes a focused one.
-      if (!threadFocus && requestedFocusId && recentMessages.length)
-        return NextResponse.json({ error: FOCUS_CONFLICT }, { status: 409 });
+      if (threadFocus) {
+        if (requestedFocusId && requestedFocusId !== threadFocus.contractId)
+          return NextResponse.json({ error: FOCUS_CONFLICT }, { status: 409 });
+        focusContract = threadFocus.contract;
+      } else if (requestedFocusId) {
+        // A focus starts with a thread's first turn; an ordinary chat never becomes a focused one.
+        if (recentMessages.length)
+          return NextResponse.json({ error: FOCUS_CONFLICT }, { status: 409 });
+        focusContract =
+          requestedContract ??
+          (await getChatFocusContractForUser(userId, requestedFocusId));
+        if (!focusContract)
+          return NextResponse.json(
+            { error: FOCUS_CONTRACT_NOT_FOUND },
+            { status: 404 },
+          );
+      }
       // A retry of an interrupted turn answers that question afresh: leave its earlier attempt out
       // of the history, since the new answer replaces it.
       persistedMessages = turnId

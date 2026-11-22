@@ -143,6 +143,10 @@ function renderPanel(props: PanelProps) {
   };
 }
 
+// The reply's Markdown renderer loads lazily, which can take over a second on a busy CI runner.
+const SLOW = { timeout: 5000 };
+// Each test sends a turn and waits for its rendered reply, so allow more than the 5 s default.
+vi.setConfig({ testTimeout: 15_000 });
 const composer = () => screen.getByRole("textbox", { name: "Chat message" });
 const chatPosts = () => requests.filter((request) => request.url === "/api/chat");
 
@@ -150,7 +154,7 @@ describe("a new saved chat about a contract", () => {
   it("shows the contract and an editable draft, and sends nothing until the user presses Send", async () => {
     renderPanel({ focusContract: { contractId, title: "Office lease" } });
 
-    await waitFor(() => expect(composer()).toHaveValue(contractChatDraft("Office lease")));
+    await waitFor(() => expect(composer()).toHaveValue(contractChatDraft("Office lease")), SLOW);
     expect(contractChatDraft("Office lease")).toBe("About “Office lease”: ");
     const link = screen.getByRole("link", { name: "Office lease" });
     expect(link).toHaveAttribute("href", `/contracts/${contractId}`);
@@ -171,7 +175,7 @@ describe("a new saved chat about a contract", () => {
       messages: [{ role: "user", content: "About “Office lease”: can I end it early?" }],
     });
     // The new thread keeps the scope line.
-    expect(await screen.findByText("Clause 9 allows it.")).toBeInTheDocument();
+    expect(await screen.findByText("Clause 9 allows it.", undefined, SLOW)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Office lease" })).toBeInTheDocument();
   });
 
@@ -189,7 +193,7 @@ describe("a new saved chat about a contract", () => {
     renderPanel({ focusContract: { contractId, title: null } });
 
     expect(
-      await screen.findByText("This contract is not available, so this chat will not be about it."),
+      await screen.findByText("This contract is not available, so this chat will not be about it.", undefined, SLOW),
     ).toBeInTheDocument();
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(composer()).toHaveValue("");
@@ -199,7 +203,7 @@ describe("a new saved chat about a contract", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(chatPosts()).toHaveLength(1));
     expect(chatPosts()[0]!.body).not.toHaveProperty("focusContractId");
-    expect(await screen.findByText("Clause 9 allows it.")).toBeInTheDocument();
+    expect(await screen.findByText("Clause 9 allows it.", undefined, SLOW)).toBeInTheDocument();
   });
 
   it("never applies a focus to temporary chat", async () => {
@@ -221,7 +225,7 @@ describe("a reloaded saved chat about a contract", () => {
     threadFocus = { contractId, title: "Office lease" };
     renderPanel({ selectedThreadId: threadId });
 
-    expect(await screen.findByText("Sixty days.")).toBeInTheDocument();
+    expect(await screen.findByText("Sixty days.", undefined, SLOW)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Office lease" })).toHaveAttribute(
       "href",
       `/contracts/${contractId}`,
@@ -234,7 +238,9 @@ describe("a reloaded saved chat about a contract", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(chatPosts()).toHaveLength(1));
     expect(chatPosts()[0]!.body).toMatchObject({ threadId, focusContractId: contractId });
-    expect(await screen.findByText("Clause 9 allows it.")).toBeInTheDocument();
+    expect(await screen.findByText("Clause 9 allows it.", undefined, SLOW)).toBeInTheDocument();
+    // The saved turn updates the cached thread without dropping what it is about.
+    expect(screen.getByRole("link", { name: "Office lease" })).toBeInTheDocument();
   });
 
   it("still opens once the contract is deleted, says so, and sends new turns unfocused", async () => {
@@ -245,7 +251,7 @@ describe("a reloaded saved chat about a contract", () => {
     threadFocus = { contractId, title: null };
     renderPanel({ selectedThreadId: threadId });
 
-    expect(await screen.findByText("Sixty days.")).toBeInTheDocument();
+    expect(await screen.findByText("Sixty days.", undefined, SLOW)).toBeInTheDocument();
     expect(
       screen.getByText(
         "The contract this chat was about is no longer available. New messages are not about it.",
@@ -258,14 +264,14 @@ describe("a reloaded saved chat about a contract", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(chatPosts()).toHaveLength(1));
     expect(chatPosts()[0]!.body).not.toHaveProperty("focusContractId");
-    expect(await screen.findByText("Clause 9 allows it.")).toBeInTheDocument();
+    expect(await screen.findByText("Clause 9 allows it.", undefined, SLOW)).toBeInTheDocument();
   });
 
   it("shows no scope line for an ordinary chat", async () => {
     threadMessages = [message("q1", 1, "user", "Hello"), message("a1", 2, "assistant", "Hi.")];
     renderPanel({ selectedThreadId: threadId });
 
-    expect(await screen.findByText("Hi.")).toBeInTheDocument();
+    expect(await screen.findByText("Hi.", undefined, SLOW)).toBeInTheDocument();
     expect(screen.queryByText("About:")).not.toBeInTheDocument();
   });
 });
