@@ -124,6 +124,13 @@ describe("owner-scoped bounded source endpoint", () => {
     `?analysisId=${analysisId}&flag=obligation--1`,
     `?analysisId=${analysisId}&flag=Obligation-0`,
     `?analysisId=${analysisId}&flag=obligations-0`,
+    `?analysisId=${analysisId}&flag=key-date`,
+    `?analysisId=${analysisId}&flag=key-date-`,
+    `?analysisId=${analysisId}&flag=key-date-1000`,
+    `?analysisId=${analysisId}&flag=key-date--1`,
+    `?analysisId=${analysisId}&flag=Key-date-0`,
+    `?analysisId=${analysisId}&flag=key-dates-0`,
+    `?analysisId=${analysisId}&flag=keydate-0`,
   ])("rejects malformed/unbounded requests: %s", async (query) => {
     expect((await get(query)).status).toBe(400);
     expect(getContractSourceForUser).not.toHaveBeenCalled();
@@ -482,6 +489,73 @@ describe("owner-scoped bounded source endpoint", () => {
     });
     expect((await get(obligation(0))).status).toBe(422);
     expect((await get(obligation(1))).status).toBe(422);
+  });
+  it("highlights the clause stating a key date, by the date's index", async () => {
+    const text = "The fees are reviewed on 1 April. The agreement renews on 1 January 2027. Members keep their kit.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (
+      keyDateEvidence: { type: string; date: string; quote: string }[],
+    ) =>
+      attachAnalysisSources(
+        {
+          key_dates: [
+            { type: "PRICE_REVIEW", date: "1 April", derived_from: null },
+            { type: "RENEWAL", date: "2027-01-01", derived_from: null },
+          ],
+          key_date_evidence: keyDateEvidence.map((proposal) => ({ ...proposal, segment: "full" })),
+          obligations: ["Keep the kit"],
+          obligation_evidence: [{ obligation: "Keep the kit", quote: "Members keep their kit.", segment: "full" }],
+        },
+        id,
+        text,
+      );
+    const keyDate = (index: number) =>
+      `?revision=${sourceRevision}&analysisId=${analysisId}&flag=key-date-${index}`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed([
+        { type: "RENEWAL", date: "2027-01-01", quote: "The agreement renews on 1 January 2027." },
+        { type: "PRICE_REVIEW", date: "1 April", quote: "The fees are reviewed on 1 April." },
+      ]),
+    });
+    const first = await get(keyDate(0));
+    expect(first.status).toBe(200);
+    expect((await first.json()).highlight).toMatchObject({
+      quote: "The fees are reviewed on 1 April.",
+      start: 0,
+      end: 33,
+    });
+    const second = await get(keyDate(1));
+    expect(second.status).toBe(200);
+    expect((await second.json()).highlight).toMatchObject({
+      quote: "The agreement renews on 1 January 2027.",
+      start: 34,
+    });
+    // The obligation's own quotation is still served beside the key dates'.
+    const obligation = await get(`?revision=${sourceRevision}&analysisId=${analysisId}&flag=obligation-0`);
+    expect(obligation.status).toBe(200);
+    expect((await obligation.json()).highlight).toMatchObject({ quote: "Members keep their kit." });
+    // An index past the end has no citation, nor does a key-date index used as an obligation's.
+    expect((await get(keyDate(2))).status).toBe(422);
+    expect(
+      (await get(`?revision=${sourceRevision}&analysisId=${analysisId}&flag=obligation-1`)).status,
+    ).toBe(422);
+    // Nor does a date whose quotation is a paraphrase, or one quoted under another type or date.
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed([
+        { type: "PRICE_REVIEW", date: "1 April", quote: "Fees are reviewed every April." },
+        { type: "OTHER", date: "2027-01-01", quote: "The agreement renews on 1 January 2027." },
+        { type: "RENEWAL", date: "1 January 2027", quote: "The agreement renews on 1 January 2027." },
+      ]),
+    });
+    expect((await get(keyDate(0))).status).toBe(422);
+    expect((await get(keyDate(1))).status).toBe(422);
   });
   it("highlights the clause stating an extra fee, by the fee's index", async () => {
     const text = "Late invoices cost 50 GBP. Set-up costs 300 GBP. The Client pays 1,200 GBP monthly.";

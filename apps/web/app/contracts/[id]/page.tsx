@@ -57,7 +57,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ContractSourceProvider, FindingSource, NoticePeriodSource, OpenContractSource, PaymentSource, PenaltiesSource, RenewalSource, TermSource } from "@/components/contract-source";
+import { ContractSourceProvider, FindingSource, KeyDateSource, NoticePeriodSource, OpenContractSource, PaymentSource, PenaltiesSource, RenewalSource, TermSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
 import { DownloadBriefButton } from "@/components/download-brief-button";
 import { PrintBrief } from "@/components/print-brief";
@@ -886,16 +886,19 @@ const ContractDetails = () => {
                   <CardDescription>Important dates to track</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                  <ul
+                    aria-label="Key dates"
+                    className="grid gap-3 md:grid-cols-2 lg:grid-cols-3"
+                  >
                     {keyDates.map((date, idx) => (
-                      <div
+                      <li
                         key={idx}
-                        className="flex items-center gap-3 p-3 rounded-lg border bg-card"
+                        className="flex items-start gap-3 p-3 rounded-lg border bg-card"
                       >
                         <div className="rounded-full p-2 bg-primary/10">
                           <Calendar className="h-4 w-4 text-primary" />
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-sm font-medium">
                             {typeof date?.type === "string"
                               ? date.type.replace(/_/g, " ")
@@ -909,13 +912,14 @@ const ContractDetails = () => {
                           {typeof date?.derived_from === "string" &&
                             date.derived_from && (
                               <p className="text-xs text-muted-foreground italic">
-                                From: {date.derived_from}
+                                Analysis’s explanation: {date.derived_from}
                               </p>
                             )}
+                          <KeyDateSource index={idx} />
                         </div>
-                      </div>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 </CardContent>
               </Card>
             )}

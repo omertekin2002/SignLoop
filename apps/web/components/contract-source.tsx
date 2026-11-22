@@ -32,6 +32,7 @@ import {
   listedCitationRef,
   type KnownListedFact,
 } from "@/lib/listed-citations";
+import { keyDateCitationRef } from "@/lib/key-date-citations";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -333,20 +334,19 @@ function StatedFactSource({
   stated,
   citationRef,
   label,
+  caveat = "The quotation shows where this value comes from, not that this reading of it is correct.",
 }: {
   stated: boolean;
   citationRef: CitationRef;
   label: string;
+  caveat?: string;
 }) {
   const source = useContext(SourceContext);
   if (!stated) return null;
   return source?.citation(citationRef) ? (
     <>
       <QuotedSource citationRef={citationRef} label={label} />
-      <p className="mt-2 text-xs text-muted-foreground">
-        The quotation shows where this value comes from, not that this
-        reading of it is correct.
-      </p>
+      <p className="mt-2 text-xs text-muted-foreground">{caveat}</p>
     </>
   ) : (
     <p className="mt-2 inline-block rounded border border-border px-2 py-0.5 text-xs text-muted-foreground">
@@ -553,6 +553,23 @@ export function ObligationsSource({ obligations }: { obligations: unknown }) {
         </p>
       }
       className="list-disc space-y-3 pl-5"
+    />
+  );
+}
+
+/**
+ * A key date's evidence: the verified quotation of the clause stating it or that it is derived from,
+ * looked up by the date's position in the stored `key_dates` (`key-date-<n>`), which
+ * `keyDateCitation` matches on its exact type and date; or a visible "No verified quotation" marker.
+ * Display-only: the quotation never makes a calculated date correct, and the caveat says so.
+ */
+export function KeyDateSource({ index }: { index: number }) {
+  return (
+    <StatedFactSource
+      stated
+      citationRef={keyDateCitationRef(index)}
+      label={`View matched quotation of key date ${index + 1}`}
+      caveat="The quotation shows which clause this date comes from, not that the date was worked out correctly."
     />
   );
 }

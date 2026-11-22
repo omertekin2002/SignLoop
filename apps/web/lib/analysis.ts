@@ -17,8 +17,10 @@ import {
   PartialAnalysisResultSchema,
   FeeEvidenceSchema,
   ObligationEvidenceSchema,
+  KeyDateEvidenceSchema,
   PenaltyEvidenceSchema,
   AnalysisResult,
+  type KeyDateEvidence,
 } from "@/lib/schemas";
 import {
   LISTED_FEES,
@@ -27,6 +29,7 @@ import {
   listedContainer,
   type KnownListedFact,
 } from "@/lib/listed-citations";
+import { namesKeyDate } from "@/lib/key-date-citations";
 import {
   extractResponseOutputText,
   LlmResponseValidationError,
@@ -299,6 +302,7 @@ Required JSON rules:
 - For each entry in "summary.cancellation.penalties", add one entry to "summary.cancellation.penalty_evidence": its "penalty" repeats that penalty's text exactly, character for character, and its "quote" is the exact sentence or clause stating that penalty, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. When no penalties are listed, "penalty_evidence" is an empty array.
 - For each entry in "summary.payments.fees", add one entry to "summary.payments.fee_evidence": its "fee" repeats that fee's text exactly, character for character, and its "quote" is the exact sentence or clause stating that fee, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. When no fees are listed, "fee_evidence" is an empty array.
 - For each entry in "obligations", add one entry to "obligation_evidence": its "obligation" repeats that obligation's text exactly, character for character, and its "quote" is the exact sentence or clause stating that obligation, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. When no obligations are listed, "obligation_evidence" is an empty array.
+- For each entry in "key_dates", add one entry to "key_date_evidence": its "type" and "date" repeat that key date's "type" and "date" exactly, character for character, and its "quote" is the exact sentence or clause that states the date or that it is derived from, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. When no key dates are listed, "key_date_evidence" is an empty array.
 - "proposed_jurisdiction" is the jurisdiction named in the contract's governing-law (choice-of-law) clause, as the clause words it, with that clause quoted as evidence under the same quotation rules. The user confirms or changes it later.
 - Use null for "proposed_jurisdiction" when no supplied CONTRACT segment contains a governing-law clause. Do not infer it from addresses, courts, currency, or where the parties are, and do not take it from project context or metadata.
 - Report only which law the clause names. Never state what that law provides or whether the contract complies with it.
@@ -322,6 +326,7 @@ Expected shape:
     "email_templates": [{ "subject": "...", "body": "..." }]
   },
   "key_dates": [{ "type": "OTHER", "date": "YYYY-MM-DD or description", "derived_from": null }],
+  "key_date_evidence": [{ "type": "the key date's type exactly as listed in key_dates", "date": "the key date's date exactly as listed in key_dates", "quote": "exact wording of the clause stating that date or that it is derived from", "segment": "${segment.label}" }],
   "obligations": ["..."],
   "obligation_evidence": [{ "obligation": "the obligation's text exactly as listed in obligations", "quote": "exact wording of the clause stating that obligation", "segment": "${segment.label}" }],
   "parties": ["..."],
@@ -808,6 +813,10 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
       email_templates: emailTemplates,
     },
     key_dates: keyDates,
+    key_date_evidence: parsedEntries(
+      pickFirst(source, ["key_date_evidence", "keyDateEvidence"]),
+      KeyDateEvidenceSchema,
+    ),
     obligations: toStringArray(pickFirst(source, ["obligations", "duties"])),
     obligation_evidence: parsedEntries(
       pickFirst(source, ["obligation_evidence", "obligationEvidence"]),
@@ -1465,6 +1474,37 @@ function listedEvidence<F extends KnownListedFact>(
   });
 }
 
+/** A key date as a section or merge lists it. */
+type KeyDate = AnalysisResult["key_dates"][number];
+
+/**
+ * The quotations behind merged key dates. Like `listedEvidence`, each date keeps a quotation only
+ * from a section that lists exactly that date (the same type and date) and whose quotation of it is
+ * found in that section, so a date the merge reworded or recalculated has none, and no quotation
+ * sits beside a date another section stated differently.
+ */
+function keyDateEvidence(
+  keyDates: readonly KeyDate[],
+  sections: readonly AnalysedSection[],
+): KeyDateEvidence[] {
+  const quoted: KeyDateEvidence[] = [];
+  for (const keyDate of keyDates) {
+    if (quoted.some((evidence) => namesKeyDate(evidence, keyDate))) continue;
+    const evidence = sections
+      .filter(({ result }) =>
+        result.key_dates.some((listed) => namesKeyDate(listed, keyDate)),
+      )
+      .flatMap(({ segment, result }) =>
+        (result.key_date_evidence ?? []).filter(
+          (proposal) =>
+            namesKeyDate(proposal, keyDate) && verifyQuote(proposal, [segment]),
+        ),
+      )[0];
+    if (evidence) quoted.push(evidence);
+  }
+  return quoted;
+}
+
 /**
  * Combines section results without a model: lists are concatenated in document order and
  * de-duplicated, the highest risk badge wins, and each summary fact comes from the first section
@@ -1513,6 +1553,10 @@ export function mergeSectionResults(
   );
   const fees = uniqueText(all((result) => result.summary.payments.fees));
   const obligations = uniqueText(all((result) => result.obligations));
+  const keyDates = uniqueBy(
+    all((result) => result.key_dates),
+    (date) => `${date.type}|${normalizedKey(date.date)}`,
+  );
 
   return {
     ...(coverageNotices.length ? { coverage_notices: coverageNotices } : {}),
@@ -1582,10 +1626,8 @@ export function mergeSectionResults(
           `${normalizedKey(template.subject)}|${normalizedKey(template.body)}`,
       ),
     },
-    key_dates: uniqueBy(
-      all((result) => result.key_dates),
-      (date) => `${date.type}|${normalizedKey(date.date)}`,
-    ),
+    key_dates: keyDates,
+    key_date_evidence: keyDateEvidence(keyDates, sections),
     obligations,
     obligation_evidence: listedEvidence(LISTED_OBLIGATIONS, obligations, sections),
     parties: uniqueText(all((result) => result.parties)),
@@ -1619,10 +1661,13 @@ export function buildMergePrompt(
       coverage_notices: _notices,
       obligation_evidence: _obligationEvidence,
       obligation_citations: _obligationCitations,
+      key_date_evidence: _keyDateEvidence,
+      key_date_citations: _keyDateCitations,
       summary,
       ...rest
     } = result;
-    // Fact quotations are copied from the sections afterwards (mergedFactEvidence, listedEvidence).
+    // Fact quotations are copied from the sections afterwards (mergedFactEvidence, listedEvidence,
+    // keyDateEvidence).
     const {
       notice_evidence: _noticeEvidence,
       notice_citation: _noticeCitation,
@@ -1724,8 +1769,8 @@ ${JSON.stringify(analyses, null, 2)}
  * Validates the merge call's answer. Red flags are the section flags it names by ID, de-duplicated;
  * if it names none, or an ID that cannot be read, although the sections found some, all of them are
  * kept rather than lost. The jurisdiction proposal and the notice-period, penalty, renewal,
- * payment, fee and term quotations are the sections' own, so their quotations are never the merge
- * model's.
+ * payment, fee, term, obligation and key-date quotations are the sections' own, so their quotations
+ * are never the merge model's.
  */
 function parseMergedAnalysis(
   content: string,
@@ -1766,6 +1811,8 @@ function parseMergedAnalysis(
     coverage_notices: _modelNotices,
     obligation_evidence: _modelObligationEvidence,
     obligation_citations: _modelObligationCitations,
+    key_date_evidence: _modelKeyDateEvidence,
+    key_date_citations: _modelKeyDateCitations,
     ...rest
   } = parsed;
   const merged = parseStrictJson<AnalysisResult>(
@@ -1838,6 +1885,7 @@ function parseMergedAnalysis(
       ...merged.next_actions,
       questions_to_ask: uniqueText(merged.next_actions.questions_to_ask),
     },
+    key_date_evidence: keyDateEvidence(merged.key_dates, sections),
     obligations,
     obligation_evidence: listedEvidence(LISTED_OBLIGATIONS, obligations, sections),
     parties: uniqueText(merged.parties),

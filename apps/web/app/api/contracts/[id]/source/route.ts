@@ -12,6 +12,7 @@ import {
   TERM_CITATION,
 } from "@/lib/source-citations";
 import { isListedCitationRef } from "@/lib/listed-citations";
+import { isKeyDateCitationRef } from "@/lib/key-date-citations";
 import { isUuid } from "@/lib/utils";
 
 export async function GET(
@@ -45,8 +46,8 @@ export async function GET(
     (analysisId === null) !== (flag === null) ||
     // A red flag's index, the governing-law quotation behind the jurisdiction proposal, the clause
     // stating the cancellation notice period, renewal, the payment amount and frequency or the term,
-    // or a cancellation penalty, an extra fee or an obligation by its index (`penalty-<n>`,
-    // `fee-<n>`, `obligation-<n>`).
+    // or a cancellation penalty, an extra fee, an obligation or a key date by its index
+    // (`penalty-<n>`, `fee-<n>`, `obligation-<n>`, `key-date-<n>`).
     (flag !== null &&
       flag !== JURISDICTION_CITATION &&
       flag !== NOTICE_CITATION &&
@@ -54,6 +55,7 @@ export async function GET(
       flag !== PAYMENT_CITATION &&
       flag !== TERM_CITATION &&
       !isListedCitationRef(flag) &&
+      !isKeyDateCitationRef(flag) &&
       !/^\d{1,5}$/.test(flag))
   )
     return reply({ error: "Invalid source request" }, 400);
@@ -72,7 +74,7 @@ export async function GET(
         flag === PAYMENT_CITATION ||
         flag === TERM_CITATION
         ? flag
-        : isListedCitationRef(flag)
+        : isListedCitationRef(flag) || isKeyDateCitationRef(flag)
           ? flag
           : Number(flag),
     );

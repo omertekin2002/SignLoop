@@ -10,6 +10,7 @@ import {
   listedCitationRef,
   type KnownListedFact,
 } from "@/lib/listed-citations";
+import { keyDateCitationRef } from "@/lib/key-date-citations";
 import { regionalComparisonsView } from "@/lib/regional-comparisons";
 import {
   citationForReport,
@@ -277,13 +278,14 @@ function quotedFactLines(
   contractId: string,
   ref: CitationRef,
   indent = "    ",
+  caveat = "it shows where this value comes from, not that this reading is correct",
 ): string[] {
   if (!stated) return [line];
   const cited = citationForReport(result, contractId, ref);
   if (!cited) return [`${line} (**No verified quotation**)`];
   return [
     line,
-    `${indent}- **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):`,
+    `${indent}- **Verified quotation** (matched in the extracted contract text; ${caveat}):`,
     ...blockquote(cited.quote).map((quoted) => `${indent}  ${quoted}`),
   ];
 }
@@ -439,9 +441,10 @@ function summarySection(
   const term = record(summary.term);
   const renewal = record(summary.renewal);
   const cancellation = record(summary.cancellation);
+  // Each date keeps its index in the stored list, which names its quotation (`key-date-<n>`).
   const keyDates = (Array.isArray(result.key_dates) ? result.key_dates : [])
-    .map(record)
-    .filter((date) => text(date.date));
+    .map((date, index) => ({ date: record(date), index }))
+    .filter(({ date }) => text(date.date));
   const obligations = listedItemLines(
     result,
     record(result),
@@ -471,11 +474,19 @@ function summarySection(
   }
   lines.push("", "### Key dates", "");
   if (keyDates.length) {
-    for (const date of keyDates) {
+    for (const { date, index } of keyDates) {
       const type = KEY_DATE_LABELS[String(date.type)] ?? "Date";
       const from = text(date.derived_from);
       lines.push(
-        `- **${type}:** ${inline(text(date.date)!)}${from ? ` (from: ${inline(from)})` : ""}`,
+        ...quotedFactLines(
+          `- **${type}:** ${inline(text(date.date)!)}${from ? ` (from: ${inline(from)})` : ""}`,
+          true,
+          result,
+          contractId,
+          keyDateCitationRef(index),
+          "  ",
+          "it shows which clause this date comes from, not that the date was worked out correctly",
+        ),
       );
     }
   } else {

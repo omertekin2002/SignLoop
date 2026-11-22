@@ -754,6 +754,98 @@ describe("renderAnalysisBriefMarkdown", () => {
     }
   });
 
+  it("shows each key date's own verified quotation, marks a date without one, and leaves none identified", () => {
+    const datesOf = (fields: Record<string, unknown>) => {
+      const summary = section(brief({ ...FULL_RESULT, ...fields }).markdown, "Summary");
+      return summary.slice(
+        summary.indexOf("### Key dates"),
+        summary.indexOf("### Obligations"),
+      );
+    };
+    const renewal = { type: "RENEWAL", date: "2026-12-31", derived_from: "End of the first year" };
+    const cutoff = { type: "NOTICE_CUTOFF", date: "2026-11-30", derived_from: "One month before renewal" };
+    const renewalClause = "The membership renews on 31 December 2026 for a further year.";
+    const cutoffClause = "The Member may cancel with one calendar month's notice before renewal.";
+    const caveat =
+      "  - **Verified quotation** (matched in the extracted contract text; it shows which clause this date comes from, not that the date was worked out correctly):";
+
+    const quoted = datesOf({
+      key_dates: [renewal, cutoff],
+      key_date_citations: [
+        { type: cutoff.type, date: cutoff.date, citation: citation(cutoffClause, 300) },
+        { type: renewal.type, date: renewal.date, citation: citation(renewalClause, 200) },
+      ],
+    });
+    expect(quoted).toBe(
+      [
+        "### Key dates",
+        "",
+        "- **Renewal:** 2026-12-31 (from: End of the first year)",
+        caveat,
+        `    > ${renewalClause}`,
+        "- **Notice cutoff:** 2026-11-30 (from: One month before renewal)",
+        caveat,
+        `    > ${cutoffClause}`,
+        "",
+        "",
+      ].join("\n"),
+    );
+    // Each quotation renders inside its own date's list item as a block quote.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(2);
+    expect(tokens.filter((token) => token.type === "list_item")).toHaveLength(4);
+
+    // Two dates of the same type, or the same date of two types: only the exact date is quoted.
+    const later = { type: "RENEWAL", date: "2027-12-31", derived_from: null };
+    const sameDay = { type: "OTHER", date: renewal.date, derived_from: null };
+    const one = datesOf({
+      key_dates: [later, sameDay, renewal],
+      key_date_citations: [
+        { type: renewal.type, date: renewal.date, citation: citation(renewalClause, 200) },
+      ],
+    });
+    expect(one).toContain(
+      "- **Renewal:** 2027-12-31 (**No verified quotation**)\n- **Other:** 2026-12-31 (**No verified quotation**)\n- **Renewal:** 2026-12-31 (from: End of the first year)\n",
+    );
+    expect(one.match(/> /g)).toHaveLength(1);
+
+    // A report stored before key-date quotations, a citation for another contract, one keyed by
+    // another type or date, and one stored under the obligations' key.
+    for (const fields of [
+      { key_dates: [cutoff] },
+      {
+        key_dates: [cutoff],
+        key_date_citations: [
+          {
+            type: cutoff.type,
+            date: cutoff.date,
+            citation: { ...citation(cutoffClause), contract_id: "99999999-2222-4333-8444-555555555555" },
+          },
+        ],
+      },
+      {
+        key_dates: [cutoff],
+        key_date_citations: [
+          { type: "RENEWAL", date: cutoff.date, citation: citation(cutoffClause) },
+          { type: cutoff.type, date: "2026-11-29", citation: citation(cutoffClause) },
+        ],
+      },
+      {
+        key_dates: [cutoff],
+        obligation_citations: [{ obligation: cutoff.date, citation: citation(cutoffClause) }],
+      },
+    ]) {
+      const marked = datesOf(fields);
+      expect(marked).toContain(
+        "- **Notice cutoff:** 2026-11-30 (from: One month before renewal) (**No verified quotation**)",
+      );
+      expect(marked).not.toContain(cutoffClause);
+    }
+
+    // No key dates keeps the unchanged text.
+    expect(datesOf({ key_dates: [] })).toBe("### Key dates\n\nNone identified in this analysis.\n\n");
+  });
+
   it("renders an unknown auto-renewal as unknown, not as no", () => {
     const { markdown } = brief({
       ...FULL_RESULT,

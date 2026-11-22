@@ -55,6 +55,9 @@ export function sectionOutput(
     obligations?: string[];
     /** The section's quotations of the clauses stating its obligations, keyed by obligation text. */
     obligationQuotes?: Record<string, string>;
+    keyDates?: { type: string; date: string }[];
+    /** The section's quotations of the clauses stating its key dates, each naming its type and date. */
+    keyDateQuotes?: { type: string; date: string; quote: string }[];
     jurisdiction?: string;
   } = {},
 ) {
@@ -123,7 +126,14 @@ export function sectionOutput(
       questions_to_ask: options.questions ?? [],
       email_templates: [],
     },
-    key_dates: [],
+    key_dates: (options.keyDates ?? []).map((keyDate) => ({
+      ...keyDate,
+      derived_from: null,
+    })),
+    key_date_evidence: (options.keyDateQuotes ?? []).map((proposal) => ({
+      ...proposal,
+      segment: segment.label,
+    })),
     obligations: options.obligations ?? [],
     obligation_evidence: Object.entries(options.obligationQuotes ?? {}).map(
       ([obligation, quote]) => ({ obligation, quote, segment: segment.label }),

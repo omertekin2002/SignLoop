@@ -242,6 +242,39 @@ describe("PrintBrief", () => {
     expect(kit!.querySelector("blockquote")).toBeNull();
   });
 
+  it("prints each key date with its own quotation, or marks it", () => {
+    const renewalClause = "The membership renews on 31 December 2026 for a further year.";
+    const withDates = {
+      ...ANALYSIS,
+      resultJson: {
+        ...RESULT,
+        key_dates: [
+          { type: "RENEWAL" as const, date: "2026-12-31", derived_from: null },
+          { type: "NOTICE_CUTOFF" as const, date: "2026-12-31", derived_from: "Same day as renewal" },
+        ],
+        key_date_citations: [
+          {
+            type: "RENEWAL" as const,
+            date: "2026-12-31",
+            citation: { ...SOURCE, status: "verified" as const, quote: renewalClause, start: 200, end: 200 + renewalClause.length },
+          },
+        ],
+      },
+    };
+    render(<PrintBrief contract={CONTRACT} analysis={withDates} />);
+    const heading = Array.from(printedBrief().querySelectorAll("h3")).find(
+      (item) => item.textContent === "Key dates",
+    );
+    expect(heading?.nextElementSibling?.tagName).toBe("UL");
+    const [renewal, cutoff] = Array.from(heading!.nextElementSibling!.querySelectorAll(":scope > li"));
+    expect(renewal).toHaveTextContent("Renewal: 2026-12-31");
+    expect(renewal!.querySelector("blockquote")).toHaveTextContent(renewalClause);
+    expect(cutoff).toHaveTextContent(
+      "Notice cutoff: 2026-12-31 (from: Same day as renewal) (No verified quotation)",
+    );
+    expect(cutoff!.querySelector("blockquote")).toBeNull();
+  });
+
   it("prints the term's quotation under Term, or marks a stated term without one", () => {
     const termClause = "This membership starts on joining and lasts at least 12 months.";
     const withTerm = (term: AnalysisResult["summary"]["term"]) => ({
