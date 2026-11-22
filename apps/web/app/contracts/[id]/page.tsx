@@ -59,6 +59,7 @@ import {
 import { toast } from "sonner";
 import { ContractSourceProvider, FindingSource, KeyDateSource, NoticePeriodSource, OpenContractSource, PaymentSource, PenaltiesSource, RenewalSource, TermSource } from "@/components/contract-source";
 import { AnalysisDetails } from "@/components/analysis-details";
+import { BeforeYouSign, findingAnchor } from "@/components/before-you-sign";
 import { DownloadBriefButton } from "@/components/download-brief-button";
 import { PrintBrief } from "@/components/print-brief";
 import { ContractNotes } from "@/components/contract-notes";
@@ -319,9 +320,6 @@ const ContractDetails = () => {
     resultJson?.next_actions && typeof resultJson.next_actions === "object"
       ? resultJson.next_actions
       : null;
-  const questionsToAsk: string[] = Array.isArray(nextActions?.questions_to_ask)
-    ? nextActions.questions_to_ask
-    : [];
   const emailTemplates: AnalysisResult["next_actions"]["email_templates"] =
     Array.isArray(nextActions?.email_templates)
       ? nextActions.email_templates
@@ -684,6 +682,13 @@ const ContractDetails = () => {
               </Card>
             </div>
 
+            {/* What to clarify before signing, from the same checklist as the brief. */}
+            <BeforeYouSign
+              contractId={id}
+              extractionWarning={extractionWarning}
+              result={resultJson}
+            />
+
             {/* Contract Summary Section */}
             <Card className="mt-6">
               <CardHeader>
@@ -782,7 +787,7 @@ const ContractDetails = () => {
 
             {/* Red Flags */}
             {redFlags.length > 0 && (
-              <Card className="mt-6 border-destructive/40">
+              <Card id="red-flags" className="mt-6 border-destructive/40">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-destructive">
                     <Shield className="h-5 w-5" />
@@ -816,7 +821,8 @@ const ContractDetails = () => {
                       return (
                         <div
                           key={idx}
-                          className="p-4 rounded-lg border bg-card"
+                          id={findingAnchor(idx + 1)}
+                          className="scroll-mt-6 p-4 rounded-lg border bg-card"
                         >
                           <div className="flex items-start justify-between gap-4">
                             <div className="flex-1">
@@ -925,7 +931,8 @@ const ContractDetails = () => {
             )}
 
             {/* Next Actions */}
-            {(questionsToAsk.length > 0 || emailTemplates.length > 0) && (
+            {/* Questions to ask are in the Before you sign card. */}
+            {emailTemplates.length > 0 && (
               <Card className="mt-6">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -937,28 +944,6 @@ const ContractDetails = () => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {questionsToAsk.length > 0 && (
-                    <div className="mb-6">
-                      <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-                        <HelpCircle className="h-4 w-4 text-primary" />
-                        Questions to Ask
-                      </h4>
-                      <ul className="space-y-2">
-                        {questionsToAsk.map((question: string, idx: number) => (
-                          <li
-                            key={idx}
-                            className="flex items-start gap-2 text-sm"
-                          >
-                            <span className="text-primary font-medium">
-                              {idx + 1}.
-                            </span>
-                            <span>{question}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
                   {emailTemplates.length > 0 && (
                     <div>
                       <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
