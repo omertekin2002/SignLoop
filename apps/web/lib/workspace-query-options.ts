@@ -98,6 +98,20 @@ export function contractDetailOptions(id: string) {
   });
 }
 
+/** One stored analysis of the user's contract, with its result (the detail carries only the latest's). */
+export function contractAnalysisOptions(contractId: string, analysisId: string | null) {
+  return queryOptions({
+    queryKey: ["analysis", contractId, analysisId],
+    queryFn: async ({ signal }) =>
+      (
+        await apiClient.get<AnalysisRecord>(
+          `/contracts/${contractId}/analysis/${analysisId}`,
+          { signal },
+        )
+      ).data,
+  });
+}
+
 export function projectDetailOptions(id: string, contractsOffset = 0, contextOffset = 0) {
   return queryOptions({
     queryKey: ["project", id, contractsOffset, contextOffset],

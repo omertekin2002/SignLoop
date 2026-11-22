@@ -625,6 +625,25 @@ describe("ContractDecisionSections layout", () => {
     expect(screen.queryByRole("heading", { name: /^Red Flags/ })).toBeNull();
   });
 
+  it("offers Ask on the checklist's items, naming the analysis shown, only when a chat can read the contract", () => {
+    const askLinks = () =>
+      within(screen.getByRole("region", { name: "Before you sign: what to clarify" }))
+        .queryAllByRole("link")
+        .filter((link) => link.textContent === "Ask");
+
+    const view = renderPage(report(true), { analysisId: ANALYSIS_ID, chatAvailable: true });
+    const links = askLinks();
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links)
+      expect(
+        new URL(link.getAttribute("href")!, "https://app.test").searchParams.get("analysis"),
+      ).toBe(ANALYSIS_ID);
+    view.unmount();
+
+    renderPage(report(true), { analysisId: ANALYSIS_ID, chatAvailable: false });
+    expect(askLinks()).toHaveLength(0);
+  });
+
   it("shows regional comparisons right after the Jurisdiction card", () => {
     renderPage({
       ...report(true),
