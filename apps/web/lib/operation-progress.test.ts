@@ -56,6 +56,83 @@ describe("operation progress lifecycle", () => {
       expect(execute).toHaveBeenCalledWith(original);
     }
   });
+  // Next.js passes route handlers a Proxy (proxyNextRequest) that reads each property with the
+  // target as receiver and binds methods to it. Node 24's undici cannot use it as a Request input.
+  const nextRouteRequest = (request: Request) =>
+    new Proxy(request, {
+      get(target, prop) {
+        const value: unknown = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  it("accepts the Proxy Next.js wraps route requests in, keeping url, method, headers and body", async () => {
+    const form = new FormData();
+    form.append("file", new File(["contract text"], "contract.txt", { type: "text/plain" }));
+    form.append("title", "Lease");
+    const original = new Request("http://localhost/operation?force=true", {
+      method: "POST",
+      headers: { Accept: PROGRESS_MEDIA_TYPE },
+      body: form,
+    });
+    let received: unknown;
+    const response = await operationProgressResponse(
+      nextRouteRequest(original),
+      async (request, report) => {
+        report?.("uploading");
+        const body = await request.formData();
+        const file = body.get("file");
+        received = {
+          url: request.url,
+          method: request.method,
+          accept: request.headers.get("accept"),
+          title: body.get("title"),
+          file: file instanceof File ? [file.name, await file.text()] : null,
+          aborted: request.signal.aborted,
+        };
+        report?.("extracting");
+        report?.("saving");
+        return Response.json({ success: true });
+      },
+    );
+    expect(response.headers.get("content-type")).toBe(PROGRESS_MEDIA_TYPE);
+    await expect(
+      readOperationResponse(response, { validate: isUploadResult }),
+    ).resolves.toEqual({ success: true });
+    expect(received).toEqual({
+      url: "http://localhost/operation?force=true",
+      method: "POST",
+      accept: PROGRESS_MEDIA_TYPE,
+      title: "Lease",
+      file: ["contract.txt", "contract text"],
+      aborted: false,
+    });
+  });
+  it("aborts the operation's request when the client disconnects", async () => {
+    const client = new AbortController();
+    const started = deferred<AbortSignal>();
+    const original = new Request("http://localhost/operation", {
+      method: "POST",
+      headers: { Accept: PROGRESS_MEDIA_TYPE },
+      signal: client.signal,
+    });
+    const response = await operationProgressResponse(
+      nextRouteRequest(original),
+      async (request, report) => {
+        report?.("preparing");
+        started.resolve(request.signal);
+        await new Promise((resolve) =>
+          request.signal.addEventListener("abort", resolve, { once: true }),
+        );
+        return Response.json({ analysisId: "id" });
+      },
+    );
+    expect(response.headers.get("content-type")).toBe(PROGRESS_MEDIA_TYPE);
+    const signal = await started.promise;
+    expect(signal.aborted).toBe(false);
+    client.abort();
+    expect(signal.aborted).toBe(true);
+    await response.text();
+  });
   it("returns untouched preflight errors even when opted in", async () => {
     const json = Response.json({ error: "Unauthorized" }, { status: 401 });
     expect(await operationProgressResponse(req(), async () => json)).toBe(json);

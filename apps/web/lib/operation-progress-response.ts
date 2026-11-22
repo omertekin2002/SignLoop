@@ -25,7 +25,18 @@ export async function operationProgressResponse(
 
   const abort = new AbortController();
   const signal = AbortSignal.any([request.signal, abort.signal]);
-  const operationRequest = new Request(request, { signal });
+  // Copy the parts rather than passing the request itself: Next.js hands route handlers a Proxy
+  // around it, and Node 24's undici reads a Request input's private #state, which no Proxy has, so
+  // `new Request(request, init)` throws there (a 500 before the first stage).
+  // `duplex` is required with a stream body; the DOM RequestInit type does not declare it.
+  const init: RequestInit & { duplex: "half" } = {
+    method: request.method,
+    headers: request.headers,
+    body: request.body,
+    duplex: "half",
+    signal,
+  };
+  const operationRequest = new Request(request.url, init);
   let resolve!: (response: Response) => void;
   let reject!: (error: unknown) => void;
   const response = new Promise<Response>((yes, no) => {
