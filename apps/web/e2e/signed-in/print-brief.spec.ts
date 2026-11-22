@@ -140,20 +140,25 @@ for (const theme of THEMES) {
     await expect(
       brief.getByRole("heading", { level: 1, name: `Decision brief: ${title}` }),
     ).toBeVisible();
-    for (const section of [
+    const sections = [
+      "Overview",
       "Coverage",
       "Jurisdiction",
       "Before you sign: what to clarify",
-      "Summary",
-      "Findings",
-      "Next steps",
-    ]) {
+      "Payments and fees",
+      "Term, renewal and how it ends",
+      "Obligations in the contract",
+      "Key dates",
+      "Findings and draft emails",
+    ];
+    for (const section of sections) {
       await expect(brief.getByRole("heading", { level: 2, name: section, exact: true })).toBeVisible();
     }
     // What to clarify, right after Jurisdiction: the coverage gaps, the stated facts this stored
     // analysis has no quotation for, its one finding and its question, which the brief lists only
-    // here. The Summary repeats some of these lines, so read only this section's list items.
+    // here. The groups below repeat some of these facts, so read only this section's list items.
     const headings = await brief.getByRole("heading", { level: 2 }).allTextContents();
+    expect(headings).toEqual(sections);
     expect(headings.indexOf("Before you sign: what to clarify")).toBe(headings.indexOf("Jurisdiction") + 1);
     const clarify = await brief.evaluate((article) => {
       const items: string[] = [];

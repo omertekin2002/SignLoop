@@ -320,18 +320,19 @@ function listedItemLines(
 }
 
 /**
- * A cited summary list (cancellation penalties, fees) under its heading, with each item's evidence
- * (`listedItemLines`). None listed keeps its unchanged line.
+ * A cited summary list (cancellation penalties, fees) under its label line, with each item's
+ * evidence (`listedItemLines`) at `itemIndent`. None listed keeps its unchanged wording.
  */
 function listedLines(
   result: Partial<AnalysisResult>,
   group: Record<string, unknown>,
   fact: KnownListedFact,
-  heading: string,
+  label: string,
   contractId: string,
+  itemIndent: string,
 ): string[] {
-  const items = listedItemLines(result, group, fact, contractId, "    ");
-  return items.length ? [`  - ${heading}:`, ...items] : [`  - ${heading}: None listed`];
+  const items = listedItemLines(result, group, fact, contractId, itemIndent);
+  return items.length ? [label, ...items] : [`${label} None listed`];
 }
 
 /** The notice period with its evidence, or the unchanged "Not specified" when none is stated. */
@@ -382,9 +383,9 @@ function renewalLines(
 }
 
 /**
- * The payment amount and frequency with their evidence: both lines, then the verified quotation of
- * the clause stating them or a marker on the frequency line. Unknown payment keeps its unchanged
- * lines. Each fee has its own quotation (`listedLines`).
+ * The payment amount and frequency with their evidence, as top-level lines of Payments and fees:
+ * both lines, then the verified quotation of the clause stating them or a marker on the frequency
+ * line. Unknown payment keeps its unchanged values. Each fee has its own quotation (`listedLines`).
  */
 function paymentLines(
   result: Partial<AnalysisResult>,
@@ -394,13 +395,14 @@ function paymentLines(
   const amount = text(payments.amount);
   const frequency = text(payments.frequency);
   return [
-    `  - Amount: ${inline(amount ?? NOT_SPECIFIED)}`,
+    `- **Amount:** ${inline(amount ?? NOT_SPECIFIED)}`,
     ...quotedFactLines(
-      `  - Frequency: ${inline(frequency ?? NOT_SPECIFIED)}`,
+      `- **Frequency:** ${inline(frequency ?? NOT_SPECIFIED)}`,
       isPaymentStated({ amount, frequency }),
       result,
       contractId,
       PAYMENT_CITATION,
+      "  ",
     ),
   ];
 }
@@ -431,20 +433,71 @@ function termLines(
   ];
 }
 
-function summarySection(
+/**
+ * What the contract is: its description, parties and key points (without lines that repeat a
+ * coverage notice). None of these has a citation slot, so none is marked as unquoted.
+ */
+function overviewSection(result: Partial<AnalysisResult>, keyPoints: string[]): string[] {
+  const parties = texts(result.parties);
+  const lines = [
+    "## Overview",
+    "",
+    labelled("What it is", text(record(result.summary).what_it_is)),
+    ...(parties.length
+      ? ["- **Parties:**", ...bulletList(parties, "  ")]
+      : ["- **Parties:** None identified in this analysis."]),
+  ];
+  if (keyPoints.length) {
+    lines.push("- **Key points:**", ...bulletList(keyPoints, "  "));
+  }
+  return lines;
+}
+
+function paymentsSection(
   result: Partial<AnalysisResult>,
-  keyPoints: string[],
+  contractId: string,
+): string[] {
+  const payments = record(record(result.summary).payments);
+  return [
+    "## Payments and fees",
+    "",
+    ...paymentLines(result, payments, contractId),
+    ...listedLines(result, payments, LISTED_FEES, "- **Fees:**", contractId, "  "),
+  ];
+}
+
+function termSection(
+  result: Partial<AnalysisResult>,
   contractId: string,
 ): string[] {
   const summary = record(result.summary);
-  const payments = record(summary.payments);
-  const term = record(summary.term);
-  const renewal = record(summary.renewal);
   const cancellation = record(summary.cancellation);
-  // Each date keeps its index in the stored list, which names its quotation (`key-date-<n>`).
-  const keyDates = (Array.isArray(result.key_dates) ? result.key_dates : [])
-    .map((date, index) => ({ date: record(date), index }))
-    .filter(({ date }) => text(date.date));
+  return [
+    "## Term, renewal and how it ends",
+    "",
+    "- **Term:**",
+    ...termLines(result, record(summary.term), contractId),
+    "- **Renewal:**",
+    ...renewalLines(result, record(summary.renewal), contractId),
+    "- **Cancellation:**",
+    `  - How to cancel: ${inline(text(cancellation.how) ?? NOT_SPECIFIED)}`,
+    ...noticePeriodLines(result, cancellation, contractId),
+    ...listedLines(
+      result,
+      cancellation,
+      LISTED_PENALTIES,
+      "  - Penalties:",
+      contractId,
+      "    ",
+    ),
+  ];
+}
+
+/** Each obligation with its evidence. The analysis does not say which party owes it. */
+function obligationsSection(
+  result: Partial<AnalysisResult>,
+  contractId: string,
+): string[] {
   const obligations = listedItemLines(
     result,
     record(result),
@@ -452,59 +505,53 @@ function summarySection(
     contractId,
     "",
   );
-  const parties = texts(result.parties);
+  return [
+    "## Obligations in the contract",
+    "",
+    "This analysis does not record which party owes each obligation.",
+    "",
+    ...(obligations.length ? obligations : ["None identified in this analysis."]),
+  ];
+}
 
-  const lines = ["## Summary", "", labelled("What it is", text(summary.what_it_is))];
-  lines.push(
-    "- **Payments:**",
-    ...paymentLines(result, payments, contractId),
-    ...listedLines(result, payments, LISTED_FEES, "Fees", contractId),
-    "- **Term:**",
-    ...termLines(result, term, contractId),
-    "- **Renewal:**",
-    ...renewalLines(result, renewal, contractId),
-    "- **Cancellation:**",
-    `  - How to cancel: ${inline(text(cancellation.how) ?? NOT_SPECIFIED)}`,
-    ...noticePeriodLines(result, cancellation, contractId),
-    ...listedLines(result, cancellation, LISTED_PENALTIES, "Penalties", contractId),
-  );
-
-  if (keyPoints.length) {
-    lines.push("", "### Key points", "", ...bulletList(keyPoints));
-  }
-  lines.push("", "### Key dates", "");
-  if (keyDates.length) {
-    for (const { date, index } of keyDates) {
-      const type = KEY_DATE_LABELS[String(date.type)] ?? "Date";
-      const from = text(date.derived_from);
-      lines.push(
-        ...quotedFactLines(
-          `- **${type}:** ${inline(text(date.date)!)}${from ? ` (from: ${inline(from)})` : ""}`,
-          true,
-          result,
-          contractId,
-          keyDateCitationRef(index),
-          "  ",
-          "it shows which clause this date comes from, not that the date was worked out correctly",
-        ),
-      );
-    }
-  } else {
+/** Each key date with its evidence, for display only (no deadlines are derived from them). */
+function keyDatesSection(
+  result: Partial<AnalysisResult>,
+  contractId: string,
+): string[] {
+  // Each date keeps its index in the stored list, which names its quotation (`key-date-<n>`).
+  const keyDates = (Array.isArray(result.key_dates) ? result.key_dates : [])
+    .map((date, index) => ({ date: record(date), index }))
+    .filter(({ date }) => text(date.date));
+  const lines = ["## Key dates", ""];
+  if (!keyDates.length) {
     lines.push("None identified in this analysis.");
+    return lines;
   }
-  lines.push("", "### Obligations", "");
-  lines.push(...(obligations.length ? obligations : ["None identified in this analysis."]));
-  lines.push("", "### Parties", "");
-  lines.push(...(parties.length ? bulletList(parties) : ["None identified in this analysis."]));
+  for (const { date, index } of keyDates) {
+    const type = KEY_DATE_LABELS[String(date.type)] ?? "Date";
+    const from = text(date.derived_from);
+    lines.push(
+      ...quotedFactLines(
+        `- **${type}:** ${inline(text(date.date)!)}${from ? ` (from: ${inline(from)})` : ""}`,
+        true,
+        result,
+        contractId,
+        keyDateCitationRef(index),
+        "  ",
+        "it shows which clause this date comes from, not that the date was worked out correctly",
+      ),
+    );
+  }
   return lines;
 }
 
-function findingsSection(
+function findingsLines(
   result: Partial<AnalysisResult>,
   contractId: string,
 ): string[] {
   const flags = Array.isArray(result.red_flags) ? result.red_flags : [];
-  const lines = ["## Findings", ""];
+  const lines = ["### Findings", ""];
   if (!flags.length) {
     lines.push("No red flags were identified in this analysis.");
     return lines;
@@ -522,7 +569,7 @@ function findingsSection(
     const where = text(flag.where);
     if (index > 0) lines.push("");
     lines.push(
-      `### ${index + 1}. ${inline(text(flag.type) ?? "Risk")}`,
+      `#### ${index + 1}. ${inline(text(flag.type) ?? "Risk")}`,
       "",
       `- **Severity:** ${severity === null ? "Not provided" : `${severity}/10`}`,
       `- **Confidence:** ${confidence === null ? "Not provided" : `${confidence}%`}`,
@@ -534,6 +581,45 @@ function findingsSection(
     lines.push("", ...(quote.length ? quote : ["No source quotation."]));
   });
   return lines;
+}
+
+/** The analysis's draft emails. Its questions are in the checklist (`clarifySection`). */
+function draftEmailLines(result: Partial<AnalysisResult>): string[] {
+  const actions = record(result.next_actions);
+  const emails = (Array.isArray(actions.email_templates) ? actions.email_templates : [])
+    .map(record)
+    .filter((email) => text(email.subject) || text(email.body));
+  const lines = ["### Draft emails", ""];
+  if (!emails.length) {
+    lines.push("No draft emails were suggested in this analysis.");
+    return lines;
+  }
+  lines.push(
+    "These are drafts generated by the analysis. Review and adapt them before you use them.",
+  );
+  emails.forEach((email, index) => {
+    const body = text(email.body);
+    lines.push(
+      "",
+      `#### Draft ${index + 1}: ${inline(text(email.subject) ?? "Untitled")}`,
+      "",
+      ...(body ? fenced(body) : ["No body provided."]),
+    );
+  });
+  return lines;
+}
+
+function findingsSection(
+  result: Partial<AnalysisResult>,
+  contractId: string,
+): string[] {
+  return [
+    "## Findings and draft emails",
+    "",
+    ...findingsLines(result, contractId),
+    "",
+    ...draftEmailLines(result),
+  ];
 }
 
 /**
@@ -614,34 +700,6 @@ function clarifySection(input: AnalysisBriefInput): string[] {
   return lines;
 }
 
-/** The analysis's draft emails. Its questions are in the checklist (`clarifySection`). */
-function nextStepsSection(result: Partial<AnalysisResult>): string[] {
-  const actions = record(result.next_actions);
-  const emails = (Array.isArray(actions.email_templates) ? actions.email_templates : [])
-    .map(record)
-    .filter((email) => text(email.subject) || text(email.body));
-  const lines = ["## Next steps", ""];
-  if (!emails.length) {
-    lines.push("No draft emails were suggested in this analysis.");
-    return lines;
-  }
-  lines.push(
-    "These are drafts generated by the analysis. Review and adapt them before you use them.",
-    "",
-    "### Draft emails",
-  );
-  emails.forEach((email, index) => {
-    const body = text(email.body);
-    lines.push(
-      "",
-      `#### Draft ${index + 1}: ${inline(text(email.subject) ?? "Untitled")}`,
-      "",
-      ...(body ? fenced(body) : ["No body provided."]),
-    );
-  });
-  return lines;
-}
-
 /**
  * The stored analysis as a portable Markdown decision brief. Pure: it reads only its input and
  * runs no inference. Every piece of contract or model text is escaped, so it cannot change the
@@ -666,12 +724,15 @@ export function renderAnalysisBriefMarkdown(input: AnalysisBriefInput): {
 
   const sections = [
     identitySection(input, title),
+    overviewSection(result, keyPoints),
     coverageSection(extractionWarning, reportNotices),
     jurisdictionSection(result, contractId),
     clarifySection(input),
-    summarySection(result, keyPoints, contractId),
+    paymentsSection(result, contractId),
+    termSection(result, contractId),
+    obligationsSection(result, contractId),
+    keyDatesSection(result, contractId),
     findingsSection(result, contractId),
-    nextStepsSection(result),
     [
       "---",
       "",

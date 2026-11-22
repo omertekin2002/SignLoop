@@ -153,14 +153,31 @@ describe("PrintBrief", () => {
     expect(expected).toEqual(
       expect.arrayContaining([
         "h1 Decision brief: Gym membership",
+        "h2 Overview",
         "h2 Coverage",
         "h2 Jurisdiction",
         "h2 Before you sign: what to clarify",
-        "h2 Summary",
-        "h2 Findings",
-        "h2 Next steps",
+        "h2 Payments and fees",
+        "h2 Term, renewal and how it ends",
+        "h2 Obligations in the contract",
+        "h2 Key dates",
+        "h2 Findings and draft emails",
+        "h3 Findings",
+        "h3 Draft emails",
       ]),
     );
+    // The level-2 sections, in the decision order, with Before you sign right after Jurisdiction.
+    expect(headingsOf(brief).filter((heading) => heading.startsWith("h2 "))).toEqual([
+      "h2 Overview",
+      "h2 Coverage",
+      "h2 Jurisdiction",
+      "h2 Before you sign: what to clarify",
+      "h2 Payments and fees",
+      "h2 Term, renewal and how it ends",
+      "h2 Obligations in the contract",
+      "h2 Key dates",
+      "h2 Findings and draft emails",
+    ]);
     expect(headingsOf(brief)).toEqual(expected);
 
     // Report identity, coverage and jurisdiction.
@@ -181,7 +198,7 @@ describe("PrintBrief", () => {
     expect(brief).not.toHaveTextContent("Earlier analysis.");
   });
 
-  it("prints each fee under Payments with its own quotation, or marks it", () => {
+  it("prints each fee under Payments and fees with its own quotation, or marks it", () => {
     const lateClause = "A late fee of £10 applies to payments made after the 5th.";
     const withFees = {
       ...ANALYSIS,
@@ -232,11 +249,14 @@ describe("PrintBrief", () => {
       },
     };
     render(<PrintBrief contract={CONTRACT} analysis={withObligations} />);
-    const heading = Array.from(printedBrief().querySelectorAll("h3")).find(
-      (item) => item.textContent === "Obligations",
+    const heading = Array.from(printedBrief().querySelectorAll("h2")).find(
+      (item) => item.textContent === "Obligations in the contract",
     );
-    expect(heading?.nextElementSibling?.tagName).toBe("UL");
-    const [pay, kit] = Array.from(heading!.nextElementSibling!.querySelectorAll(":scope > li"));
+    // A note that the analysis does not say who owes each obligation, then the list.
+    const note = heading?.nextElementSibling;
+    expect(note).toHaveTextContent("This analysis does not record which party owes each obligation.");
+    expect(note?.nextElementSibling?.tagName).toBe("UL");
+    const [pay, kit] = Array.from(note!.nextElementSibling!.querySelectorAll(":scope > li"));
     expect(pay).toHaveTextContent("Pay monthly dues");
     expect(pay!.querySelector("blockquote")).toHaveTextContent(payClause);
     expect(kit).toHaveTextContent("Return club kit when leaving (No verified quotation)");
@@ -263,7 +283,7 @@ describe("PrintBrief", () => {
       },
     };
     render(<PrintBrief contract={CONTRACT} analysis={withDates} />);
-    const heading = Array.from(printedBrief().querySelectorAll("h3")).find(
+    const heading = Array.from(printedBrief().querySelectorAll("h2")).find(
       (item) => item.textContent === "Key dates",
     );
     expect(heading?.nextElementSibling?.tagName).toBe("UL");
@@ -283,7 +303,7 @@ describe("PrintBrief", () => {
       resultJson: { ...RESULT, summary: { ...RESULT.summary!, term } },
     });
     const termItem = () =>
-      // The Summary's Term item, which holds its lines; the checklist's Term entry has none.
+      // The Term group's item, which holds its lines; the checklist's Term entry has none.
       Array.from(printedBrief().querySelectorAll("li")).find(
         (item) =>
           item.firstChild?.textContent?.startsWith("Term:") &&
