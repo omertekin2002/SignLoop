@@ -4,6 +4,7 @@ import { requireUserId } from "@/lib/api-auth";
 import {
   deleteChatThreadForUser,
   getChatThreadByIdForUser,
+  getChatThreadFocusForUser,
 } from "@/lib/server-db";
 import { isUuid } from "@/lib/utils";
 
@@ -22,12 +23,24 @@ export async function GET(
     }
     const before = Number(new URL(_req.url).searchParams.get("before") ?? 2147483647);
     if (!Number.isSafeInteger(before) || before < 1 || before > 2147483647) return NextResponse.json({ error: "Invalid history cursor" }, { status: 400 });
-    const thread = await getChatThreadByIdForUser(userId, id, before);
+    const [thread, focus] = await Promise.all([
+      getChatThreadByIdForUser(userId, id, before),
+      getChatThreadFocusForUser(userId, id),
+    ]);
     if (!thread) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ data: { ...thread, messages: thread.messages.map(toPublicChatMessage) } });
+    return NextResponse.json({
+      data: {
+        ...thread,
+        messages: thread.messages.map(toPublicChatMessage),
+        // The contract the chat is about, by id; its title is null once the contract is deleted.
+        focus: focus
+          ? { contractId: focus.contractId, title: focus.contract?.title ?? null }
+          : null,
+      },
+    });
   } catch (error) {
     console.error("Failed to fetch chat thread:", error);
     return NextResponse.json({ error: "Failed to fetch chat thread" }, { status: 500 });

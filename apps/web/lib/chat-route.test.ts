@@ -44,6 +44,9 @@ vi.mock("@/lib/server-db", () => ({
   getRecentChatMessagesForThreadForUser,
   getUserSettingsByUserId,
   getChatDocumentsForUser,
+  // No thread in these tests is about a contract (see chat-route-focus.test.ts).
+  getChatThreadFocusForUser: vi.fn().mockResolvedValue(null),
+  getChatFocusContractForUser: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("@/lib/chat-title", () => ({ generateChatTitle }));
 vi.mock("@/lib/chat", () => ({ generateChatReply, generateChatReplyStream, hasImageInputProvider }));
