@@ -61,6 +61,53 @@ describe("extractQuotations", () => {
     ]);
   });
 
+  it("keeps a lazy continuation line in the blockquote, as the renderer does, so an altered ending is checked", () => {
+    const reply = [
+      "> The Client will pay a monthly fee of 1,200 GBP,",
+      "with no interest ever charged on late payments.",
+      "",
+      "> A late payment fee of 50 GBP applies",
+      "- but this list item is not part of it",
+      "> Late payments accrue interest",
+      "# Neither is this heading",
+    ].join("\n");
+    const quotations = extractQuotations(reply);
+    expect(quotations).toEqual([
+      "The Client will pay a monthly fee of 1,200 GBP, with no interest ever charged on late payments",
+      "A late payment fee of 50 GBP applies",
+      "Late payments accrue interest",
+    ]);
+    expect(checkQuotations(quotations, CONTRACT).map((check) => check.status)).toEqual([
+      "not_found",
+      "found",
+      "found",
+    ]);
+  });
+
+  it("drops emphasis markup the chat renders away, keeping intraword underscores, escapes and a lone asterisk", () => {
+    expect(
+      extractQuotations(
+        [
+          "> *The Provider may review the monthly fee once a year, on 1 April.*",
+          "",
+          "> _Late payments accrue interest at 4% per month_",
+          "",
+          "> __This agreement is governed__ by the ***laws of England and Wales***.",
+          "",
+          "> **Clause 4:** the value_in_snake_case stays \\*as written\\* and 2 * 3 too",
+          "",
+          'It says "*the Provider will design, host and maintain* the Client\'s website".',
+        ].join("\n"),
+      ),
+    ).toEqual([
+      "The Provider may review the monthly fee once a year, on 1 April",
+      "Late payments accrue interest at 4% per month",
+      "This agreement is governed by the laws of England and Wales",
+      "Clause 4: the value_in_snake_case stays *as written* and 2 * 3 too",
+      "the Provider will design, host and maintain the Client's website",
+    ]);
+  });
+
   it("takes inline straight and curly quotations of at least six words, skipping short phrases and scare quotes", () => {
     expect(
       extractQuotations(

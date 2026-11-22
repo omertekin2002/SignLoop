@@ -33,6 +33,13 @@ export type ChatQuoteChecks = {
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const BLOCKQUOTE_MARKERS = /^(?:[ \t]*>[ \t]?)+/;
 const LIST_MARKER = /^[ \t]*(?:[-*+]|\d{1,3}[.)])[ \t]+/;
+// A line that starts a new block (list item, heading, thematic break or HTML) rather than
+// continuing a blockquote's paragraph without its own `>`.
+const NEW_BLOCK = /^ {0,3}(?:[-*+][ \t]|\d{1,9}[.)][ \t]|#{1,6}(?:[ \t]|$)|(?:[-*_][ \t]*){3,}$|<)/;
+// Backslash-escaped punctuation renders as itself; escaped * and _ are kept out of emphasis.
+const ESCAPED = /\\([!-/:-@[-`{-~])/g;
+const ESCAPED_STAR = "\uE000";
+const ESCAPED_UNDERSCORE = "\uE001";
 // An attribution line under a quotation ("— Clause 9"), not part of it.
 const ATTRIBUTION = /^(?:—|–|--)/;
 const INLINE_QUOTATION = /“([^“”]+)”|"([^"]+)"/g;
@@ -72,13 +79,28 @@ function wordCount(text: string): number {
 }
 
 /**
- * The quoted words as the reader sees them: Markdown bold markers dropped, whitespace collapsed,
+ * Text as the chat's Markdown renderer shows it: emphasis delimiters (`*`, `_`, `**`, `__`, `***`)
+ * at the edges of words dropped, and backslash escapes resolved. Intraword underscores, as in
+ * snake_case, and a lone `*` between spaces are not emphasis and stay.
+ */
+function renderedText(text: string): string {
+  return text
+    .replace(ESCAPED, (_match, char: string) =>
+      char === "*" ? ESCAPED_STAR : char === "_" ? ESCAPED_UNDERSCORE : char,
+    )
+    .replace(/(^|[^\p{L}\p{N}*_])[*_]+(?=[^\s*_])/gu, "$1")
+    .replace(/([^\s*_])[*_]+(?=$|[^\p{L}\p{N}*_])/gu, "$1")
+    .replaceAll(ESCAPED_STAR, "*")
+    .replaceAll(ESCAPED_UNDERSCORE, "_");
+}
+
+/**
+ * Rendered quoted words (see renderedText, applied once by the caller) with whitespace collapsed,
  * and a leading or trailing ellipsis and one trailing , . ; or : (often written inside the marks)
  * trimmed. Trimming only shortens a quotation, so it can never turn a match into a miss.
  */
 function cleanQuotation(text: string): string {
   return text
-    .replace(/\*\*/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^(?:…|\.{3})\s*/, "")
@@ -87,7 +109,10 @@ function cleanQuotation(text: string): string {
     .trim();
 }
 
-/** Inline "…" and “…” passages of at least MIN_INLINE_QUOTE_WORDS words, within one paragraph. */
+/**
+ * Inline "…" and “…” passages of at least MIN_INLINE_QUOTE_WORDS words, within one paragraph, in
+ * text already rendered (renderedText).
+ */
 function inlineQuotations(text: string): string[] {
   const found: string[] = [];
   for (const match of text.matchAll(INLINE_QUOTATION)) {
@@ -118,9 +143,11 @@ function blockQuotations(lines: readonly string[]): string[] {
     else paragraphs.at(-1)!.push(line);
   }
   return paragraphs.flatMap((paragraph) => {
-    const text = withoutCodeSpans(paragraph.join("\n")).replace(/\s+/g, " ").trim();
+    const text = renderedText(
+      withoutCodeSpans(paragraph.join("\n")).replace(/\s+/g, " ").trim(),
+    );
     if (!text) return [];
-    const inline = inlineQuotations(text.replace(/\*\*/g, ""));
+    const inline = inlineQuotations(text);
     if (inline.length) return inline;
     if (ATTRIBUTION.test(text)) return [];
     const quote = cleanQuotation(withoutOuterMarks(cleanQuotation(text)));
@@ -130,7 +157,8 @@ function blockQuotations(lines: readonly string[]): string[] {
 
 /**
  * The quotations in a reply's Markdown, in order: each blockquote passage (consecutive `>` lines
- * joined), and each inline "…" or “…” passage of at least MIN_INLINE_QUOTE_WORDS words elsewhere.
+ * joined, with any lazy continuation line the renderer also puts in the blockquote), and each
+ * inline "…" or “…” passage of at least MIN_INLINE_QUOTE_WORDS words elsewhere.
  * Code blocks and code spans are ignored. Repeats (after the matcher's normalisation) are dropped,
  * a quotation longer than MAX_EVIDENCE_QUOTE is skipped, and at most MAX_QUOTE_CHECKS are returned.
  */
@@ -141,7 +169,9 @@ export function extractQuotations(markdown: string): string[] {
   let quoted: string[] = [];
   const flushProse = () => {
     if (prose.length)
-      found.push(...inlineQuotations(withoutCodeSpans(prose.join("\n"))));
+      found.push(
+        ...inlineQuotations(renderedText(withoutCodeSpans(prose.join("\n")))),
+      );
     prose = [];
   };
   const flushQuoted = () => {
@@ -152,6 +182,14 @@ export function extractQuotations(markdown: string): string[] {
     if (BLOCKQUOTE_MARKERS.test(line)) {
       flushProse();
       quoted.push(line.replace(BLOCKQUOTE_MARKERS, ""));
+    } else if (
+      // A paragraph continuation without its own `>` stays in the blockquote, as rendered, so an
+      // altered continuation cannot hide behind a matching first line.
+      quoted.at(-1)?.trim() &&
+      line.trim() &&
+      !NEW_BLOCK.test(line)
+    ) {
+      quoted.push(line);
     } else {
       flushQuoted();
       prose.push(line);
