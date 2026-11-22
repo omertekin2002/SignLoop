@@ -125,10 +125,11 @@ function itemQuestion(
 
   if (kind === "finding") {
     const item = checklist.findings.find((finding) => finding.number === position);
-    if (!item) return null;
-    const type = substantive(item.type);
-    const subject = type ? `the finding “${type}”` : `finding ${item.number}`;
-    return `Explain ${subject}: which clause it relies on, and what I should clarify before signing. ${QUOTE_OR_NONE}`;
+    // A placeholder type ("General risk") leaves nothing the chat could find the finding by: it
+    // sees the contract's text, not the analysis's numbered findings.
+    const type = item ? substantive(item.type) : null;
+    if (!type) return null;
+    return `Explain the finding “${type}”: which clause it relies on, and what I should clarify before signing. ${QUOTE_OR_NONE}`;
   }
 
   // A question.

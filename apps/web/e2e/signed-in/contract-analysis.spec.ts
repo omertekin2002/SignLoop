@@ -204,7 +204,10 @@ async function expectStubAnalysis(page: Page) {
     checklist.getByRole("listitem").filter({ hasText: `Obligation: ${STUB_UNQUOTED_OBLIGATION}` }),
   ).toContainText("No verified quotation");
   await expect(checklist.getByText("Every stated fact has a verified quotation", { exact: false })).toHaveCount(0);
-  await expect(checklist.getByRole("link")).toHaveText(STUB_ANALYSIS_FLAGS.map(({ type }) => type));
+  // The findings' own links; each item's Ask link (contract-chat.spec.ts) opens a chat instead.
+  await expect(checklist.locator('a[href^="#finding-"]')).toHaveText(
+    STUB_ANALYSIS_FLAGS.map(({ type }) => type),
+  );
   for (const [index, { type }] of STUB_ANALYSIS_FLAGS.entries()) {
     await expect(checklist.getByRole("link", { name: type, exact: true })).toHaveAttribute(
       "href",

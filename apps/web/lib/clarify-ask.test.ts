@@ -184,11 +184,10 @@ describe("clarifyItemDraft", () => {
     expect(fee).toBe(
       `${PREFIX}The analysis states a fee but found no quotation for it. Which clause states it? Quote it, or say none was found.`,
     );
-    const finding = clarifyItemDraft(TITLE, list, "finding-1");
-    expect(finding).toContain("Explain finding 1:");
-    // A placeholder question has nothing to ask, so the plain draft is used.
+    expect(fee).not.toMatch(/not specified/i);
+    // A placeholder finding type or question leaves nothing to identify the item by (the chat
+    // cannot see the analysis's numbered findings), so the plain draft is used.
+    expect(clarifyItemDraft(TITLE, list, "finding-1")).toBe(contractChatDraft(TITLE));
     expect(clarifyItemDraft(TITLE, list, "question-1")).toBe(contractChatDraft(TITLE));
-    for (const draft of [fee, finding])
-      expect(draft).not.toMatch(/not specified|general risk|n\/a/i);
   });
 });
