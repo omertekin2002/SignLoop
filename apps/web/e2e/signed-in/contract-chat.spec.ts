@@ -122,9 +122,13 @@ for (const theme of THEMES) {
     // The thread stores the focus with its first turn.
     const stored = await page.request.get(`/api/chat/threads/${data.id}`);
     expect(stored.status()).toBe(200);
-    expect(await stored.json()).toMatchObject({
+    const storedThread = (await stored.json()) as { data: { title: string } };
+    expect(storedThread).toMatchObject({
       data: { focus: { contractId: id, title }, messages: [{ role: "user" }, { role: "assistant" }] },
     });
+    // The stub names the chat after the question, which the app cuts to 80 characters.
+    const chatTitle = storedThread.data.title;
+    expect(stubTitle(question).startsWith(chatTitle.replace(/…$/, ""))).toBe(true);
 
     // After a reload the thread, opened from the sidebar, still shows what it is about.
     await page.reload();
@@ -132,7 +136,7 @@ for (const theme of THEMES) {
     await openSidebar(page);
     const thread = page
       .locator("aside")
-      .getByRole("button", { name: new RegExp(`^${escapeRegExp(stubTitle(question))}`) });
+      .getByRole("button", { name: new RegExp(`^${escapeRegExp(chatTitle)}`) });
     await thread.click();
     await expect(main.getByText(`Stub reply to: ${question}`, { exact: true })).toBeVisible();
     await expect(main.getByRole("link", { name: title, exact: true })).toHaveAttribute(
