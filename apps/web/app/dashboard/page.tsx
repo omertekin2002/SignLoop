@@ -1,23 +1,20 @@
 import Dashboard from "@/components/dashboard";
-import { isUuid } from "@/lib/utils";
+import {
+  dashboardFocusFromSearchParams,
+  type DashboardFocusParams,
+} from "@/lib/dashboard-focus";
 
 type DashboardPageProps = {
-  searchParams?: Promise<{
-    contract?: string | string[];
-  }>;
+  searchParams?: Promise<DashboardFocusParams>;
 };
 
-/** Only the contract's id travels in the URL; the page loads its title from the user's own data. */
-function normalizeFocusContractId(
-  value: string | string[] | undefined,
-): string | undefined {
-  const id = Array.isArray(value) ? value[0] : value;
-  return isUuid(id) ? id.toLowerCase() : undefined;
-}
-
+/**
+ * Only ids (and a "Before you sign" item's structural key) travel in the URL; the page loads the
+ * contract's title and the item from the user's own data, and drops anything malformed.
+ */
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
-  const params = await searchParams;
-  return (
-    <Dashboard focusContractId={normalizeFocusContractId(params?.contract)} />
+  const { focusContractId, focusAsk } = dashboardFocusFromSearchParams(
+    await searchParams,
   );
+  return <Dashboard focusContractId={focusContractId} focusAsk={focusAsk} />;
 }

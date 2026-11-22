@@ -202,6 +202,51 @@ describe("a new saved chat about a contract", () => {
     await screen.findByText("Clause 9 allows it.");
   });
 
+  it("starts with an item's draft once it is built, and sends it only when the user presses Send", async () => {
+    const itemDraft =
+      "About “Office lease”: Explain the finding “Auto-renewal trap”: which clause it relies on, and what I should clarify before signing. Quote the clause, or say none was found.";
+    // While the draft is still being built, the composer waits instead of taking the plain draft.
+    const view = renderPanel({
+      focusContract: { contractId, title: "Office lease" },
+      focusDraft: null,
+    });
+    await waitFor(() => expect(composer()).toBeEnabled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(composer()).toHaveValue("");
+
+    view.rerenderPanel({
+      focusContract: { contractId, title: "Office lease" },
+      focusDraft: itemDraft,
+    });
+    await waitFor(() => expect(composer()).toHaveValue(itemDraft));
+    expect(screen.getByRole("link", { name: "Office lease" }).parentElement).toHaveTextContent(
+      "About: Office lease",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(requests).toEqual([]);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(chatPosts()).toHaveLength(1));
+    expect(chatPosts()[0]!.body).toMatchObject({
+      threadId,
+      focusContractId: contractId,
+      messages: [{ role: "user", content: itemDraft }],
+    });
+    await screen.findByText("Clause 9 allows it.");
+  });
+
+  it("never applies an item's draft to temporary chat", async () => {
+    renderPanel({
+      temporary: true,
+      focusContract: { contractId, title: "Office lease" },
+      focusDraft: "About “Office lease”: Ask question 1",
+    });
+    await waitFor(() => expect(composer()).toBeEnabled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(composer()).toHaveValue("");
+  });
+
   it("never applies a focus to temporary chat", async () => {
     renderPanel({ temporary: true, focusContract: { contractId, title: "Office lease" } });
 

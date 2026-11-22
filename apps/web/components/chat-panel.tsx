@@ -85,6 +85,7 @@ import { createOperationGuard } from "@/lib/operation-guard";
 import { createSavedChatSession } from "@/lib/saved-chat-session";
 import { refreshWorkspaceList } from "@/lib/use-workspace-list";
 import { invalidateAfterWrite } from "@/lib/invalidate-after-write";
+import { contractChatDraft } from "@/lib/clarify-ask";
 import {
   chatThreadOptions,
   type ChatThreadDetail,
@@ -591,10 +592,8 @@ function ReplyStatusAnnouncer() {
   );
 }
 
-/** The editable draft a chat about a contract starts with; it is never sent automatically. */
-export function contractChatDraft(title: string): string {
-  return `About “${title}”: `;
-}
+// Kept here for callers and tests that already import it with the panel.
+export { contractChatDraft };
 
 /**
  * The compact line naming the contract a saved chat is about, linking back to it. Once the
@@ -647,6 +646,12 @@ type ChatPanelProps = {
    * creates its thread; the thread then keeps the focus the server stored with that turn.
    */
   focusContract?: ChatThreadFocus | null;
+  /**
+   * The editable draft a focused new chat starts with, in place of the plain "About" draft (from a
+   * "Before you sign" item's Ask link). Null while it is still being built; omitted for the plain
+   * draft. Like that draft, it only fills the composer.
+   */
+  focusDraft?: string | null;
 };
 
 /** Manage saved and temporary chat lifecycles, authenticated attachments, streaming, and cancellation. */
@@ -660,6 +665,7 @@ export function ChatPanel({
   active = true,
   onContentChange,
   focusContract = null,
+  focusDraft,
 }: ChatPanelProps) {
   const { loading, user } = useAuth();
   const isLoaded = !loading;
@@ -1123,8 +1129,14 @@ export function ChatPanel({
   const draftTitle =
     typeof pendingFocusTitle === "string" ? pendingFocusTitle : null;
   const draftContractId = pendingFocusId;
+  const draftText =
+    draftTitle === null
+      ? null
+      : focusDraft === undefined
+        ? contractChatDraft(draftTitle)
+        : focusDraft;
   useEffect(() => {
-    if (!draftTitle || !draftContractId || !privacyAcknowledged) return;
+    if (!draftText || !draftContractId || !privacyAcknowledged) return;
     const signature = `focus-draft:${draftContractId}`;
     let canceled = false;
     // Deferred past Strict Mode replay, as the temporary chat's URL draft is.
@@ -1132,12 +1144,12 @@ export function ChatPanel({
       if (canceled || focusDraftSignatureRef.current === signature) return;
       focusDraftSignatureRef.current = signature;
       if (!runtime.thread.composer.getState().text.trim())
-        runtime.thread.composer.setText(contractChatDraft(draftTitle));
+        runtime.thread.composer.setText(draftText);
     });
     return () => {
       canceled = true;
     };
-  }, [draftContractId, draftTitle, privacyAcknowledged, runtime]);
+  }, [draftContractId, draftText, privacyAcknowledged, runtime]);
 
   useEffect(() => {
     if (temporary) {
