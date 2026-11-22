@@ -129,7 +129,19 @@ async function expectStubAnalysis(page: Page) {
   await expect(
     onScreen(page.getByText("Stub key point: the agreement renews automatically each year.", { exact: true })),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { level: 3, name: `Red Flags (${STUB_ANALYSIS_FLAGS.length})` })).toBeVisible();
+  // The cards follow the brief's sections, in the same order.
+  await expect(onScreen(page.getByRole("heading", { level: 3 }))).toHaveText([
+    "Overview",
+    "Jurisdiction",
+    "Before you sign: what to clarify",
+    "Payments and fees",
+    "Term, renewal and how it ends",
+    "Obligations in the contract",
+    "Key dates",
+    "Findings and draft emails",
+    "Your notes",
+  ]);
+  await expect(page.locator("#red-flags [id^='finding-']")).toHaveCount(STUB_ANALYSIS_FLAGS.length);
   for (const { explanation, quote } of STUB_ANALYSIS_FLAGS) {
     await expect(onScreen(page.getByText(explanation, { exact: true }))).toBeVisible();
     await expect(onScreen(page.locator("blockquote").filter({ hasText: quote }))).toHaveText(`“${quote}”`);
@@ -168,19 +180,19 @@ async function expectStubAnalysis(page: Page) {
     penalty.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_PENALTY_QUOTE)}”$`) }),
   ).toHaveCount(1);
   await expect(penalty.getByRole("button", { name: "View matched quotation of penalty 1" })).toBeVisible();
-  // So is the fee, in the Payment fees section. Its clause sits right after the payment clause and
+  // So is the fee, in the Fees group. Its clause sits right after the payment clause and
   // the late-interest finding's line, so match the list item holding exactly the fee's text and the
   // quotation's own element.
-  const fees = page.getByRole("heading", { level: 3, name: "Payment fees", exact: true }).locator("xpath=..");
+  const fees = page.getByRole("heading", { level: 4, name: "Fees", exact: true }).locator("xpath=..");
   const fee = onScreen(fees.getByRole("listitem").filter({ has: page.getByText(STUB_FEE, { exact: true }) }));
   await expect(fee).toHaveCount(1);
   await expect(
     fee.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_FEE_QUOTE)}”$`) }),
   ).toHaveCount(1);
   await expect(fee.getByRole("button", { name: "View matched quotation of fee 1" })).toBeVisible();
-  // So is the obligation, in the Obligations section: the list item holding exactly its text and the
+  // So is the obligation, in the Obligations in the contract card: the list item holding exactly its text and the
   // quotation's own element.
-  const obligations = page.getByRole("heading", { level: 3, name: "Obligations", exact: true }).locator("xpath=..");
+  const obligations = page.getByRole("region", { name: "Obligations in the contract" });
   const obligation = onScreen(
     obligations.getByRole("listitem").filter({ has: page.getByText(STUB_OBLIGATION, { exact: true }) }),
   );
@@ -189,7 +201,7 @@ async function expectStubAnalysis(page: Page) {
     obligation.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_OBLIGATION_QUOTE)}”$`) }),
   ).toHaveCount(1);
   await expect(obligation.getByRole("button", { name: "View matched quotation of obligation 1" })).toBeVisible();
-  // So is the key date, in the Key Dates card, beside the analysis's own explanation, which is
+  // So is the key date, in the Key dates card, beside the analysis's own explanation, which is
   // labelled as such rather than shown as contract text.
   const keyDate = onScreen(
     page
@@ -214,8 +226,8 @@ async function expectStubAnalysis(page: Page) {
   await expect(unquoted.locator("blockquote")).toHaveCount(0);
   await expect(onScreen(page.getByRole("button", { name: "View matched quotation of obligation 2" }))).toHaveCount(0);
   // Before you sign lists that obligation, every finding (highest severity first, each linking to its
-  // entry in the Red Flags card) and the stub's question, which appears nowhere else.
-  const checklist = page.getByRole("region", { name: "Before you sign" });
+  // entry in the Findings and draft emails card) and the stub's question, which appears nowhere else.
+  const checklist = page.getByRole("region", { name: "Before you sign: what to clarify" });
   await expect(checklist).toBeVisible();
   await expect(
     checklist.getByRole("listitem").filter({ hasText: `Obligation: ${STUB_UNQUOTED_OBLIGATION}` }),
@@ -345,10 +357,10 @@ for (const theme of THEMES) {
     await page.waitForLoadState("networkidle");
     await expectNoA11yViolations(page, { theme });
 
-    // A finding's link in Before you sign goes to that finding in the Red Flags card.
+    // A finding's link in Before you sign goes to that finding in the Findings and draft emails card.
     const second = STUB_ANALYSIS_FLAGS[1];
     await page
-      .getByRole("region", { name: "Before you sign" })
+      .getByRole("region", { name: "Before you sign: what to clarify" })
       .getByRole("link", { name: second.type, exact: true })
       .click();
     await expect(page).toHaveURL(`${SIGNED_IN_ORIGIN}/contracts/${id}#finding-2`);

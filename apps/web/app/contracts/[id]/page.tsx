@@ -43,23 +43,13 @@ import {
 import {
   ArrowLeft,
   Play,
-  AlertTriangle,
   Loader2,
   Trash2,
-  Calendar,
-  FileText,
-  HelpCircle,
-  Mail,
-  Shield,
-  Clock,
-  DollarSign,
-  RefreshCw,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ContractSourceProvider, FindingSource, KeyDateSource, NoticePeriodSource, OpenContractSource, PaymentSource, PenaltiesSource, RenewalSource, TermSource } from "@/components/contract-source";
-import { AnalysisDetails } from "@/components/analysis-details";
-import { BeforeYouSign, findingAnchor } from "@/components/before-you-sign";
+import { ContractSourceProvider, OpenContractSource } from "@/components/contract-source";
+import { ContractDecisionSections } from "@/components/contract-decision-sections";
 import { DownloadBriefButton } from "@/components/download-brief-button";
 import { PrintBrief } from "@/components/print-brief";
 import { ContractNotes } from "@/components/contract-notes";
@@ -261,21 +251,6 @@ const ContractDetails = () => {
     analysis?.resultJson && typeof analysis.resultJson === "object"
       ? analysis.resultJson
       : null;
-  const summary =
-    resultJson?.summary && typeof resultJson.summary === "object"
-      ? resultJson.summary
-      : null;
-  const summaryPayments =
-    summary?.payments && typeof summary.payments === "object"
-      ? summary.payments
-      : null;
-  const summaryTerm =
-    summary?.term && typeof summary.term === "object" ? summary.term : null;
-  const summaryRenewal =
-    summary?.renewal && typeof summary.renewal === "object"
-      ? summary.renewal
-      : null;
-
   const riskBadge =
     typeof analysis?.riskBadge === "string"
       ? analysis.riskBadge
@@ -283,47 +258,11 @@ const ContractDetails = () => {
         ? resultJson.risk_badge
         : "UNKNOWN";
 
-  const keyPoints: string[] = Array.isArray(resultJson?.key_points)
-    ? resultJson.key_points
-    : [];
-  const redFlags: AnalysisResult["red_flags"] = Array.isArray(
-    resultJson?.red_flags,
-  )
-    ? resultJson.red_flags
-    : [];
-  const coverageNotices = Array.isArray(resultJson?.coverage_notices)
-    ? resultJson.coverage_notices
-    : [];
-  const keyFindings = keyPoints.filter(
-    (point) => !coverageNotices.includes(point),
-  );
   const extractionWarning =
     typeof contract?.extractionWarning === "string" &&
     contract.extractionWarning.trim()
       ? contract.extractionWarning
       : null;
-  // A report carries the extraction warning from its own run; the page-level notice already
-  // shows the current one, so the same sentence is not repeated under Analysis coverage.
-  const reportCoverageNotices = coverageNotices.filter(
-    (notice) => notice !== extractionWarning,
-  );
-  const summaryCancellation =
-    summary?.cancellation && typeof summary.cancellation === "object"
-      ? summary.cancellation
-      : null;
-  const keyDates: AnalysisResult["key_dates"] = Array.isArray(
-    resultJson?.key_dates,
-  )
-    ? resultJson.key_dates
-    : [];
-  const nextActions =
-    resultJson?.next_actions && typeof resultJson.next_actions === "object"
-      ? resultJson.next_actions
-      : null;
-  const emailTemplates: AnalysisResult["next_actions"]["email_templates"] =
-    Array.isArray(nextActions?.email_templates)
-      ? nextActions.email_templates
-      : [];
 
   const uploadedDateLabel = formatDate(
     contract?.createdAt,
@@ -465,6 +404,35 @@ const ContractDetails = () => {
     );
   }
 
+  const jurisdiction = (
+    <ContractJurisdiction
+      contractId={id}
+      confirmed={
+        typeof contract.confirmedJurisdiction === "string"
+          ? contract.confirmedJurisdiction
+          : null
+      }
+      report={
+        resultJson
+          ? {
+              proposed:
+                typeof resultJson.proposed_jurisdiction?.jurisdiction ===
+                "string"
+                  ? resultJson.proposed_jurisdiction.jurisdiction
+                  : null,
+              ranWith:
+                typeof resultJson.comparison_jurisdiction === "string"
+                  ? resultJson.comparison_jurisdiction
+                  : null,
+              isLatest: !isViewingHistoricalAnalysis,
+            }
+          : null
+      }
+      onRerun={() => analyzeMutation.mutate({ force: true })}
+      rerunPending={analyzeMutation.isPending}
+    />
+  );
+
   return (
     <ContractSourceProvider key={`${id}:${analysis?.id ?? "none"}:${contract.updatedAt ?? ""}`} contractId={id} analysisId={analysis?.id} result={resultJson}>
     <div className="app-page pb-12">
@@ -602,379 +570,20 @@ const ContractDetails = () => {
               </Card>
             )}
 
-            <div className="grid gap-6 md:grid-cols-3">
-              {/* Risk Score Card */}
-              <Card className="md:col-span-1">
-                <CardHeader>
-                  <CardTitle className="text-lg">Risk Assessment</CardTitle>
-                  <CardDescription>Overall contract risk level</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Badge
-                    className={`text-lg px-4 py-1 ${getRiskColor(riskBadge, { hover: true })}`}
-                  >
-                    {riskBadge || "UNKNOWN"}
-                  </Badge>
-                  <p className="mt-4 text-sm text-muted-foreground">
-                    Analyzed on {analysisDateLabel}
-                  </p>
-                  {!!llmModel && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      LLM: {llmProviderLabel ? `${llmProviderLabel} • ` : ""}
-                      {llmModel}
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Key Risks / Points */}
-              <Card className="md:col-span-2">
-                <CardHeader>
-                  <CardTitle>Key Findings</CardTitle>
-                  <CardDescription>
-                    Important points extracted from the contract
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {reportCoverageNotices.length > 0 && (
-                    <div
-                      role="status"
-                      className="mb-4 rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground"
-                    >
-                      <p className="text-highlight">Analysis coverage</p>
-                      <ul className="mt-2 list-disc pl-5">
-                        {reportCoverageNotices.map((notice) => (
-                          <li key={notice}>{notice}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {contract.status !== "ANALYZED" && (
-                    <p
-                      role="status"
-                      className="mb-4 rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground"
-                    >
-                      This analysis uses older evidence. The contract or project
-                      context has changed; analyze again for a current result.
-                    </p>
-                  )}
-                  {keyFindings.length > 0 ? (
-                    <ul className="space-y-4">
-                      {keyFindings.map((point: string, idx: number) => (
-                        <li
-                          key={idx}
-                          className="flex items-start gap-3 p-3 rounded-lg bg-muted/60"
-                        >
-                          <AlertTriangle className="h-5 w-5 text-highlight shrink-0 mt-0.5" />
-                          <span className="text-sm text-foreground/90 leading-relaxed">
-                            {point}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <div className="text-center py-8 text-muted-foreground">
-                      No key findings yet. Re-run analysis to extract
-                      highlights.
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* What to clarify before signing, from the same checklist as the brief. */}
-            <BeforeYouSign
+            <ContractDecisionSections
               contractId={id}
+              result={resultJson ?? {}}
               extractionWarning={extractionWarning}
-              result={resultJson}
+              riskBadge={riskBadge}
+              analyzedOn={analysisDateLabel}
+              model={
+                llmModel
+                  ? `${llmProviderLabel ? `${llmProviderLabel} • ` : ""}${llmModel}`
+                  : null
+              }
+              stale={contract.status !== "ANALYZED"}
+              jurisdiction={jurisdiction}
             />
-
-            {/* Contract Summary Section */}
-            <Card className="mt-6">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <FileText className="h-5 w-5" />
-                  Contract Summary
-                </CardTitle>
-                <CardDescription>
-                  Quick overview of the contract terms
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {summary ? (
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                    {/* What It Is */}
-                    <div className="p-4 rounded-lg bg-muted/40">
-                      <h4 className="text-sm font-medium text-muted-foreground mb-1">
-                        What It Is
-                      </h4>
-                      <p className="text-sm">
-                        {summary.what_it_is || "Not specified"}
-                      </p>
-                    </div>
-
-                    {/* Payments */}
-                    <div className="p-4 rounded-lg bg-muted/40">
-                      <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
-                        <DollarSign className="h-4 w-4" /> Payments
-                      </h4>
-                      <PaymentSource payments={summaryPayments ?? {}} />
-                    </div>
-
-                    {/* Term */}
-                    <div className="p-4 rounded-lg bg-muted/40">
-                      <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
-                        <Clock className="h-4 w-4" /> Term
-                      </h4>
-                      <TermSource term={summaryTerm ?? {}} />
-                    </div>
-
-                    {/* Renewal */}
-                    <div className="p-4 rounded-lg bg-muted/40">
-                      <h4 className="text-sm font-medium text-muted-foreground mb-1 flex items-center gap-1">
-                        <RefreshCw className="h-4 w-4" /> Renewal
-                      </h4>
-                      <RenewalSource renewal={summaryRenewal ?? {}} />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    Summary unavailable. Re-run analysis to generate the
-                    contract overview.
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Cancellation Terms */}
-            {summaryCancellation && (
-              <Card className="mt-6">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <XCircle className="h-5 w-5" />
-                    Cancellation Terms
-                  </CardTitle>
-                  <CardDescription>
-                    How this agreement can be ended
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <div className="p-4 rounded-lg bg-muted/40">
-                      <h4 className="text-sm font-medium text-muted-foreground mb-1">
-                        How to cancel
-                      </h4>
-                      <p className="text-sm">
-                        {summaryCancellation.how || "Not specified"}
-                      </p>
-                    </div>
-                    <div className="p-4 rounded-lg bg-muted/40">
-                      <h4 className="text-sm font-medium text-muted-foreground mb-1">
-                        Notice period
-                      </h4>
-                      <NoticePeriodSource cancellation={summaryCancellation} />
-                    </div>
-                    <div className="p-4 rounded-lg bg-muted/40">
-                      <h4 className="text-sm font-medium text-muted-foreground mb-1">
-                        Penalties
-                      </h4>
-                      <PenaltiesSource penalties={summaryCancellation.penalties} />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Red Flags */}
-            {redFlags.length > 0 && (
-              <Card id="red-flags" className="mt-6 border-destructive/40">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-destructive">
-                    <Shield className="h-5 w-5" />
-                    Red Flags ({redFlags.length})
-                  </CardTitle>
-                  <CardDescription>
-                    Potential issues identified in the contract
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {redFlags.map((flag, idx) => {
-                      const type =
-                        typeof flag?.type === "string" ? flag.type : "Risk";
-                      const explanation =
-                        typeof flag?.explanation === "string"
-                          ? flag.explanation
-                          : "";
-                      const confidence =
-                        typeof flag?.confidence === "number"
-                          ? `${flag.confidence}%`
-                          : "Not provided";
-                      const severity =
-                        typeof flag?.severity === "number" &&
-                        Number.isFinite(flag.severity)
-                          ? Math.max(0, Math.min(10, flag.severity))
-                          : null;
-                      const where =
-                        typeof flag?.where === "string" ? flag.where : "";
-
-                      return (
-                        <div
-                          key={idx}
-                          id={findingAnchor(idx + 1)}
-                          className="scroll-mt-6 p-4 rounded-lg border bg-card"
-                        >
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-2">
-                                <Badge variant="outline" className="text-xs">
-                                  {type}
-                                </Badge>
-                                <span className="text-xs text-muted-foreground">
-                                  Confidence: {confidence}
-                                </span>
-                              </div>
-                              <p className="text-sm">
-                                {explanation || "No explanation provided."}
-                              </p>
-                              <FindingSource index={idx} />
-                              {where && (
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  Found in: {where}
-                                </p>
-                              )}
-                            </div>
-                            <div className="flex flex-col items-end gap-1">
-                              <span className="text-xs text-muted-foreground">
-                                Severity
-                              </span>
-                              {severity !== null ? (
-                                <div className="flex items-center gap-1">
-                                  <div className="w-16 h-2 rounded-full bg-muted overflow-hidden">
-                                    <div
-                                      className={`h-full rounded-full ${
-                                        severity >= 7
-                                          ? "bg-destructive"
-                                          : severity >= 4
-                                            ? "bg-highlight"
-                                            : "bg-success"
-                                      }`}
-                                      style={{ width: `${severity * 10}%` }}
-                                    />
-                                  </div>
-                                  <span className="text-xs font-medium">
-                                    {severity}/10
-                                  </span>
-                                </div>
-                              ) : (
-                                <span className="text-xs font-medium text-muted-foreground">
-                                  Not provided
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Key Dates */}
-            {keyDates.length > 0 && (
-              <Card className="mt-6">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Calendar className="h-5 w-5" />
-                    Key Dates
-                  </CardTitle>
-                  <CardDescription>Important dates to track</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ul
-                    aria-label="Key dates"
-                    className="grid gap-3 md:grid-cols-2 lg:grid-cols-3"
-                  >
-                    {keyDates.map((date, idx) => (
-                      <li
-                        key={idx}
-                        className="flex items-start gap-3 p-3 rounded-lg border bg-card"
-                      >
-                        <div className="rounded-full p-2 bg-primary/10">
-                          <Calendar className="h-4 w-4 text-primary" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium">
-                            {typeof date?.type === "string"
-                              ? date.type.replace(/_/g, " ")
-                              : "DATE"}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {typeof date?.date === "string"
-                              ? date.date
-                              : "Unknown"}
-                          </p>
-                          {typeof date?.derived_from === "string" &&
-                            date.derived_from && (
-                              <p className="text-xs text-muted-foreground italic">
-                                Analysis’s explanation: {date.derived_from}
-                              </p>
-                            )}
-                          <KeyDateSource index={idx} />
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Next Actions */}
-            {/* Questions to ask are in the Before you sign card. */}
-            {emailTemplates.length > 0 && (
-              <Card className="mt-6">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <HelpCircle className="h-5 w-5" />
-                    Recommended Actions
-                  </CardTitle>
-                  <CardDescription>
-                    Suggested follow-up based on the analysis
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {emailTemplates.length > 0 && (
-                    <div>
-                      <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-                        <Mail className="h-4 w-4 text-primary" />
-                        Email Templates
-                      </h4>
-                      <div className="space-y-3">
-                        {emailTemplates.map((template, idx) => (
-                          <div
-                            key={idx}
-                            className="p-3 rounded-lg border bg-muted/30"
-                          >
-                            <p className="text-sm font-medium mb-1">
-                              Subject:{" "}
-                              {typeof template?.subject === "string"
-                                ? template.subject
-                                : "Untitled"}
-                            </p>
-                            <p className="text-xs text-muted-foreground whitespace-pre-wrap">
-                              {typeof template?.body === "string"
-                                ? template.body
-                                : ""}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
           </>
         ) : (
           <Card>
@@ -1021,34 +630,8 @@ const ContractDetails = () => {
           </Card>
         )}
 
-        <ContractJurisdiction
-          contractId={id}
-          confirmed={
-            typeof contract.confirmedJurisdiction === "string"
-              ? contract.confirmedJurisdiction
-              : null
-          }
-          report={
-            resultJson
-              ? {
-                  proposed:
-                    typeof resultJson.proposed_jurisdiction?.jurisdiction ===
-                    "string"
-                      ? resultJson.proposed_jurisdiction.jurisdiction
-                      : null,
-                  ranWith:
-                    typeof resultJson.comparison_jurisdiction === "string"
-                      ? resultJson.comparison_jurisdiction
-                      : null,
-                  isLatest: !isViewingHistoricalAnalysis,
-                }
-              : null
-          }
-          onRerun={() => analyzeMutation.mutate({ force: true })}
-          rerunPending={analyzeMutation.isPending}
-        />
-
-        {resultJson && <AnalysisDetails result={resultJson} />}
+        {/* With an analysis, the Jurisdiction card sits in its decision group, after the Overview. */}
+        {!analysis && jurisdiction}
 
         {/* The owner's own writing, after everything generated, so it never reads as analysis. */}
         <ContractNotes contractId={id} />

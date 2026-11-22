@@ -34,7 +34,7 @@ const RESULT = {
 
 function card(result: Partial<AnalysisResult> | null, extractionWarning: string | null = null) {
   render(<BeforeYouSign contractId={CONTRACT_ID} extractionWarning={extractionWarning} result={result} />);
-  return screen.getByRole("region", { name: "Before you sign" });
+  return screen.getByRole("region", { name: "Before you sign: what to clarify" });
 }
 
 describe("BeforeYouSign", () => {
@@ -57,7 +57,7 @@ describe("BeforeYouSign", () => {
     expect(region).not.toHaveTextContent(/nothing to clarify/i);
   });
 
-  it("links each finding, highest severity first, to its entry in the Red Flags card", () => {
+  it("links each finding, highest severity first, to its entry in the Findings and draft emails card", () => {
     const region = card(RESULT);
     const links = within(region).getAllByRole("link");
     expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([

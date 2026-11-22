@@ -15,7 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-/** The id of a finding in the Red Flags card, which the checklist links to. */
+/** The id of a finding in the Findings and draft emails card, which the checklist links to. */
 export function findingAnchor(number: number): string {
   return `finding-${number}`;
 }
@@ -33,10 +33,10 @@ const MARKER =
   "ml-2 inline-block rounded border border-border px-2 py-0.5 text-xs text-muted-foreground";
 
 /**
- * What to clarify before signing, from the same checklist as the brief's "Before you sign" section
- * (`clarifyBeforeSigning`): coverage gaps, stated facts without a verified quotation, facts not
- * stated, findings (each linking to its entry in the Red Flags card) and the analysis's questions.
- * Built from the stored analysis the page already holds; it never says there is nothing to clarify.
+ * What to clarify before signing, from the same checklist as the brief's "Before you sign: what to
+ * clarify" section (`clarifyBeforeSigning`): coverage gaps, stated facts without a verified
+ * quotation, facts not stated, findings (each linking to its entry in the Findings and draft emails
+ * card) and the analysis's questions. Built from the stored analysis the page already holds; it never says there is nothing to clarify.
  */
 export function BeforeYouSign({
   contractId,
@@ -60,7 +60,7 @@ export function BeforeYouSign({
       <CardHeader>
         <CardTitle id={titleId} className="flex items-center gap-2">
           <ClipboardCheck className="h-5 w-5" aria-hidden="true" />
-          Before you sign
+          Before you sign: what to clarify
         </CardTitle>
         <CardDescription>
           What to clarify, built from this analysis. The full facts and
