@@ -24,7 +24,7 @@ import {
   STUB_UNQUOTED_OBLIGATION,
   type StubModelRequest,
 } from "../stub-model-server";
-import { openDashboard, openSidebar } from "./dashboard";
+import { uploadThroughDashboard } from "./dashboard";
 import { E2E_MODEL_STUB_URL, SIGNED_IN_ORIGIN } from "./env";
 
 // Its own project, after the workspace project, because it adds analysed contracts. The app's model
@@ -81,35 +81,6 @@ type StoredContract = {
     };
   }[];
 };
-
-// Uploads the fixture through the dashboard's upload dialog and returns the new contract's id.
-async function uploadThroughDashboard(page: Page, title: string, contents: string): Promise<string> {
-  await openDashboard(page);
-  await openSidebar(page);
-  await page.getByRole("button", { name: "Contracts", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Contracts" })).toBeVisible();
-  await page.getByRole("button", { name: "New Contract" }).first().click();
-  const dialog = page.getByRole("dialog", { name: "Upload Contract" });
-  await dialog.locator('input[type="file"]').setInputFiles({
-    name: "e2e-services-agreement.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from(contents),
-  });
-  await expect(dialog.getByLabel("Contract Name")).toHaveValue("e2e-services-agreement");
-  await dialog.getByLabel("Contract Name").fill(title);
-
-  const created = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" && new URL(response.url()).pathname === "/api/contracts",
-  );
-  await dialog.getByRole("button", { name: "Upload Contract" }).click();
-  const response = await created;
-  expect(response.status()).toBe(201);
-  const { id } = (await response.json()) as { id: string };
-  await expect(page.getByText("Contract uploaded successfully")).toBeVisible();
-  await expect(dialog).toBeHidden();
-  return id;
-}
 
 // The contract page has no <main> landmark, and its printable brief repeats the report in a hidden
 // element, so the checks below look only at what is on screen.

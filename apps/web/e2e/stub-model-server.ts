@@ -14,6 +14,8 @@ export type StubModelRequest = {
   question: string;
   /** Names of the tools the request offered; the stub never calls one. */
   tools: string[];
+  /** The request's system text (instructions and system or developer messages), bounded. */
+  system: string;
 };
 
 export const STUB_MODEL = "e2e-stub";
@@ -25,6 +27,7 @@ const TITLE_PROMPT = "Create a short, specific title for a conversation";
 // Kept bounded so a long run cannot grow the stub's memory without limit.
 const MAX_RECORDED_REQUESTS = 200;
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
+const MAX_RECORDED_SYSTEM_CHARACTERS = 32_000;
 
 /** The fixed reply, with some Markdown, quoting the question so a test can see it arrived. */
 export function stubReply(question: string): string {
@@ -242,7 +245,7 @@ export async function startStubModelServer(port: number): Promise<StubModelServe
               });
               return;
             }
-            record({ model, kind: "analysis", question, tools: toolNames(body.tools) });
+            record({ model, kind: "analysis", question, tools: toolNames(body.tools), system: systemText(body) });
             responseCount += 1;
             sendJson(
               response,
@@ -254,7 +257,7 @@ export async function startStubModelServer(port: number): Promise<StubModelServe
           // System messages travel in `input` (or, with some settings, in `instructions`).
           const isTitle = JSON.stringify([body.instructions, body.input]).includes(TITLE_PROMPT);
           const kind = isTitle ? "title" : "reply";
-          record({ model, kind, question, tools: toolNames(body.tools) });
+          record({ model, kind, question, tools: toolNames(body.tools), system: systemText(body) });
           responseCount += 1;
           // The title request quotes the message as JSON (lib/chat-title.ts).
           const text = kind === "title" ? stubTitle(unquote(question)) : stubReply(question);
@@ -374,6 +377,19 @@ function lastUserText(input: unknown): string {
     .filter((part) => isRecord(part) && part.type === "input_text" && typeof part.text === "string")
     .map((part) => (part as { text: string }).text)
     .join("\n");
+}
+
+function systemText(body: Record<string, unknown>): string {
+  const parts = typeof body.instructions === "string" ? [body.instructions] : [];
+  if (Array.isArray(body.input))
+    for (const item of body.input) {
+      if (!isRecord(item) || (item.role !== "system" && item.role !== "developer")) continue;
+      if (typeof item.content === "string") parts.push(item.content);
+      else if (Array.isArray(item.content))
+        for (const part of item.content)
+          if (isRecord(part) && typeof part.text === "string") parts.push(part.text);
+    }
+  return parts.join("\n").slice(0, MAX_RECORDED_SYSTEM_CHARACTERS);
 }
 
 function toolNames(tools: unknown): string[] {
