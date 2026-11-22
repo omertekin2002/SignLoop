@@ -18,6 +18,7 @@ import {
 } from "@/lib/chat-engine-config";
 import {
   contractToolExtension,
+  type ChatFocusContract,
   type ContractToolName,
 } from "@/lib/contract-tools";
 import {
@@ -62,6 +63,8 @@ type ChatGenerationOptions = {
   enableHttpFetch?: boolean;
   /** Enables list_contracts and read_contract scoped to this user's own documents. */
   contractsUserId?: string | null;
+  /** The contract a saved chat is about; adds its note. The route checks the owner first. */
+  focusContract?: ChatFocusContract | null;
   /** Enables generate_image; the route sets this from the live model availability snapshot. */
   enableImageGeneration?: boolean;
   /** Passed through to the image endpoint's `user` field for abuse attribution. */
@@ -113,7 +116,7 @@ export async function* generateChatReplyStream(
         ...(options?.enableUrlReader ? { urlReader: urlReaderConfig() } : {}),
         ...(options?.enableHttpFetch ? { httpFetch: httpFetchConfig() } : {}),
         extensions: [
-          contractToolExtension(options?.contractsUserId),
+          contractToolExtension(options?.contractsUserId, options?.focusContract),
           ...(options?.enableDocuments
             ? [chatDocumentExtension(documents, (file) => files.push(file))]
             : []),

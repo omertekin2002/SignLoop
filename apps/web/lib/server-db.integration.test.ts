@@ -57,7 +57,9 @@ import {
   saveChatFileForUser,
   getChatFileForUser,
   getChatDocumentsForUser,
+  getChatFocusContractForUser,
   getChatThreadByIdForUser,
+  getChatThreadFocusForUser,
   getChatTurnByTurnId,
   getContractAnalysisGateForUser,
   getContractByIdForUser,
@@ -104,7 +106,7 @@ const TEST_OWNERS = [
   "another-user", "bounded-followup-owner", "chat-owner", "chat-pagination-owner",
   "chat-search-intruder", "chat-search-owner", "chat-search-paging-owner",
   "content-receipt-owner", "empty-lookup-intruder", "empty-lookup-owner", "file-owner",
-  "filter-intruder", "filter-owner", "filter-paging-owner",
+  "filter-intruder", "filter-owner", "filter-paging-owner", "focus-intruder", "focus-owner",
   "interrupted-turn-owner", "intruder", "late-reply-owner", "legacy-receipt-owner", "other", "owner", "OWNER",
   "project-analysis-owner", "project-search-intruder", "project-search-owner",
   "project-search-paging-owner", "quota-owner", "replay-failure-owner", "replay-intruder",
@@ -655,6 +657,52 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect(
       (await getChatThreadByIdForUser("title-owner", thread.id))?.title,
     ).toBe("Lease Renewal Terms");
+  });
+
+  it("reads a chat's contract focus from its earliest focused turn, owner-scoped, and drops it once the contract is deleted", async () => {
+    const userId = "focus-owner";
+    const item = await createContractForUser({ userId, title: "Office lease" });
+    await setContractJurisdictionForUser({ userId, contractId: item.id, jurisdiction: "Ontario" });
+    const other = await createContractForUser({ userId, title: "Other" });
+    const foreign = await createContractForUser({ userId: "focus-intruder", title: "Not yours" });
+
+    expect(await getChatFocusContractForUser(userId, item.id)).toEqual({
+      id: item.id, title: "Office lease", confirmedJurisdiction: "Ontario",
+    });
+    // Another user's contract and a missing one look the same.
+    expect(await getChatFocusContractForUser(userId, foreign.id)).toBeNull();
+    expect(await getChatFocusContractForUser("focus-intruder", item.id)).toBeNull();
+    expect(await getChatFocusContractForUser(userId, crypto.randomUUID())).toBeNull();
+
+    const thread = await createChatThreadForUser({ userId });
+    expect(await getChatThreadFocusForUser(userId, thread.id)).toBeNull();
+    await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
+      { role: "user", content: "Can I end this early?", metadata: { focusContractId: item.id } },
+      { role: "assistant", content: "Clause 9 allows it." },
+    ] });
+    // A later turn naming another id never replaces the stored focus.
+    await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
+      { role: "user", content: "And the deposit?", metadata: { focusContractId: other.id } },
+      { role: "assistant", content: "Clause 5." },
+    ] });
+    expect(await getChatThreadFocusForUser(userId, thread.id)).toEqual({
+      contractId: item.id,
+      contract: { id: item.id, title: "Office lease", confirmedJurisdiction: "Ontario" },
+    });
+    // The thread is the owner's: another user sees no focus.
+    expect(await getChatThreadFocusForUser("focus-intruder", thread.id)).toBeNull();
+
+    // A thread whose stored id names another user's contract never reveals that contract.
+    const forged = await createChatThreadForUser({ userId });
+    await appendChatMessagesToThread({ userId, threadId: forged.id, messages: [
+      { role: "user", content: "Hello", metadata: { focusContractId: foreign.id } },
+    ] });
+    expect(await getChatThreadFocusForUser(userId, forged.id)).toEqual({ contractId: foreign.id, contract: null });
+
+    // Deleting the contract keeps the thread readable and its focus id, without the contract.
+    await deleteContractForUser({ userId, contractId: item.id });
+    expect(await getChatThreadFocusForUser(userId, thread.id)).toEqual({ contractId: item.id, contract: null });
+    expect((await getChatThreadByIdForUser(userId, thread.id))?.messages).toHaveLength(4);
   });
 
   it("stores a retried chat turn once and finds it only in its owner's thread", async () => {

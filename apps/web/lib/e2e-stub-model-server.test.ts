@@ -97,6 +97,27 @@ describe("the end-to-end stub model", () => {
     ]);
     // Tools were offered, and the stub answered without using them.
     expect(requests[0]?.tools.length).toBeGreaterThan(0);
+    // The system text is recorded, so a spec can check the notes the server added.
+    expect(requests[0]?.system).toContain("You are a test assistant.");
+  });
+
+  it("records a focused chat's contract note and its contract tools", async () => {
+    const { generateChatReplyStream } = await import("@/lib/chat");
+    const focus = {
+      id: "33333333-3333-4333-8333-333333333333",
+      title: "E2E focused agreement",
+      confirmedJurisdiction: null,
+    };
+    for await (const chunk of generateChatReplyStream(
+      [{ role: "user", content: "Can I end it early?" }],
+      { primaryModel: STUB_MODEL, contractsUserId: "owner", focusContract: focus },
+    ))
+      void chunk;
+
+    const [request] = stub.requests().slice(-1);
+    expect(request?.system).toContain(`id ${focus.id}`);
+    expect(request?.system).toContain(focus.title);
+    expect(request?.tools).toEqual(expect.arrayContaining(["read_contract", "list_contracts"]));
   });
 
   it("answers the app's title request with its fixed title", async () => {
@@ -262,7 +283,10 @@ describe("the end-to-end stub model", () => {
       body: JSON.stringify({
         model: STUB_MODEL,
         stream: true,
-        input: [{ role: "user", content: [{ type: "input_text", text: "Hello stub" }] }],
+        input: [
+          { role: "system", content: "Stub system note" },
+          { role: "user", content: [{ type: "input_text", text: "Hello stub" }] },
+        ],
       }),
     });
     expect(streamed.headers.get("content-type")).toContain("text/event-stream");
@@ -282,8 +306,8 @@ describe("the end-to-end stub model", () => {
     const recorded = await fetch(`${stub.url}/__e2e/requests`);
     expect(await recorded.json()).toEqual({
       data: [
-        { model: STUB_MODEL, kind: "analysis", question: "Analyse this", tools: [] },
-        { model: STUB_MODEL, kind: "reply", question: "Hello stub", tools: [] },
+        { model: STUB_MODEL, kind: "analysis", question: "Analyse this", tools: [], system: "" },
+        { model: STUB_MODEL, kind: "reply", question: "Hello stub", tools: [], system: "Stub system note" },
       ],
     });
   });

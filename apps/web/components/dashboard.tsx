@@ -29,7 +29,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { apiClient, getApiErrorMessage } from "@/lib/api-client";
+import {
+  apiClient,
+  getApiErrorMessage,
+  type ApiError,
+} from "@/lib/api-client";
+import { contractDetailOptions } from "@/lib/workspace-query-options";
 import { cn, formatDate } from "@/lib/utils";
 import {
   fetchSettings,
@@ -260,12 +265,15 @@ type DashboardProps = {
   landingHero?: boolean;
   startTemporary?: boolean;
   initialTemporaryPrompt?: string;
+  /** Open a new saved chat about this contract (from its page's "Ask about this contract"). */
+  focusContractId?: string;
 };
 
 const Dashboard = ({
   landingHero = false,
   startTemporary = false,
   initialTemporaryPrompt,
+  focusContractId: initialFocusContractId,
 }: DashboardProps) => {
   const { user, loading, signOut } = useAuth();
   const isLoaded = !loading;
@@ -288,7 +296,14 @@ const Dashboard = ({
   const [selectedChatThreadId, setSelectedChatThreadId] = useState<
     string | null
   >(null);
-  const [isNewSavedChatSelected, setIsNewSavedChatSelected] = useState(false);
+  // The contract a new saved chat will be about, until the user leaves that new chat.
+  const [focusContractId, setFocusContractId] = useState(
+    initialFocusContractId ?? null,
+  );
+  // A focused new chat starts selected, so the newest thread is not opened in its place.
+  const [isNewSavedChatSelected, setIsNewSavedChatSelected] = useState(
+    Boolean(initialFocusContractId),
+  );
   const [savedChatKey, setSavedChatKey] = useState(0);
   const [recentlyCreatedChatThreadId, setRecentlyCreatedChatThreadId] =
     useState<string | null>(null);
@@ -408,13 +423,39 @@ const Dashboard = ({
     ? settingsData?.primaryModel || availableModels[0] || "OpenRouter"
     : "Temporary chat";
 
+  // Only the contract id came in the URL; the title is read from the user's own contract.
+  const focusContractQuery = useQuery({
+    ...contractDetailOptions(focusContractId ?? ""),
+    enabled: canUseSavedWorkspace && Boolean(focusContractId),
+  });
+  const focusContract = focusContractId
+    ? {
+        contractId: focusContractId,
+        title: focusContractQuery.data
+          ? focusContractQuery.data.title?.trim() || "Untitled contract"
+          : (focusContractQuery.error as ApiError | null)?.response?.status ===
+              404
+            ? null
+            : undefined,
+      }
+    : null;
+
+  // The id has done its job once read; a reload should not start another draft.
+  useEffect(() => {
+    if (initialFocusContractId)
+      window.history.replaceState(null, "", "/dashboard");
+  }, [initialFocusContractId]);
+
   const selectSavedChatThread = (threadId: string) => {
+    setFocusContractId(null);
     setIsTemporaryChatSelected(false);
     setIsNewSavedChatSelected(false);
     setSelectedChatThreadId(threadId);
   };
 
   const selectNewChatThread = (threadId: string) => {
+    // The chat panel keeps a focused chat's focus with the thread it just created.
+    setFocusContractId(null);
     setIsTemporaryChatSelected(false);
     setIsNewSavedChatSelected(false);
     setRecentlyCreatedChatThreadId(threadId);
@@ -422,6 +463,7 @@ const Dashboard = ({
   };
 
   const selectTemporaryChat = () => {
+    setFocusContractId(null);
     setActiveTab("chat");
     setOpenSections((previous) => ({ ...previous, chat: true }));
     setRecentlyCreatedChatThreadId(null);
@@ -561,6 +603,7 @@ const Dashboard = ({
 
     // No server-side empty thread is needed until the first message is submitted.
     // A new runtime also clears the previous composer's draft, even for repeated clicks.
+    setFocusContractId(null);
     setSavedChatKey((key) => key + 1);
     setIsNewSavedChatSelected(true);
     setIsTemporaryChatSelected(false);
@@ -1419,6 +1462,7 @@ const Dashboard = ({
                   key={savedChatKey}
                   active={!isTemporaryChatSelected}
                   selectedThreadId={selectedChatThreadId}
+                  focusContract={focusContract}
                   onThreadSelected={(threadId) => {
                     if (threadId) selectNewChatThread(threadId);
                     else setSelectedChatThreadId(null);

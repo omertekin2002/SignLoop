@@ -31,6 +31,8 @@ vi.mock("@/lib/server-db", () => ({
   getContractWithLatestAnalysisForUser: mocks.contract,
   getProjectContextForAnalysis: mocks.context,
   createAnalysisForContract: mocks.createAnalysis,
+  getChatThreadFocusForUser: vi.fn(),
+  getChatFocusContractForUser: vi.fn(),
 }));
 vi.mock("@/lib/chat-admission", async (original) => ({
   ...(await original<typeof import("./chat-admission")>()),

@@ -104,6 +104,14 @@ export default defineConfig({
       use: { storageState: AUTH_STATE_PATH },
     },
     {
+      // Also after the workspace checks: it uploads a contract and opens a saved chat about it,
+      // which the stub model answers.
+      name: "contract-chat",
+      testMatch: "contract-chat.spec.ts",
+      dependencies: ["workspace"],
+      use: { storageState: AUTH_STATE_PATH },
+    },
+    {
       name: "sign-out",
       testMatch: "sign-out.spec.ts",
       dependencies: [
@@ -114,6 +122,7 @@ export default defineConfig({
         "project-context",
         "saved-chat",
         "contract-analysis",
+        "contract-chat",
       ],
       use: { storageState: AUTH_STATE_PATH },
     },
