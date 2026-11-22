@@ -52,6 +52,9 @@ export function sectionOutput(
     penalties?: string[];
     /** The section's quotations of the clauses stating its penalties, keyed by penalty text. */
     penaltyQuotes?: Record<string, string>;
+    obligations?: string[];
+    /** The section's quotations of the clauses stating its obligations, keyed by obligation text. */
+    obligationQuotes?: Record<string, string>;
     jurisdiction?: string;
   } = {},
 ) {
@@ -121,7 +124,10 @@ export function sectionOutput(
       email_templates: [],
     },
     key_dates: [],
-    obligations: [],
+    obligations: options.obligations ?? [],
+    obligation_evidence: Object.entries(options.obligationQuotes ?? {}).map(
+      ([obligation, quote]) => ({ obligation, quote, segment: segment.label }),
+    ),
     parties: ["Provider", "Customer"],
     disclaimer: "This is an AI analysis, not legal advice.",
   };

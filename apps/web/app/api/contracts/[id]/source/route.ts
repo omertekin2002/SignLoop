@@ -45,7 +45,8 @@ export async function GET(
     (analysisId === null) !== (flag === null) ||
     // A red flag's index, the governing-law quotation behind the jurisdiction proposal, the clause
     // stating the cancellation notice period, renewal, the payment amount and frequency or the term,
-    // or a cancellation penalty or an extra fee by its index (`penalty-<n>`, `fee-<n>`).
+    // or a cancellation penalty, an extra fee or an obligation by its index (`penalty-<n>`,
+    // `fee-<n>`, `obligation-<n>`).
     (flag !== null &&
       flag !== JURISDICTION_CITATION &&
       flag !== NOTICE_CITATION &&

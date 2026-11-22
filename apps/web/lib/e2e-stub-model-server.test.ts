@@ -8,6 +8,8 @@ import {
   STUB_FEE_QUOTE,
   STUB_MODEL,
   STUB_NOTICE_QUOTE,
+  STUB_OBLIGATION,
+  STUB_OBLIGATION_QUOTE,
   STUB_PAYMENT_QUOTE,
   STUB_PENALTY,
   STUB_PENALTY_QUOTE,
@@ -199,6 +201,16 @@ describe("the end-to-end stub model", () => {
       },
     ]);
     expect(stored.summary.payments).not.toHaveProperty("fee_evidence");
+
+    // And its one obligation, keyed by the obligation's exact text, from a clause no other fact quotes.
+    expect(stored.obligations).toEqual([STUB_OBLIGATION]);
+    expect(stored.obligation_citations).toEqual([
+      {
+        obligation: STUB_OBLIGATION,
+        citation: expect.objectContaining({ status: "verified", contract_id: contractId, quote: STUB_OBLIGATION_QUOTE }),
+      },
+    ]);
+    expect(stored).not.toHaveProperty("obligation_evidence");
 
     const requests = stub.requests();
     expect(requests).toEqual([expect.objectContaining({ model: STUB_MODEL, kind: "analysis", tools: [] })]);

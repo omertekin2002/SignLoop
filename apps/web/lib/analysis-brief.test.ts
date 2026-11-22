@@ -551,7 +551,8 @@ describe("renderAnalysisBriefMarkdown", () => {
         `        > ${kitClause}`,
       ].join("\n"),
     );
-    expect(quoted).not.toMatch(/Penalties:[\s\S]*No verified quotation/);
+    // Up to the next heading: the Obligations section after it marks its own items.
+    expect(quoted.split("\n### ")[0]).not.toMatch(/Penalties:[\s\S]*No verified quotation/);
     // Each quotation renders inside its own penalty's list item as a block quote.
     const tokens = allTokens(marked.lexer(quoted));
     expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(2);
@@ -592,7 +593,7 @@ describe("renderAnalysisBriefMarkdown", () => {
     for (const none of [{ penalties: [] }, {}]) {
       const marked = withCancellation(none);
       expect(marked).toContain("  - Penalties: None listed");
-      expect(marked).not.toMatch(/Penalties:[\s\S]*No verified quotation/);
+      expect(marked.split("\n### ")[0]).not.toMatch(/Penalties:[\s\S]*No verified quotation/);
     }
   });
 
@@ -678,6 +679,78 @@ describe("renderAnalysisBriefMarkdown", () => {
       const marked = withPayments({ amount: null, frequency: null, ...none });
       expect(marked).toContain("  - Fees: None listed");
       expect(marked).not.toMatch(/Fees:[^\n]*No verified quotation/);
+    }
+  });
+
+  it("shows each obligation's own verified quotation, marks an obligation without one, and leaves none identified", () => {
+    const obligationsOf = (fields: Record<string, unknown>) => {
+      const summary = section(brief({ ...FULL_RESULT, ...fields }).markdown, "Summary");
+      return summary.slice(
+        summary.indexOf("### Obligations"),
+        summary.indexOf("### Parties"),
+      );
+    };
+    const pay = "Pay monthly dues by *direct debit*";
+    const kit = "Return club kit when leaving";
+    const payClause = "The Member pays the monthly dues by direct debit.";
+    const kitClause = "On leaving, the Member returns all club kit within 30 days.";
+
+    const quoted = obligationsOf({
+      obligations: [pay, kit],
+      obligation_citations: [
+        { obligation: kit, citation: citation(kitClause, 300) },
+        { obligation: pay, citation: citation(payClause, 200) },
+      ],
+    });
+    expect(quoted).toBe(
+      [
+        "### Obligations",
+        "",
+        "- Pay monthly dues by \\*direct debit\\*",
+        "  - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        `    > ${payClause}`,
+        `- ${kit}`,
+        "  - **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):",
+        `    > ${kitClause}`,
+        "",
+        "",
+      ].join("\n"),
+    );
+    // Each quotation renders inside its own obligation's list item as a block quote.
+    const tokens = allTokens(marked.lexer(quoted));
+    expect(tokens.filter((token) => token.type === "blockquote")).toHaveLength(2);
+    expect(tokens.filter((token) => token.type === "list_item")).toHaveLength(4);
+
+    // One obligation quoted and the other not: the other is marked, never given its neighbour's quote.
+    const one = obligationsOf({
+      obligations: [kit, pay],
+      obligation_citations: [{ obligation: pay, citation: citation(payClause, 200) }],
+    });
+    expect(one).toContain(`- ${kit} (**No verified quotation**)\n- Pay monthly dues`);
+    expect(one).not.toContain(kitClause);
+
+    // A report stored before obligation quotations, a citation for another contract, one keyed by
+    // different text, and one stored under the fees' key.
+    for (const fields of [
+      { obligations: [kit] },
+      {
+        obligations: [kit],
+        obligation_citations: [
+          {
+            obligation: kit,
+            citation: { ...citation(kitClause), contract_id: "99999999-2222-4333-8444-555555555555" },
+          },
+        ],
+      },
+      { obligations: [kit], obligation_citations: [{ obligation: kit.toLowerCase(), citation: citation(kitClause) }] },
+      { obligations: [kit], obligation_citations: [{ fee: kit, citation: citation(kitClause) }] },
+    ]) {
+      const marked = obligationsOf(fields);
+      expect(marked).toBe(`### Obligations\n\n- ${kit} (**No verified quotation**)\n\n`);
+    }
+
+    for (const none of [{ obligations: [] }, { obligations: undefined }]) {
+      expect(obligationsOf(none)).toBe("### Obligations\n\nNone identified in this analysis.\n\n");
     }
   });
 

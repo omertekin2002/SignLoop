@@ -118,6 +118,12 @@ describe("owner-scoped bounded source endpoint", () => {
     `?analysisId=${analysisId}&flag=fee-0x1`,
     `?analysisId=${analysisId}&flag=Fee-0`,
     `?analysisId=${analysisId}&flag=fees-0`,
+    `?analysisId=${analysisId}&flag=obligation`,
+    `?analysisId=${analysisId}&flag=obligation-`,
+    `?analysisId=${analysisId}&flag=obligation-1000`,
+    `?analysisId=${analysisId}&flag=obligation--1`,
+    `?analysisId=${analysisId}&flag=Obligation-0`,
+    `?analysisId=${analysisId}&flag=obligations-0`,
   ])("rejects malformed/unbounded requests: %s", async (query) => {
     expect((await get(query)).status).toBe(400);
     expect(getContractSourceForUser).not.toHaveBeenCalled();
@@ -407,6 +413,75 @@ describe("owner-scoped bounded source endpoint", () => {
     });
     expect((await get(penalty(0))).status).toBe(422);
     expect((await get(penalty(1))).status).toBe(422);
+  });
+  it("highlights the clause stating an obligation, by the obligation's index", async () => {
+    const text = "The Provider hosts the website. The Client gives the Provider access. Late invoices cost 50 GBP.";
+    const sourceRevision = contractSourceRevision(text);
+    getContractSourceForUser.mockResolvedValue({
+      revision: sourceRevision,
+      text,
+      totalCharacters: Array.from(text).length,
+      extractionWarning: null,
+      highlightMatches: true,
+    });
+    const analysed = (
+      obligationEvidence: { obligation: string; quote: string }[],
+    ) =>
+      attachAnalysisSources(
+        {
+          summary: {
+            payments: {
+              amount: null,
+              frequency: null,
+              fees: ["Late fee of 50 GBP"],
+              fee_evidence: [{ fee: "Late fee of 50 GBP", quote: "Late invoices cost 50 GBP.", segment: "full" }],
+            },
+          },
+          obligations: ["Host the website", "Give the Provider access"],
+          obligation_evidence: obligationEvidence.map((proposal) => ({ ...proposal, segment: "full" })),
+        },
+        id,
+        text,
+      );
+    const obligation = (index: number) =>
+      `?revision=${sourceRevision}&analysisId=${analysisId}&flag=obligation-${index}`;
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed([
+        { obligation: "Give the Provider access", quote: "The Client gives the Provider access." },
+        { obligation: "Host the website", quote: "The Provider hosts the website." },
+      ]),
+    });
+    const first = await get(obligation(0));
+    expect(first.status).toBe(200);
+    expect((await first.json()).highlight).toMatchObject({
+      quote: "The Provider hosts the website.",
+      start: 0,
+      end: 31,
+    });
+    const second = await get(obligation(1));
+    expect(second.status).toBe(200);
+    expect((await second.json()).highlight).toMatchObject({
+      quote: "The Client gives the Provider access.",
+      start: 32,
+    });
+    // The fee's own quotation is still served beside the obligations'.
+    const fee = await get(`?revision=${sourceRevision}&analysisId=${analysisId}&flag=fee-0`);
+    expect(fee.status).toBe(200);
+    expect((await fee.json()).highlight).toMatchObject({ quote: "Late invoices cost 50 GBP." });
+    // An index past the end has no citation, nor does an obligation index used as a penalty's.
+    expect((await get(obligation(2))).status).toBe(422);
+    expect(
+      (await get(`?revision=${sourceRevision}&analysisId=${analysisId}&flag=penalty-1`)).status,
+    ).toBe(422);
+    // Nor does an obligation whose quotation is a paraphrase, or one quoted under other text.
+    getAnalysisForUser.mockResolvedValue({
+      resultJson: analysed([
+        { obligation: "Host the website", quote: "The Provider runs the website." },
+        { obligation: "give the Provider access", quote: "The Client gives the Provider access." },
+      ]),
+    });
+    expect((await get(obligation(0))).status).toBe(422);
+    expect((await get(obligation(1))).status).toBe(422);
   });
   it("highlights the clause stating an extra fee, by the fee's index", async () => {
     const text = "Late invoices cost 50 GBP. Set-up costs 300 GBP. The Client pays 1,200 GBP monthly.";

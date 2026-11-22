@@ -27,6 +27,7 @@ import { isTermStated } from "@/lib/term";
 import { isSubstantiveText } from "@/lib/substantive-text";
 import {
   LISTED_FEES,
+  LISTED_OBLIGATIONS,
   LISTED_PENALTIES,
   listedCitationRef,
   type KnownListedFact,
@@ -529,6 +530,23 @@ export function FeesSource({ fees }: { fees: unknown }) {
       fact={LISTED_FEES}
       items={fees}
       noun="fee"
+      empty={
+        <p className="text-muted-foreground">
+          None identified in this analysis.
+        </p>
+      }
+      className="list-disc space-y-3 pl-5"
+    />
+  );
+}
+
+/** A report's obligations, each with its own quotation (`ListedSources`). */
+export function ObligationsSource({ obligations }: { obligations: unknown }) {
+  return (
+    <ListedSources
+      fact={LISTED_OBLIGATIONS}
+      items={obligations}
+      noun="obligation"
       empty={
         <p className="text-muted-foreground">
           None identified in this analysis.

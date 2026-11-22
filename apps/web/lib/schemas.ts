@@ -53,6 +53,10 @@ export const PenaltyCitationSchema = listedCitationSchema("penalty");
 export const FeeEvidenceSchema = listedEvidenceSchema("fee");
 export type FeeEvidence = z.infer<typeof FeeEvidenceSchema>;
 export const FeeCitationSchema = listedCitationSchema("fee");
+/** One obligation's quotation (`obligation_evidence`, at the report's root). */
+export const ObligationEvidenceSchema = listedEvidenceSchema("obligation");
+export type ObligationEvidence = z.infer<typeof ObligationEvidenceSchema>;
+export const ObligationCitationSchema = listedCitationSchema("obligation");
 /** A list whose malformed entries are dropped one by one; a malformed list is dropped whole. */
 const entriesOf = <T extends z.ZodType>(entry: T) =>
   z
@@ -65,13 +69,15 @@ const entriesOf = <T extends z.ZodType>(entry: T) =>
     )
     .optional()
     .catch(undefined);
-// `penalty_evidence` and `fee_evidence` are the model's proposals; attachAnalysisSources replaces
-// them with `penalty_citations` and `fee_citations`, one entry per listed item whose proposal
-// verifies.
+// `penalty_evidence`, `fee_evidence` and `obligation_evidence` are the model's proposals;
+// attachAnalysisSources replaces them with `penalty_citations`, `fee_citations` and
+// `obligation_citations`, one entry per listed item whose proposal verifies.
 const PenaltyEvidenceListSchema = entriesOf(PenaltyEvidenceSchema);
 const PenaltyCitationListSchema = entriesOf(PenaltyCitationSchema);
 const FeeEvidenceListSchema = entriesOf(FeeEvidenceSchema);
 const FeeCitationListSchema = entriesOf(FeeCitationSchema);
+const ObligationEvidenceListSchema = entriesOf(ObligationEvidenceSchema);
+const ObligationCitationListSchema = entriesOf(ObligationCitationSchema);
 
 const BaseAnalysisResultSchema = z.object({
   source: SourceIdentitySchema.nullable().optional().catch(null),
@@ -161,6 +167,8 @@ const BaseAnalysisResultSchema = z.object({
   ),
 
   obligations: z.array(z.string()),
+  obligation_evidence: ObligationEvidenceListSchema,
+  obligation_citations: ObligationCitationListSchema,
 
   parties: z.array(z.string()),
 
@@ -354,6 +362,8 @@ export const PartialAnalysisResultSchema = z
       .optional()
       .default([]),
     obligations: z.array(z.string()).optional().default([]),
+    obligation_evidence: ObligationEvidenceListSchema,
+    obligation_citations: ObligationCitationListSchema,
     parties: z.array(z.string()).optional().default([]),
     disclaimer: z
       .string()
