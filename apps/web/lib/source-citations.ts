@@ -220,7 +220,8 @@ export function verifyQuote(
 /**
  * A cited passage in a stored report: a red flag by index, the jurisdiction proposal, the
  * cancellation notice period, renewal, the payment amount and frequency, the term, or a cancellation
- * penalty or an extra fee by its index in the stored `penalties` (`penalty-<n>`) or `fees` (`fee-<n>`).
+ * penalty, an extra fee or an obligation by its index in the stored `penalties` (`penalty-<n>`),
+ * `fees` (`fee-<n>`) or `obligations` (`obligation-<n>`).
  */
 export type CitationRef =
   | number
@@ -251,7 +252,7 @@ function storedCitation(report: Record<string, unknown>, ref: CitationRef): unkn
     return field(field(report.summary, "payments"), "payment_citation");
   if (ref === TERM_CITATION)
     return field(field(report.summary, "term"), "term_citation");
-  if (isListedCitationRef(ref)) return storedListedCitation(report.summary, ref);
+  if (isListedCitationRef(ref)) return storedListedCitation(report, ref);
   return Array.isArray(report.red_flags)
     ? field(report.red_flags[ref], "citation")
     : null;

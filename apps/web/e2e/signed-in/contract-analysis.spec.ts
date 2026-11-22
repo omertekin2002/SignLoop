@@ -10,6 +10,8 @@ import {
   STUB_FEE_QUOTE,
   STUB_MODEL,
   STUB_NOTICE_QUOTE,
+  STUB_OBLIGATION,
+  STUB_OBLIGATION_QUOTE,
   STUB_PAYMENT_QUOTE,
   STUB_PENALTY,
   STUB_PENALTY_QUOTE,
@@ -57,6 +59,7 @@ type StoredContract = {
     llmProvider: string | null;
     resultJson: {
       red_flags?: { citation?: { status?: string; quote?: string } | null }[];
+      obligation_citations?: { obligation?: string; citation?: { status?: string; quote?: string } }[];
       summary?: {
         payments?: {
           payment_citation?: { status?: string; quote?: string } | null;
@@ -113,7 +116,7 @@ function onScreen(locator: Locator): Locator {
 }
 
 // The stub's report as the contract page renders it: its summary and key points, the payment, the
-// extra fee, the term, renewal, the notice period, the cancellation penalty and every finding with
+// extra fee, the term, renewal, the notice period, the cancellation penalty, the obligation and every finding with
 // the quotation the server verified, and the stub named as the model.
 async function expectStubAnalysis(page: Page) {
   await expect(onScreen(page.getByText(STUB_ANALYSIS_SUMMARY, { exact: true }))).toBeVisible();
@@ -169,6 +172,17 @@ async function expectStubAnalysis(page: Page) {
     fee.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_FEE_QUOTE)}”$`) }),
   ).toHaveCount(1);
   await expect(fee.getByRole("button", { name: "View matched quotation of fee 1" })).toBeVisible();
+  // So is the obligation, in the Obligations section: the list item holding exactly its text and the
+  // quotation's own element.
+  const obligations = page.getByRole("heading", { level: 3, name: "Obligations", exact: true }).locator("xpath=..");
+  const obligation = onScreen(
+    obligations.getByRole("listitem").filter({ has: page.getByText(STUB_OBLIGATION, { exact: true }) }),
+  );
+  await expect(obligation).toHaveCount(1);
+  await expect(
+    obligation.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_OBLIGATION_QUOTE)}”$`) }),
+  ).toHaveCount(1);
+  await expect(obligation.getByRole("button", { name: "View matched quotation of obligation 1" })).toBeVisible();
   await expect(onScreen(page.getByText("No verified quotation", { exact: true }))).toHaveCount(0);
   await expect(onScreen(page.getByText(`LLM: Primary provider • ${STUB_MODEL}`, { exact: true }))).toBeVisible();
   await expect(page.getByRole("button", { name: "Re-run Analysis" })).toBeEnabled();
@@ -251,10 +265,19 @@ for (const theme of THEMES) {
     await page.keyboard.press("Escape");
     await expect(source).toBeHidden();
 
-    // And the fee's quotation of the clause stating it.
+    // So does the fee's quotation of the clause stating it.
     await page.getByRole("button", { name: "View matched quotation of fee 1" }).click();
     await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
     await expect(source.getByRole("region", { name: "Source passage" }).locator("mark")).toHaveText(STUB_FEE_QUOTE);
+    await page.keyboard.press("Escape");
+    await expect(source).toBeHidden();
+
+    // And the obligation's quotation of the clause stating it.
+    await page.getByRole("button", { name: "View matched quotation of obligation 1" }).click();
+    await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
+    await expect(source.getByRole("region", { name: "Source passage" }).locator("mark")).toHaveText(
+      STUB_OBLIGATION_QUOTE,
+    );
     await page.keyboard.press("Escape");
     await expect(source).toBeHidden();
 
@@ -302,6 +325,12 @@ for (const theme of THEMES) {
       {
         fee: STUB_FEE,
         citation: expect.objectContaining({ status: "verified", quote: STUB_FEE_QUOTE }),
+      },
+    ]);
+    expect(stored.analyses[0]!.resultJson.obligation_citations).toEqual([
+      {
+        obligation: STUB_OBLIGATION,
+        citation: expect.objectContaining({ status: "verified", quote: STUB_OBLIGATION_QUOTE }),
       },
     ]);
 

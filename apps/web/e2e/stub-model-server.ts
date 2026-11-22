@@ -103,6 +103,13 @@ export const STUB_FEE = "Late payment fee of 50 GBP";
 export const STUB_FEE_QUOTE =
   "A late payment fee of 50 GBP applies to any invoice paid more than 14 days after its due date.";
 
+/** The stub's one obligation, as the Obligations section lists it. */
+export const STUB_OBLIGATION = "Design, host and maintain the Client's website";
+
+/** The stub's quotation of the clause stating that obligation. */
+export const STUB_OBLIGATION_QUOTE =
+  "The Provider will design, host and maintain the Client's website as described in the order form.";
+
 export const STUB_ANALYSIS_SUMMARY = "Stub analysis: a twelve-month website services agreement.";
 
 /**
@@ -160,7 +167,10 @@ export function stubAnalysis() {
       email_templates: [],
     },
     key_dates: [],
-    obligations: ["Pay the monthly fee on the first day of each month."],
+    obligations: [STUB_OBLIGATION],
+    obligation_evidence: [
+      { obligation: STUB_OBLIGATION, quote: STUB_OBLIGATION_QUOTE, segment: "full" },
+    ],
     parties: ["Example Studio Ltd", "The Client"],
     disclaimer: "This is an AI analysis, not legal advice.",
   };

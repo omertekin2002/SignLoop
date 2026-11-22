@@ -16,12 +16,15 @@ import {
   AnalysisResultSchema,
   PartialAnalysisResultSchema,
   FeeEvidenceSchema,
+  ObligationEvidenceSchema,
   PenaltyEvidenceSchema,
   AnalysisResult,
 } from "@/lib/schemas";
 import {
   LISTED_FEES,
+  LISTED_OBLIGATIONS,
   LISTED_PENALTIES,
+  listedContainer,
   type KnownListedFact,
 } from "@/lib/listed-citations";
 import {
@@ -295,6 +298,7 @@ Required JSON rules:
 - When the contract states when it starts, when it ends or a minimum term, "summary.term.term_evidence" quotes the exact sentence or clause that states the term, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. Use null when none of the start, end or minimum term is stated.
 - For each entry in "summary.cancellation.penalties", add one entry to "summary.cancellation.penalty_evidence": its "penalty" repeats that penalty's text exactly, character for character, and its "quote" is the exact sentence or clause stating that penalty, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. When no penalties are listed, "penalty_evidence" is an empty array.
 - For each entry in "summary.payments.fees", add one entry to "summary.payments.fee_evidence": its "fee" repeats that fee's text exactly, character for character, and its "quote" is the exact sentence or clause stating that fee, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. When no fees are listed, "fee_evidence" is an empty array.
+- For each entry in "obligations", add one entry to "obligation_evidence": its "obligation" repeats that obligation's text exactly, character for character, and its "quote" is the exact sentence or clause stating that obligation, under the same quotation rules. Quote only that sentence or clause, normally under 500 characters. When no obligations are listed, "obligation_evidence" is an empty array.
 - "proposed_jurisdiction" is the jurisdiction named in the contract's governing-law (choice-of-law) clause, as the clause words it, with that clause quoted as evidence under the same quotation rules. The user confirms or changes it later.
 - Use null for "proposed_jurisdiction" when no supplied CONTRACT segment contains a governing-law clause. Do not infer it from addresses, courts, currency, or where the parties are, and do not take it from project context or metadata.
 - Report only which law the clause names. Never state what that law provides or whether the contract complies with it.
@@ -319,6 +323,7 @@ Expected shape:
   },
   "key_dates": [{ "type": "OTHER", "date": "YYYY-MM-DD or description", "derived_from": null }],
   "obligations": ["..."],
+  "obligation_evidence": [{ "obligation": "the obligation's text exactly as listed in obligations", "quote": "exact wording of the clause stating that obligation", "segment": "${segment.label}" }],
   "parties": ["..."],
   "disclaimer": "This is an AI analysis, not legal advice."
 }
@@ -804,6 +809,10 @@ function normalizeAnalysisPayload(parsed: unknown): AnalysisResult {
     },
     key_dates: keyDates,
     obligations: toStringArray(pickFirst(source, ["obligations", "duties"])),
+    obligation_evidence: parsedEntries(
+      pickFirst(source, ["obligation_evidence", "obligationEvidence"]),
+      ObligationEvidenceSchema,
+    ),
     parties: toStringArray(pickFirst(source, ["parties", "entities"])),
     disclaimer:
       toStringOrNull(pickFirst(source, ["disclaimer"])) ||
@@ -1412,20 +1421,23 @@ function mergedFactEvidence(
 type ListedEvidence<F extends KnownListedFact> = FactEvidence &
   Record<F["item"], string>;
 
-/** A section's list of items and its quotations of them. The schemas give every list both fields. */
+/**
+ * A section's list of items and its quotations of them, from the list's container in its result
+ * (`listedContainer`). The schemas give every list both fields.
+ */
 function sectionListed<F extends KnownListedFact>(
   fact: F,
-  summary: Summary,
+  result: AnalysisResult,
 ): { items: readonly string[]; evidence: readonly ListedEvidence<F>[] } {
-  const group = summary[fact.group] as unknown as Record<string, unknown>;
+  const container = listedContainer(fact, result);
   return {
-    items: (group[fact.list] ?? []) as readonly string[],
-    evidence: (group[fact.evidence] ?? []) as readonly ListedEvidence<F>[],
+    items: (container?.[fact.list] ?? []) as readonly string[],
+    evidence: (container?.[fact.evidence] ?? []) as readonly ListedEvidence<F>[],
   };
 }
 
 /**
- * The quotations behind a merged list's items (cancellation penalties, fees). Each item keeps a
+ * The quotations behind a merged list's items (cancellation penalties, fees, obligations). Each item keeps a
  * quotation only from a section that lists exactly that text and whose quotation of it is found in
  * that section, so an item the merge reworded has none, and no quotation sits beside an item
  * another section stated differently.
@@ -1439,7 +1451,7 @@ function listedEvidence<F extends KnownListedFact>(
     const evidence = sections
       .map(({ segment, result }) => ({
         segment,
-        ...sectionListed(fact, result.summary),
+        ...sectionListed(fact, result),
       }))
       .filter((section) => section.items.includes(item))
       .flatMap(({ segment, evidence }) =>
@@ -1500,6 +1512,7 @@ export function mergeSectionResults(
     all((result) => result.summary.cancellation.penalties),
   );
   const fees = uniqueText(all((result) => result.summary.payments.fees));
+  const obligations = uniqueText(all((result) => result.obligations));
 
   return {
     ...(coverageNotices.length ? { coverage_notices: coverageNotices } : {}),
@@ -1573,7 +1586,8 @@ export function mergeSectionResults(
       all((result) => result.key_dates),
       (date) => `${date.type}|${normalizedKey(date.date)}`,
     ),
-    obligations: uniqueText(all((result) => result.obligations)),
+    obligations,
+    obligation_evidence: listedEvidence(LISTED_OBLIGATIONS, obligations, sections),
     parties: uniqueText(all((result) => result.parties)),
     disclaimer: first.disclaimer,
   };
@@ -1603,10 +1617,12 @@ export function buildMergePrompt(
       red_flags: redFlags,
       proposed_jurisdiction: _proposal,
       coverage_notices: _notices,
+      obligation_evidence: _obligationEvidence,
+      obligation_citations: _obligationCitations,
       summary,
       ...rest
     } = result;
-    // Fact quotations are copied from the sections afterwards (mergedFactEvidence).
+    // Fact quotations are copied from the sections afterwards (mergedFactEvidence, listedEvidence).
     const {
       notice_evidence: _noticeEvidence,
       notice_citation: _noticeCitation,
@@ -1748,6 +1764,8 @@ function parseMergedAnalysis(
     red_flags: _modelFlags,
     proposed_jurisdiction: _modelProposal,
     coverage_notices: _modelNotices,
+    obligation_evidence: _modelObligationEvidence,
+    obligation_citations: _modelObligationCitations,
     ...rest
   } = parsed;
   const merged = parseStrictJson<AnalysisResult>(
@@ -1785,6 +1803,7 @@ function parseMergedAnalysis(
     ...term
   } = merged.summary.term;
   const summary = { ...merged.summary, payments, term, renewal, cancellation };
+  const obligations = uniqueText(merged.obligations);
   return {
     ...merged,
     ...(coverageNotices.length ? { coverage_notices: coverageNotices } : {}),
@@ -1819,7 +1838,8 @@ function parseMergedAnalysis(
       ...merged.next_actions,
       questions_to_ask: uniqueText(merged.next_actions.questions_to_ask),
     },
-    obligations: uniqueText(merged.obligations),
+    obligations,
+    obligation_evidence: listedEvidence(LISTED_OBLIGATIONS, obligations, sections),
     parties: uniqueText(merged.parties),
   };
 }

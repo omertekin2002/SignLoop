@@ -215,6 +215,33 @@ describe("PrintBrief", () => {
     expect(joining!.querySelector("blockquote")).toBeNull();
   });
 
+  it("prints each obligation with its own quotation, or marks it", () => {
+    const payClause = "The Member pays the monthly dues by direct debit.";
+    const withObligations = {
+      ...ANALYSIS,
+      resultJson: {
+        ...RESULT,
+        obligations: ["Pay monthly dues", "Return club kit when leaving"],
+        obligation_citations: [
+          {
+            obligation: "Pay monthly dues",
+            citation: { ...SOURCE, status: "verified" as const, quote: payClause, start: 200, end: 249 },
+          },
+        ],
+      },
+    };
+    render(<PrintBrief contract={CONTRACT} analysis={withObligations} />);
+    const heading = Array.from(printedBrief().querySelectorAll("h3")).find(
+      (item) => item.textContent === "Obligations",
+    );
+    expect(heading?.nextElementSibling?.tagName).toBe("UL");
+    const [pay, kit] = Array.from(heading!.nextElementSibling!.querySelectorAll(":scope > li"));
+    expect(pay).toHaveTextContent("Pay monthly dues");
+    expect(pay!.querySelector("blockquote")).toHaveTextContent(payClause);
+    expect(kit).toHaveTextContent("Return club kit when leaving (No verified quotation)");
+    expect(kit!.querySelector("blockquote")).toBeNull();
+  });
+
   it("prints the term's quotation under Term, or marks a stated term without one", () => {
     const termClause = "This membership starts on joining and lasts at least 12 months.";
     const withTerm = (term: AnalysisResult["summary"]["term"]) => ({

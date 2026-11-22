@@ -5,6 +5,7 @@ import { isPaymentStated } from "@/lib/payment";
 import { isTermStated } from "@/lib/term";
 import {
   LISTED_FEES,
+  LISTED_OBLIGATIONS,
   LISTED_PENALTIES,
   listedCitationRef,
   type KnownListedFact,
@@ -288,9 +289,37 @@ function quotedFactLines(
 }
 
 /**
- * A cited list (cancellation penalties, fees) with its evidence: each item, then the verified
- * quotation of the clause stating that item or a marker on its line. None listed keeps its
- * unchanged line.
+ * A cited list's items with their evidence: each item as a bullet at `indent`, then the verified
+ * quotation of the clause stating that item or a marker on its line. Empty when none are listed.
+ */
+function listedItemLines(
+  result: Partial<AnalysisResult>,
+  container: Record<string, unknown>,
+  fact: KnownListedFact,
+  contractId: string,
+  indent: string,
+): string[] {
+  const listed = container[fact.list];
+  return (Array.isArray(listed) ? listed : []).flatMap(
+    (item: unknown, index) => {
+      const value = text(item);
+      return value
+        ? quotedFactLines(
+            `${indent}- ${inline(value)}`,
+            true,
+            result,
+            contractId,
+            listedCitationRef(fact, index),
+            `${indent}  `,
+          )
+        : [];
+    },
+  );
+}
+
+/**
+ * A cited summary list (cancellation penalties, fees) under its heading, with each item's evidence
+ * (`listedItemLines`). None listed keeps its unchanged line.
  */
 function listedLines(
   result: Partial<AnalysisResult>,
@@ -299,27 +328,8 @@ function listedLines(
   heading: string,
   contractId: string,
 ): string[] {
-  const listed = group[fact.list];
-  const items = (Array.isArray(listed) ? listed : []).flatMap(
-    (item: unknown, index) => {
-      const value = text(item);
-      return value ? [{ value, index }] : [];
-    },
-  );
-  if (!items.length) return [`  - ${heading}: None listed`];
-  return [
-    `  - ${heading}:`,
-    ...items.flatMap(({ value, index }) =>
-      quotedFactLines(
-        `    - ${inline(value)}`,
-        true,
-        result,
-        contractId,
-        listedCitationRef(fact, index),
-        "      ",
-      ),
-    ),
-  ];
+  const items = listedItemLines(result, group, fact, contractId, "    ");
+  return items.length ? [`  - ${heading}:`, ...items] : [`  - ${heading}: None listed`];
 }
 
 /** The notice period with its evidence, or the unchanged "Not specified" when none is stated. */
@@ -432,7 +442,13 @@ function summarySection(
   const keyDates = (Array.isArray(result.key_dates) ? result.key_dates : [])
     .map(record)
     .filter((date) => text(date.date));
-  const obligations = texts(result.obligations);
+  const obligations = listedItemLines(
+    result,
+    record(result),
+    LISTED_OBLIGATIONS,
+    contractId,
+    "",
+  );
   const parties = texts(result.parties);
 
   const lines = ["## Summary", "", labelled("What it is", text(summary.what_it_is))];
@@ -466,7 +482,7 @@ function summarySection(
     lines.push("None identified in this analysis.");
   }
   lines.push("", "### Obligations", "");
-  lines.push(...(obligations.length ? bulletList(obligations) : ["None identified in this analysis."]));
+  lines.push(...(obligations.length ? obligations : ["None identified in this analysis."]));
   lines.push("", "### Parties", "");
   lines.push(...(parties.length ? bulletList(parties) : ["None identified in this analysis."]));
   return lines;

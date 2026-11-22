@@ -14,6 +14,7 @@ import { isPaymentStated } from "@/lib/payment";
 import { isTermStated } from "@/lib/term";
 import {
   LISTED_FEES,
+  LISTED_OBLIGATIONS,
   LISTED_PENALTIES,
   type ListedFact,
 } from "@/lib/listed-citations";
@@ -26,7 +27,7 @@ export function contractSourceRevision(text: string): string {
 /**
  * Always discard model-supplied receipts, even if they claim to be verified. Red flags, the
  * jurisdiction proposal, the cancellation notice period, each cancellation penalty, renewal,
- * payment, each extra fee and the term get server-verified citations instead.
+ * payment, each extra fee, the term and each obligation get server-verified citations instead.
  */
 export function attachAnalysisSources<T extends Record<string, unknown>>(
   result: T,
@@ -96,20 +97,19 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
       },
     };
   };
-  // Each item of a cited list (penalties, fees) gets the first proposal naming exactly its text
-  // whose quotation verifies. Proposals for any other text are discarded, a model-sent citation is
-  // never kept, and the items themselves are always kept.
-  const citeListed = (
+  // Each item of a cited list (penalties, fees, obligations) gets the first proposal naming exactly
+  // its text whose quotation verifies. Proposals for any other text are discarded, a model-sent
+  // citation is never kept, and the items themselves are always kept. `container` is the object
+  // holding the list (`listedContainer`): a summary group, or the report for a root list.
+  const citeItems = (
     fact: ListedFact,
-    cited: Record<string, Record<string, unknown>>,
-  ) => {
-    const group = cited[fact.group];
-    if (!group) return cited;
+    container: Record<string, unknown>,
+  ): Record<string, unknown> => {
     const {
       [fact.evidence]: proposals,
       [fact.citations]: _untrusted,
       ...rest
-    } = group;
+    } = container;
     const listed = rest[fact.list];
     const items = Array.isArray(listed)
       ? listed.filter((item): item is string => typeof item === "string")
@@ -123,7 +123,14 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
           .find(Boolean) ?? null;
       return citation ? [{ [fact.item]: item, citation }] : [];
     });
-    return { ...cited, [fact.group]: { ...rest, [fact.citations]: citations } };
+    return { ...rest, [fact.citations]: citations };
+  };
+  const citeListed = (
+    fact: ListedFact & { group: string },
+    cited: Record<string, Record<string, unknown>>,
+  ) => {
+    const group = cited[fact.group];
+    return group ? { ...cited, [fact.group]: citeItems(fact, group) } : cited;
   };
   const citedSummary = summary
     ? {
@@ -155,8 +162,18 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
         ...citeFact("term", "term_evidence", "term_citation", isTermStated),
       }
     : null;
+  // Obligations sit at the report's root, so their proposals and citations do too. A result that
+  // mentions none of the three fields is left as it is, as a summary without that group is.
+  const mentionsObligations = [
+    LISTED_OBLIGATIONS.list,
+    LISTED_OBLIGATIONS.evidence,
+    LISTED_OBLIGATIONS.citations,
+  ].some((key) => key in result);
+  const obligations = mentionsObligations
+    ? (citeItems(LISTED_OBLIGATIONS, result) as T)
+    : result;
   return {
-    ...result,
+    ...obligations,
     source,
     ...(flags ? { red_flags: flags } : {}),
     ...(citedSummary ? { summary: citedSummary as T["summary"] } : {}),
