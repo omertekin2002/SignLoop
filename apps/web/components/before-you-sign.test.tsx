@@ -132,6 +132,8 @@ describe("BeforeYouSign Ask links", () => {
     expect(
       within(region).getByRole("link", { name: "Ask about finding: Auto-renewal" }),
     ).toBeInTheDocument();
+    // The question keeps its own text element beside its Ask link.
+    expect(within(region).getAllByText("# Can I **cancel** early?", { exact: true })).toHaveLength(1);
     // The coverage gaps' list has no Ask link: a chat could not see what the analysis did not.
     const gaps = within(region).getByText("Coverage gaps").closest("section")!;
     expect(within(gaps).queryByRole("link")).toBeNull();

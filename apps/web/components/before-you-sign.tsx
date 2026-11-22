@@ -199,7 +199,8 @@ export function BeforeYouSign({
             <ol className="list-decimal space-y-2 pl-5">
               {checklist.questions.map((question, index) => (
                 <li key={index}>
-                  {question}
+                  {/* Its own element, so the question's text stays whole beside its Ask link. */}
+                  <span>{question}</span>
                   {ask(questionItemKey(index), `Ask question ${index + 1}`)}
                 </li>
               ))}
