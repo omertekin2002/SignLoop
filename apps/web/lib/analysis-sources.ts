@@ -18,6 +18,12 @@ import {
   LISTED_PENALTIES,
   type ListedFact,
 } from "@/lib/listed-citations";
+import {
+  citeKeyDates,
+  KEY_DATE_CITATIONS,
+  KEY_DATE_EVIDENCE,
+  KEY_DATES,
+} from "@/lib/key-date-citations";
 import { isRecord } from "@/lib/utils";
 
 export function contractSourceRevision(text: string): string {
@@ -27,7 +33,8 @@ export function contractSourceRevision(text: string): string {
 /**
  * Always discard model-supplied receipts, even if they claim to be verified. Red flags, the
  * jurisdiction proposal, the cancellation notice period, each cancellation penalty, renewal,
- * payment, each extra fee, the term and each obligation get server-verified citations instead.
+ * payment, each extra fee, the term, each obligation and each key date get server-verified
+ * citations instead.
  */
 export function attachAnalysisSources<T extends Record<string, unknown>>(
   result: T,
@@ -172,8 +179,29 @@ export function attachAnalysisSources<T extends Record<string, unknown>>(
   const obligations = mentionsObligations
     ? (citeItems(LISTED_OBLIGATIONS, result) as T)
     : result;
+  // Key dates sit at the report's root too. Each listed date (by its exact type and date) gets the
+  // first proposal naming exactly that date whose quotation verifies; the dates are always kept.
+  const mentionsKeyDates = [KEY_DATES, KEY_DATE_EVIDENCE, KEY_DATE_CITATIONS].some(
+    (key) => key in obligations,
+  );
+  const keyDates = (() => {
+    if (!mentionsKeyDates) return obligations;
+    const {
+      [KEY_DATE_EVIDENCE]: proposals,
+      [KEY_DATE_CITATIONS]: _untrusted,
+      ...rest
+    } = obligations as Record<string, unknown>;
+    return {
+      ...rest,
+      [KEY_DATE_CITATIONS]: citeKeyDates(
+        rest[KEY_DATES],
+        proposals,
+        verifiedCitation,
+      ),
+    } as unknown as T;
+  })();
   return {
-    ...obligations,
+    ...keyDates,
     source,
     ...(flags ? { red_flags: flags } : {}),
     ...(citedSummary ? { summary: citedSummary as T["summary"] } : {}),
