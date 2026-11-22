@@ -3,7 +3,9 @@ import { expect, test, type Page, type Request } from "@playwright/test";
 import { THEMES, expectNoA11yViolations, startInTheme } from "../axe";
 import { expectNoCspViolations, recordCspViolations } from "../csp";
 import {
+  STUB_ANALYSIS_FLAGS,
   STUB_CONTRACT_FIXTURE,
+  STUB_QUESTION,
   stubTitle,
   type StubModelRequest,
 } from "../stub-model-server";
@@ -147,6 +149,111 @@ for (const theme of THEMES) {
     await expectNoA11yViolations(page, { theme });
 
     expectNoCspViolations(violations, `a saved chat about a contract (${theme} theme)`);
+    expect(pageErrors).toEqual([]);
+  });
+}
+
+// A "Before you sign" item's Ask link opens the same kind of chat about the contract, with a
+// question drafted in the browser from the stored item. The dark run asks about a finding and the
+// light run about the analysis's question.
+for (const theme of THEMES) {
+  const asksFinding = theme === "dark";
+  test(`a "Before you sign" item's Ask drafts a question about it in a chat about the contract, and sends it only on Send (${theme} theme)`, async ({
+    page,
+  }) => {
+    const pageErrors = collectPageErrors(page);
+    const violations = await recordCspViolations(page);
+    await startInTheme(page, theme);
+    const stamp = `${theme}-${Date.now()}`;
+    const title = `E2E ask item agreement ${stamp}`;
+    // A line only this upload carries, so the stub's requests can be matched to this test.
+    const id = await uploadThroughDashboard(
+      page,
+      title,
+      `${FIXTURE_TEXT}\n\nAgreement reference: E2E-ASK-${stamp}.\n`,
+    );
+
+    await page.goto(`/contracts/${id}`);
+    await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
+    const analysed = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === `/api/contracts/${id}/analyze`,
+    );
+    await page.getByRole("button", { name: "Start Analysis" }).click();
+    expect((await analysed).status()).toBe(200);
+    const checklist = page.getByRole("region", { name: "Before you sign: what to clarify" });
+    await expect(checklist).toBeVisible({ timeout: 30_000 });
+
+    const stored = await page.request.get(`/api/contracts/${id}`);
+    expect(stored.status()).toBe(200);
+    const before = (await stored.json()) as { analyses: { id: string; resultJson: unknown }[] };
+    expect(before.analyses).toHaveLength(1);
+    const analysisId = before.analyses[0]!.id;
+
+    // Every finding and question has its own Ask link, holding only ids and the item's key.
+    const [flag] = STUB_ANALYSIS_FLAGS;
+    for (const [index, each] of STUB_ANALYSIS_FLAGS.entries())
+      await expect(
+        checklist.getByRole("link", { name: `Ask about finding: ${each.type}`, exact: true }),
+      ).toHaveAttribute("href", `/dashboard?contract=${id}&analysis=${analysisId}&ask=finding-${index + 1}`);
+    const ask = asksFinding
+      ? checklist.getByRole("link", { name: `Ask about finding: ${flag.type}`, exact: true })
+      : checklist.getByRole("link", { name: "Ask question 1", exact: true });
+    const href = await ask.getAttribute("href");
+    expect(href).toBe(
+      `/dashboard?contract=${id}&analysis=${analysisId}&ask=${asksFinding ? "finding-1" : "question-1"}`,
+    );
+    for (const text of [title, flag.type, STUB_QUESTION]) expect(decodeURIComponent(href!)).not.toContain(text);
+    await expectNoA11yViolations(page, { theme });
+
+    const chatRequests = recordChatRequests(page);
+    await ask.click();
+
+    // The new chat names the contract and holds the drafted question, but sends nothing.
+    await expect(page).toHaveURL(`${SIGNED_IN_ORIGIN}/dashboard`);
+    const main = page.getByRole("main");
+    const composer = page.getByRole("textbox", { name: "Chat message" });
+    const draft = asksFinding
+      ? `About “${title}”: Explain the finding “${flag.type}”: which clause it relies on, and what I should clarify before signing. Quote the clause, or say none was found.`
+      : `About “${title}”: ${STUB_QUESTION} Answer from the contract and quote the clause you rely on.`;
+    await expect(composer).toHaveValue(draft);
+    await expect(main.getByRole("link", { name: title, exact: true })).toHaveAttribute(
+      "href",
+      `/contracts/${id}`,
+    );
+    await expectNoA11yViolations(page, { theme });
+    expect(chatRequests).toEqual([]);
+
+    const sentTurn = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" && new URL(response.url()).pathname === "/api/chat",
+    );
+    await page.getByRole("button", { name: "Send message" }).click();
+    const turn = await sentTurn;
+    expect(turn.status()).toBe(200);
+    expect(turn.request().postDataJSON()).toMatchObject({ focusContractId: id });
+    await expect(main.getByText(`Stub reply to: ${draft}`, { exact: true })).toBeVisible();
+
+    // The model was told which contract the chat is about, and got no contract text.
+    const reply = (await stubRequests(page)).find(
+      (request) => request.kind === "reply" && request.question.includes(draft),
+    );
+    expect(reply).toBeDefined();
+    expect(reply!.system).toContain(`This conversation is about one of the user's contracts, id ${id}.`);
+    expect(reply!.system).not.toContain("Late payments accrue interest at 4% per month");
+
+    // A reload opens a plain dashboard, not another draft.
+    await page.reload();
+    await expect(composer).toBeEnabled();
+    await expect(page).toHaveURL(`${SIGNED_IN_ORIGIN}/dashboard`);
+    expect(await composer.inputValue()).not.toContain(title);
+
+    // Asking changed nothing about the analysis.
+    const after = await page.request.get(`/api/contracts/${id}`);
+    expect(((await after.json()) as typeof before).analyses).toEqual(before.analyses);
+
+    expectNoCspViolations(violations, `asking about a Before you sign item (${theme} theme)`);
     expect(pageErrors).toEqual([]);
   });
 }
