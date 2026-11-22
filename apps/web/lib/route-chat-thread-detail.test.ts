@@ -24,6 +24,11 @@ import { DELETE, GET } from "@/app/api/chat/threads/[id]/route";
 const THREAD_ID = "11e3e947-f71f-4ecd-a901-adbf24edbb8a";
 const CONTRACT_ID = "5a1d2c3e-4b5f-4a6b-8c7d-9e0f1a2b3c4d";
 const MAX_CURSOR = 2147483647;
+const QUOTE_CHECKS = {
+  contractId: CONTRACT_ID,
+  revision: `sha256:${"c".repeat(64)}`,
+  checks: [{ quote: "The notice period is sixty days", status: "found" as const }],
+};
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 const rejectedParams = () => {
@@ -67,6 +72,7 @@ const threadRecord = () => ({
       toolActivity: [{ tool: "search_contract", status: "done" }],
       agentMessages: [{ role: "assistant", content: "replay-only state" }],
       webSources: [{ title: "Source", url: "https://example.com" }],
+      quoteChecks: QUOTE_CHECKS,
     },
   ],
 });
@@ -142,6 +148,8 @@ describe("GET /api/chat/threads/[id]", () => {
       model: "model-a",
       provider: "provider-a",
       toolActivity: [{ tool: "search_contract", status: "done" }],
+      // A focused reply's quotation checks come back with it, so they survive a reload.
+      quoteChecks: QUOTE_CHECKS,
     });
     for (const message of data.messages) {
       expect(message).not.toHaveProperty("agentMessages");

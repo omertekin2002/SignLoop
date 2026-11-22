@@ -46,7 +46,13 @@ import {
   getChatDocumentsForUser,
   getChatFocusContractForUser,
   getChatThreadFocusForUser,
+  getContractTextForUser,
 } from "@/lib/server-db";
+import {
+  checkQuotations,
+  extractQuotations,
+  type ChatQuoteChecks,
+} from "@/lib/chat-quote-checks";
 import {
   MAX_CHAT_DOCUMENT_CONTEXT,
   MAX_CHAT_IMAGE_CONTEXT,
@@ -152,6 +158,8 @@ async function persistChatMessages(input: {
   generatedFiles?: ChatReply["files"];
   /** The contract this turn was about; stored on its user message so later turns keep it. */
   focusContractId?: string | null;
+  /** The reply's quotations checked against that contract, when it quoted any. */
+  quoteChecks?: ChatQuoteChecks | null;
   signal: AbortSignal;
 }): Promise<ChatMessageRecord[]> {
   if (input.temporary) {
@@ -204,6 +212,7 @@ async function persistChatMessages(input: {
           contractEvidence: input.contractEvidence,
           webSources: input.webSources ?? [],
           toolActivity: input.toolActivity ?? [],
+          ...(input.quoteChecks ? { quoteChecks: input.quoteChecks } : {}),
           ...(input.generatedFiles?.length
             ? {
                 files: input.generatedFiles.map((file) =>
@@ -215,6 +224,38 @@ async function persistChatMessages(input: {
       },
     ],
   });
+}
+
+/**
+ * Check each quotation in a finished reply about one contract against that contract's current
+ * text, as the analysis checks its quotations, but over the whole text. It makes no model call and
+ * spends no quota. The text is loaded, owner-scoped and under the turn's lease, only when the turn
+ * was focused and the reply quotes something. Any failure, such as the contract being deleted
+ * mid-turn, gives null: the reply is then saved without checks, never failed or lost.
+ */
+async function checkReplyQuotations(input: {
+  userId: string | null;
+  focusContract: ChatFocusContractRecord | null;
+  reply: string;
+}): Promise<ChatQuoteChecks | null> {
+  if (!input.userId || !input.focusContract) return null;
+  try {
+    const quotations = extractQuotations(input.reply);
+    if (!quotations.length) return null;
+    const contract = await getContractTextForUser(
+      input.userId,
+      input.focusContract.id,
+    );
+    if (!contract?.text) return null;
+    return {
+      contractId: input.focusContract.id,
+      revision: contract.revision,
+      checks: checkQuotations(quotations, contract.text),
+    };
+  } catch (error) {
+    console.error("Chat quotation check failed:", error);
+    return null;
+  }
 }
 
 /**
@@ -324,6 +365,7 @@ function toDoneStreamEvent(input: {
   persisted?: boolean;
   storedMessages: ChatMessageRecord[];
   quota?: AccountQuota;
+  quoteChecks?: ChatQuoteChecks | null;
 }): Record<string, unknown> {
   const { reply, message, temporary, persisted = true } = input;
 
@@ -343,6 +385,7 @@ function toDoneStreamEvent(input: {
     toolActivity: reply.toolActivity ?? [],
     // The account quota as of this request's admission, so the client can update without a refetch.
     quota: input.quota,
+    ...(input.quoteChecks ? { quoteChecks: input.quoteChecks } : {}),
     ...(temporary && reply.files?.length
       ? {
           documents: reply.files.map(
@@ -385,6 +428,7 @@ function toReplayedTurnResult(
     webSearchAttempts: [],
     webSearchSuccessfulCount: 0,
     webSources: [],
+    ...(reply?.quoteChecks ? { quoteChecks: reply.quoteChecks } : {}),
     ...(reply?.files?.length ? { files: reply.files } : {}),
   };
 }
@@ -852,6 +896,9 @@ export async function POST(req: Request) {
           })
         : Promise.resolve(null);
 
+    // Only a saved chat about one of the user's contracts has its reply's quotations checked.
+    const checksQuotations = Boolean(userId && !isTemporaryChat && focusContract);
+
     timings.outcome = "error";
     endGeneration = timings.start("generation");
     const wantsStream = isRecord(body) && body.stream === true;
@@ -930,6 +977,15 @@ export async function POST(req: Request) {
               // The full answer has already been streamed to (and rendered by) the client, so a
               // persistence failure here must NOT flip the visible message to an error state.
               // Log it, mark the done event as unpersisted, and still finalize the turn.
+              // Checked from the model's own text, before web sources are appended to it. An
+              // unfocused turn never awaits it, so its save starts exactly as before.
+              const quoteChecks = checksQuotations
+                ? await checkReplyQuotations({
+                    userId,
+                    focusContract,
+                    reply: chunk.reply.message,
+                  })
+                : null;
               let persisted = true;
               try {
                 const title = await timings.measure(
@@ -956,6 +1012,7 @@ export async function POST(req: Request) {
                       inputFiles,
                       generatedFiles: chunk.reply.files,
                       focusContractId: focusContract?.id ?? null,
+                      quoteChecks,
                       signal: operationSignal,
                     }),
                 );
@@ -985,6 +1042,7 @@ export async function POST(req: Request) {
                     persisted,
                     storedMessages,
                     quota,
+                    quoteChecks,
                   }),
                 ),
               );
@@ -1107,6 +1165,9 @@ export async function POST(req: Request) {
       { readThisTurn: readSources, figures },
     );
 
+    const quoteChecks = checksQuotations
+      ? await checkReplyQuotations({ userId, focusContract, reply: message })
+      : null;
     let persisted = true;
     if (!isTemporaryChat) {
       if (!userId) {
@@ -1133,6 +1194,7 @@ export async function POST(req: Request) {
             inputFiles,
             generatedFiles: files,
             focusContractId: focusContract?.id ?? null,
+            quoteChecks,
             signal: operationSignal,
           }),
         );
@@ -1168,6 +1230,7 @@ export async function POST(req: Request) {
         webSearchSuccessfulCount: webSearch?.successfulSearches ?? 0,
         webSources: webSearch?.sources ?? [],
         quota,
+        ...(quoteChecks ? { quoteChecks } : {}),
         ...(isTemporaryChat && files?.length
           ? { documents: files.map(({ data: _data, ...document }) => document) }
           : {}),

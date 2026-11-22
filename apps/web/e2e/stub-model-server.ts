@@ -41,6 +41,31 @@ export function stubReply(question: string): string {
   ].join("\n");
 }
 
+// A saved chat about one contract carries this note in its instructions (lib/contract-tools.ts).
+const FOCUS_NOTE = "This conversation is about one of the user's contracts";
+
+/** In a reply about the fixture contract: a quotation that appears in it word for word. */
+export const STUB_FOCUSED_FOUND_QUOTE =
+  "The Provider's total liability under this agreement is limited to the fees paid in the previous month";
+/** In the same reply: a quotation the fixture contract does not contain. */
+export const STUB_FOCUSED_INVENTED_QUOTE =
+  "The Client may cancel at any time without paying any fee";
+
+/**
+ * The reply to a chat about a contract: the plain reply, then one verbatim quotation of the fixture
+ * contract in a blockquote and one invented inline quotation, so the app's quotation check marks one
+ * found and one not found.
+ */
+export function stubFocusedReply(question: string): string {
+  return [
+    stubReply(question),
+    "",
+    `> ${STUB_FOCUSED_FOUND_QUOTE}.`,
+    "",
+    `It also says "${STUB_FOCUSED_INVENTED_QUOTE}."`,
+  ].join("\n");
+}
+
 /**
  * The contract the analysis fixture describes (e2e/fixtures/e2e-services-agreement.txt). Every
  * quotation in stubAnalysis() appears in it exactly once, word for word, so the app's citation check
@@ -260,7 +285,13 @@ export async function startStubModelServer(port: number): Promise<StubModelServe
           record({ model, kind, question, tools: toolNames(body.tools), system: systemText(body) });
           responseCount += 1;
           // The title request quotes the message as JSON (lib/chat-title.ts).
-          const text = kind === "title" ? stubTitle(unquote(question)) : stubReply(question);
+          const focused = JSON.stringify([body.instructions, body.input]).includes(FOCUS_NOTE);
+          const text =
+            kind === "title"
+              ? stubTitle(unquote(question))
+              : focused
+                ? stubFocusedReply(question)
+                : stubReply(question);
           streamResponse(response, `resp_e2e_${responseCount}`, model || STUB_MODEL, text);
         })
         .catch(() => sendJson(response, 400, { error: { message: "Invalid JSON body." } }));

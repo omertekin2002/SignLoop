@@ -676,10 +676,21 @@ describe.skipIf(!connectionString)("database integration", () => {
 
     const thread = await createChatThreadForUser({ userId });
     expect(await getChatThreadFocusForUser(userId, thread.id)).toBeNull();
+    const quoteChecks = {
+      contractId: item.id,
+      revision: `sha256:${"d".repeat(64)}`,
+      checks: [
+        { quote: "Either party may end this lease early", status: "found" },
+        { quote: "The tenant may leave at any time", status: "not_found" },
+      ],
+    };
     await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
       { role: "user", content: "Can I end this early?", metadata: { focusContractId: item.id } },
-      { role: "assistant", content: "Clause 9 allows it." },
+      { role: "assistant", content: "Clause 9 allows it.", metadata: { quoteChecks } },
     ] });
+    // A focused reply's quotation checks are stored in its metadata and come back with history.
+    const [, checkedReply] = (await getChatThreadByIdForUser(userId, thread.id))!.messages;
+    expect(checkedReply).toMatchObject({ role: "assistant", quoteChecks });
     // A later turn naming another id never replaces the stored focus.
     await appendChatMessagesToThread({ userId, threadId: thread.id, messages: [
       { role: "user", content: "And the deposit?", metadata: { focusContractId: other.id } },
