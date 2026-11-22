@@ -48,6 +48,7 @@ import {
   useState,
 } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import {
@@ -69,6 +70,7 @@ import {
   Bot,
   Check,
   Copy,
+  FileText,
   Loader2,
   Paperclip,
   Send,
@@ -86,6 +88,7 @@ import { invalidateAfterWrite } from "@/lib/invalidate-after-write";
 import {
   chatThreadOptions,
   type ChatThreadDetail,
+  type ChatThreadFocus,
   type ChatThreadMessage,
 } from "@/lib/workspace-query-options";
 import {
@@ -588,6 +591,48 @@ function ReplyStatusAnnouncer() {
   );
 }
 
+/** The editable draft a chat about a contract starts with; it is never sent automatically. */
+export function contractChatDraft(title: string): string {
+  return `About “${title}”: `;
+}
+
+/**
+ * The compact line naming the contract a saved chat is about, linking back to it. Once the
+ * contract is gone the line says so, since the chat's new turns are no longer about it.
+ */
+function ChatScopeLine({
+  focus,
+  started,
+}: {
+  focus: ChatThreadFocus;
+  started: boolean;
+}) {
+  if (focus.title === null)
+    return (
+      <p
+        role="status"
+        className="mx-auto mb-2 flex max-w-3xl items-center gap-2 text-caption text-muted-foreground"
+      >
+        <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        {started
+          ? "The contract this chat was about is no longer available. New messages are not about it."
+          : "This contract is not available, so this chat will not be about it."}
+      </p>
+    );
+  return (
+    <p className="mx-auto mb-2 flex max-w-3xl min-w-0 items-center gap-2 text-caption text-muted-foreground">
+      <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <span className="shrink-0">About:</span>{" "}
+      <Link
+        href={`/contracts/${focus.contractId}`}
+        className="min-w-0 truncate font-medium text-foreground underline-offset-4 hover:underline"
+      >
+        {focus.title ?? "this contract"}
+      </Link>
+    </p>
+  );
+}
+
 type ChatPanelProps = {
   selectedThreadId?: string | null;
   onThreadSelected?: (threadId: string | null) => void;
@@ -597,6 +642,11 @@ type ChatPanelProps = {
   initialPrompt?: string;
   active?: boolean;
   onContentChange?: (hasContent: boolean) => void;
+  /**
+   * Saved chat only: the contract a new chat is about. It applies until the chat's first message
+   * creates its thread; the thread then keeps the focus the server stored with that turn.
+   */
+  focusContract?: ChatThreadFocus | null;
 };
 
 /** Manage saved and temporary chat lifecycles, authenticated attachments, streaming, and cancellation. */
@@ -609,6 +659,7 @@ export function ChatPanel({
   initialPrompt,
   active = true,
   onContentChange,
+  focusContract = null,
 }: ChatPanelProps) {
   const { loading, user } = useAuth();
   const isLoaded = !loading;
@@ -643,6 +694,12 @@ export function ChatPanel({
   const loadingOlderRef = useRef(false);
   const hydratedSignatureRef = useRef<string | null>(null);
   const initialPromptSignatureRef = useRef<string | null>(null);
+  const focusDraftSignatureRef = useRef<string | null>(null);
+  // The focus of threads this panel started from a focused new chat, shown until the server's
+  // thread detail carries it.
+  const [startedFocus, setStartedFocus] = useState<
+    Record<string, ChatThreadFocus>
+  >({});
   const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
   const previousActiveThreadIdRef = useRef<string | null>(null);
   const [attachmentAdapter] = useState(chatAttachmentAdapter);
@@ -694,6 +751,20 @@ export function ChatPanel({
     ...chatThreadOptions(activeThreadId),
     enabled: !temporary && Boolean(activeThreadId),
   });
+
+  const pendingFocus = !temporary && !activeThreadId ? focusContract : null;
+  const threadFocus =
+    !temporary && activeThreadId
+      ? (activeThreadQuery.data?.focus ?? startedFocus[activeThreadId] ?? null)
+      : null;
+  const scopeFocus = threadFocus ?? pendingFocus;
+  // Sent with each turn while the contract is available; the server keeps the thread's stored
+  // focus whatever the client sends, and checks the contract's owner every turn.
+  const focusContractIdToSend =
+    scopeFocus && scopeFocus.title !== null ? scopeFocus.contractId : null;
+  // Primitives, so the chat adapter below is not rebuilt for every new focus object.
+  const pendingFocusId = pendingFocus?.contractId ?? null;
+  const pendingFocusTitle = pendingFocus?.title;
 
   useLayoutEffect(() => {
     if (temporary) {
@@ -781,6 +852,10 @@ export function ChatPanel({
           assertCurrent();
         }
         if (!temporary && threadId && threadId !== activeThreadId) {
+          if (pendingFocusId && focusContractIdToSend) {
+            const started = { contractId: pendingFocusId, title: pendingFocusTitle };
+            setStartedFocus((previous) => ({ ...previous, [threadId!]: started }));
+          }
           newlyCreatedThreadIdsRef.current.add(threadId);
           setActiveThreadId(threadId);
           onThreadSelected?.(threadId);
@@ -849,6 +924,9 @@ export function ChatPanel({
               !temporary && latestMessage?.role === "user"
                 ? turnIdFor(latestMessage.id)
                 : undefined,
+            ...(!temporary && focusContractIdToSend
+              ? { focusContractId: focusContractIdToSend }
+              : {}),
             messages: payloadMessages,
             temporary,
             stream: true,
@@ -945,7 +1023,10 @@ export function ChatPanel({
     }),
     [
       activeThreadId,
+      focusContractIdToSend,
       onThreadSelected,
+      pendingFocusId,
+      pendingFocusTitle,
       privacyAcknowledged,
       queryClient,
       savedChatSession,
@@ -1035,6 +1116,26 @@ export function ChatPanel({
       canceled = true;
     };
   }, [initialPrompt, privacyAcknowledged, runtime, temporary]);
+
+  // A chat about a contract starts with an editable draft naming it. Only the user sends it.
+  const draftTitle =
+    typeof pendingFocusTitle === "string" ? pendingFocusTitle : null;
+  const draftContractId = pendingFocusId;
+  useEffect(() => {
+    if (!draftTitle || !draftContractId || !privacyAcknowledged) return;
+    const signature = `focus-draft:${draftContractId}`;
+    let canceled = false;
+    // Deferred past Strict Mode replay, as the temporary chat's URL draft is.
+    queueMicrotask(() => {
+      if (canceled || focusDraftSignatureRef.current === signature) return;
+      focusDraftSignatureRef.current = signature;
+      if (!runtime.thread.composer.getState().text.trim())
+        runtime.thread.composer.setText(contractChatDraft(draftTitle));
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [draftContractId, draftTitle, privacyAcknowledged, runtime]);
 
   useEffect(() => {
     if (temporary) {
@@ -1301,6 +1402,9 @@ export function ChatPanel({
                 if (quotaExhausted) event.preventDefault();
               }}
             >
+              {scopeFocus && !isHydratingThread && !isThreadUnavailable ? (
+                <ChatScopeLine focus={scopeFocus} started={Boolean(threadFocus)} />
+              ) : null}
               {persistenceWarning && !temporary ? (
                 <div
                   className="mx-auto mb-2 max-w-3xl rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3 text-sm text-foreground"

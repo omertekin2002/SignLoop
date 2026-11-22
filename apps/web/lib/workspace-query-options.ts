@@ -70,11 +70,22 @@ export type ChatThreadMessage = {
   interrupted?: "stopped" | "error";
 };
 
+/**
+ * The contract a saved chat is about, by id. `title` is null once the contract is no longer the
+ * user's (deleted); undefined while a new chat's contract is still loading.
+ */
+export type ChatThreadFocus = {
+  contractId: string;
+  title?: string | null;
+};
+
 export type ChatThreadDetail = {
   id: string;
   title: string;
   messages: ChatThreadMessage[];
   hasMore: boolean;
+  /** Absent from detail cached before the thread's first turn was saved. */
+  focus?: ChatThreadFocus | null;
 };
 
 // Inherit freshness/retry policy from the identity-scoped QueryClient for both

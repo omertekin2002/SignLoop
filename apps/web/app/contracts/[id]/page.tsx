@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   ArrowLeft,
+  MessagesSquare,
   Play,
   Loader2,
   Trash2,
@@ -458,6 +459,16 @@ const ContractDetails = () => {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {/* A chat reads the extracted text, so it needs text, not an analysis. Only the id
+                  travels in the URL; the chat loads the title itself. */}
+              {(contract.analysisCoverage?.characterCount ?? 0) > 0 ? (
+                <Button variant="outline" asChild>
+                  <Link href={`/dashboard?contract=${encodeURIComponent(id)}`}>
+                    <MessagesSquare className="mr-2 h-4 w-4" aria-hidden="true" />
+                    Ask about this contract
+                  </Link>
+                </Button>
+              ) : null}
               <OpenContractSource />
               <DownloadBriefButton
                 contract={{ ...contract, id }}
