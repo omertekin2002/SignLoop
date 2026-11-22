@@ -155,6 +155,7 @@ describe("PrintBrief", () => {
         "h1 Decision brief: Gym membership",
         "h2 Coverage",
         "h2 Jurisdiction",
+        "h2 Before you sign: what to clarify",
         "h2 Summary",
         "h2 Findings",
         "h2 Next steps",
@@ -282,8 +283,11 @@ describe("PrintBrief", () => {
       resultJson: { ...RESULT, summary: { ...RESULT.summary!, term } },
     });
     const termItem = () =>
-      Array.from(printedBrief().querySelectorAll("li")).find((item) =>
-        item.firstChild?.textContent?.startsWith("Term:"),
+      // The Summary's Term item, which holds its lines; the checklist's Term entry has none.
+      Array.from(printedBrief().querySelectorAll("li")).find(
+        (item) =>
+          item.firstChild?.textContent?.startsWith("Term:") &&
+          item.querySelector("ul") !== null,
       );
 
     const { unmount } = render(

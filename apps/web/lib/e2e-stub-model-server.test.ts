@@ -10,6 +10,7 @@ import {
   STUB_NOTICE_QUOTE,
   STUB_OBLIGATION,
   STUB_OBLIGATION_QUOTE,
+  STUB_UNQUOTED_OBLIGATION,
   STUB_KEY_DATE,
   STUB_KEY_DATE_DERIVED_FROM,
   STUB_KEY_DATE_QUOTE,
@@ -205,8 +206,9 @@ describe("the end-to-end stub model", () => {
     ]);
     expect(stored.summary.payments).not.toHaveProperty("fee_evidence");
 
-    // And its one obligation, keyed by the obligation's exact text, from a clause no other fact quotes.
-    expect(stored.obligations).toEqual([STUB_OBLIGATION]);
+    // And its quoted obligation, keyed by the obligation's exact text, from a clause no other fact
+    // quotes. The second obligation has no proposal, so it has no citation.
+    expect(stored.obligations).toEqual([STUB_OBLIGATION, STUB_UNQUOTED_OBLIGATION]);
     expect(stored.obligation_citations).toEqual([
       {
         obligation: STUB_OBLIGATION,

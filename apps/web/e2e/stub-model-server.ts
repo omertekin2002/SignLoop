@@ -110,6 +110,12 @@ export const STUB_OBLIGATION = "Design, host and maintain the Client's website";
 export const STUB_OBLIGATION_QUOTE =
   "The Provider will design, host and maintain the Client's website as described in the order form.";
 
+/**
+ * A second obligation the stub states without proposing a quotation, so the page and the brief mark
+ * it "No verified quotation" and list it under Before you sign.
+ */
+export const STUB_UNQUOTED_OBLIGATION = "Pay each invoice within 14 days of its due date";
+
 /** The stub's one key date, as the Key Dates card lists it: its exact type and date. */
 export const STUB_KEY_DATE = { type: "PRICE_REVIEW", date: "1 April each year" } as const;
 
@@ -118,6 +124,9 @@ export const STUB_KEY_DATE_DERIVED_FROM = "The yearly fee review in the Fees cla
 
 /** The stub's quotation of the clause stating that key date. */
 export const STUB_KEY_DATE_QUOTE = "The Provider may review the monthly fee once a year, on 1 April.";
+
+/** The stub's one question to ask, which the page lists only under Before you sign. */
+export const STUB_QUESTION = "Stub question: can the late-payment interest be reduced?";
 
 export const STUB_ANALYSIS_SUMMARY = "Stub analysis: a twelve-month website services agreement.";
 
@@ -172,12 +181,12 @@ export function stubAnalysis() {
     proposed_jurisdiction: null,
     normal_in_region: [],
     next_actions: {
-      questions_to_ask: ["Stub question: can the late-payment interest be reduced?"],
+      questions_to_ask: [STUB_QUESTION],
       email_templates: [],
     },
     key_dates: [{ ...STUB_KEY_DATE, derived_from: STUB_KEY_DATE_DERIVED_FROM }],
     key_date_evidence: [{ ...STUB_KEY_DATE, quote: STUB_KEY_DATE_QUOTE, segment: "full" }],
-    obligations: [STUB_OBLIGATION],
+    obligations: [STUB_OBLIGATION, STUB_UNQUOTED_OBLIGATION],
     obligation_evidence: [
       { obligation: STUB_OBLIGATION, quote: STUB_OBLIGATION_QUOTE, segment: "full" },
     ],
