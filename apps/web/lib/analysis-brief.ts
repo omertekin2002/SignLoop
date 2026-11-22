@@ -5,10 +5,19 @@ import { isPaymentStated } from "@/lib/payment";
 import { isTermStated } from "@/lib/term";
 import {
   LISTED_FEES,
+  LISTED_OBLIGATIONS,
   LISTED_PENALTIES,
   listedCitationRef,
   type KnownListedFact,
 } from "@/lib/listed-citations";
+import { keyDateCitationRef } from "@/lib/key-date-citations";
+import {
+  clarifyBeforeSigning,
+  KEY_DATE_LABELS,
+  NO_VERIFIED_QUOTATION,
+  NOT_SPECIFIED,
+  quotationStatusLine,
+} from "@/lib/analysis-clarify";
 import { regionalComparisonsView } from "@/lib/regional-comparisons";
 import {
   citationForReport,
@@ -24,13 +33,6 @@ import { formatDate, isRecord } from "@/lib/utils";
 
 /** The stored disclaimer's schema default, for reports saved without one. */
 const DEFAULT_DISCLAIMER = "This is an AI analysis, not legal advice.";
-const NOT_SPECIFIED = "Not specified";
-const KEY_DATE_LABELS: Record<string, string> = {
-  RENEWAL: "Renewal",
-  NOTICE_CUTOFF: "Notice cutoff",
-  PRICE_REVIEW: "Price review",
-  OTHER: "Other",
-};
 
 export type AnalysisBriefInput = {
   /** What the contract page already holds; `id` checks that citations belong to this contract. */
@@ -276,21 +278,50 @@ function quotedFactLines(
   contractId: string,
   ref: CitationRef,
   indent = "    ",
+  caveat = "it shows where this value comes from, not that this reading is correct",
 ): string[] {
   if (!stated) return [line];
   const cited = citationForReport(result, contractId, ref);
-  if (!cited) return [`${line} (**No verified quotation**)`];
+  if (!cited) return [`${line} (**${NO_VERIFIED_QUOTATION}**)`];
   return [
     line,
-    `${indent}- **Verified quotation** (matched in the extracted contract text; it shows where this value comes from, not that this reading is correct):`,
+    `${indent}- **Verified quotation** (matched in the extracted contract text; ${caveat}):`,
     ...blockquote(cited.quote).map((quoted) => `${indent}  ${quoted}`),
   ];
 }
 
 /**
- * A cited list (cancellation penalties, fees) with its evidence: each item, then the verified
- * quotation of the clause stating that item or a marker on its line. None listed keeps its
- * unchanged line.
+ * A cited list's items with their evidence: each item as a bullet at `indent`, then the verified
+ * quotation of the clause stating that item or a marker on its line. Empty when none are listed.
+ */
+function listedItemLines(
+  result: Partial<AnalysisResult>,
+  container: Record<string, unknown>,
+  fact: KnownListedFact,
+  contractId: string,
+  indent: string,
+): string[] {
+  const listed = container[fact.list];
+  return (Array.isArray(listed) ? listed : []).flatMap(
+    (item: unknown, index) => {
+      const value = text(item);
+      return value
+        ? quotedFactLines(
+            `${indent}- ${inline(value)}`,
+            true,
+            result,
+            contractId,
+            listedCitationRef(fact, index),
+            `${indent}  `,
+          )
+        : [];
+    },
+  );
+}
+
+/**
+ * A cited summary list (cancellation penalties, fees) under its heading, with each item's evidence
+ * (`listedItemLines`). None listed keeps its unchanged line.
  */
 function listedLines(
   result: Partial<AnalysisResult>,
@@ -299,27 +330,8 @@ function listedLines(
   heading: string,
   contractId: string,
 ): string[] {
-  const listed = group[fact.list];
-  const items = (Array.isArray(listed) ? listed : []).flatMap(
-    (item: unknown, index) => {
-      const value = text(item);
-      return value ? [{ value, index }] : [];
-    },
-  );
-  if (!items.length) return [`  - ${heading}: None listed`];
-  return [
-    `  - ${heading}:`,
-    ...items.flatMap(({ value, index }) =>
-      quotedFactLines(
-        `    - ${inline(value)}`,
-        true,
-        result,
-        contractId,
-        listedCitationRef(fact, index),
-        "      ",
-      ),
-    ),
-  ];
+  const items = listedItemLines(result, group, fact, contractId, "    ");
+  return items.length ? [`  - ${heading}:`, ...items] : [`  - ${heading}: None listed`];
 }
 
 /** The notice period with its evidence, or the unchanged "Not specified" when none is stated. */
@@ -429,10 +441,17 @@ function summarySection(
   const term = record(summary.term);
   const renewal = record(summary.renewal);
   const cancellation = record(summary.cancellation);
+  // Each date keeps its index in the stored list, which names its quotation (`key-date-<n>`).
   const keyDates = (Array.isArray(result.key_dates) ? result.key_dates : [])
-    .map(record)
-    .filter((date) => text(date.date));
-  const obligations = texts(result.obligations);
+    .map((date, index) => ({ date: record(date), index }))
+    .filter(({ date }) => text(date.date));
+  const obligations = listedItemLines(
+    result,
+    record(result),
+    LISTED_OBLIGATIONS,
+    contractId,
+    "",
+  );
   const parties = texts(result.parties);
 
   const lines = ["## Summary", "", labelled("What it is", text(summary.what_it_is))];
@@ -455,18 +474,26 @@ function summarySection(
   }
   lines.push("", "### Key dates", "");
   if (keyDates.length) {
-    for (const date of keyDates) {
+    for (const { date, index } of keyDates) {
       const type = KEY_DATE_LABELS[String(date.type)] ?? "Date";
       const from = text(date.derived_from);
       lines.push(
-        `- **${type}:** ${inline(text(date.date)!)}${from ? ` (from: ${inline(from)})` : ""}`,
+        ...quotedFactLines(
+          `- **${type}:** ${inline(text(date.date)!)}${from ? ` (from: ${inline(from)})` : ""}`,
+          true,
+          result,
+          contractId,
+          keyDateCitationRef(index),
+          "  ",
+          "it shows which clause this date comes from, not that the date was worked out correctly",
+        ),
       );
     }
   } else {
     lines.push("None identified in this analysis.");
   }
   lines.push("", "### Obligations", "");
-  lines.push(...(obligations.length ? bulletList(obligations) : ["None identified in this analysis."]));
+  lines.push(...(obligations.length ? obligations : ["None identified in this analysis."]));
   lines.push("", "### Parties", "");
   lines.push(...(parties.length ? bulletList(parties) : ["None identified in this analysis."]));
   return lines;
@@ -509,40 +536,109 @@ function findingsSection(
   return lines;
 }
 
-function nextStepsSection(result: Partial<AnalysisResult>): string[] {
-  const actions = record(result.next_actions);
-  const questions = texts(actions.questions_to_ask);
-  const emails = (Array.isArray(actions.email_templates) ? actions.email_templates : [])
-    .map(record)
-    .filter((email) => text(email.subject) || text(email.body));
-  const lines = ["## Next steps", ""];
-  if (!questions.length && !emails.length) {
-    lines.push("No next steps were suggested in this analysis.");
-    return lines;
+/**
+ * What to clarify before signing (`clarifyBeforeSigning`), as one checklist: templated text and
+ * escaped stored values only. It never says there is nothing to clarify, and lists every coverage
+ * gap again even though the Coverage section above has them.
+ */
+function clarifySection(input: AnalysisBriefInput): string[] {
+  const checklist = clarifyBeforeSigning({
+    contractId: input.contract.id,
+    extractionWarning: input.contract.extractionWarning,
+    resultJson: input.analysis.resultJson,
+  });
+  const lines = [
+    "## Before you sign: what to clarify",
+    "",
+    "Built from this analysis. Each entry points to the full fact or finding in the sections below.",
+  ];
+  if (checklist.coverageGaps.length) {
+    lines.push(
+      "",
+      "### Coverage gaps",
+      "",
+      ...checklist.coverageGaps.map(
+        (gap) => `- **${gap.label}:** ${inline(gap.text)}`,
+      ),
+    );
   }
-  lines.push(
-    "These are drafts generated by the analysis. Review and adapt them before you use them.",
-  );
-  if (questions.length) {
+  const status = quotationStatusLine(checklist);
+  if (status) {
+    lines.push("", status);
+  } else if (checklist.unverified.length) {
+    lines.push(
+      "",
+      "### Stated without a verified quotation",
+      "",
+      ...checklist.unverified.map(
+        (fact) =>
+          `- **${fact.fact}:** ${inline(fact.value)} (${NO_VERIFIED_QUOTATION})`,
+      ),
+    );
+  }
+  if (checklist.unstated.length) {
+    lines.push(
+      "",
+      "### Not stated",
+      "",
+      ...checklist.unstated.map((fact) => `- **${fact.fact}:** ${NOT_SPECIFIED}`),
+    );
+  }
+  if (checklist.findings.length) {
+    lines.push(
+      "",
+      "### Findings",
+      "",
+      ...checklist.findings.map(
+        (finding) =>
+          `- **Finding ${finding.number}:** ${inline(finding.type)} (${
+            finding.severity === null
+              ? "severity not provided"
+              : `severity ${finding.severity}/10`
+          })`,
+      ),
+    );
+  }
+  if (checklist.questions.length) {
     lines.push(
       "",
       "### Questions to ask",
       "",
-      ...questions.map((question, index) => `${index + 1}. ${inline(question)}`),
+      "Suggested by the analysis. Review and adapt them before you use them.",
+      "",
+      ...checklist.questions.map(
+        (question, index) => `${index + 1}. ${inline(question)}`,
+      ),
     );
   }
-  if (emails.length) {
-    lines.push("", "### Draft emails");
-    emails.forEach((email, index) => {
-      const body = text(email.body);
-      lines.push(
-        "",
-        `#### Draft ${index + 1}: ${inline(text(email.subject) ?? "Untitled")}`,
-        "",
-        ...(body ? fenced(body) : ["No body provided."]),
-      );
-    });
+  return lines;
+}
+
+/** The analysis's draft emails. Its questions are in the checklist (`clarifySection`). */
+function nextStepsSection(result: Partial<AnalysisResult>): string[] {
+  const actions = record(result.next_actions);
+  const emails = (Array.isArray(actions.email_templates) ? actions.email_templates : [])
+    .map(record)
+    .filter((email) => text(email.subject) || text(email.body));
+  const lines = ["## Next steps", ""];
+  if (!emails.length) {
+    lines.push("No draft emails were suggested in this analysis.");
+    return lines;
   }
+  lines.push(
+    "These are drafts generated by the analysis. Review and adapt them before you use them.",
+    "",
+    "### Draft emails",
+  );
+  emails.forEach((email, index) => {
+    const body = text(email.body);
+    lines.push(
+      "",
+      `#### Draft ${index + 1}: ${inline(text(email.subject) ?? "Untitled")}`,
+      "",
+      ...(body ? fenced(body) : ["No body provided."]),
+    );
+  });
   return lines;
 }
 
@@ -572,6 +668,7 @@ export function renderAnalysisBriefMarkdown(input: AnalysisBriefInput): {
     identitySection(input, title),
     coverageSection(extractionWarning, reportNotices),
     jurisdictionSection(result, contractId),
+    clarifySection(input),
     summarySection(result, keyPoints, contractId),
     findingsSection(result, contractId),
     nextStepsSection(result),

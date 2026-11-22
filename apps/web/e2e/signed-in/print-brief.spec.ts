@@ -140,9 +140,44 @@ for (const theme of THEMES) {
     await expect(
       brief.getByRole("heading", { level: 1, name: `Decision brief: ${title}` }),
     ).toBeVisible();
-    for (const section of ["Coverage", "Jurisdiction", "Summary", "Findings", "Next steps"]) {
+    for (const section of [
+      "Coverage",
+      "Jurisdiction",
+      "Before you sign: what to clarify",
+      "Summary",
+      "Findings",
+      "Next steps",
+    ]) {
       await expect(brief.getByRole("heading", { level: 2, name: section, exact: true })).toBeVisible();
     }
+    // What to clarify, right after Jurisdiction: the coverage gaps, the stated facts this stored
+    // analysis has no quotation for, its one finding and its question, which the brief lists only
+    // here. The Summary repeats some of these lines, so read only this section's list items.
+    const headings = await brief.getByRole("heading", { level: 2 }).allTextContents();
+    expect(headings.indexOf("Before you sign: what to clarify")).toBe(headings.indexOf("Jurisdiction") + 1);
+    const clarify = await brief.evaluate((article) => {
+      const items: string[] = [];
+      let inside = false;
+      for (const element of Array.from(article.children)) {
+        if (element.tagName === "H2") inside = element.textContent === "Before you sign: what to clarify";
+        else if (inside)
+          items.push(...Array.from(element.querySelectorAll("li"), (item) => item.textContent?.trim() ?? ""));
+      }
+      return items;
+    });
+    expect(clarify).toEqual([
+      "Text extraction: Scanned pages were read with OCR.",
+      "Analysis coverage: Only part of this contract was analysed: the middle pages were skipped.",
+      "Notice period: 30 days (No verified quotation)",
+      "Renewal: Auto-renews, period 12 months (No verified quotation)",
+      "Payment: £45, Monthly (No verified quotation)",
+      "Term: 12 months (No verified quotation)",
+      "Finding 1: Auto-renewal (severity 7/10)",
+      "Can I cancel before the first year ends?",
+    ]);
+    await expect(brief.getByRole("heading", { level: 3, name: "Questions to ask", exact: true })).toHaveCount(1);
+    await expect(brief.getByText("Can I cancel before the first year ends?", { exact: true })).toHaveCount(1);
+    await expect(brief).not.toContainText("Every stated fact has a verified quotation");
     await expect(brief.locator("blockquote")).toContainText(QUOTE);
     await expect(brief).toContainText("Scanned pages were read with OCR.");
     await expect(brief).toContainText("Only part of this contract was analysed");

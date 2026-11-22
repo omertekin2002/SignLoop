@@ -155,6 +155,7 @@ describe("PrintBrief", () => {
         "h1 Decision brief: Gym membership",
         "h2 Coverage",
         "h2 Jurisdiction",
+        "h2 Before you sign: what to clarify",
         "h2 Summary",
         "h2 Findings",
         "h2 Next steps",
@@ -215,6 +216,66 @@ describe("PrintBrief", () => {
     expect(joining!.querySelector("blockquote")).toBeNull();
   });
 
+  it("prints each obligation with its own quotation, or marks it", () => {
+    const payClause = "The Member pays the monthly dues by direct debit.";
+    const withObligations = {
+      ...ANALYSIS,
+      resultJson: {
+        ...RESULT,
+        obligations: ["Pay monthly dues", "Return club kit when leaving"],
+        obligation_citations: [
+          {
+            obligation: "Pay monthly dues",
+            citation: { ...SOURCE, status: "verified" as const, quote: payClause, start: 200, end: 249 },
+          },
+        ],
+      },
+    };
+    render(<PrintBrief contract={CONTRACT} analysis={withObligations} />);
+    const heading = Array.from(printedBrief().querySelectorAll("h3")).find(
+      (item) => item.textContent === "Obligations",
+    );
+    expect(heading?.nextElementSibling?.tagName).toBe("UL");
+    const [pay, kit] = Array.from(heading!.nextElementSibling!.querySelectorAll(":scope > li"));
+    expect(pay).toHaveTextContent("Pay monthly dues");
+    expect(pay!.querySelector("blockquote")).toHaveTextContent(payClause);
+    expect(kit).toHaveTextContent("Return club kit when leaving (No verified quotation)");
+    expect(kit!.querySelector("blockquote")).toBeNull();
+  });
+
+  it("prints each key date with its own quotation, or marks it", () => {
+    const renewalClause = "The membership renews on 31 December 2026 for a further year.";
+    const withDates = {
+      ...ANALYSIS,
+      resultJson: {
+        ...RESULT,
+        key_dates: [
+          { type: "RENEWAL" as const, date: "2026-12-31", derived_from: null },
+          { type: "NOTICE_CUTOFF" as const, date: "2026-12-31", derived_from: "Same day as renewal" },
+        ],
+        key_date_citations: [
+          {
+            type: "RENEWAL" as const,
+            date: "2026-12-31",
+            citation: { ...SOURCE, status: "verified" as const, quote: renewalClause, start: 200, end: 200 + renewalClause.length },
+          },
+        ],
+      },
+    };
+    render(<PrintBrief contract={CONTRACT} analysis={withDates} />);
+    const heading = Array.from(printedBrief().querySelectorAll("h3")).find(
+      (item) => item.textContent === "Key dates",
+    );
+    expect(heading?.nextElementSibling?.tagName).toBe("UL");
+    const [renewal, cutoff] = Array.from(heading!.nextElementSibling!.querySelectorAll(":scope > li"));
+    expect(renewal).toHaveTextContent("Renewal: 2026-12-31");
+    expect(renewal!.querySelector("blockquote")).toHaveTextContent(renewalClause);
+    expect(cutoff).toHaveTextContent(
+      "Notice cutoff: 2026-12-31 (from: Same day as renewal) (No verified quotation)",
+    );
+    expect(cutoff!.querySelector("blockquote")).toBeNull();
+  });
+
   it("prints the term's quotation under Term, or marks a stated term without one", () => {
     const termClause = "This membership starts on joining and lasts at least 12 months.";
     const withTerm = (term: AnalysisResult["summary"]["term"]) => ({
@@ -222,8 +283,11 @@ describe("PrintBrief", () => {
       resultJson: { ...RESULT, summary: { ...RESULT.summary!, term } },
     });
     const termItem = () =>
-      Array.from(printedBrief().querySelectorAll("li")).find((item) =>
-        item.firstChild?.textContent?.startsWith("Term:"),
+      // The Summary's Term item, which holds its lines; the checklist's Term entry has none.
+      Array.from(printedBrief().querySelectorAll("li")).find(
+        (item) =>
+          item.firstChild?.textContent?.startsWith("Term:") &&
+          item.querySelector("ul") !== null,
       );
 
     const { unmount } = render(

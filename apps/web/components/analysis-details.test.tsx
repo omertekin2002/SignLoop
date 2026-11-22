@@ -300,3 +300,152 @@ describe("AnalysisDetails payment fees", () => {
     },
   );
 });
+
+describe("AnalysisDetails obligations", () => {
+  const CONTRACT_ID = "11111111-2222-4333-8444-555555555555";
+  const ANALYSIS_ID = "22222222-3333-4444-8555-666666666666";
+  const REVISION = `sha256:${"a".repeat(64)}`;
+  const SOURCE = {
+    contract_id: CONTRACT_ID,
+    revision: REVISION,
+    index_unit: "unicode-code-points" as const,
+  };
+  const TEXT =
+    "1. Services. The Provider will design and host the Client's website. 2. Access. The Client gives the Provider access to its hosting account. 3. Fees. A late fee of 50 GBP applies.";
+  const BUILD = "Design and host the Client's website";
+  const BUILD_QUOTE = "The Provider will design and host the Client's website.";
+  const ACCESS = "Give the Provider access to the hosting account";
+  const ACCESS_QUOTE = "The Client gives the Provider access to its hosting account.";
+  const LATE = "Late fee of 50 GBP";
+
+  function citation(quote: string) {
+    const start = TEXT.indexOf(quote);
+    return { ...SOURCE, status: "verified" as const, quote, start, end: start + quote.length };
+  }
+
+  function renderObligations(fields: Record<string, unknown>) {
+    const result = { source: SOURCE, ...fields };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <ContractSourceProvider contractId={CONTRACT_ID} analysisId={ANALYSIS_ID} result={result}>
+          <AnalysisDetails result={result as Partial<AnalysisResult>} />
+        </ContractSourceProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  const view = (index: number) => ({ name: `View matched quotation of obligation ${index + 1}` });
+
+  beforeEach(() => {
+    mocks.get.mockReset();
+  });
+
+  it("shows each obligation with its own verified quotation, and opens it in the source", async () => {
+    mocks.get.mockResolvedValue({
+      data: {
+        contractId: CONTRACT_ID,
+        revision: REVISION,
+        text: TEXT,
+        offset: 0,
+        totalCharacters: TEXT.length,
+        nextOffset: null,
+        previousOffset: null,
+        extractionWarning: null,
+        highlight: citation(ACCESS_QUOTE),
+      },
+    });
+    renderObligations({
+      parties: ["Provider", "Client"],
+      obligations: [BUILD, ACCESS],
+      // Listed in the other order, so nothing depends on position.
+      obligation_citations: [
+        { obligation: ACCESS, citation: citation(ACCESS_QUOTE) },
+        { obligation: BUILD, citation: citation(BUILD_QUOTE) },
+      ],
+      summary: { payments: { fees: [LATE] } },
+    });
+
+    const [first, second] = section("Obligations").getAllByRole("listitem");
+    expect(within(first!).getByText(BUILD)).toBeInTheDocument();
+    expect(within(first!).getByText(`“${BUILD_QUOTE}”`).tagName).toBe("BLOCKQUOTE");
+    expect(within(first!).getByRole("button", view(0))).toBeInTheDocument();
+    expect(within(second!).getByText(ACCESS)).toBeInTheDocument();
+    expect(within(second!).getByText(`“${ACCESS_QUOTE}”`).tagName).toBe("BLOCKQUOTE");
+    // Parties stay a plain list, and the uncited fee keeps its own marker.
+    expect(section("Parties").getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "Provider",
+      "Client",
+    ]);
+    expect(section("Parties").queryByRole("button")).toBeNull();
+    expect(section("Obligations").queryByText("No verified quotation")).toBeNull();
+    expect(section("Payment fees").getByText("No verified quotation")).toBeInTheDocument();
+
+    await userEvent.click(within(second!).getByRole("button", view(1)));
+    const dialog = await screen.findByRole("dialog", { name: "Extracted contract text" });
+    expect(
+      await within(dialog).findByText("Quotation matched in the analyzed text. Highlighted below."),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("region", { name: "Source passage" }).querySelector("mark"),
+    ).toHaveTextContent(ACCESS_QUOTE);
+    expect(mocks.get).toHaveBeenCalledWith(
+      `/contracts/${CONTRACT_ID}/source`,
+      expect.objectContaining({
+        params: { offset: 0, revision: REVISION, analysisId: ANALYSIS_ID, flag: "obligation-1" },
+      }),
+    );
+  });
+
+  it("marks an obligation without a verified quotation, never showing another obligation's", () => {
+    renderObligations({
+      obligations: [BUILD, ACCESS],
+      obligation_citations: [{ obligation: ACCESS, citation: citation(ACCESS_QUOTE) }],
+    });
+    const [first, second] = section("Obligations").getAllByRole("listitem");
+    expect(within(first!).getByText("No verified quotation")).toBeInTheDocument();
+    expect(within(first!).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(first!).queryByText(/website\.”/)).toBeNull();
+    expect(within(second!).getByRole("button", view(1))).toBeInTheDocument();
+    expect(document.querySelectorAll("blockquote")).toHaveLength(1);
+  });
+
+  it.each([
+    ["a report stored before obligation quotations", undefined],
+    ["no verified entries", []],
+    [
+      "a citation keyed by different text",
+      [{ obligation: BUILD.toLowerCase(), citation: citation(BUILD_QUOTE) }],
+    ],
+    ["a citation stored as a fee's", [{ fee: BUILD, citation: citation(BUILD_QUOTE) }]],
+    [
+      "a citation for another revision",
+      [
+        {
+          obligation: BUILD,
+          citation: { ...citation(BUILD_QUOTE), revision: `sha256:${"b".repeat(64)}` },
+        },
+      ],
+    ],
+  ])("marks a listed obligation without a verified quotation: %s", (_label, citations) => {
+    renderObligations({ obligations: [BUILD], obligation_citations: citations });
+    expect(section("Obligations").getByText(BUILD)).toBeInTheDocument();
+    expect(section("Obligations").getByText("No verified quotation")).toBeInTheDocument();
+    expect(screen.queryByRole("button", view(0))).not.toBeInTheDocument();
+    expect(document.querySelector("blockquote")).toBeNull();
+  });
+
+  it.each([[[]], [undefined], [["  "]], ["not a list"]])(
+    "keeps None identified with no obligations: %j",
+    (obligations) => {
+      renderObligations({
+        obligations,
+        obligation_citations: [{ obligation: BUILD, citation: citation(BUILD_QUOTE) }],
+      });
+      expect(section("Obligations").getByText(EMPTY_LIST)).toBeInTheDocument();
+      expect(section("Obligations").queryByRole("list")).not.toBeInTheDocument();
+      expect(screen.queryByText("No verified quotation")).not.toBeInTheDocument();
+      expect(document.querySelector("blockquote")).toBeNull();
+    },
+  );
+});

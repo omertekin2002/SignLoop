@@ -8,13 +8,20 @@ import {
   STUB_CONTRACT_FIXTURE,
   STUB_FEE,
   STUB_FEE_QUOTE,
+  STUB_KEY_DATE,
+  STUB_KEY_DATE_DERIVED_FROM,
+  STUB_KEY_DATE_QUOTE,
   STUB_MODEL,
   STUB_NOTICE_QUOTE,
+  STUB_OBLIGATION,
+  STUB_OBLIGATION_QUOTE,
   STUB_PAYMENT_QUOTE,
   STUB_PENALTY,
   STUB_PENALTY_QUOTE,
+  STUB_QUESTION,
   STUB_RENEWAL_QUOTE,
   STUB_TERM_QUOTE,
+  STUB_UNQUOTED_OBLIGATION,
   type StubModelRequest,
 } from "../stub-model-server";
 import { openDashboard, openSidebar } from "./dashboard";
@@ -57,6 +64,8 @@ type StoredContract = {
     llmProvider: string | null;
     resultJson: {
       red_flags?: { citation?: { status?: string; quote?: string } | null }[];
+      obligation_citations?: { obligation?: string; citation?: { status?: string; quote?: string } }[];
+      key_date_citations?: { type?: string; date?: string; citation?: { status?: string; quote?: string } }[];
       summary?: {
         payments?: {
           payment_citation?: { status?: string; quote?: string } | null;
@@ -113,7 +122,7 @@ function onScreen(locator: Locator): Locator {
 }
 
 // The stub's report as the contract page renders it: its summary and key points, the payment, the
-// extra fee, the term, renewal, the notice period, the cancellation penalty and every finding with
+// extra fee, the term, renewal, the notice period, the cancellation penalty, the obligation, the key date and every finding with
 // the quotation the server verified, and the stub named as the model.
 async function expectStubAnalysis(page: Page) {
   await expect(onScreen(page.getByText(STUB_ANALYSIS_SUMMARY, { exact: true }))).toBeVisible();
@@ -169,7 +178,60 @@ async function expectStubAnalysis(page: Page) {
     fee.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_FEE_QUOTE)}”$`) }),
   ).toHaveCount(1);
   await expect(fee.getByRole("button", { name: "View matched quotation of fee 1" })).toBeVisible();
-  await expect(onScreen(page.getByText("No verified quotation", { exact: true }))).toHaveCount(0);
+  // So is the obligation, in the Obligations section: the list item holding exactly its text and the
+  // quotation's own element.
+  const obligations = page.getByRole("heading", { level: 3, name: "Obligations", exact: true }).locator("xpath=..");
+  const obligation = onScreen(
+    obligations.getByRole("listitem").filter({ has: page.getByText(STUB_OBLIGATION, { exact: true }) }),
+  );
+  await expect(obligation).toHaveCount(1);
+  await expect(
+    obligation.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_OBLIGATION_QUOTE)}”$`) }),
+  ).toHaveCount(1);
+  await expect(obligation.getByRole("button", { name: "View matched quotation of obligation 1" })).toBeVisible();
+  // So is the key date, in the Key Dates card, beside the analysis's own explanation, which is
+  // labelled as such rather than shown as contract text.
+  const keyDate = onScreen(
+    page
+      .getByRole("list", { name: "Key dates" })
+      .getByRole("listitem")
+      .filter({ has: page.getByText(STUB_KEY_DATE.date, { exact: true }) }),
+  );
+  await expect(keyDate).toHaveCount(1);
+  await expect(keyDate.getByText("PRICE REVIEW", { exact: true })).toBeVisible();
+  await expect(
+    keyDate.getByText(`Analysis’s explanation: ${STUB_KEY_DATE_DERIVED_FROM}`, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    keyDate.locator("blockquote").filter({ hasText: new RegExp(`^“${escapeRegExp(STUB_KEY_DATE_QUOTE)}”$`) }),
+  ).toHaveCount(1);
+  await expect(keyDate.getByRole("button", { name: "View matched quotation of key date 1" })).toBeVisible();
+  // The second obligation has no quotation, so it carries the marker, and only it does on the page.
+  const unquoted = onScreen(
+    obligations.getByRole("listitem").filter({ has: page.getByText(STUB_UNQUOTED_OBLIGATION, { exact: true }) }),
+  );
+  await expect(unquoted.getByText("No verified quotation", { exact: true })).toBeVisible();
+  await expect(unquoted.locator("blockquote")).toHaveCount(0);
+  await expect(onScreen(page.getByRole("button", { name: "View matched quotation of obligation 2" }))).toHaveCount(0);
+  // Before you sign lists that obligation, every finding (highest severity first, each linking to its
+  // entry in the Red Flags card) and the stub's question, which appears nowhere else.
+  const checklist = page.getByRole("region", { name: "Before you sign" });
+  await expect(checklist).toBeVisible();
+  await expect(
+    checklist.getByRole("listitem").filter({ hasText: `Obligation: ${STUB_UNQUOTED_OBLIGATION}` }),
+  ).toContainText("No verified quotation");
+  await expect(checklist.getByText("Every stated fact has a verified quotation", { exact: false })).toHaveCount(0);
+  await expect(checklist.getByRole("link")).toHaveText(STUB_ANALYSIS_FLAGS.map(({ type }) => type));
+  for (const [index, { type }] of STUB_ANALYSIS_FLAGS.entries()) {
+    await expect(checklist.getByRole("link", { name: type, exact: true })).toHaveAttribute(
+      "href",
+      `#finding-${index + 1}`,
+    );
+  }
+  await expect(checklist.getByRole("listitem").filter({ hasText: STUB_QUESTION })).toHaveCount(1);
+  await expect(onScreen(page.getByText(STUB_QUESTION, { exact: true }))).toHaveCount(1);
+  await expect(onScreen(page.getByRole("heading", { name: "Questions to Ask" }))).toHaveCount(1);
+  await expect(onScreen(page.getByText("No verified quotation", { exact: true }))).toHaveCount(2);
   await expect(onScreen(page.getByText(`LLM: Primary provider • ${STUB_MODEL}`, { exact: true }))).toBeVisible();
   await expect(page.getByRole("button", { name: "Re-run Analysis" })).toBeEnabled();
 }
@@ -251,10 +313,28 @@ for (const theme of THEMES) {
     await page.keyboard.press("Escape");
     await expect(source).toBeHidden();
 
-    // And the fee's quotation of the clause stating it.
+    // So does the fee's quotation of the clause stating it.
     await page.getByRole("button", { name: "View matched quotation of fee 1" }).click();
     await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
     await expect(source.getByRole("region", { name: "Source passage" }).locator("mark")).toHaveText(STUB_FEE_QUOTE);
+    await page.keyboard.press("Escape");
+    await expect(source).toBeHidden();
+
+    // So does the obligation's quotation of the clause stating it.
+    await page.getByRole("button", { name: "View matched quotation of obligation 1" }).click();
+    await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
+    await expect(source.getByRole("region", { name: "Source passage" }).locator("mark")).toHaveText(
+      STUB_OBLIGATION_QUOTE,
+    );
+    await page.keyboard.press("Escape");
+    await expect(source).toBeHidden();
+
+    // And the key date's quotation of the clause stating it.
+    await page.getByRole("button", { name: "View matched quotation of key date 1" }).click();
+    await expect(source.getByText("Quotation matched in the analyzed text. Highlighted below.")).toBeVisible();
+    await expect(source.getByRole("region", { name: "Source passage" }).locator("mark")).toHaveText(
+      STUB_KEY_DATE_QUOTE,
+    );
     await page.keyboard.press("Escape");
     await expect(source).toBeHidden();
 
@@ -264,6 +344,17 @@ for (const theme of THEMES) {
     await expectStubAnalysis(page);
     await page.waitForLoadState("networkidle");
     await expectNoA11yViolations(page, { theme });
+
+    // A finding's link in Before you sign goes to that finding in the Red Flags card.
+    const second = STUB_ANALYSIS_FLAGS[1];
+    await page
+      .getByRole("region", { name: "Before you sign" })
+      .getByRole("link", { name: second.type, exact: true })
+      .click();
+    await expect(page).toHaveURL(`${SIGNED_IN_ORIGIN}/contracts/${id}#finding-2`);
+    const target = page.locator("#red-flags").locator("#finding-2");
+    await expect(target).toContainText(second.explanation);
+    await expect(target).toBeInViewport();
 
     // One report is stored, from the stub, and every finding kept its verified citation.
     const response = await page.request.get(`/api/contracts/${id}`);
@@ -302,6 +393,18 @@ for (const theme of THEMES) {
       {
         fee: STUB_FEE,
         citation: expect.objectContaining({ status: "verified", quote: STUB_FEE_QUOTE }),
+      },
+    ]);
+    expect(stored.analyses[0]!.resultJson.obligation_citations).toEqual([
+      {
+        obligation: STUB_OBLIGATION,
+        citation: expect.objectContaining({ status: "verified", quote: STUB_OBLIGATION_QUOTE }),
+      },
+    ]);
+    expect(stored.analyses[0]!.resultJson.key_date_citations).toEqual([
+      {
+        ...STUB_KEY_DATE,
+        citation: expect.objectContaining({ status: "verified", quote: STUB_KEY_DATE_QUOTE }),
       },
     ]);
 

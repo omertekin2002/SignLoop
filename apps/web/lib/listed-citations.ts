@@ -1,16 +1,19 @@
 // Dependency-free so source-citations can resolve listed citations without importing schemas.
 
 /**
- * A summary list whose entries each get their own server-verified quotation: the model proposes
+ * A report list whose entries each get their own server-verified quotation: the model proposes
  * `evidence` entries naming an item's exact text, and attachAnalysisSources stores `citations`
  * entries, `{ [item]: text, citation }`, for the listed items whose proposal verifies. Citations are
  * keyed by the item's exact text, never by position, so one item's quotation is never shown beside
  * another. The source viewer names an item by its index in the stored list (`<prefix>-<n>`).
+ *
+ * The list, its evidence and its citations sit side by side in one object, the list's container:
+ * a `summary` group (`summary.cancellation`, `summary.payments`), or the report itself.
  */
 export type ListedFact = {
-  /** The `summary` group holding the list. */
-  readonly group: string;
-  /** The list of item texts in that group. */
+  /** The `summary` group holding the list, or null for a list at the report's root. */
+  readonly group: string | null;
+  /** The list of item texts in that container. */
   readonly list: string;
   /** The key naming an item's text in its evidence and citation entries. */
   readonly item: string;
@@ -42,7 +45,21 @@ export const LISTED_FEES = {
   prefix: "fee",
 } as const satisfies ListedFact;
 
-export const LISTED_FACTS = [LISTED_PENALTIES, LISTED_FEES] as const;
+/** Each obligation (`obligations`, at the report's root). */
+export const LISTED_OBLIGATIONS = {
+  group: null,
+  list: "obligations",
+  item: "obligation",
+  evidence: "obligation_evidence",
+  citations: "obligation_citations",
+  prefix: "obligation",
+} as const satisfies ListedFact;
+
+export const LISTED_FACTS = [
+  LISTED_PENALTIES,
+  LISTED_FEES,
+  LISTED_OBLIGATIONS,
+] as const;
 
 /** One of the cited lists, with its literal field names. */
 export type KnownListedFact = (typeof LISTED_FACTS)[number];
@@ -51,17 +68,32 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
 /**
- * The citation stored for exactly this item's text in a report's summary group (for example
- * `summary.cancellation` for a penalty), or null. Callers still validate what it returns
- * (`citationForReport`).
+ * The object holding a list, its evidence and its citations in a report: its `summary` group, or
+ * the report itself for a root list. Null when the report has no such object.
+ */
+export function listedContainer(
+  fact: ListedFact,
+  report: unknown,
+): Record<string, unknown> | null {
+  if (!isObject(report)) return null;
+  if (fact.group === null) return report;
+  const summary = report.summary;
+  const group = isObject(summary) ? summary[fact.group] : null;
+  return isObject(group) ? group : null;
+}
+
+/**
+ * The citation stored for exactly this item's text in a list's container (`listedContainer`: for
+ * example `summary.cancellation` for a penalty, or the report for an obligation), or null. Callers
+ * still validate what it returns (`citationForReport`).
  */
 export function listedCitation(
   fact: ListedFact,
-  group: unknown,
+  container: unknown,
   item: unknown,
 ): unknown {
-  if (!isObject(group) || typeof item !== "string") return null;
-  const entries = group[fact.citations];
+  if (!isObject(container) || typeof item !== "string") return null;
+  const entries = container[fact.citations];
   if (!Array.isArray(entries)) return null;
   const entry = entries.find(
     (candidate) => isObject(candidate) && candidate[fact.item] === item,
@@ -95,19 +127,24 @@ export function listedCitationIndex(
   return match ? Number(match[1]) : null;
 }
 
-/** Whether a value is a reference to an item of any cited list (`penalty-<n>`, `fee-<n>`). */
+/**
+ * Whether a value is a reference to an item of any cited list (`penalty-<n>`, `fee-<n>`,
+ * `obligation-<n>`).
+ */
 export function isListedCitationRef(ref: unknown): ref is ListedCitationRef {
   return LISTED_FACTS.some((fact) => listedCitationIndex(fact, ref) !== null);
 }
 
-/** The citation a listed reference names in a report's `summary`, or null. */
-export function storedListedCitation(summary: unknown, ref: unknown): unknown {
+/** The citation a listed reference names in a stored report, or null. */
+export function storedListedCitation(report: unknown, ref: unknown): unknown {
   for (const fact of LISTED_FACTS) {
     const index = listedCitationIndex(fact, ref);
     if (index === null) continue;
-    const group = isObject(summary) ? summary[fact.group] : null;
-    const items = isObject(group) ? group[fact.list] : null;
-    return Array.isArray(items) ? listedCitation(fact, group, items[index]) : null;
+    const container = listedContainer(fact, report);
+    const items = container?.[fact.list];
+    return Array.isArray(items)
+      ? listedCitation(fact, container, items[index])
+      : null;
   }
   return null;
 }

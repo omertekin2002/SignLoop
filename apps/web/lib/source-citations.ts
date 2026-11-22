@@ -4,6 +4,11 @@ import {
   storedListedCitation,
   type ListedCitationRef,
 } from "@/lib/listed-citations";
+import {
+  isKeyDateCitationRef,
+  storedKeyDateCitation,
+  type KeyDateCitationRef,
+} from "@/lib/key-date-citations";
 
 /**
  * Code points one analysis call reads. A longer contract is split into consecutive sections of at
@@ -220,7 +225,9 @@ export function verifyQuote(
 /**
  * A cited passage in a stored report: a red flag by index, the jurisdiction proposal, the
  * cancellation notice period, renewal, the payment amount and frequency, the term, or a cancellation
- * penalty or an extra fee by its index in the stored `penalties` (`penalty-<n>`) or `fees` (`fee-<n>`).
+ * penalty, an extra fee or an obligation by its index in the stored `penalties` (`penalty-<n>`),
+ * `fees` (`fee-<n>`) or `obligations` (`obligation-<n>`), or a key date by its index in the stored
+ * `key_dates` (`key-date-<n>`).
  */
 export type CitationRef =
   | number
@@ -229,7 +236,8 @@ export type CitationRef =
   | "renewal"
   | "payment"
   | "term"
-  | ListedCitationRef;
+  | ListedCitationRef
+  | KeyDateCitationRef;
 export const JURISDICTION_CITATION = "jurisdiction";
 export const NOTICE_CITATION = "notice";
 export const RENEWAL_CITATION = "renewal";
@@ -251,7 +259,8 @@ function storedCitation(report: Record<string, unknown>, ref: CitationRef): unkn
     return field(field(report.summary, "payments"), "payment_citation");
   if (ref === TERM_CITATION)
     return field(field(report.summary, "term"), "term_citation");
-  if (isListedCitationRef(ref)) return storedListedCitation(report.summary, ref);
+  if (isListedCitationRef(ref)) return storedListedCitation(report, ref);
+  if (isKeyDateCitationRef(ref)) return storedKeyDateCitation(report, ref);
   return Array.isArray(report.red_flags)
     ? field(report.red_flags[ref], "citation")
     : null;

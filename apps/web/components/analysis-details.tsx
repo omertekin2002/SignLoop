@@ -1,7 +1,7 @@
 import type { AnalysisResult } from "@/lib/schemas";
 import { regionalComparisonsView } from "@/lib/regional-comparisons";
 import { cn } from "@/lib/utils";
-import { FeesSource } from "@/components/contract-source";
+import { FeesSource, ObligationsSource } from "@/components/contract-source";
 import {
   Card,
   CardContent,
@@ -48,7 +48,7 @@ export function AnalysisDetails({
           </section>
           <section>
             <h3 className="mb-3 font-medium">Obligations</h3>
-            <TextList values={result.obligations} />
+            <ObligationsSource obligations={result.obligations} />
           </section>
           <section>
             <h3 className="mb-3 font-medium">Payment fees</h3>
