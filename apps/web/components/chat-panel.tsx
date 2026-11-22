@@ -17,6 +17,7 @@ import {
   UploadedFile,
   MessageFileDownloads,
 } from "@/components/chat-files";
+import { MessageQuoteChecks } from "@/components/chat-quote-checks";
 
 import { toast } from "sonner";
 import { chatRequestFailure } from "@/lib/chat-request-error";
@@ -196,7 +197,8 @@ function toRuntimeMessage(message: ChatThreadMessage): ThreadMessageLike {
     (message.model ||
       message.provider ||
       message.files?.length ||
-      message.interrupted)
+      message.interrupted ||
+      message.quoteChecks)
       ? {
           metadata: {
             custom: {
@@ -206,6 +208,9 @@ function toRuntimeMessage(message: ChatThreadMessage): ThreadMessageLike {
               files: message.files ?? [],
               ...(message.interrupted
                 ? { interrupted: message.interrupted }
+                : {}),
+              ...(message.quoteChecks
+                ? { quoteChecks: message.quoteChecks }
                 : {}),
             },
           },
@@ -519,6 +524,7 @@ const ChatMessage = () => {
               }}
             />
             <MessageFileDownloads />
+            <MessageQuoteChecks />
             <InterruptedReplyNotice />
             <MessagePrimitive.Error>
               <ChatMessageError />
@@ -980,6 +986,7 @@ export function ChatPanel({
                   webSources: snapshot.webSources ?? [],
                   files: snapshot.files ?? [],
                   documents: snapshot.documents ?? [],
+                  quoteChecks: snapshot.quoteChecks ?? null,
                 },
               },
             };

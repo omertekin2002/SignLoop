@@ -88,6 +88,8 @@ describe("contract focus note", () => {
     expect(note).toContain(`call read_contract with contractId ${focus.id} first`);
     expect(note).toContain("passing find");
     expect(note).toContain("quote the clause");
+    // Word for word, in the form the app's quotation check reads (lib/chat-quote-checks.ts).
+    expect(note).toContain("word for word in a Markdown blockquote");
     expect(note).toContain("say so plainly");
     expect(note).toContain('Never call a term "standard" or "safe"');
     // The title sits inside the untrusted fence and cannot close it early.

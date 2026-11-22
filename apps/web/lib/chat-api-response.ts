@@ -7,6 +7,10 @@ import { chatRequestFailure } from "@/lib/chat-request-error";
 import { parseAccountQuota } from "@/lib/usage-client";
 import { isRecord } from "@/lib/utils";
 import {
+  parseChatQuoteChecks,
+  type ChatQuoteChecks,
+} from "@/lib/chat-quote-checks";
+import {
   parseChatDownloads,
   parseChatDocuments,
   type ChatDownloadFile,
@@ -27,6 +31,8 @@ type ChatApiSuccess = {
   storedMessages?: ChatThreadMessage[];
   /** The signed-in account's quota as of this request's admission. */
   quota?: AccountQuota;
+  /** A reply about one contract: its quotations, each checked against the contract's text. */
+  quoteChecks?: ChatQuoteChecks;
 };
 
 type ChatApiStreamEvent =
@@ -91,6 +97,7 @@ function parseSuccess(payload: unknown): ChatApiSuccess {
     persisted:
       typeof payload.persisted === "boolean" ? payload.persisted : undefined,
     quota: parseAccountQuota(payload.quota) ?? undefined,
+    quoteChecks: parseChatQuoteChecks(payload.quoteChecks) ?? undefined,
   };
 }
 

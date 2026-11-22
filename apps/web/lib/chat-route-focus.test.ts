@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getModelAvailabilitySnapshot: vi.fn(),
   listContractsForChat: vi.fn(),
   getContractWindowForUser: vi.fn(),
+  getContractTextForUser: vi.fn(),
   getChatFocusContractForUser: vi.fn(),
   getChatThreadFocusForUser: vi.fn(),
   getChatTurnByTurnId: vi.fn(),
@@ -33,7 +34,7 @@ vi.mock("@/lib/server-db", () => ({
     mocks.getRecentChatMessagesForThreadForUser,
   getUserSettingsByUserId: mocks.getUserSettingsByUserId,
   listContractsForChat: mocks.listContractsForChat,
-  getContractTextForUser: vi.fn(),
+  getContractTextForUser: mocks.getContractTextForUser,
   getContractWindowForUser: mocks.getContractWindowForUser,
   getChatFocusContractForUser: mocks.getChatFocusContractForUser,
   getChatThreadFocusForUser: mocks.getChatThreadFocusForUser,
@@ -175,6 +176,23 @@ function savedUserMetadata() {
     messages: Array<{ role: string; metadata?: Record<string, unknown> }>;
   };
   return call.messages.find((message) => message.role === "user")?.metadata;
+}
+
+function savedAssistantMetadata() {
+  const call = mocks.appendChatMessagesToThread.mock.calls[0]?.[0] as {
+    messages: Array<{ role: string; metadata?: Record<string, unknown> }>;
+  };
+  return call.messages.find((message) => message.role === "assistant")?.metadata;
+}
+
+/** The final result: the done event of a stream, or the JSON body. */
+function finalResult(text: string, stream: boolean): Record<string, unknown> {
+  if (!stream) return JSON.parse(text) as Record<string, unknown>;
+  const events = text
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  return events.find((event) => event.type === "done")!;
 }
 
 function expectNothingSpent() {
@@ -345,12 +363,142 @@ describe.each([false, true])("a saved chat about one contract (stream=%s)", (str
   });
 });
 
+const CONTRACT_TEXT = [
+  "4. Notice",
+  "Either party may end this lease by giving sixty days'",
+  "written notice to the other party.",
+].join("\n");
+const REVISION = `sha256:${"a".repeat(64)}`;
+const QUOTING_REPLY = [
+  "Clause 4 allows it:",
+  "",
+  "> Either party may end this lease by giving sixty days’ written notice to the other party.",
+  "",
+  'It does not say "the Tenant may leave at any time without notice".',
+].join("\n");
+const EXPECTED_CHECKS = {
+  contractId,
+  revision: REVISION,
+  checks: [
+    {
+      quote: "Either party may end this lease by giving sixty days’ written notice to the other party",
+      status: "found",
+    },
+    { quote: "the Tenant may leave at any time without notice", status: "not_found" },
+  ],
+};
+
+describe.each([false, true])("quotation checks in a saved chat (stream=%s)", (stream) => {
+  async function send(body: Record<string, unknown>) {
+    const response = await POST(request({ stream, ...body }));
+    const text = await response.text();
+    return { status: response.status, result: finalResult(text, stream) };
+  }
+
+  beforeEach(() => {
+    model = textOnlyModel(QUOTING_REPLY);
+    mocks.responses.mockReturnValue(model);
+    mocks.getContractTextForUser.mockResolvedValue({
+      id: contractId,
+      title: contract.title,
+      status: "ready",
+      revision: REVISION,
+      text: CONTRACT_TEXT,
+      extractionWarning: null,
+    });
+  });
+
+  it("checks each quotation in a focused reply against the owner's contract and stores the result with the reply", async () => {
+    mocks.getChatFocusContractForUser.mockResolvedValue(contract);
+
+    const { status, result } = await send({ focusContractId: contractId });
+
+    expect(status).toBe(200);
+    expect(mocks.getContractTextForUser).toHaveBeenCalledTimes(1);
+    expect(mocks.getContractTextForUser).toHaveBeenCalledWith("owner", contractId);
+    expect(savedAssistantMetadata()?.quoteChecks).toEqual(EXPECTED_CHECKS);
+    expect(result.quoteChecks).toEqual(EXPECTED_CHECKS);
+    // The check is not a model call: the model answered once, and nothing else asked it.
+    expect(model.doStreamCalls).toHaveLength(1);
+    expect(mocks.admitChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks a follow-up turn against the thread's stored focus", async () => {
+    mocks.getChatThreadFocusForUser.mockResolvedValue({ contractId, contract });
+    mocks.getRecentChatMessagesForThreadForUser.mockResolvedValue([
+      savedRow(1, "user", "What is the notice period?"),
+      savedRow(2, "assistant", "Sixty days."),
+    ]);
+
+    await send({});
+
+    expect(savedAssistantMetadata()?.quoteChecks).toEqual(EXPECTED_CHECKS);
+  });
+
+  it("never checks an unfocused reply, even one with quotations", async () => {
+    const { status, result } = await send({});
+
+    expect(status).toBe(200);
+    expect(mocks.getContractTextForUser).not.toHaveBeenCalled();
+    expect(savedAssistantMetadata()).not.toHaveProperty("quoteChecks");
+    expect(result).not.toHaveProperty("quoteChecks");
+  });
+
+  it("loads no contract text for a focused reply that quotes nothing", async () => {
+    model = textOnlyModel("Clause 4 gives a notice period of sixty days.");
+    mocks.responses.mockReturnValue(model);
+    mocks.getChatFocusContractForUser.mockResolvedValue(contract);
+
+    const { result } = await send({ focusContractId: contractId });
+
+    expect(mocks.getContractTextForUser).not.toHaveBeenCalled();
+    expect(savedAssistantMetadata()).not.toHaveProperty("quoteChecks");
+    expect(result).not.toHaveProperty("quoteChecks");
+  });
+
+  it.each([
+    ["deleted mid-turn", () => mocks.getContractTextForUser.mockResolvedValue(null)],
+    ["unreadable", () => mocks.getContractTextForUser.mockRejectedValue(new Error("db down"))],
+  ])("saves the reply without checks when the contract is %s", async (_label, arrange) => {
+    arrange();
+    mocks.getChatFocusContractForUser.mockResolvedValue(contract);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { status, result } = await send({ focusContractId: contractId });
+
+    expect(status).toBe(200);
+    expect(result.message).toBe(QUOTING_REPLY);
+    expect(result.persisted).toBe(true);
+    expect(mocks.appendChatMessagesToThread).toHaveBeenCalledTimes(1);
+    expect(savedAssistantMetadata()).not.toHaveProperty("quoteChecks");
+    expect(result).not.toHaveProperty("quoteChecks");
+    consoleError.mockRestore();
+  });
+
+  it("returns a replayed turn's stored checks", async () => {
+    mocks.getChatThreadFocusForUser.mockResolvedValue({ contractId, contract });
+    mocks.getChatTurnByTurnId.mockResolvedValue([
+      { ...savedRow(1, "user", "Can I end this early?"), turnId },
+      { ...savedRow(2, "assistant", QUOTING_REPLY), quoteChecks: EXPECTED_CHECKS },
+    ]);
+
+    const { result } = await send({ turnId });
+
+    expect(result.quoteChecks).toEqual(EXPECTED_CHECKS);
+    expect(mocks.getContractTextForUser).not.toHaveBeenCalled();
+    expect(model.doStreamCalls).toHaveLength(0);
+  });
+});
+
 describe.each([
   ["signed-in", "owner"],
   ["anonymous", null],
 ])("%s temporary chat", (_label, userId) => {
-  it("ignores focusContractId, valid or not, and never looks up a contract", async () => {
+  it("ignores focusContractId, valid or not, and never looks up or checks a contract", async () => {
     mocks.auth.mockResolvedValue({ userId });
+    // Even a reply with quotations is never checked: a temporary chat has no focus.
+    model = textOnlyModel(QUOTING_REPLY);
+    mocks.responses.mockReturnValue(model);
     for (const focusContractId of [contractId, "not-a-uuid"]) {
       const response = await POST(
         new Request("http://localhost/api/chat", {
@@ -369,6 +517,7 @@ describe.each([
     expect(mocks.getChatThreadFocusForUser).not.toHaveBeenCalled();
     expect(mocks.getChatFocusContractForUser).not.toHaveBeenCalled();
     expect(mocks.appendChatMessagesToThread).not.toHaveBeenCalled();
+    expect(mocks.getContractTextForUser).not.toHaveBeenCalled();
     expect(model.doStreamCalls).toHaveLength(2);
     expect(systemPrompt()).not.toContain("This conversation is about one of the user's contracts");
   });

@@ -23,6 +23,7 @@ import {
 import type { PrimaryModel } from "@/lib/model-settings";
 import type { PersonalityMode } from "@/lib/personality-settings";
 import { parseChatFileInfos, savedChatFile, type ChatUpload, type ChatFileInfo } from "@/lib/chat-files-shared";
+import { parseChatQuoteChecks, type ChatQuoteChecks } from "@/lib/chat-quote-checks";
 import type { GeneratedChatFile } from "@/lib/chat-file-generation";
 import type { ContractNotes } from "@/lib/contract-notes";
 import {
@@ -515,6 +516,8 @@ export type ChatMessageRecord = {
    * reply text streamed. Such a turn is not a saved answer; a retry replaces it.
    */
   interrupted?: ChatTurnInterruption;
+  /** A focused reply's quotations, each checked against the contract's text when it was saved. */
+  quoteChecks?: ChatQuoteChecks;
 };
 
 export type ChatThreadSummaryRecord = {
@@ -2377,6 +2380,7 @@ function mapChatMessageRow(
   const interrupted = metadata.interrupted === true
     ? (metadata.interruptedReason === "error" ? "error" : "stopped")
     : null;
+  const quoteChecks = parseChatQuoteChecks(metadata.quoteChecks);
 
   return {
     id: row.id,
@@ -2397,6 +2401,7 @@ function mapChatMessageRow(
     provider,
     ...(typeof metadata.turnId === "string" ? { turnId: metadata.turnId } : {}),
     ...(interrupted ? { interrupted } : {}),
+    ...(role === "assistant" && quoteChecks ? { quoteChecks } : {}),
     ...(Array.isArray(metadata.files) && !(replayState === "include" && metadata.contractEvidenceInvalid === true)
       ? { files: parseChatFileInfos(metadata.files) } : {}),
   };

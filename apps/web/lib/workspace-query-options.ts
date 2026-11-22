@@ -68,6 +68,8 @@ export type ChatThreadMessage = {
   turnId?: string;
   /** Set on the record that ends a turn whose reply was cut off (see ChatMessageRecord). */
   interrupted?: "stopped" | "error";
+  /** A focused reply's quotations, each checked against the contract's text when it was saved. */
+  quoteChecks?: import("@/lib/chat-quote-checks").ChatQuoteChecks;
 };
 
 /**

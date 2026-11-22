@@ -195,6 +195,11 @@ function capPassage(
   return pieces;
 }
 
+/** A quotation either check accepts: some non-space text, at most MAX_EVIDENCE_QUOTE code points. */
+function isQuotable(quote: string): boolean {
+  return Boolean(quote.trim()) && Array.from(quote).length <= MAX_EVIDENCE_QUOTE;
+}
+
 export function verifyQuote(
   proposal: unknown,
   segments: readonly ContractSegment[],
@@ -203,7 +208,7 @@ export function verifyQuote(
   if (!parsed.success) return null;
   const { quote, segment: label } = parsed.data;
   const length = Array.from(quote).length;
-  if (!quote.trim() || length > MAX_EVIDENCE_QUOTE) return null;
+  if (!isQuotable(quote)) return null;
   const segment = segments.find((part) => part.label === label);
   if (!segment) return null;
   const at = segment.text.indexOf(quote);
@@ -220,6 +225,39 @@ export function verifyQuote(
   )
     return null;
   return { quote, start, end };
+}
+
+// A lone surrogate could match half of a pair, so a quotation holding one is never found.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/**
+ * The only differences the whole-text check forgives, applied alike to both sides: every run of
+ * whitespace becomes one space, and curly double and single quotation marks and apostrophes become
+ * straight ones. Nothing fuzzier.
+ */
+export function normalizeQuotation(text: string): string {
+  return text
+    .replace(/[“”„‟]/g, '"')
+    .replace(/[‘’‚‛]/g, "'")
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * verifyQuote's exact match over the whole text rather than one labelled segment, for checking
+ * where a quotation came from rather than where it sits: a quotation that appears more than once
+ * still matches. The text is normalised once, so one matcher can check many quotations. A
+ * well-formed quotation can only match whole code points, so this agrees with a code-point search.
+ */
+export function createQuoteMatcher(text: string): (quote: string) => boolean {
+  const haystack = normalizeQuotation(text);
+  return (quote) => {
+    const needle = normalizeQuotation(quote).trim();
+    return (
+      isQuotable(needle) &&
+      !LONE_SURROGATE.test(needle) &&
+      haystack.includes(needle)
+    );
+  };
 }
 
 /**

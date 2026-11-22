@@ -5,6 +5,8 @@ import { expectNoCspViolations, recordCspViolations } from "../csp";
 import {
   STUB_ANALYSIS_FLAGS,
   STUB_CONTRACT_FIXTURE,
+  STUB_FOCUSED_FOUND_QUOTE,
+  STUB_FOCUSED_INVENTED_QUOTE,
   STUB_QUESTION,
   stubTitle,
   type StubModelRequest,
@@ -48,6 +50,23 @@ async function stubRequests(page: Page): Promise<StubModelRequest[]> {
   const response = await page.context().request.get(`${E2E_MODEL_STUB_URL}/__e2e/requests`);
   expect(response.status()).toBe(200);
   return ((await response.json()) as { data: StubModelRequest[] }).data;
+}
+
+/**
+ * The stub's reply about the fixture holds one quotation from it and one invented, so the list
+ * under the reply marks one found and one not found.
+ */
+async function expectQuotationChecks(page: Page) {
+  const list = page.getByRole("main").getByRole("list", { name: "Quotations" });
+  await expect(list).toBeVisible();
+  const rows = list.getByRole("listitem");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText(STUB_FOCUSED_FOUND_QUOTE);
+  await expect(rows.nth(0)).toContainText("Found in the contract");
+  await expect(rows.nth(1)).toContainText(STUB_FOCUSED_INVENTED_QUOTE);
+  await expect(rows.nth(1)).toContainText(
+    "Not found in the contract: check the wording against the original",
+  );
 }
 
 function escapeRegExp(text: string): string {
@@ -107,6 +126,9 @@ for (const theme of THEMES) {
     // Only the contract id travels with the turn.
     expect(turn.request().postDataJSON()).toMatchObject({ threadId: data.id, focusContractId: id });
     await expect(main.getByText(`Stub reply to: ${question}`, { exact: true })).toBeVisible();
+    // The server checked the reply's quotations against the contract's text.
+    await expectQuotationChecks(page);
+    await expectNoA11yViolations(page, { theme });
 
     // The model was told which contract the chat is about and was offered read_contract; the
     // contract's text was not put in its instructions.
@@ -126,7 +148,24 @@ for (const theme of THEMES) {
     expect(stored.status()).toBe(200);
     const storedThread = (await stored.json()) as { data: { title: string } };
     expect(storedThread).toMatchObject({
-      data: { focus: { contractId: id, title }, messages: [{ role: "user" }, { role: "assistant" }] },
+      data: {
+        focus: { contractId: id, title },
+        messages: [
+          { role: "user" },
+          {
+            role: "assistant",
+            // Stored with the reply: each result and the contract text revision it was checked against.
+            quoteChecks: {
+              contractId: id,
+              revision: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+              checks: [
+                { quote: STUB_FOCUSED_FOUND_QUOTE, status: "found" },
+                { quote: STUB_FOCUSED_INVENTED_QUOTE, status: "not_found" },
+              ],
+            },
+          },
+        ],
+      },
     });
     // The stub names the chat after the question, which the app cuts to 80 characters.
     const chatTitle = storedThread.data.title;
@@ -141,6 +180,7 @@ for (const theme of THEMES) {
       .getByRole("button", { name: new RegExp(`^${escapeRegExp(chatTitle)}`) });
     await thread.click();
     await expect(main.getByText(`Stub reply to: ${question}`, { exact: true })).toBeVisible();
+    await expectQuotationChecks(page);
     await expect(main.getByRole("link", { name: title, exact: true })).toHaveAttribute(
       "href",
       `/contracts/${id}`,

@@ -34,5 +34,7 @@ export function toPublicChatMessage(message: ChatMessageRecord) {
     // A reloaded thread needs the turn id to retry an interrupted turn, and the flag to mark it.
     ...(message.turnId ? { turnId: message.turnId } : {}),
     ...(message.interrupted ? { interrupted: message.interrupted } : {}),
+    // A focused reply's quotation checks, so they survive a reload.
+    ...(message.quoteChecks ? { quoteChecks: message.quoteChecks } : {}),
   };
 }

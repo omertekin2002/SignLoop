@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -46,6 +46,8 @@ const message = (
 let threadMessages: ChatThreadMessage[];
 let threadFocus: ChatThreadFocus | null;
 let requests: Array<{ url: string; method: string; body: Record<string, unknown> | null }>;
+/** Extra fields of the done event the chat API answers with. */
+let doneExtra: Record<string, unknown>;
 
 function respond(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -58,6 +60,7 @@ beforeEach(() => {
   requests = [];
   threadMessages = [];
   threadFocus = null;
+  doneExtra = {};
   // assistant-ui's viewport measures and scrolls, which jsdom does not implement.
   vi.stubGlobal(
     "ResizeObserver",
@@ -96,6 +99,7 @@ beforeEach(() => {
             storedMessages: stored,
             persisted: true,
             mode: "chat",
+            ...doneExtra,
           })}\n`,
           { headers: { "Content-Type": "application/x-ndjson" } },
         );
@@ -314,5 +318,70 @@ describe("a reloaded saved chat about a contract", () => {
 
     await screen.findByText("Hi.");
     expect(screen.queryByText("About:")).not.toBeInTheDocument();
+  });
+});
+
+describe("quotation checks under a reply about a contract", () => {
+  const quoteChecks = {
+    contractId,
+    revision: `sha256:${"b".repeat(64)}`,
+    checks: [
+      { quote: "Either party may end this lease on sixty days' notice", status: "found" },
+      { quote: `The Tenant may leave at any time ${"and more ".repeat(30)}`, status: "not_found" },
+    ],
+  };
+
+  function expectQuotationRows() {
+    const list = screen.getByRole("list", { name: "Quotations" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("Either party may end this lease on sixty days' notice");
+    expect(rows[0]).toHaveTextContent("Found in the contract");
+    expect(rows[1]).toHaveTextContent(
+      "Not found in the contract: check the wording against the original",
+    );
+    // A long quotation is shortened in its row.
+    expect(rows[1]!.querySelector("q")!.textContent!.endsWith("…")).toBe(true);
+    expect(Array.from(rows[1]!.querySelector("q")!.textContent!).length).toBeLessThanOrEqual(160);
+  }
+
+  it("lists each stored check under its reply after a reload, and nothing under a reply without checks", async () => {
+    threadMessages = [
+      message("q1", 1, "user", "What is the notice period?"),
+      { ...message("a1", 2, "assistant", "Sixty days."), quoteChecks } as ChatThreadMessage,
+      message("q2", 3, "user", "Thanks"),
+      message("a2", 4, "assistant", "You are welcome."),
+    ];
+    threadFocus = { contractId, title: "Office lease" };
+    renderPanel({ selectedThreadId: threadId });
+
+    await screen.findByText("You are welcome.");
+    expectQuotationRows();
+  });
+
+  it("lists the checks a finished reply's done event carries", async () => {
+    doneExtra = { quoteChecks };
+    renderPanel({ focusContract: { contractId, title: "Office lease" } });
+    await waitFor(() => expect(composer()).toHaveValue(contractChatDraft("Office lease")));
+
+    const user = userEvent.setup();
+    await user.type(composer(), "can I end it early?");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await screen.findByText("Clause 9 allows it.");
+    await waitFor(() => expect(screen.getByRole("list", { name: "Quotations" })).toBeInTheDocument());
+    expectQuotationRows();
+  });
+
+  it("shows no list for a reply whose done event has no checks", async () => {
+    renderPanel({ focusContract: { contractId, title: "Office lease" } });
+    await waitFor(() => expect(composer()).toHaveValue(contractChatDraft("Office lease")));
+
+    const user = userEvent.setup();
+    await user.type(composer(), "hello");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await screen.findByText("Clause 9 allows it.");
+    expect(screen.queryByRole("list", { name: "Quotations" })).not.toBeInTheDocument();
   });
 });
