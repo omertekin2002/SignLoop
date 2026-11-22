@@ -96,14 +96,14 @@ export const STUB_PENALTY = "Early termination fee equal to two months' fees";
 export const STUB_PENALTY_QUOTE =
   "If the Client ends this agreement before the end of the current term, the Client must pay an early termination fee equal to two months' fees.";
 
-/** The stub's one extra fee, as the Payment fees section lists it. */
+/** The stub's one extra fee, as the Fees group lists it. */
 export const STUB_FEE = "Late payment fee of 50 GBP";
 
 /** The stub's quotation of the clause stating that fee. */
 export const STUB_FEE_QUOTE =
   "A late payment fee of 50 GBP applies to any invoice paid more than 14 days after its due date.";
 
-/** The stub's one obligation, as the Obligations section lists it. */
+/** The stub's one obligation, as the Obligations in the contract card lists it. */
 export const STUB_OBLIGATION = "Design, host and maintain the Client's website";
 
 /** The stub's quotation of the clause stating that obligation. */
@@ -116,7 +116,7 @@ export const STUB_OBLIGATION_QUOTE =
  */
 export const STUB_UNQUOTED_OBLIGATION = "Pay each invoice within 14 days of its due date";
 
-/** The stub's one key date, as the Key Dates card lists it: its exact type and date. */
+/** The stub's one key date, as the Key dates card lists it: its exact type and date. */
 export const STUB_KEY_DATE = { type: "PRICE_REVIEW", date: "1 April each year" } as const;
 
 /** The analysis's own explanation of where that date comes from (`derived_from`), not contract text. */
