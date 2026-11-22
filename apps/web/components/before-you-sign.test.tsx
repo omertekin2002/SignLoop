@@ -1,9 +1,11 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { BeforeYouSign } from "@/components/before-you-sign";
+import { isClarifyItemKey } from "@/lib/clarify-ask";
 import type { AnalysisResult } from "@/lib/schemas";
 
 const CONTRACT_ID = "11111111-2222-4333-8444-555555555555";
+const ANALYSIS_ID = "66666666-7777-4888-8999-aaaaaaaaaaaa";
 const SOURCE = {
   contract_id: CONTRACT_ID,
   revision: `sha256:${"a".repeat(64)}`,
@@ -32,8 +34,19 @@ const RESULT = {
   next_actions: { questions_to_ask: ["# Can I **cancel** early?"], email_templates: [] },
 } as unknown as Partial<AnalysisResult>;
 
-function card(result: Partial<AnalysisResult> | null, extractionWarning: string | null = null) {
-  render(<BeforeYouSign contractId={CONTRACT_ID} extractionWarning={extractionWarning} result={result} />);
+function card(
+  result: Partial<AnalysisResult> | null,
+  extractionWarning: string | null = null,
+  askAnalysisId: string | null = null,
+) {
+  render(
+    <BeforeYouSign
+      contractId={CONTRACT_ID}
+      extractionWarning={extractionWarning}
+      result={result}
+      askAnalysisId={askAnalysisId}
+    />,
+  );
   return screen.getByRole("region", { name: "Before you sign: what to clarify" });
 }
 
@@ -91,5 +104,59 @@ describe("BeforeYouSign", () => {
     const region = card(null);
     expect(within(region).getAllByText("Not specified", { exact: true })).toHaveLength(4);
     expect(within(region).queryByRole("link")).toBeNull();
+  });
+});
+
+describe("BeforeYouSign Ask links", () => {
+  const askLinks = (region: HTMLElement) =>
+    within(region)
+      .getAllByRole("link")
+      .filter((link) => link.textContent === "Ask");
+
+  it("offers Ask on every unverified fact, unstated fact, finding and question, naming each", () => {
+    const region = card(RESULT, "Scanned pages were read with OCR.", ANALYSIS_ID);
+
+    expect(
+      askLinks(region).map((link) => [
+        link.getAttribute("aria-label"),
+        new URL(link.getAttribute("href")!, "https://app.test").searchParams.get("ask"),
+      ]),
+    ).toEqual([
+      ["Ask about Notice period: 30 days", "unverified-1"],
+      ["Ask about Renewal", "unstated-renewal"],
+      ["Ask about Term", "unstated-term"],
+      ["Ask about finding: Auto-renewal", "finding-2"],
+      ["Ask about finding: Price increase", "finding-1"],
+      ["Ask question 1", "question-1"],
+    ]);
+    expect(
+      within(region).getByRole("link", { name: "Ask about finding: Auto-renewal" }),
+    ).toBeInTheDocument();
+    // The question keeps its own text element beside its Ask link.
+    expect(within(region).getAllByText("# Can I **cancel** early?", { exact: true })).toHaveLength(1);
+    // The coverage gaps' list has no Ask link: a chat could not see what the analysis did not.
+    const gaps = within(region).getByText("Coverage gaps").closest("section")!;
+    expect(within(gaps).queryByRole("link")).toBeNull();
+  });
+
+  it("puts only the ids and the item's key in each link, never its text", () => {
+    const region = card(RESULT, null, ANALYSIS_ID);
+    // The items' text and values as the card shows them; the keys are structural (`unstated-term`).
+    const texts = ["30 days", "Notice period", "Auto-renewal", "Price increase", "Can I", "Renewal", "Term", "gym"];
+    for (const link of askLinks(region)) {
+      const href = link.getAttribute("href")!;
+      const url = new URL(href, "https://app.test");
+      expect(url.pathname).toBe("/dashboard");
+      expect([...url.searchParams.keys()]).toEqual(["contract", "analysis", "ask"]);
+      expect(url.searchParams.get("contract")).toBe(CONTRACT_ID);
+      expect(url.searchParams.get("analysis")).toBe(ANALYSIS_ID);
+      expect(isClarifyItemKey(url.searchParams.get("ask"))).toBe(true);
+      for (const text of texts) expect(decodeURIComponent(href)).not.toContain(text);
+    }
+  });
+
+  it("offers no Ask links without an analysis to name (no extracted text)", () => {
+    const region = card(RESULT, null, null);
+    expect(askLinks(region)).toHaveLength(0);
   });
 });

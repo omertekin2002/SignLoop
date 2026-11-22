@@ -58,6 +58,7 @@ import { ContractJurisdiction } from "@/components/contract-jurisdiction";
 import { AnalysisCoverageNotice } from "@/components/analysis-coverage-notice";
 import type { AnalysisResult } from "@/lib/schemas";
 import {
+  contractAnalysisOptions,
   contractDetailOptions,
   type AnalysisRecord,
   type ContractDetail,
@@ -228,15 +229,8 @@ const ContractDetails = () => {
     selectedAnalysis && selectedAnalysis.id !== latestAnalysisRecord?.id,
   );
   const historicalAnalysisQuery = useQuery({
-    queryKey: ["analysis", id, selectedAnalysisId],
+    ...contractAnalysisOptions(id, selectedAnalysisId),
     enabled: viewingOlder,
-    queryFn: async ({ signal }) =>
-      (
-        await apiClient.get<AnalysisRecord>(
-          `/contracts/${id}/analysis/${selectedAnalysisId}`,
-          { signal },
-        )
-      ).data,
   });
   const analysis = viewingOlder
     ? (historicalAnalysisQuery.data ?? null)
@@ -583,6 +577,10 @@ const ContractDetails = () => {
 
             <ContractDecisionSections
               contractId={id}
+              analysisId={analysis.id}
+              chatAvailable={
+                (contract.analysisCoverage?.characterCount ?? 0) > 0
+              }
               result={resultJson ?? {}}
               extractionWarning={extractionWarning}
               riskBadge={riskBadge}

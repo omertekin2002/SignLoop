@@ -406,6 +406,8 @@ function DraftEmails({ result }: { result: Partial<AnalysisResult> }) {
  */
 export function ContractDecisionSections({
   contractId,
+  analysisId,
+  chatAvailable = false,
   result,
   extractionWarning,
   riskBadge,
@@ -415,6 +417,10 @@ export function ContractDecisionSections({
   jurisdiction,
 }: {
   contractId: string;
+  /** The analysis shown, which the checklist's Ask links name. */
+  analysisId?: string | null;
+  /** The contract has extracted text, so a chat can read it and its Ask links are offered. */
+  chatAvailable?: boolean;
   result: Partial<AnalysisResult>;
   extractionWarning: string | null;
   riskBadge: string;
@@ -453,6 +459,7 @@ export function ContractDecisionSections({
         contractId={contractId}
         extractionWarning={extractionWarning}
         result={result}
+        askAnalysisId={chatAvailable ? analysisId : null}
       />
 
       <DecisionCard
