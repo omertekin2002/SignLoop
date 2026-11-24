@@ -110,7 +110,12 @@ const ProjectDetails = () => {
     },
     onSuccess: () => {
       toast.success("Project deleted");
-      void invalidateAfterWrite(queryClient, ["contracts"], ["projects"]);
+      void invalidateAfterWrite(
+        queryClient,
+        ["contracts"],
+        ["projects"],
+        ["chat-thread"],
+      );
       for (const contract of project?.contracts ?? []) {
         queryClient.removeQueries({ queryKey: ["contract", contract.id] });
         queryClient.removeQueries({ queryKey: ["analysis", contract.id] });

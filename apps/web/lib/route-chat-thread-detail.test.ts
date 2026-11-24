@@ -1,21 +1,34 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { auth, getChatThreadByIdForUser, deleteChatThreadForUser } = vi.hoisted(() => ({
+const {
+  auth,
+  getChatThreadByIdForUser,
+  getChatThreadFocusForUser,
+  deleteChatThreadForUser,
+} = vi.hoisted(() => ({
   auth: vi.fn(),
   getChatThreadByIdForUser: vi.fn(),
+  getChatThreadFocusForUser: vi.fn(),
   deleteChatThreadForUser: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth }));
 vi.mock("@/lib/server-db", () => ({
   getChatThreadByIdForUser,
+  getChatThreadFocusForUser,
   deleteChatThreadForUser,
 }));
 
 import { DELETE, GET } from "@/app/api/chat/threads/[id]/route";
 
 const THREAD_ID = "11e3e947-f71f-4ecd-a901-adbf24edbb8a";
+const CONTRACT_ID = "5a1d2c3e-4b5f-4a6b-8c7d-9e0f1a2b3c4d";
 const MAX_CURSOR = 2147483647;
+const QUOTE_CHECKS = {
+  contractId: CONTRACT_ID,
+  revision: `sha256:${"c".repeat(64)}`,
+  checks: [{ quote: "The notice period is sixty days", status: "found" as const }],
+};
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 const rejectedParams = () => {
@@ -59,6 +72,7 @@ const threadRecord = () => ({
       toolActivity: [{ tool: "search_contract", status: "done" }],
       agentMessages: [{ role: "assistant", content: "replay-only state" }],
       webSources: [{ title: "Source", url: "https://example.com" }],
+      quoteChecks: QUOTE_CHECKS,
     },
   ],
 });
@@ -134,11 +148,51 @@ describe("GET /api/chat/threads/[id]", () => {
       model: "model-a",
       provider: "provider-a",
       toolActivity: [{ tool: "search_contract", status: "done" }],
+      // A focused reply's quotation checks come back with it, so they survive a reload.
+      quoteChecks: QUOTE_CHECKS,
     });
     for (const message of data.messages) {
       expect(message).not.toHaveProperty("agentMessages");
       expect(message).not.toHaveProperty("webSources");
     }
+  });
+
+  it("reports no focus for an ordinary chat", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    getChatThreadByIdForUser.mockResolvedValue(threadRecord());
+    getChatThreadFocusForUser.mockResolvedValue(null);
+
+    const response = await GET(getRequest(), params(THREAD_ID));
+
+    expect(getChatThreadFocusForUser).toHaveBeenCalledWith("owner", THREAD_ID);
+    expect(await response.json()).toMatchObject({ data: { focus: null } });
+  });
+
+  it("names the contract a focused chat is about, by id and the owner's title only", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    getChatThreadByIdForUser.mockResolvedValue(threadRecord());
+    getChatThreadFocusForUser.mockResolvedValue({
+      contractId: CONTRACT_ID,
+      contract: { id: CONTRACT_ID, title: "Office lease", confirmedJurisdiction: "England" },
+    });
+
+    const response = await GET(getRequest(), params(THREAD_ID));
+
+    const { data } = (await response.json()) as { data: { focus: unknown } };
+    expect(data.focus).toEqual({ contractId: CONTRACT_ID, title: "Office lease" });
+  });
+
+  it("keeps a deleted contract's id, without a title, so the chat can say it is gone", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    getChatThreadByIdForUser.mockResolvedValue(threadRecord());
+    getChatThreadFocusForUser.mockResolvedValue({ contractId: CONTRACT_ID, contract: null });
+
+    const response = await GET(getRequest(), params(THREAD_ID));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      data: { focus: { contractId: CONTRACT_ID, title: null }, messages: expect.any(Array) },
+    });
   });
 
   it("passes a valid history cursor through to the owner-scoped query", async () => {

@@ -29,6 +29,8 @@ vi.mock("@/lib/server-db", () => ({
   listContractsForChat: mocks.listContractsForChat,
   getContractTextForUser: vi.fn(),
   getContractWindowForUser: mocks.getContractWindowForUser,
+  getChatThreadFocusForUser: vi.fn(),
+  getChatFocusContractForUser: vi.fn(),
 }));
 vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: () => ({ responses: mocks.responses }),

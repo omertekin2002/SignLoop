@@ -7,6 +7,8 @@ import {
   citationForReport,
   CONTRACT_ANALYSIS_LIMIT,
   contractAnalysisSegments,
+  createQuoteMatcher,
+  normalizeQuotation,
   verifyQuote,
 } from "./source-citations";
 import { buildAnalysisPrompt, parseStrictJson } from "./analysis";
@@ -258,6 +260,61 @@ function expectCoveringSections(text: string) {
   }
   return segments;
 }
+
+describe("whole-text quotation matching", () => {
+  it("finds an exact quotation anywhere in the text, and one that repeats", () => {
+    const matches = createQuoteMatcher("fee then fee " + "x".repeat(CONTRACT_ANALYSIS_LIMIT * 2) + " late fee");
+    expect(matches("fee")).toBe(true);
+    expect(matches("then fee")).toBe(true);
+    expect(matches("late fee")).toBe(true);
+    expect(matches("Fee")).toBe(false);
+    expect(matches("fees")).toBe(false);
+  });
+  it("forgives only whitespace runs and the form of quotation marks and apostrophes, on both sides", () => {
+    const matches = createQuoteMatcher("the “Provider’s”\n  fee, 'net'  \"30\"");
+    expect(matches(`the "Provider's" fee, ‘net’ “30”`)).toBe(true);
+    expect(matches("  the “Provider’s”\tfee  ")).toBe(true);
+    expect(matches("the Provider's fee")).toBe(false);
+    expect(matches("the “Provider’s” fee 'net'")).toBe(false);
+    expect(normalizeQuotation("a\u00a0\u2018b\u2019 \u201cc\u201d\r\nd")).toBe(`a 'b' "c" d`);
+  });
+  it("rejects blank, over-long and half-surrogate quotations, and matches whole code points", () => {
+    const matches = createQuoteMatcher(`😀 ${"x".repeat(2000)} ${"y".repeat(2001)}`);
+    expect(matches(" \n ")).toBe(false);
+    expect(matches("y".repeat(2001))).toBe(false);
+    expect(matches("x".repeat(2000))).toBe(true);
+    expect(matches("\ud83d")).toBe(false);
+    expect(matches("\ude00 x")).toBe(false);
+    expect(matches("😀 x")).toBe(false);
+    expect(createQuoteMatcher("😀 x y")("😀 x")).toBe(true);
+    expect(createQuoteMatcher("e\u0301")("é")).toBe(false);
+  });
+  it("requires word and number boundaries so altered terms cannot match substrings", () => {
+    const matches = createQuoteMatcher(
+      "30 days' notice is required. The Client cannot cancel for 1,200 GBP, −5% applies to all invoices, or .5% applies to all invoices.",
+    );
+    expect(matches("0 days' notice is required")).toBe(false);
+    expect(matches("30 days' notice is required")).toBe(true);
+    expect(matches("not cancel")).toBe(false);
+    expect(matches("cannot cancel")).toBe(true);
+    expect(matches("200 GBP")).toBe(false);
+    expect(matches("1,200 GBP")).toBe(true);
+    expect(matches("5% applies to all invoices")).toBe(false);
+    expect(matches("−5% applies to all invoices")).toBe(true);
+    expect(matches(".5% applies to all invoices")).toBe(true);
+    expect(createQuoteMatcher("1.5% applies to all invoices")(".5% applies to all invoices")).toBe(false);
+    expect(createQuoteMatcher("−.5% applies to all invoices")(".5% applies to all invoices")).toBe(false);
+    expect(createQuoteMatcher("-.5% applies to all invoices")(".5% applies to all invoices")).toBe(false);
+    expect(createQuoteMatcher("−,5% applies to all invoices")(",5% applies to all invoices")).toBe(false);
+    expect(createQuoteMatcher("−,5% on every invoice")("5% on every invoice")).toBe(false);
+    expect(createQuoteMatcher("1,200 GBP")(",200 GBP")).toBe(false);
+    expect(createQuoteMatcher("12.5% fee")("12")).toBe(false);
+    expect(createQuoteMatcher("12.5% fee")("12.")).toBe(false);
+    expect(createQuoteMatcher("12.5% fee")("12.5%")).toBe(true);
+    // Skips a mid-word occurrence ("fees") to find a whole-word match later ("fee.").
+    expect(createQuoteMatcher("no fees apply; the fee. applies")("fee")).toBe(true);
+  });
+});
 
 describe("contract analysis segments", () => {
   it("sends a contract at or under the limit as one full segment", () => {

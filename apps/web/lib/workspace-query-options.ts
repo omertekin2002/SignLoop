@@ -68,6 +68,17 @@ export type ChatThreadMessage = {
   turnId?: string;
   /** Set on the record that ends a turn whose reply was cut off (see ChatMessageRecord). */
   interrupted?: "stopped" | "error";
+  /** A focused reply's quotations, each checked against the contract's text when it was saved. */
+  quoteChecks?: import("@/lib/chat-quote-checks").ChatQuoteChecks;
+};
+
+/**
+ * The contract a saved chat is about, by id. `title` is null once the contract is no longer the
+ * user's (deleted); undefined while a new chat's contract is still loading.
+ */
+export type ChatThreadFocus = {
+  contractId: string;
+  title?: string | null;
 };
 
 export type ChatThreadDetail = {
@@ -75,6 +86,8 @@ export type ChatThreadDetail = {
   title: string;
   messages: ChatThreadMessage[];
   hasMore: boolean;
+  /** Absent from detail cached before the thread's first turn was saved. */
+  focus?: ChatThreadFocus | null;
 };
 
 // Inherit freshness/retry policy from the identity-scoped QueryClient for both
@@ -84,6 +97,20 @@ export function contractDetailOptions(id: string) {
     queryKey: ["contract", id],
     queryFn: async ({ signal }) =>
       (await apiClient.get<ContractDetail>(`/contracts/${id}`, { signal })).data,
+  });
+}
+
+/** One stored analysis of the user's contract, with its result (the detail carries only the latest's). */
+export function contractAnalysisOptions(contractId: string, analysisId: string | null) {
+  return queryOptions({
+    queryKey: ["analysis", contractId, analysisId],
+    queryFn: async ({ signal }) =>
+      (
+        await apiClient.get<AnalysisRecord>(
+          `/contracts/${contractId}/analysis/${analysisId}`,
+          { signal },
+        )
+      ).data,
   });
 }
 

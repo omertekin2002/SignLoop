@@ -285,6 +285,50 @@ function* replayedPrivateText(
     }
 }
 
+/** Short identifying titles inside replayed private tool results (e.g. list_contracts, read_contract). */
+function* replayedPrivatePhrases(
+  messages: readonly ChatMessage[],
+  privateToolNames: ReadonlySet<string>,
+): Generator<string> {
+  for (const message of messages)
+    for (const replayed of message.agentMessages ?? []) {
+      if (replayed.role !== "tool") continue;
+      for (const part of replayed.content) {
+        if (
+          part.type !== "tool-result" ||
+          !privateToolNames.has(part.toolName)
+        )
+          continue;
+        const output = part.output;
+        if (output.type === "json" || output.type === "error-json") {
+          const value = output.value;
+          if (isRecord(value)) {
+            if (typeof value.title === "string") yield value.title;
+            if (Array.isArray(value.contracts)) {
+              for (const item of value.contracts) {
+                if (isRecord(item) && typeof item.title === "string") {
+                  yield item.title;
+                }
+              }
+            }
+          }
+        } else if (output.type === "text" || output.type === "error-text") {
+          for (const match of output.value.matchAll(
+            /"title"\s*:\s*"((?:[^"\\]|\\.)+)"/g,
+          )) {
+            if (!match[1]) continue;
+            try {
+              const decoded = JSON.parse(`"${match[1]}"`) as unknown;
+              if (typeof decoded === "string") yield decoded;
+            } catch {
+              // Ignore truncated or malformed JSON fragments from compaction.
+            }
+          }
+        }
+      }
+    }
+}
+
 /** Stream one agentic turn: tool progress, answer deltas, then the complete reply. */
 export async function* generateChatReplyStream<TTool extends string = string>(
   messages: readonly ChatMessage[],
@@ -361,8 +405,9 @@ export async function* generateChatReplyStream<TTool extends string = string>(
   );
   const toolNotes: string[] = [];
   const tools: ToolSet = {};
-  const egressGuard = createContractEgressGuard(() =>
-    replayedPrivateText(messages, privateToolNames),
+  const egressGuard = createContractEgressGuard(
+    () => replayedPrivateText(messages, privateToolNames),
+    () => replayedPrivatePhrases(messages, privateToolNames),
   );
   const onEvidence = (text: string) => {
     evidence.push(text);

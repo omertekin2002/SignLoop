@@ -14,6 +14,8 @@ export type StubModelRequest = {
   question: string;
   /** Names of the tools the request offered; the stub never calls one. */
   tools: string[];
+  /** The request's system text (instructions and system or developer messages), bounded. */
+  system: string;
 };
 
 export const STUB_MODEL = "e2e-stub";
@@ -25,6 +27,7 @@ const TITLE_PROMPT = "Create a short, specific title for a conversation";
 // Kept bounded so a long run cannot grow the stub's memory without limit.
 const MAX_RECORDED_REQUESTS = 200;
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
+const MAX_RECORDED_SYSTEM_CHARACTERS = 32_000;
 
 /** The fixed reply, with some Markdown, quoting the question so a test can see it arrived. */
 export function stubReply(question: string): string {
@@ -35,6 +38,31 @@ export function stubReply(question: string): string {
     "- **Renewal:** automatic",
     "",
     "This reply comes from the end-to-end stub model.",
+  ].join("\n");
+}
+
+// A saved chat about one contract carries this note in its instructions (lib/contract-tools.ts).
+const FOCUS_NOTE = "This conversation is about one of the user's contracts";
+
+/** In a reply about the fixture contract: a quotation that appears in it word for word. */
+export const STUB_FOCUSED_FOUND_QUOTE =
+  "The Provider's total liability under this agreement is limited to the fees paid in the previous month";
+/** In the same reply: a quotation the fixture contract does not contain. */
+export const STUB_FOCUSED_INVENTED_QUOTE =
+  "The Client may cancel at any time without paying any fee";
+
+/**
+ * The reply to a chat about a contract: the plain reply, then one verbatim quotation of the fixture
+ * contract in a blockquote and one invented inline quotation, so the app's quotation check marks one
+ * found and one not found.
+ */
+export function stubFocusedReply(question: string): string {
+  return [
+    stubReply(question),
+    "",
+    `> ${STUB_FOCUSED_FOUND_QUOTE}.`,
+    "",
+    `It also says "${STUB_FOCUSED_INVENTED_QUOTE}."`,
   ].join("\n");
 }
 
@@ -96,14 +124,14 @@ export const STUB_PENALTY = "Early termination fee equal to two months' fees";
 export const STUB_PENALTY_QUOTE =
   "If the Client ends this agreement before the end of the current term, the Client must pay an early termination fee equal to two months' fees.";
 
-/** The stub's one extra fee, as the Payment fees section lists it. */
+/** The stub's one extra fee, as the Fees group lists it. */
 export const STUB_FEE = "Late payment fee of 50 GBP";
 
 /** The stub's quotation of the clause stating that fee. */
 export const STUB_FEE_QUOTE =
   "A late payment fee of 50 GBP applies to any invoice paid more than 14 days after its due date.";
 
-/** The stub's one obligation, as the Obligations section lists it. */
+/** The stub's one obligation, as the Obligations in the contract card lists it. */
 export const STUB_OBLIGATION = "Design, host and maintain the Client's website";
 
 /** The stub's quotation of the clause stating that obligation. */
@@ -116,7 +144,7 @@ export const STUB_OBLIGATION_QUOTE =
  */
 export const STUB_UNQUOTED_OBLIGATION = "Pay each invoice within 14 days of its due date";
 
-/** The stub's one key date, as the Key Dates card lists it: its exact type and date. */
+/** The stub's one key date, as the Key dates card lists it: its exact type and date. */
 export const STUB_KEY_DATE = { type: "PRICE_REVIEW", date: "1 April each year" } as const;
 
 /** The analysis's own explanation of where that date comes from (`derived_from`), not contract text. */
@@ -242,7 +270,7 @@ export async function startStubModelServer(port: number): Promise<StubModelServe
               });
               return;
             }
-            record({ model, kind: "analysis", question, tools: toolNames(body.tools) });
+            record({ model, kind: "analysis", question, tools: toolNames(body.tools), system: systemText(body) });
             responseCount += 1;
             sendJson(
               response,
@@ -254,10 +282,16 @@ export async function startStubModelServer(port: number): Promise<StubModelServe
           // System messages travel in `input` (or, with some settings, in `instructions`).
           const isTitle = JSON.stringify([body.instructions, body.input]).includes(TITLE_PROMPT);
           const kind = isTitle ? "title" : "reply";
-          record({ model, kind, question, tools: toolNames(body.tools) });
+          record({ model, kind, question, tools: toolNames(body.tools), system: systemText(body) });
           responseCount += 1;
           // The title request quotes the message as JSON (lib/chat-title.ts).
-          const text = kind === "title" ? stubTitle(unquote(question)) : stubReply(question);
+          const focused = JSON.stringify([body.instructions, body.input]).includes(FOCUS_NOTE);
+          const text =
+            kind === "title"
+              ? stubTitle(unquote(question))
+              : focused
+                ? stubFocusedReply(question)
+                : stubReply(question);
           streamResponse(response, `resp_e2e_${responseCount}`, model || STUB_MODEL, text);
         })
         .catch(() => sendJson(response, 400, { error: { message: "Invalid JSON body." } }));
@@ -374,6 +408,19 @@ function lastUserText(input: unknown): string {
     .filter((part) => isRecord(part) && part.type === "input_text" && typeof part.text === "string")
     .map((part) => (part as { text: string }).text)
     .join("\n");
+}
+
+function systemText(body: Record<string, unknown>): string {
+  const parts = typeof body.instructions === "string" ? [body.instructions] : [];
+  if (Array.isArray(body.input))
+    for (const item of body.input) {
+      if (!isRecord(item) || (item.role !== "system" && item.role !== "developer")) continue;
+      if (typeof item.content === "string") parts.push(item.content);
+      else if (Array.isArray(item.content))
+        for (const part of item.content)
+          if (isRecord(part) && typeof part.text === "string") parts.push(part.text);
+    }
+  return parts.join("\n").slice(0, MAX_RECORDED_SYSTEM_CHARACTERS);
 }
 
 function toolNames(tools: unknown): string[] {

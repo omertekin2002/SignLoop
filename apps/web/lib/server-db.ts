@@ -23,6 +23,7 @@ import {
 import type { PrimaryModel } from "@/lib/model-settings";
 import type { PersonalityMode } from "@/lib/personality-settings";
 import { parseChatFileInfos, savedChatFile, type ChatUpload, type ChatFileInfo } from "@/lib/chat-files-shared";
+import { parseChatQuoteChecks, type ChatQuoteChecks } from "@/lib/chat-quote-checks";
 import type { GeneratedChatFile } from "@/lib/chat-file-generation";
 import type { ContractNotes } from "@/lib/contract-notes";
 import {
@@ -515,6 +516,8 @@ export type ChatMessageRecord = {
    * reply text streamed. Such a turn is not a saved answer; a retry replaces it.
    */
   interrupted?: ChatTurnInterruption;
+  /** A focused reply's quotations, each checked against the contract's text when it was saved. */
+  quoteChecks?: ChatQuoteChecks;
 };
 
 export type ChatThreadSummaryRecord = {
@@ -957,6 +960,86 @@ export type ChatContractSummaryRecord = {
   characterCount: number;
   extractionWarning: string | null;
 };
+
+/**
+ * The contract a saved chat is about: only what the chat's system note names (never its text,
+ * which the model reads through read_contract). The jurisdiction is the owner's confirmed one;
+ * a proposed jurisdiction is never included.
+ */
+export type ChatFocusContractRecord = {
+  id: string;
+  title: string;
+  confirmedJurisdiction: string | null;
+};
+
+/** The owner's contract for a chat's focus, or null when it is missing or another user's. */
+export async function getChatFocusContractForUser(
+  userId: string,
+  contractId: string,
+): Promise<ChatFocusContractRecord | null> {
+  await ensureSchema();
+  const { rows } = await sql<ChatFocusContractRecord>`
+    select id, title, confirmed_jurisdiction as "confirmedJurisdiction"
+    from contracts
+    where id = ${contractId}
+      and user_id = ${userId}
+    limit 1
+  `;
+  return rows[0] ?? null;
+}
+
+/**
+ * The focus a saved thread took from its stored turns: the contract id on its earliest focused
+ * user message, and that contract while the owner still has it (null once it was deleted). Null
+ * when the thread has no focus, or is missing or another user's.
+ */
+export async function getChatThreadFocusForUser(
+  userId: string,
+  threadId: string,
+): Promise<{
+  contractId: string;
+  contract: ChatFocusContractRecord | null;
+} | null> {
+  await ensureSchema();
+  const { rows } = await sql<{
+    contractId: string;
+    id: string | null;
+    title: string | null;
+    confirmedJurisdiction: string | null;
+  }>`
+    select
+      focus.contract_id as "contractId",
+      c.id,
+      c.title,
+      c.confirmed_jurisdiction as "confirmedJurisdiction"
+    from (
+      select m.metadata_json->>'focusContractId' as contract_id
+      from chat_messages m
+      join chat_threads t on t.id = m.thread_id and t.user_id = ${userId}
+      where m.thread_id = ${threadId}
+        and m.role = 'user'
+        and m.metadata_json->>'focusContractId' is not null
+      order by m.position asc
+      limit 1
+    ) focus
+    left join contracts c
+      on c.id::text = focus.contract_id
+      and c.user_id = ${userId}
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    contractId: row.contractId,
+    contract:
+      row.id && row.title !== null
+        ? {
+            id: row.id,
+            title: row.title,
+            confirmedJurisdiction: row.confirmedJurisdiction,
+          }
+        : null,
+  };
+}
 
 // Bounded listing for the chat agent's list_contracts tool: metadata only, newest first.
 export async function listContractsForChat(
@@ -2297,6 +2380,7 @@ function mapChatMessageRow(
   const interrupted = metadata.interrupted === true
     ? (metadata.interruptedReason === "error" ? "error" : "stopped")
     : null;
+  const quoteChecks = parseChatQuoteChecks(metadata.quoteChecks);
 
   return {
     id: row.id,
@@ -2317,6 +2401,7 @@ function mapChatMessageRow(
     provider,
     ...(typeof metadata.turnId === "string" ? { turnId: metadata.turnId } : {}),
     ...(interrupted ? { interrupted } : {}),
+    ...(role === "assistant" && quoteChecks ? { quoteChecks } : {}),
     ...(Array.isArray(metadata.files) && !(replayState === "include" && metadata.contractEvidenceInvalid === true)
       ? { files: parseChatFileInfos(metadata.files) } : {}),
   };

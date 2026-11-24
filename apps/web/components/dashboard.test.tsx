@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   get: vi.fn(),
   delete: vi.fn(),
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+  chatPanel: vi.fn(),
 }));
 
 vi.mock("@/lib/api-client", async (importOriginal) => ({
@@ -24,8 +25,13 @@ vi.mock("next/link", () => ({
     <a href={href}>{children}</a>
   ),
 }));
-// The chat itself is not under test, and its runtime needs a browser.
-vi.mock("@/components/chat-panel", () => ({ ChatPanel: () => null }));
+// The chat itself is not under test, and its runtime needs a browser; its props are recorded.
+vi.mock("@/components/chat-panel", () => ({
+  ChatPanel: (props: Record<string, unknown>) => {
+    mocks.chatPanel(props);
+    return null;
+  },
+}));
 
 type Row = { id: string; title: string };
 
@@ -125,7 +131,7 @@ describe("deleting from the dashboard", () => {
       "lease",
     );
     expect(await screen.findByText("Searching chats…")).toBeInTheDocument();
-    expect(list.searches).toHaveLength(1);
+    await waitFor(() => expect(list.searches).toHaveLength(1));
 
     const rendered: string[] = [];
     const recorder = new MutationObserver(() => {
@@ -337,5 +343,261 @@ describe("filtering contracts on the dashboard", () => {
       await screen.findByText("1 contract matches the filters: added in the last 12 months"),
     ).toBeInTheDocument();
     expect(filtered.every((params) => params.get("added") === "365d")).toBe(true);
+  });
+});
+
+describe("opening a chat about a contract", () => {
+  const contractId = "33333333-3333-4333-8333-333333333333";
+
+  /** The latest props of the saved chat panel (the temporary one is always rendered too). */
+  const savedPanel = () =>
+    mocks.chatPanel.mock.calls
+      .map(([props]) => props as Record<string, unknown>)
+      .filter((props) => !props.temporary)
+      .at(-1);
+
+  function serveContract(answer: () => Promise<unknown>) {
+    mocks.get.mockImplementation(async (url: string) => {
+      const { pathname } = new URL(url, "https://app.test");
+      if (pathname === "/settings")
+        return { data: { primaryModel: "model", availablePrimaryModels: ["model"] } };
+      if (pathname === `/contracts/${contractId}`) return answer();
+      // An existing thread must not be opened in place of the new chat.
+      if (pathname === "/chat/threads") return page([draft]);
+      return page([]);
+    });
+  }
+
+  function renderFocused() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Dashboard focusContractId={contractId} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("starts a new saved chat about the contract, with the title read from the user's own contract", async () => {
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    serveContract(async () => ({ data: { title: "Office lease" } }));
+    renderFocused();
+
+    await waitFor(() =>
+      expect(savedPanel()?.focusContract).toEqual({ contractId, title: "Office lease" }),
+    );
+    expect(savedPanel()?.selectedThreadId).toBeNull();
+    // Without an item to ask about, the panel builds the plain "About" draft itself.
+    expect(savedPanel()?.focusDraft).toBeUndefined();
+    expect(mocks.get).toHaveBeenCalledWith(`/contracts/${contractId}`, expect.anything());
+    // The id is dropped from the address once read, so a reload does not start another draft.
+    expect(replaceState).toHaveBeenCalledWith(null, "", "/dashboard");
+    // The thread list loaded, and still the new chat stays selected.
+    await waitFor(() =>
+      expect(mocks.get).toHaveBeenCalledWith(expect.stringMatching(/^\/chat\/threads/), expect.anything()),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(savedPanel()?.selectedThreadId).toBeNull();
+    replaceState.mockRestore();
+  });
+
+  it("marks the contract unavailable when it is missing or another user's", async () => {
+    serveContract(async () => {
+      throw Object.assign(new Error("Not found"), {
+        isAxiosError: true,
+        response: { status: 404, data: { error: "Contract not found" } },
+      });
+    });
+    renderFocused();
+
+    await waitFor(() =>
+      expect(savedPanel()?.focusContract).toEqual({ contractId, title: null }),
+    );
+  });
+
+  it("marks the focused contract unavailable immediately when a refetch returns 404 after deletion", async () => {
+    let deleted = false;
+    serveContract(async () => {
+      if (deleted) {
+        throw Object.assign(new Error("Not found"), {
+          isAxiosError: true,
+          response: { status: 404, data: { error: "Contract not found" } },
+        });
+      }
+      return { data: { title: "Office lease" } };
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <Dashboard focusContractId={contractId} />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(savedPanel()?.focusContract).toEqual({ contractId, title: "Office lease" }),
+    );
+    deleted = true;
+    await client.invalidateQueries({ queryKey: ["contract", contractId] });
+    await waitFor(() =>
+      expect(savedPanel()?.focusContract).toEqual({ contractId, title: null }),
+    );
+  });
+
+  it("drops the focus when the user starts another new chat", async () => {
+    serveContract(async () => ({ data: { title: "Office lease" } }));
+    renderFocused();
+    await waitFor(() => expect(savedPanel()?.focusContract).toMatchObject({ contractId }));
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Open sidebar" }));
+    await user.click(screen.getByRole("button", { name: "New chat" }));
+
+    await waitFor(() => expect(savedPanel()?.focusContract).toBeNull());
+  });
+});
+
+describe("asking about one Before you sign item", () => {
+  const contractId = "33333333-3333-4333-8333-333333333333";
+  const latestId = "44444444-4444-4444-8444-444444444444";
+  const olderId = "55555555-5555-4555-8555-555555555555";
+  const PREFIX = "About “Office lease”: ";
+
+  const result = (findingType: string) => ({
+    summary: {
+      payments: { amount: null, frequency: null, fees: [] },
+      term: { start: null, end: null, minimum_term: null },
+      renewal: { auto_renew: null, renewal_period: null },
+      cancellation: { notice_period_days: null, notice_period_text: null, penalties: [] },
+    },
+    red_flags: [{ type: findingType, severity: 8, explanation: "", where: null, confidence: 80 }],
+    next_actions: { questions_to_ask: ["Can I cancel early?"], email_templates: [] },
+  });
+
+  const savedPanel = () =>
+    mocks.chatPanel.mock.calls
+      .map(([props]) => props as Record<string, unknown>)
+      .filter((props) => !props.temporary)
+      .at(-1);
+
+  function serve(older: () => Promise<unknown> = async () => ({ data: { id: olderId, resultJson: result("Late fee") } })) {
+    mocks.get.mockImplementation(async (url: string) => {
+      const { pathname } = new URL(url, "https://app.test");
+      if (pathname === "/settings")
+        return { data: { primaryModel: "model", availablePrimaryModels: ["model"] } };
+      if (pathname === `/contracts/${contractId}`)
+        return {
+          data: {
+            title: "Office lease",
+            // The detail carries only the latest analysis's result.
+            analyses: [
+              { id: latestId, resultJson: result("Auto-renewal trap") },
+              { id: olderId, resultJson: null },
+            ],
+          },
+        };
+      if (pathname === `/contracts/${contractId}/analysis/${olderId}`) return older();
+      if (pathname.startsWith(`/contracts/${contractId}/analysis/`))
+        throw Object.assign(new Error("Not found"), {
+          isAxiosError: true,
+          response: { status: 404, data: { error: "Analysis not found" } },
+        });
+      return page([]);
+    });
+  }
+
+  function renderAsk(analysisId: string, itemKey: string) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Dashboard
+          focusContractId={contractId}
+          focusAsk={{ analysisId, itemKey: itemKey as never }}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("drafts the question from the named analysis's stored item, and clears the URL", async () => {
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    serve();
+    renderAsk(latestId, "finding-1");
+
+    await waitFor(() =>
+      expect(savedPanel()?.focusDraft).toBe(
+        `${PREFIX}Explain the finding “Auto-renewal trap”: which clause it relies on, and what I should clarify before signing. Quote the clause, or say none was found.`,
+      ),
+    );
+    expect(savedPanel()?.focusContract).toEqual({ contractId, title: "Office lease" });
+    expect(replaceState).toHaveBeenCalledWith(null, "", "/dashboard");
+    // The latest analysis's result came with the detail; nothing else was read.
+    expect(mocks.get).not.toHaveBeenCalledWith(
+      expect.stringContaining("/analysis/"),
+      expect.anything(),
+    );
+    replaceState.mockRestore();
+  });
+
+  it("reads an older analysis on its own before drafting, and waits meanwhile", async () => {
+    let answer!: (value: unknown) => void;
+    serve(() => new Promise((resolve) => (answer = resolve)));
+    renderAsk(olderId, "question-1");
+
+    await waitFor(() =>
+      expect(mocks.get).toHaveBeenCalledWith(
+        `/contracts/${contractId}/analysis/${olderId}`,
+        expect.anything(),
+      ),
+    );
+    expect(savedPanel()?.focusDraft).toBeNull();
+    answer({ data: { id: olderId, resultJson: result("Late fee") } });
+    await waitFor(() =>
+      expect(savedPanel()?.focusDraft).toBe(
+        `${PREFIX}Can I cancel early? Answer from the contract and quote the clause you rely on.`,
+      ),
+    );
+  });
+
+  it("falls back to the plain draft for an unknown analysis or a key that names no item", async () => {
+    serve();
+    renderAsk("66666666-6666-4666-8666-666666666666", "finding-1");
+    await waitFor(() => expect(savedPanel()?.focusDraft).toBe(PREFIX));
+  });
+
+  it("falls back to the plain draft when the key no longer resolves (after a re-analysis)", async () => {
+    serve();
+    renderAsk(latestId, "finding-2");
+    await waitFor(() => expect(savedPanel()?.focusDraft).toBe(PREFIX));
+  });
+
+  it("falls back to the plain draft for a contract with no analysis", async () => {
+    mocks.get.mockImplementation(async (url: string) => {
+      const { pathname } = new URL(url, "https://app.test");
+      if (pathname === "/settings")
+        return { data: { primaryModel: "model", availablePrimaryModels: ["model"] } };
+      if (pathname === `/contracts/${contractId}`)
+        return { data: { title: "Office lease", analyses: [] } };
+      if (pathname.startsWith(`/contracts/${contractId}/analysis/`))
+        throw Object.assign(new Error("Not found"), {
+          isAxiosError: true,
+          response: { status: 404, data: { error: "Analysis not found" } },
+        });
+      return page([]);
+    });
+    renderAsk(latestId, "question-1");
+    await waitFor(() => expect(savedPanel()?.focusDraft).toBe(PREFIX));
+  });
+
+  it("drops the item's draft with the focus when the user starts another new chat", async () => {
+    serve();
+    renderAsk(latestId, "question-1");
+    await waitFor(() => expect(typeof savedPanel()?.focusDraft).toBe("string"));
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Open sidebar" }));
+    await user.click(screen.getByRole("button", { name: "New chat" }));
+
+    await waitFor(() => expect(savedPanel()?.focusContract).toBeNull());
+    expect(savedPanel()?.focusDraft).toBeUndefined();
   });
 });

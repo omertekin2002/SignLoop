@@ -29,7 +29,18 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { apiClient, getApiErrorMessage } from "@/lib/api-client";
+import {
+  apiClient,
+  getApiErrorMessage,
+  type ApiError,
+} from "@/lib/api-client";
+import {
+  contractAnalysisOptions,
+  contractDetailOptions,
+} from "@/lib/workspace-query-options";
+import { clarifyBeforeSigning } from "@/lib/analysis-clarify";
+import { clarifyItemDraft, contractChatDraft } from "@/lib/clarify-ask";
+import type { DashboardFocus } from "@/lib/dashboard-focus";
 import { cn, formatDate } from "@/lib/utils";
 import {
   fetchSettings,
@@ -260,12 +271,21 @@ type DashboardProps = {
   landingHero?: boolean;
   startTemporary?: boolean;
   initialTemporaryPrompt?: string;
+  /** Open a new saved chat about this contract (from its page's "Ask about this contract"). */
+  focusContractId?: string;
+  /**
+   * With `focusContractId`: draft the chat's question from one "Before you sign" item, named by the
+   * analysis's id and the item's key (from the item's Ask link).
+   */
+  focusAsk?: DashboardFocus["focusAsk"];
 };
 
 const Dashboard = ({
   landingHero = false,
   startTemporary = false,
   initialTemporaryPrompt,
+  focusContractId: initialFocusContractId,
+  focusAsk: initialFocusAsk,
 }: DashboardProps) => {
   const { user, loading, signOut } = useAuth();
   const isLoaded = !loading;
@@ -288,7 +308,14 @@ const Dashboard = ({
   const [selectedChatThreadId, setSelectedChatThreadId] = useState<
     string | null
   >(null);
-  const [isNewSavedChatSelected, setIsNewSavedChatSelected] = useState(false);
+  // The contract a new saved chat will be about, until the user leaves that new chat.
+  const [focusContractId, setFocusContractId] = useState(
+    initialFocusContractId ?? null,
+  );
+  // A focused new chat starts selected, so the newest thread is not opened in its place.
+  const [isNewSavedChatSelected, setIsNewSavedChatSelected] = useState(
+    Boolean(initialFocusContractId),
+  );
   const [savedChatKey, setSavedChatKey] = useState(0);
   const [recentlyCreatedChatThreadId, setRecentlyCreatedChatThreadId] =
     useState<string | null>(null);
@@ -408,13 +435,93 @@ const Dashboard = ({
     ? settingsData?.primaryModel || availableModels[0] || "OpenRouter"
     : "Temporary chat";
 
+  // Only the contract id came in the URL; the title is read from the user's own contract.
+  const focusContractQuery = useQuery({
+    ...contractDetailOptions(focusContractId ?? ""),
+    enabled: canUseSavedWorkspace && Boolean(focusContractId),
+  });
+  const focusContract = focusContractId
+    ? {
+        contractId: focusContractId,
+        // Check 404 before cached data: TanStack Query keeps stale `data` alongside `error`
+        // when a refetch fails after the contract was deleted.
+        title:
+          (focusContractQuery.error as ApiError | null)?.response?.status ===
+          404
+            ? null
+            : focusContractQuery.data
+              ? focusContractQuery.data.title?.trim() || "Untitled contract"
+              : undefined,
+      }
+    : null;
+
+  // An Ask link's item draft, built here from the named stored analysis; the URL held only ids and
+  // a key. It applies only while the new chat is still about the linked contract.
+  const focusAsk =
+    initialFocusAsk && focusContractId === initialFocusContractId
+      ? initialFocusAsk
+      : null;
+  const focusDetail = focusContractQuery.data;
+  const askAnalysisId = focusAsk?.analysisId ?? null;
+  const listedAskAnalysis = focusDetail?.analyses?.find(
+    (analysis) => analysis.id === askAnalysisId,
+  );
+  const listedAskResult =
+    listedAskAnalysis?.resultJson &&
+    typeof listedAskAnalysis.resultJson === "object"
+      ? listedAskAnalysis.resultJson
+      : null;
+  // The detail carries only the latest analysis's result; an older one is read on its own, from
+  // the user's own contract (an unknown id answers 404 and falls back to the plain draft).
+  const askAnalysisQuery = useQuery({
+    ...contractAnalysisOptions(focusContractId ?? "", askAnalysisId),
+    enabled:
+      canUseSavedWorkspace &&
+      Boolean(focusDetail && askAnalysisId) &&
+      !listedAskResult,
+  });
+  const askResult =
+    listedAskResult ??
+    (askAnalysisQuery.data?.resultJson &&
+    typeof askAnalysisQuery.data.resultJson === "object"
+      ? askAnalysisQuery.data.resultJson
+      : null);
+  const focusTitle = focusContract?.title;
+  const focusDraft = !focusAsk
+    ? undefined
+    : typeof focusTitle !== "string"
+      ? null
+      : askResult
+        ? clarifyItemDraft(
+            focusTitle,
+            clarifyBeforeSigning({
+              contractId: focusContractId!,
+              extractionWarning: focusDetail?.extractionWarning,
+              resultJson: askResult,
+            }),
+            focusAsk.itemKey,
+            askResult,
+          )
+        : !listedAskResult && askAnalysisQuery.isPending
+          ? null
+          : contractChatDraft(focusTitle);
+
+  // The id has done its job once read; a reload should not start another draft.
+  useEffect(() => {
+    if (initialFocusContractId)
+      window.history.replaceState(null, "", "/dashboard");
+  }, [initialFocusContractId]);
+
   const selectSavedChatThread = (threadId: string) => {
+    setFocusContractId(null);
     setIsTemporaryChatSelected(false);
     setIsNewSavedChatSelected(false);
     setSelectedChatThreadId(threadId);
   };
 
   const selectNewChatThread = (threadId: string) => {
+    // The chat panel keeps a focused chat's focus with the thread it just created.
+    setFocusContractId(null);
     setIsTemporaryChatSelected(false);
     setIsNewSavedChatSelected(false);
     setRecentlyCreatedChatThreadId(threadId);
@@ -422,6 +529,7 @@ const Dashboard = ({
   };
 
   const selectTemporaryChat = () => {
+    setFocusContractId(null);
     setActiveTab("chat");
     setOpenSections((previous) => ({ ...previous, chat: true }));
     setRecentlyCreatedChatThreadId(null);
@@ -561,6 +669,7 @@ const Dashboard = ({
 
     // No server-side empty thread is needed until the first message is submitted.
     // A new runtime also clears the previous composer's draft, even for repeated clicks.
+    setFocusContractId(null);
     setSavedChatKey((key) => key + 1);
     setIsNewSavedChatSelected(true);
     setIsTemporaryChatSelected(false);
@@ -600,10 +709,13 @@ const Dashboard = ({
     },
     onSuccess: (_data, contract) => {
       setContractToDelete(null);
-      // Search results include contracts in projects, whose page and list counts also change.
+      // Search results include contracts in projects, whose page and list counts also change,
+      // and cached chat threads or an open focused draft may reference the deleted contract.
       void invalidateAfterWrite(
         queryClient,
         ["contracts"],
+        ["contract", contract.id],
+        ["chat-thread"],
         ...(contract.projectId
           ? [["project", contract.projectId], ["projects"]]
           : []),
@@ -1419,6 +1531,8 @@ const Dashboard = ({
                   key={savedChatKey}
                   active={!isTemporaryChatSelected}
                   selectedThreadId={selectedChatThreadId}
+                  focusContract={focusContract}
+                  focusDraft={focusDraft}
                   onThreadSelected={(threadId) => {
                     if (threadId) selectNewChatThread(threadId);
                     else setSelectedChatThreadId(null);

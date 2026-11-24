@@ -110,7 +110,7 @@ describe("a reloaded thread with an interrupted turn", () => {
     ];
     renderThread();
 
-    expect(await screen.findByText("Renewal ext")).toBeInTheDocument();
+    await screen.findByText("Renewal ext");
     const notice = (await screen.findByText(/Reply interrupted\./)).closest("[role=status]")!;
     expect(notice).toHaveTextContent("Reply interrupted. Retry for a complete answer.");
 
@@ -122,7 +122,7 @@ describe("a reloaded thread with an interrupted turn", () => {
       turnId,
       messages: [{ role: "user", content: "Explain my lease renewal." }],
     });
-    expect(await screen.findByText("Renewal extends the term by a year.")).toBeInTheDocument();
+    await screen.findByText("Renewal extends the term by a year.");
     expect(screen.queryByText(/Reply interrupted/)).not.toBeInTheDocument();
     expect(screen.queryByText("Renewal ext")).not.toBeInTheDocument();
   });
@@ -144,7 +144,7 @@ describe("a reloaded thread with an interrupted turn", () => {
     ];
     renderThread();
 
-    expect(await screen.findByText("Explain my lease renewal.")).toBeInTheDocument();
+    await screen.findByText("Explain my lease renewal.");
     const notice = (await screen.findByText(/Reply interrupted by an error\./)).closest(
       "[role=status]",
     ) as HTMLElement;
@@ -156,7 +156,7 @@ describe("a reloaded thread with an interrupted turn", () => {
       turnId,
       messages: [{ role: "user", fileIds: [file.id] }],
     });
-    expect(await screen.findByText("Renewal extends the term by a year.")).toBeInTheDocument();
+    await screen.findByText("Renewal extends the term by a year.");
   });
 
   it("marks an older interrupted turn without offering Retry, and leaves finished turns unmarked", async () => {
@@ -168,7 +168,7 @@ describe("a reloaded thread with an interrupted turn", () => {
     ];
     renderThread();
 
-    expect(await screen.findByText("Thirty days.")).toBeInTheDocument();
+    await screen.findByText("Thirty days.");
     const notices = screen.getAllByText(/Reply interrupted/);
     expect(notices).toHaveLength(1);
     expect(notices[0]).toHaveTextContent(/^Reply interrupted\.$/);
