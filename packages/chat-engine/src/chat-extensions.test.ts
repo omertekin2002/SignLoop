@@ -180,6 +180,79 @@ describe("tool extensions", () => {
     expect(mocks.search).toHaveBeenCalledOnce();
   });
 
+  it("seeds short private titles from replayed list_contracts results into addPrivatePhrase", async () => {
+    const history: ChatMessage[] = [
+      { role: "user", content: "List my contracts" },
+      {
+        role: "assistant",
+        content: "Found one contract.",
+        agentMessages: [
+          {
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "list-1", toolName: "read_note", input: {} }],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "list-1",
+                toolName: "read_note",
+                output: {
+                  type: "json",
+                  value: { contracts: [{ id: "c-1", title: "Acme Acquisition Draft" }] },
+                },
+              },
+            ],
+          },
+        ],
+      },
+      { role: "user", content: "Search for that title" },
+    ];
+    const guarded = scripted([call("c1", "search_web", { query: "Acme Acquisition Draft terms" })]);
+    const reply = await run(guarded, history, [notesExtension({ offered: false })]);
+    expect(mocks.search).not.toHaveBeenCalled();
+    expect(reply.toolActivity?.[0]?.status).toBe("error");
+
+    // Compacted text replay with JSON escapes (e.g. \n) still decodes the title cleanly.
+    const compactedHistory: ChatMessage[] = [
+      { role: "user", content: "List my contracts" },
+      {
+        role: "assistant",
+        content: "Found one contract.",
+        agentMessages: [
+          {
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "list-2", toolName: "read_note", input: {} }],
+          },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "list-2",
+                toolName: "read_note",
+                output: {
+                  type: "text",
+                  value: '{"contracts":[{"id":"c-1","title":"Acme Acquisition\\nDraft"}]}',
+                },
+              },
+            ],
+          },
+        ],
+      },
+      { role: "user", content: "Search for that title" },
+    ];
+    const compactedGuarded = scripted([
+      call("c1", "search_web", { query: "Acme Acquisition Draft terms" }),
+    ]);
+    const compactedReply = await run(compactedGuarded, compactedHistory, [
+      notesExtension({ offered: false }),
+    ]);
+    expect(mocks.search).not.toHaveBeenCalled();
+    expect(compactedReply.toolActivity?.[0]?.status).toBe("error");
+  });
+
   it("reports only engine and extension tools as activity", async () => {
     const model = scripted([call("c1", "read_note", { id: "n" })]);
     const reply = await run(model, [{ role: "user", content: "Hi" }], []);

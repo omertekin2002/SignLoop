@@ -159,4 +159,24 @@ describe("BeforeYouSign Ask links", () => {
     const region = card(RESULT, null, null);
     expect(askLinks(region)).toHaveLength(0);
   });
+
+  it("distinguishes Ask link labels by finding number when two findings share a type", () => {
+    const region = card(
+      {
+        ...RESULT,
+        red_flags: [
+          { type: "Indemnity", severity: 8, explanation: "First", where: "Clause 9.1", evidence: null, citation: null, confidence: 80 },
+          { type: "Indemnity", severity: 5, explanation: "Second", where: "Clause 12", evidence: null, citation: null, confidence: 70 },
+        ],
+      },
+      null,
+      ANALYSIS_ID,
+    );
+    expect(
+      within(region).getByRole("link", { name: "Ask about finding 1: Indemnity" }),
+    ).toHaveAttribute("href", `/dashboard?contract=${CONTRACT_ID}&analysis=${ANALYSIS_ID}&ask=finding-1`);
+    expect(
+      within(region).getByRole("link", { name: "Ask about finding 2: Indemnity" }),
+    ).toHaveAttribute("href", `/dashboard?contract=${CONTRACT_ID}&analysis=${ANALYSIS_ID}&ask=finding-2`);
+  });
 });

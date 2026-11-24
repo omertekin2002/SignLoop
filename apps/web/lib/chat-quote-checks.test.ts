@@ -119,7 +119,7 @@ describe("extractQuotations", () => {
     ]);
   });
 
-  it("uses the inline quotations in a blockquote that holds them, rather than the whole paragraph", () => {
+  it("uses a short lead-in quotation in a blockquote, without dropping surrounding blockquote text", () => {
     expect(
       extractQuotations(
         '> **Clause 4** says "the Provider\'s total liability under this agreement is limited".',
@@ -128,13 +128,107 @@ describe("extractQuotations", () => {
     expect(
       extractQuotations("> “This agreement is governed by the laws of England and Wales.”"),
     ).toEqual(["This agreement is governed by the laws of England and Wales"]);
+    // A blockquote wrapped in straight quotes keeps inner defined terms whole.
+    expect(
+      extractQuotations(
+        '> "The "Client" must give sixty days written notice before the renewal date."',
+      ),
+    ).toEqual(['The "Client" must give sixty days written notice before the renewal date']);
+    // Text outside an inner quote in a blockquote is never dropped so altered clauses stay checked.
+    expect(
+      extractQuotations(
+        '> Notice must state "I hereby cancel this agreement effective immediately" within 2 days.',
+      ),
+    ).toEqual([
+      'Notice must state "I hereby cancel this agreement effective immediately" within 2 days',
+    ]);
+    // Substantive short prefixes before an inner quote are kept too (only source intros are stripped).
+    expect(
+      extractQuotations(
+        '> The tenant need not give "written notice at least thirty days before renewal".',
+      ),
+    ).toEqual([
+      'The tenant need not give "written notice at least thirty days before renewal"',
+    ]);
+    expect(
+      extractQuotations(
+        '> Clause excludes "written notice at least thirty days before renewal".',
+      ),
+    ).toEqual([
+      'Clause excludes "written notice at least thirty days before renewal"',
+    ]);
   });
 
-  it("ignores code spans and fenced code blocks, including blockquote lines inside them", () => {
+  it("drops an adjacent source attribution line while preserving dash-led clause continuations", () => {
+    expect(
+      extractQuotations(
+        [
+          "> Late payments accrue interest at 4% per month until paid in full.",
+          "> — Clause 2, Fees",
+        ].join("\n"),
+      ),
+    ).toEqual(["Late payments accrue interest at 4% per month until paid in full"]);
+    expect(
+      extractQuotations(
+        [
+          "> The Client may terminate early",
+          "> — only if the provider consents",
+        ].join("\n"),
+      ),
+    ).toEqual(["The Client may terminate early — only if the provider consents"]);
+    expect(
+      extractQuotations(
+        [
+          "> Late payments accrue interest",
+          "> — Section 4 may impose a fee.",
+          ">",
+          "> — Section 4: No interest accrues before notice.",
+          ">",
+          "> The tenant may cancel at any time",
+          "> — Section 4 (Cancellation takes effect only after sixty days.)",
+          ">",
+          "> The tenant may cancel at any time",
+          "> — Section 4 (Payment is required)",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      "Late payments accrue interest — Section 4 may impose a fee",
+      "— Section 4: No interest accrues before notice",
+      "The tenant may cancel at any time — Section 4 (Cancellation takes effect only after sixty days.)",
+      "The tenant may cancel at any time — Section 4 (Payment is required)",
+    ]);
+  });
+
+  it("handles nested emphasis, non-flanking asterisks, escaped backticks, curly quotes in code spans, blanks and escaped quotes", () => {
+    expect(
+      extractQuotations(
+        [
+          "> *due *only* on Friday*",
+          "",
+          "> The fee is $500*, plus taxes*, payable on ____ of each month.",
+          "",
+          "> The tenant may \\`not\\` terminate early",
+          "",
+          "> Clause 4 says `“the Client may cancel after thirty days”`",
+          "",
+          'It says "The \\"Client\\" must pay within thirty days of invoice."',
+        ].join("\n"),
+      ),
+    ).toEqual([
+      "due only on Friday",
+      "The fee is $500*, plus taxes*, payable on ____ of each month",
+      "The tenant may `not` terminate early",
+      "Clause 4 says “the Client may cancel after thirty days”",
+      'The "Client" must pay within thirty days of invoice',
+    ]);
+  });
+
+  it("ignores prose code spans and fenced code blocks, while keeping inline-code text literal inside blockquotes", () => {
     expect(
       extractQuotations(
         [
           'Run `grep "Either party may end this lease on notice" lease.txt` to search.',
+          'See [`"Either party may end this lease on notice"`](https://example.com).',
           "```",
           "> Either party may end this lease on six months' notice",
           'const text = "Either party may end this lease on six months notice";',
@@ -142,11 +236,27 @@ describe("extractQuotations", () => {
           "~~~text",
           'echo "The Tenant will pay rent on the first day"',
           "~~~",
-          "> Real quotation: the Tenant will pay rent quarterly",
-          "> `inline code` stays out",
+          "> The tenant may `not` terminate early",
+          ">",
+          "> Fees are `*not refundable*` after signing",
         ].join("\n"),
       ),
-    ).toEqual(["Real quotation: the Tenant will pay rent quarterly stays out"]);
+    ).toEqual([
+      "The tenant may not terminate early",
+      "Fees are *not refundable* after signing",
+    ]);
+    expect(
+      checkQuotations(
+        extractQuotations("> The tenant may `not` terminate early"),
+        "The tenant may terminate early.",
+      ),
+    ).toEqual([{ quote: "The tenant may not terminate early", status: "not_found" }]);
+    expect(
+      checkQuotations(
+        extractQuotations("> Fees are `*not refundable*` after signing"),
+        "Fees are not refundable after signing.",
+      ),
+    ).toEqual([{ quote: "Fees are *not refundable* after signing", status: "not_found" }]);
   });
 
   it("does not join an inline quotation across a blank line", () => {

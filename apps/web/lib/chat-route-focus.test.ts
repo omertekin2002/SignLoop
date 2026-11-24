@@ -354,6 +354,18 @@ describe.each([false, true])("a saved chat about one contract (stream=%s)", (str
     expect(savedUserMetadata()).toBeUndefined();
   });
 
+  it("keeps the deleted focus id when retrying an interrupted first turn so the deleted-contract notice stays", async () => {
+    mocks.getChatThreadFocusForUser.mockResolvedValue({ contractId, contract: null });
+    mocks.getRecentChatMessagesForThreadForUser.mockResolvedValue([
+      { ...savedRow(1, "user", "Can I end this early?"), turnId, interrupted: "stopped" },
+    ]);
+
+    expect((await send({ turnId, focusContractId: contractId })).status).toBe(200);
+
+    expect(systemPrompt()).not.toContain("This conversation is about one of the user's contracts");
+    expect(savedUserMetadata()).toEqual({ focusContractId: contractId });
+  });
+
   it("adds no focus note to an ordinary saved chat", async () => {
     expect((await send({})).status).toBe(200);
 
@@ -417,6 +429,10 @@ describe.each([false, true])("quotation checks in a saved chat (stream=%s)", (st
     expect(mocks.getContractTextForUser).toHaveBeenCalledTimes(1);
     expect(mocks.getContractTextForUser).toHaveBeenCalledWith("owner", contractId);
     expect(savedAssistantMetadata()?.quoteChecks).toEqual(EXPECTED_CHECKS);
+    // A matched quotation also links the checked contract revision into contractEvidence for replay invalidation.
+    expect(savedAssistantMetadata()?.contractEvidence).toEqual([
+      { id: contractId, revision: REVISION },
+    ]);
     expect(result.quoteChecks).toEqual(EXPECTED_CHECKS);
     // The check is not a model call: the model answered once, and nothing else asked it.
     expect(model.doStreamCalls).toHaveLength(1);

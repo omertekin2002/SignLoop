@@ -131,7 +131,7 @@ describe("deleting from the dashboard", () => {
       "lease",
     );
     expect(await screen.findByText("Searching chats…")).toBeInTheDocument();
-    expect(list.searches).toHaveLength(1);
+    await waitFor(() => expect(list.searches).toHaveLength(1));
 
     const rendered: string[] = [];
     const recorder = new MutationObserver(() => {
@@ -409,6 +409,36 @@ describe("opening a chat about a contract", () => {
     });
     renderFocused();
 
+    await waitFor(() =>
+      expect(savedPanel()?.focusContract).toEqual({ contractId, title: null }),
+    );
+  });
+
+  it("marks the focused contract unavailable immediately when a refetch returns 404 after deletion", async () => {
+    let deleted = false;
+    serveContract(async () => {
+      if (deleted) {
+        throw Object.assign(new Error("Not found"), {
+          isAxiosError: true,
+          response: { status: 404, data: { error: "Contract not found" } },
+        });
+      }
+      return { data: { title: "Office lease" } };
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <Dashboard focusContractId={contractId} />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(savedPanel()?.focusContract).toEqual({ contractId, title: "Office lease" }),
+    );
+    deleted = true;
+    await client.invalidateQueries({ queryKey: ["contract", contractId] });
     await waitFor(() =>
       expect(savedPanel()?.focusContract).toEqual({ contractId, title: null }),
     );

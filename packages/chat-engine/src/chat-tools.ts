@@ -36,6 +36,7 @@ export function fenceUntrusted(text: string): string {
 // Outbound URLs and search queries that repeat this many consecutive words of contract text
 // are refused, so the model cannot carry the user's document to an outside service.
 export const CONTRACT_EGRESS_SHINGLE_TOKENS = 8;
+const MIN_PRIVATE_PHRASE_TOKENS = 3;
 export const CONTRACT_EGRESS_ERROR =
   "This request repeats wording from the user's contract, which cannot be sent to an outside service. Rephrase the request without document text.";
 const MAX_OUTBOUND_DECODE_PASSES = 3;
@@ -68,16 +69,21 @@ function decodeOutbound(value: string): string {
 
 export type ContractEgressGuard = {
   addContractText: (text: string) => void;
+  /** Protect a shorter identifying phrase (such as a contract title of 3+ words) as a whole. */
+  addPrivatePhrase: (text: string) => void;
   /** Returns a tool error when the outbound URL or query repeats contract wording. */
   check: (outbound: string) => { error: string } | null;
 };
 
-/** Per-turn guard; `seed` supplies contract text replayed from earlier turns and runs on first check. */
+/** Per-turn guard; `seed` and `seedPhrases` supply contract text and short titles replayed from earlier turns. */
 export function createContractEgressGuard(
   seed: () => Iterable<string> = () => [],
+  seedPhrases: () => Iterable<string> = () => [],
 ): ContractEgressGuard {
   const shingles = new Set<string>();
+  const phrasesByLength = new Map<number, Set<string>>();
   let pendingSeed: (() => Iterable<string>) | null = seed;
+  let pendingPhraseSeed: (() => Iterable<string>) | null = seedPhrases;
   const addContractText = (text: string) => {
     const tokens = egressTokens(text);
     for (
@@ -89,15 +95,35 @@ export function createContractEgressGuard(
         tokens.slice(index, index + CONTRACT_EGRESS_SHINGLE_TOKENS).join(" "),
       );
   };
+  const addPrivatePhrase = (text: string) => {
+    const tokens = egressTokens(text);
+    if (tokens.length >= CONTRACT_EGRESS_SHINGLE_TOKENS) {
+      addContractText(text);
+      return;
+    }
+    if (tokens.length < MIN_PRIVATE_PHRASE_TOKENS) return;
+    let bucket = phrasesByLength.get(tokens.length);
+    if (!bucket) {
+      bucket = new Set<string>();
+      phrasesByLength.set(tokens.length, bucket);
+    }
+    bucket.add(tokens.join(" "));
+  };
   return {
     addContractText,
+    addPrivatePhrase,
     check: (outbound) => {
       if (pendingSeed) {
         const load = pendingSeed;
         pendingSeed = null;
         for (const text of load()) addContractText(text);
       }
-      if (!shingles.size) return null;
+      if (pendingPhraseSeed) {
+        const loadPhrases = pendingPhraseSeed;
+        pendingPhraseSeed = null;
+        for (const phrase of loadPhrases()) addPrivatePhrase(phrase);
+      }
+      if (!shingles.size && !phrasesByLength.size) return null;
       const tokens = egressTokens(decodeOutbound(outbound));
       for (
         let index = 0;
@@ -112,6 +138,13 @@ export function createContractEgressGuard(
           )
         )
           return { error: CONTRACT_EGRESS_ERROR };
+      for (const [length, phrases] of phrasesByLength) {
+        for (let index = 0; index + length <= tokens.length; index++) {
+          if (phrases.has(tokens.slice(index, index + length).join(" "))) {
+            return { error: CONTRACT_EGRESS_ERROR };
+          }
+        }
+      }
       return null;
     },
   };

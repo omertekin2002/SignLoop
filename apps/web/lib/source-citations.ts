@@ -229,6 +229,50 @@ export function verifyQuote(
 
 // A lone surrogate could match half of a pair, so a quotation holding one is never found.
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+const DIGIT_CHAR = /\p{N}/u;
+const ATTACHED_SIGN = /[-+−]/;
+const ATTACHED_NUMBER_PREFIX = /(?:[-+−.]|(?:\p{N}|[-+−]),)$/u;
+const NUMBER_SEP_DIGIT = /^[.,]\p{N}/u;
+const DIGIT_NUMBER_SEP = /\p{N}[.,]$/u;
+
+/** True when a match does not start or end inside a word or number (e.g. "0" in "30", "5%" in "−5%" or ".5%", ".5%" in "1.5%" or "−.5%", "200" in "1,200"). */
+function atQuotationBoundary(
+  haystack: string,
+  start: number,
+  end: number,
+  needle: string,
+  first: string,
+  last: string,
+): boolean {
+  if (start > 0) {
+    const before = haystack.slice(Math.max(0, start - 3), start);
+    const prev = Array.from(before).at(-1);
+    if (WORD_CHAR.test(first)) {
+      if (prev && WORD_CHAR.test(prev)) return false;
+      if (DIGIT_CHAR.test(first) && ATTACHED_NUMBER_PREFIX.test(before)) {
+        return false;
+      }
+    } else if (
+      NUMBER_SEP_DIGIT.test(needle) &&
+      prev &&
+      (DIGIT_CHAR.test(prev) || ATTACHED_SIGN.test(prev))
+    ) {
+      return false;
+    }
+  }
+  if (end < haystack.length) {
+    const after = haystack.slice(end, end + 3);
+    const next = Array.from(after)[0];
+    if (WORD_CHAR.test(last)) {
+      if (next && WORD_CHAR.test(next)) return false;
+      if (DIGIT_CHAR.test(last) && NUMBER_SEP_DIGIT.test(after)) return false;
+    } else if (DIGIT_NUMBER_SEP.test(needle) && next && DIGIT_CHAR.test(next)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 /**
  * The only differences the whole-text check forgives, applied alike to both sides: every run of
@@ -245,18 +289,28 @@ export function normalizeQuotation(text: string): string {
 /**
  * verifyQuote's exact match over the whole text rather than one labelled segment, for checking
  * where a quotation came from rather than where it sits: a quotation that appears more than once
- * still matches. The text is normalised once, so one matcher can check many quotations. A
+ * still matches, as long as an occurrence sits on word and number boundaries (so "0 days" never
+ * matches "30 days"). The text is normalised once, so one matcher can check many quotations. A
  * well-formed quotation can only match whole code points, so this agrees with a code-point search.
  */
 export function createQuoteMatcher(text: string): (quote: string) => boolean {
   const haystack = normalizeQuotation(text);
   return (quote) => {
     const needle = normalizeQuotation(quote).trim();
-    return (
-      isQuotable(needle) &&
-      !LONE_SURROGATE.test(needle) &&
-      haystack.includes(needle)
-    );
+    if (!isQuotable(needle) || LONE_SURROGATE.test(needle)) return false;
+    const chars = Array.from(needle);
+    const first = chars[0]!;
+    const last = chars.at(-1)!;
+    let at = haystack.indexOf(needle);
+    while (at >= 0) {
+      if (
+        atQuotationBoundary(haystack, at, at + needle.length, needle, first, last)
+      ) {
+        return true;
+      }
+      at = haystack.indexOf(needle, at + 1);
+    }
+    return false;
   };
 }
 

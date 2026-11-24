@@ -141,6 +141,89 @@ describe("clarifyItemDraft", () => {
     );
   });
 
+  it("disambiguates findings that share a type (and even a clause location) using number, location and explanation", () => {
+    const duplicateResult: Partial<AnalysisResult> = {
+      red_flags: [
+        {
+          type: "Indemnity",
+          severity: 8,
+          explanation: "Uncapped IP indemnity.",
+          where: "Clause 9.2",
+          evidence: null,
+          citation: null,
+          confidence: 80,
+        },
+        {
+          type: "Indemnity",
+          severity: 6,
+          explanation: "Third-party claim indemnity.",
+          where: "Clause 9.2",
+          evidence: null,
+          citation: null,
+          confidence: 70,
+        },
+        {
+          type: "Indemnity",
+          severity: 5,
+          explanation: "Data breach indemnity.",
+          where: "Clause 12",
+          evidence: null,
+          citation: null,
+          confidence: 70,
+        },
+      ],
+    };
+    const list = clarifyBeforeSigning({ contractId: CONTRACT_ID, resultJson: duplicateResult });
+    expect(clarifyItemDraft(TITLE, list, "finding-1", duplicateResult)).toBe(
+      `${PREFIX}Explain finding 1 (“Indemnity”, Clause 9.2 — Uncapped IP indemnity.): which clause it relies on, and what I should clarify before signing. Quote the clause, or say none was found.`,
+    );
+    expect(clarifyItemDraft(TITLE, list, "finding-2", duplicateResult)).toBe(
+      `${PREFIX}Explain finding 2 (“Indemnity”, Clause 9.2 — Third-party claim indemnity.): which clause it relies on, and what I should clarify before signing. Quote the clause, or say none was found.`,
+    );
+    expect(clarifyItemDraft(TITLE, list, "finding-3", duplicateResult)).toBe(
+      `${PREFIX}Explain finding 3 (“Indemnity”, Clause 12): which clause it relies on, and what I should clarify before signing. Quote the clause, or say none was found.`,
+    );
+    expect(clarifyItemDraft(TITLE, list, "finding-2")).toBe(
+      `${PREFIX}Explain finding 2 (“Indemnity”): which clause it relies on, and what I should clarify before signing. Quote the clause, or say none was found.`,
+    );
+
+    // An overlong `where` value is truncated so the drafted prompt never exceeds the chat limit,
+    // and two findings whose locations match after truncation still include their explanations.
+    const sharedPrefix = `Clause ${"x".repeat(4500)}`;
+    const longWhereResult: Partial<AnalysisResult> = {
+      red_flags: [
+        {
+          type: "Indemnity",
+          severity: 8,
+          explanation: "Uncapped IP indemnity.",
+          where: `${sharedPrefix} A`,
+          evidence: null,
+          citation: null,
+          confidence: 80,
+        },
+        {
+          type: "Indemnity",
+          severity: 6,
+          explanation: "Third-party claim indemnity.",
+          where: `${sharedPrefix} B`,
+          evidence: null,
+          citation: null,
+          confidence: 70,
+        },
+      ],
+    };
+    const longList = clarifyBeforeSigning({
+      contractId: CONTRACT_ID,
+      resultJson: longWhereResult,
+    });
+    const longDraft1 = clarifyItemDraft(TITLE, longList, "finding-1", longWhereResult);
+    const longDraft2 = clarifyItemDraft(TITLE, longList, "finding-2", longWhereResult);
+    expect(longDraft1.length).toBeLessThan(500);
+    expect(longDraft1).toContain("…");
+    expect(longDraft1).toContain("Uncapped IP indemnity.");
+    expect(longDraft2).toContain("Third-party claim indemnity.");
+  });
+
   it("asks the analysis's question, answered from the contract", () => {
     expect(clarifyItemDraft(TITLE, checklist(), "question-2")).toBe(
       `${PREFIX}Is the joining fee refundable? Answer from the contract and quote the clause you rely on.`,

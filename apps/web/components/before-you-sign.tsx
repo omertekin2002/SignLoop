@@ -171,25 +171,35 @@ export function BeforeYouSign({
         {checklist.findings.length > 0 && (
           <Group title="Findings">
             <ul className="list-disc space-y-2 pl-5">
-              {checklist.findings.map((finding) => (
-                <li key={finding.number}>
-                  <a
-                    href={`#${findingAnchor(finding.number)}`}
-                    className="text-highlight underline underline-offset-4"
-                  >
-                    {finding.type}
-                  </a>{" "}
-                  <span className="text-muted-foreground">
-                    {finding.severity === null
-                      ? "(severity not provided)"
-                      : `(severity ${finding.severity}/10)`}
-                  </span>
-                  {ask(
-                    findingItemKey(finding.number),
-                    `Ask about finding: ${finding.type}`,
-                  )}
-                </li>
-              ))}
+              {checklist.findings.map((finding) => {
+                const duplicateType =
+                  checklist.findings.filter(
+                    (other) =>
+                      other.type.trim().toLowerCase() ===
+                      finding.type.trim().toLowerCase(),
+                  ).length > 1;
+                return (
+                  <li key={finding.number}>
+                    <a
+                      href={`#${findingAnchor(finding.number)}`}
+                      className="text-highlight underline underline-offset-4"
+                    >
+                      {finding.type}
+                    </a>{" "}
+                    <span className="text-muted-foreground">
+                      {finding.severity === null
+                        ? "(severity not provided)"
+                        : `(severity ${finding.severity}/10)`}
+                    </span>
+                    {ask(
+                      findingItemKey(finding.number),
+                      duplicateType
+                        ? `Ask about finding ${finding.number}: ${finding.type}`
+                        : `Ask about finding: ${finding.type}`,
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </Group>
         )}

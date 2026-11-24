@@ -1,3 +1,4 @@
+import { marked, type Token } from "marked";
 import {
   createQuoteMatcher,
   MAX_EVIDENCE_QUOTE,
@@ -36,13 +37,30 @@ const LIST_MARKER = /^[ \t]*(?:[-*+]|\d{1,3}[.)])[ \t]+/;
 // A line that starts a new block (list item, heading, thematic break or HTML) rather than
 // continuing a blockquote's paragraph without its own `>`.
 const NEW_BLOCK = /^ {0,3}(?:[-*+][ \t]|\d{1,9}[.)][ \t]|#{1,6}(?:[ \t]|$)|(?:[-*_][ \t]*){3,}$|<)/;
-// Backslash-escaped punctuation renders as itself; escaped * and _ are kept out of emphasis.
-const ESCAPED = /\\([!-/:-@[-`{-~])/g;
-const ESCAPED_STAR = "\uE000";
-const ESCAPED_UNDERSCORE = "\uE001";
-// An attribution line under a quotation ("— Clause 9"), not part of it.
-const ATTRIBUTION = /^(?:—|–|--)/;
+// Escaped `"` and quotation marks inside literal code spans stay protected until delimiter parsing finishes.
+const ESCAPED_QUOTE = "\uE002";
+const ESCAPED_LEFT_CURLY = "\uE003";
+const ESCAPED_RIGHT_CURLY = "\uE004";
+// A recognisable contract locator: e.g. `Clause 4`, `Section 2.1`, `Schedule A`, `Article IV`.
+const SHORT_LABEL = /[A-Z][\w&/'-]*(?:\s+[A-Z][\w&/'-]*){0,2}/;
+const BASE_LOCATOR =
+  /(?:Clause|Section|Article|Paragraph|Schedule|Annex|Appendix|Part|Page|Exhibit)\s+(?:\d[\w.-]*|[A-Z](?:\.\d[\w.-]*)?|[IVX]{1,5}\b)/;
+const LOCATOR = new RegExp(
+  `${BASE_LOCATOR.source}(?:\\s*\\(${SHORT_LABEL.source}\\))?`,
+);
+// A pure attribution line (`— Clause 9`, `— Clause 2, Fees`): no parentheticals or lowercase prose,
+// so operative lines such as `— Section 4 (Payment is required)` or `— Section 4: No interest...`
+// stay part of the checked quotation.
+const ATTRIBUTION_LINE = new RegExp(
+  `^(?:—|–|--)\\s*${BASE_LOCATOR.source}(?:,\\s*${SHORT_LABEL.source})?$`,
+);
 const INLINE_QUOTATION = /“([^“”]+)”|"([^"]+)"/g;
+// Only strip an explicit source introduction inside a blockquote (e.g. `> Clause 4 says "…".`),
+// requiring a real locator or explicit subject + speech verb so operative text such as
+// `> Clause excludes "…"` or `> The tenant need not give "…"` stays checked in full.
+const LEAD_IN_QUOTATION = new RegExp(
+  `^(?:${LOCATOR.source}(?:\\s+(?:says|states|provides|reads))?:?\\s*|(?:It|This clause|The clause|The contract|The agreement)\\s+(?:says|states|provides|reads):?\\s*)(?:“([^“”]+)”|"([^"]+)")[.,;:]?$`,
+);
 const BLANK_LINE = /\n[^\S\n]*\n/;
 
 /** Lines inside fenced code blocks become blank, so they hold no quotations or blockquotes. */
@@ -69,38 +87,66 @@ function withoutFences(lines: readonly string[]): string[] {
   });
 }
 
-/** Code spans (`…`, ``…``) never hold quotations; each becomes a space. */
-function withoutCodeSpans(text: string): string {
-  return text.replace(/(`+)(?:(?!\1)[\s\S])+?\1(?!`)/g, " ");
-}
-
 function wordCount(text: string): number {
   return text.split(/\s+/).filter((word) => /[\p{L}\p{N}]/u.test(word)).length;
 }
 
 /**
- * Text as the chat's Markdown renderer shows it: emphasis delimiters (`*`, `_`, `**`, `__`, `***`)
- * at the edges of words dropped, and backslash escapes resolved. Intraword underscores, as in
- * snake_case, and a lone `*` between spaces are not emphasis and stay.
+ * Render inline Markdown tokens using the same CommonMark tokenizer (`marked`) the chat renderer
+ * uses: nested emphasis (`*due *only* on Friday*`) unwraps cleanly, non-flanking literal asterisks
+ * (`$500*, plus taxes*.`) and escaped backticks (`\`not\``) stay intact, and code spans are either
+ * dropped (prose) or kept completely literal without emphasis/quote processing (blockquotes).
  */
-function renderedText(text: string): string {
-  return text
-    .replace(ESCAPED, (_match, char: string) =>
-      char === "*" ? ESCAPED_STAR : char === "_" ? ESCAPED_UNDERSCORE : char,
-    )
-    .replace(/(^|[^\p{L}\p{N}*_])[*_]+(?=[^\s*_])/gu, "$1")
-    .replace(/([^\s*_])[*_]+(?=$|[^\p{L}\p{N}*_])/gu, "$1")
-    .replaceAll(ESCAPED_STAR, "*")
-    .replaceAll(ESCAPED_UNDERSCORE, "_");
+function renderInlineTokens(
+  tokens: readonly Token[],
+  codeSpans: "drop" | "keep",
+): string {
+  let out = "";
+  for (const token of tokens) {
+    if (token.type === "codespan") {
+      out +=
+        codeSpans === "drop"
+          ? " "
+          : token.text
+              .replaceAll('"', ESCAPED_QUOTE)
+              .replaceAll("“", ESCAPED_LEFT_CURLY)
+              .replaceAll("”", ESCAPED_RIGHT_CURLY);
+    } else if (token.type === "escape") {
+      out += token.text === '"' ? ESCAPED_QUOTE : token.text;
+    } else if (token.type === "br") {
+      out += " ";
+    } else if (
+      "tokens" in token &&
+      Array.isArray(token.tokens) &&
+      token.tokens.length
+    ) {
+      out += renderInlineTokens(token.tokens, codeSpans);
+    } else if ("text" in token && typeof token.text === "string") {
+      out += token.text;
+    } else {
+      out += token.raw;
+    }
+  }
+  return out;
+}
+
+function renderInlineMarkdown(
+  text: string,
+  codeSpans: "drop" | "keep",
+): string {
+  return renderInlineTokens(marked.Lexer.lexInline(text), codeSpans);
 }
 
 /**
- * Rendered quoted words (see renderedText, applied once by the caller) with whitespace collapsed,
- * and a leading or trailing ellipsis and one trailing , . ; or : (often written inside the marks)
- * trimmed. Trimming only shortens a quotation, so it can never turn a match into a miss.
+ * Rendered quoted words with whitespace collapsed, protected quotes restored, and a leading or
+ * trailing ellipsis and one trailing , . ; or : (often written inside the marks) trimmed.
+ * Trimming only shortens a quotation, so it can never turn a match into a miss.
  */
 function cleanQuotation(text: string): string {
   return text
+    .replaceAll(ESCAPED_QUOTE, '"')
+    .replaceAll(ESCAPED_LEFT_CURLY, "“")
+    .replaceAll(ESCAPED_RIGHT_CURLY, "”")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^(?:…|\.{3})\s*/, "")
@@ -111,7 +157,7 @@ function cleanQuotation(text: string): string {
 
 /**
  * Inline "…" and “…” passages of at least MIN_INLINE_QUOTE_WORDS words, within one paragraph, in
- * text already rendered (renderedText).
+ * text already rendered (`renderInlineMarkdown`).
  */
 function inlineQuotations(text: string): string[] {
   const found: string[] = [];
@@ -131,26 +177,36 @@ function withoutOuterMarks(text: string): string {
 }
 
 /**
- * One blockquote's quotations. Each paragraph (or list item) is one passage, unless it holds long
- * inline quotations, as in `> Clause 9 says "…"`: then those are the quotations, not the paragraph.
+ * One blockquote's quotations. Each paragraph (or list item) is one passage checked as rendered,
+ * keeping visible inline-code text literal and never dropping surrounding blockquote text around an
+ * inner quotation. Only a recognizable source introduction (`> Clause 9 says "…"`) is stripped.
  */
 function blockQuotations(lines: readonly string[]): string[] {
   const paragraphs: string[][] = [[]];
   for (const line of withoutFences(lines)) {
-    if (!line.trim()) paragraphs.push([]);
+    const trimmed = line.trim();
+    if (!trimmed || ATTRIBUTION_LINE.test(trimmed)) paragraphs.push([]);
     else if (LIST_MARKER.test(line))
       paragraphs.push([line.replace(LIST_MARKER, "")]);
     else paragraphs.at(-1)!.push(line);
   }
   return paragraphs.flatMap((paragraph) => {
-    const text = renderedText(
-      withoutCodeSpans(paragraph.join("\n")).replace(/\s+/g, " ").trim(),
-    );
+    const raw = paragraph.join("\n").trim();
+    if (!raw) return [];
+    const text = renderInlineMarkdown(raw, "keep").replace(/\s+/g, " ").trim();
     if (!text) return [];
-    const inline = inlineQuotations(text);
-    if (inline.length) return inline;
-    if (ATTRIBUTION.test(text)) return [];
-    const quote = cleanQuotation(withoutOuterMarks(cleanQuotation(text)));
+    if (ATTRIBUTION_LINE.test(text)) return [];
+    const unwrapped = withoutOuterMarks(text);
+    if (unwrapped !== text) {
+      const quote = cleanQuotation(unwrapped);
+      return wordCount(quote) >= MIN_BLOCKQUOTE_WORDS ? [quote] : [];
+    }
+    const leadIn = LEAD_IN_QUOTATION.exec(text);
+    if (leadIn) {
+      const quote = cleanQuotation(leadIn[1] ?? leadIn[2] ?? "");
+      if (wordCount(quote) >= MIN_INLINE_QUOTE_WORDS) return [quote];
+    }
+    const quote = cleanQuotation(text);
     return wordCount(quote) >= MIN_BLOCKQUOTE_WORDS ? [quote] : [];
   });
 }
@@ -159,8 +215,9 @@ function blockQuotations(lines: readonly string[]): string[] {
  * The quotations in a reply's Markdown, in order: each blockquote passage (consecutive `>` lines
  * joined, with any lazy continuation line the renderer also puts in the blockquote), and each
  * inline "…" or “…” passage of at least MIN_INLINE_QUOTE_WORDS words elsewhere.
- * Code blocks and code spans are ignored. Repeats (after the matcher's normalisation) are dropped,
- * a quotation longer than MAX_EVIDENCE_QUOTE is skipped, and at most MAX_QUOTE_CHECKS are returned.
+ * Fenced code blocks and prose code spans are ignored. Repeats (after the matcher's normalisation)
+ * are dropped, a quotation longer than MAX_EVIDENCE_QUOTE is skipped, and at most MAX_QUOTE_CHECKS
+ * are returned.
  */
 export function extractQuotations(markdown: string): string[] {
   const lines = withoutFences(markdown.replace(/\r\n?/g, "\n").split("\n"));
@@ -168,10 +225,14 @@ export function extractQuotations(markdown: string): string[] {
   let prose: string[] = [];
   let quoted: string[] = [];
   const flushProse = () => {
-    if (prose.length)
-      found.push(
-        ...inlineQuotations(renderedText(withoutCodeSpans(prose.join("\n")))),
-      );
+    if (prose.length) {
+      // Render each paragraph separately so BLANK_LINE boundaries stay intact.
+      const paragraphs = prose.join("\n").split(BLANK_LINE);
+      for (const paragraph of paragraphs) {
+        if (!paragraph.trim()) continue;
+        found.push(...inlineQuotations(renderInlineMarkdown(paragraph, "drop")));
+      }
+    }
     prose = [];
   };
   const flushQuoted = () => {

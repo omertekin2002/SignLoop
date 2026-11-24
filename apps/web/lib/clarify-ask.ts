@@ -2,6 +2,7 @@ import type {
   ClarifyChecklist,
   ClarifyUnstatedFact,
 } from "@/lib/analysis-clarify";
+import type { AnalysisResult } from "@/lib/schemas";
 import { isSubstantiveText } from "@/lib/substantive-text";
 
 /**
@@ -94,10 +95,20 @@ function substantive(value: string): string | null {
   return trimmed && isSubstantiveText(trimmed) ? trimmed : null;
 }
 
+/** Shorten a finding detail kept in a disambiguated draft without slicing mid-code-point. */
+const MAX_FINDING_DETAIL = 120;
+function shortenDetail(value: string): string {
+  const chars = Array.from(value);
+  return chars.length > MAX_FINDING_DETAIL
+    ? `${chars.slice(0, MAX_FINDING_DETAIL - 1).join("").trimEnd()}…`
+    : value;
+}
+
 /** The question for one item, or null when the key names no item in this checklist. */
 function itemQuestion(
   checklist: ClarifyChecklist,
   key: string,
+  result?: Partial<AnalysisResult> | null,
 ): string | null {
   if (!isClarifyItemKey(key)) return null;
   const separator = key.indexOf("-");
@@ -128,7 +139,45 @@ function itemQuestion(
     // A placeholder type ("General risk") leaves nothing the chat could find the finding by: it
     // sees the contract's text, not the analysis's numbered findings.
     const type = item ? substantive(item.type) : null;
-    if (!type) return null;
+    if (!type || !item) return null;
+    const sameType = checklist.findings.filter(
+      (finding) =>
+        finding.type.trim().toLowerCase() === item.type.trim().toLowerCase(),
+    );
+    if (sameType.length > 1) {
+      const storedFlag = Array.isArray(result?.red_flags)
+        ? result.red_flags[position - 1]
+        : undefined;
+      const where =
+        typeof storedFlag?.where === "string"
+          ? substantive(storedFlag.where)
+          : null;
+      const explanation =
+        typeof storedFlag?.explanation === "string"
+          ? substantive(storedFlag.explanation)
+          : null;
+      const whereText = where ? shortenDetail(where) : null;
+      const sharedWhere =
+        whereText !== null &&
+        sameType.filter((finding) => {
+          const other = Array.isArray(result?.red_flags)
+            ? result.red_flags[finding.number - 1]
+            : undefined;
+          const otherWhere =
+            typeof other?.where === "string" ? substantive(other.where) : null;
+          const otherWhereText = otherWhere ? shortenDetail(otherWhere) : null;
+          return otherWhereText?.toLowerCase() === whereText.toLowerCase();
+        }).length > 1;
+      const detail = sharedWhere
+        ? [whereText, explanation ? shortenDetail(explanation) : null]
+            .filter(Boolean)
+            .join(" — ")
+        : (whereText ?? (explanation ? shortenDetail(explanation) : null));
+      if (detail) {
+        return `Explain finding ${item.number} (“${type}”, ${detail}): which clause it relies on, and what I should clarify before signing. ${QUOTE_OR_NONE}`;
+      }
+      return `Explain finding ${item.number} (“${type}”): which clause it relies on, and what I should clarify before signing. ${QUOTE_OR_NONE}`;
+    }
     return `Explain the finding “${type}”: which clause it relies on, and what I should clarify before signing. ${QUOTE_OR_NONE}`;
   }
 
@@ -148,8 +197,9 @@ export function clarifyItemDraft(
   title: string,
   checklist: ClarifyChecklist | null,
   key: string,
+  result?: Partial<AnalysisResult> | null,
 ): string {
-  const question = checklist ? itemQuestion(checklist, key) : null;
+  const question = checklist ? itemQuestion(checklist, key, result) : null;
   return question
     ? `${contractChatDraft(title)}${question}`
     : contractChatDraft(title);

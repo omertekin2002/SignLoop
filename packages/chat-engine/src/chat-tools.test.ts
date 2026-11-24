@@ -207,6 +207,18 @@ describe("contract egress guard", () => {
     expect(httpGet).toHaveBeenCalledTimes(MAX_HTTP_FETCHES);
   });
 
+  it("protects shorter identifying phrases (3+ words) with addPrivatePhrase while ignoring generic 2-word ones", () => {
+    const guard = createContractEgressGuard();
+    guard.addPrivatePhrase("Acme Acquisition Draft");
+    guard.addPrivatePhrase("Office lease");
+    expect(guard.check("search Acme Acquisition Draft terms")).toEqual({
+      error: CONTRACT_EGRESS_ERROR,
+    });
+    expect(guard.check("https://collector.test/?q=acme%20acquisition%20draft")).toEqual({
+      error: CONTRACT_EGRESS_ERROR,
+    });
+    expect(guard.check("statutory notice period for an office lease")).toBeNull();
+  });
 });
 
 describe("createHttpGetTool", () => {

@@ -259,6 +259,34 @@ async function checkReplyQuotations(input: {
 }
 
 /**
+ * Record the checked contract revision in `contractEvidence` whenever a quotation matched it, so
+ * replay invalidation and contract-deletion scrubbing catch focused replies even when the model
+ * echoed contract text without calling `read_contract`.
+ */
+function withQuoteCheckEvidence(
+  evidence: ChatReply["contractEvidence"],
+  quoteChecks: ChatQuoteChecks | null,
+): ChatReply["contractEvidence"] {
+  if (!quoteChecks?.checks.some((check) => check.status === "found")) {
+    return evidence;
+  }
+  const existing = evidence ?? [];
+  if (
+    existing.some(
+      (item) =>
+        item.id === quoteChecks.contractId &&
+        item.revision === quoteChecks.revision,
+    )
+  ) {
+    return existing;
+  }
+  return [
+    ...existing,
+    { id: quoteChecks.contractId, revision: quoteChecks.revision },
+  ];
+}
+
+/**
  * Save the question, and whatever reply text had streamed, of a saved-chat turn that ended without
  * its done event (Stop, a closed tab, a dropped connection, or a failure after admission). The record
  * that ends the turn is marked interrupted, so the thread can offer Retry and a retry with the same
@@ -595,6 +623,8 @@ export async function POST(req: Request) {
     let persistedMessages: ChatMessageRecord[] = [];
     // The contract this turn is about, owned by the user as of this request; null when unfocused.
     let focusContract: ChatFocusContractRecord | null = null;
+    // The focus contract id already recorded on the thread (kept even once the contract is deleted).
+    let storedFocusContractId: string | null = null;
 
     if (userId && !isTemporaryChat) {
       // The thread's focus comes from its stored turns, never from the client. A client value can
@@ -651,6 +681,7 @@ export async function POST(req: Request) {
       if (threadFocus) {
         if (requestedFocusId && requestedFocusId !== threadFocus.contractId)
           return NextResponse.json({ error: FOCUS_CONFLICT }, { status: 409 });
+        storedFocusContractId = threadFocus.contractId;
         focusContract = threadFocus.contract;
       } else if (requestedFocusId) {
         // A focus starts with a thread's first turn; an ordinary chat never becomes a focused one.
@@ -664,6 +695,7 @@ export async function POST(req: Request) {
             { error: FOCUS_CONTRACT_NOT_FOUND },
             { status: 404 },
           );
+        storedFocusContractId = focusContract.id;
       }
       // A retry of an interrupted turn answers that question afresh: leave its earlier attempt out
       // of the history, since the new answer replaces it.
@@ -898,6 +930,11 @@ export async function POST(req: Request) {
 
     // Only a saved chat about one of the user's contracts has its reply's quotations checked.
     const checksQuotations = Boolean(userId && !isTemporaryChat && focusContract);
+    // Retrying an interrupted first turn replaces that row, so keep its recorded focus id even
+    // after the contract was deleted so the thread does not lose its deleted-contract notice.
+    const focusContractIdToPersist =
+      focusContract?.id ??
+      (persistedMessages.length === 0 ? storedFocusContractId : null);
 
     timings.outcome = "error";
     endGeneration = timings.start("generation");
@@ -1002,7 +1039,10 @@ export async function POST(req: Request) {
                       latestUserMessage,
                       assistantMessage,
                       agentMessages: chunk.reply.agentMessages,
-                      contractEvidence: chunk.reply.contractEvidence,
+                      contractEvidence: withQuoteCheckEvidence(
+                        chunk.reply.contractEvidence,
+                        quoteChecks,
+                      ),
                       webSources: chunk.reply.webSearch?.sources,
                       toolActivity: chunk.reply.toolActivity,
                       assistantModel: chunk.reply.model ?? null,
@@ -1011,7 +1051,7 @@ export async function POST(req: Request) {
                       generatedTitle: title,
                       inputFiles,
                       generatedFiles: chunk.reply.files,
-                      focusContractId: focusContract?.id ?? null,
+                      focusContractId: focusContractIdToPersist,
                       quoteChecks,
                       signal: operationSignal,
                     }),
@@ -1094,7 +1134,7 @@ export async function POST(req: Request) {
                 partialMessage: streamedText,
                 reason: interruption,
                 inputFiles,
-                focusContractId: focusContract?.id ?? null,
+                focusContractId: focusContractIdToPersist,
                 generatedTitle,
                 contractDependent:
                   readContracts ||
@@ -1184,7 +1224,10 @@ export async function POST(req: Request) {
             latestUserMessage,
             assistantMessage,
             agentMessages,
-            contractEvidence,
+            contractEvidence: withQuoteCheckEvidence(
+              contractEvidence,
+              quoteChecks,
+            ),
             webSources: webSearch?.sources,
             toolActivity,
             assistantModel: model ?? null,
@@ -1193,7 +1236,7 @@ export async function POST(req: Request) {
             generatedTitle: title,
             inputFiles,
             generatedFiles: files,
-            focusContractId: focusContract?.id ?? null,
+            focusContractId: focusContractIdToPersist,
             quoteChecks,
             signal: operationSignal,
           }),

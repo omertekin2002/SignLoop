@@ -443,12 +443,15 @@ const Dashboard = ({
   const focusContract = focusContractId
     ? {
         contractId: focusContractId,
-        title: focusContractQuery.data
-          ? focusContractQuery.data.title?.trim() || "Untitled contract"
-          : (focusContractQuery.error as ApiError | null)?.response?.status ===
-              404
+        // Check 404 before cached data: TanStack Query keeps stale `data` alongside `error`
+        // when a refetch fails after the contract was deleted.
+        title:
+          (focusContractQuery.error as ApiError | null)?.response?.status ===
+          404
             ? null
-            : undefined,
+            : focusContractQuery.data
+              ? focusContractQuery.data.title?.trim() || "Untitled contract"
+              : undefined,
       }
     : null;
 
@@ -497,6 +500,7 @@ const Dashboard = ({
               resultJson: askResult,
             }),
             focusAsk.itemKey,
+            askResult,
           )
         : !listedAskResult && askAnalysisQuery.isPending
           ? null
@@ -705,10 +709,13 @@ const Dashboard = ({
     },
     onSuccess: (_data, contract) => {
       setContractToDelete(null);
-      // Search results include contracts in projects, whose page and list counts also change.
+      // Search results include contracts in projects, whose page and list counts also change,
+      // and cached chat threads or an open focused draft may reference the deleted contract.
       void invalidateAfterWrite(
         queryClient,
         ["contracts"],
+        ["contract", contract.id],
+        ["chat-thread"],
         ...(contract.projectId
           ? [["project", contract.projectId], ["projects"]]
           : []),

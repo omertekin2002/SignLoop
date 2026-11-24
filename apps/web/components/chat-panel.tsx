@@ -660,6 +660,22 @@ type ChatPanelProps = {
   focusDraft?: string | null;
 };
 
+// Track threads whose first focused turn was just interrupted, across panel remounts, so reopening
+// before the server commits `persistInterruptedTurn` keeps empty responses stale and retries briefly.
+const PENDING_INTERRUPTED_FIRST_TURN_MS = 10_000;
+const pendingInterruptedFirstTurns = new Map<string, number>();
+
+function isPendingInterruptedFirstTurn(threadId: string | null): boolean {
+  if (!threadId) return false;
+  const expiresAt = pendingInterruptedFirstTurns.get(threadId);
+  if (expiresAt === undefined) return false;
+  if (Date.now() > expiresAt) {
+    pendingInterruptedFirstTurns.delete(threadId);
+    return false;
+  }
+  return true;
+}
+
 /** Manage saved and temporary chat lifecycles, authenticated attachments, streaming, and cancellation. */
 export function ChatPanel({
   selectedThreadId = null,
@@ -708,10 +724,11 @@ export function ChatPanel({
   const initialPromptSignatureRef = useRef<string | null>(null);
   const focusDraftSignatureRef = useRef<string | null>(null);
   // The focus of threads this panel started from a focused new chat, shown until the server's
-  // thread detail carries it.
+  // thread detail carries it. Ref mirrors it so retries can read the focus without rebuilding the adapter.
   const [startedFocus, setStartedFocus] = useState<
     Record<string, ChatThreadFocus>
   >({});
+  const startedFocusRef = useRef<Record<string, ChatThreadFocus>>({});
   const newlyCreatedThreadIdsRef = useRef<Set<string>>(new Set());
   const previousActiveThreadIdRef = useRef<string | null>(null);
   const [attachmentAdapter] = useState(chatAttachmentAdapter);
@@ -762,6 +779,15 @@ export function ChatPanel({
   const activeThreadQuery = useQuery({
     ...chatThreadOptions(activeThreadId),
     enabled: !temporary && Boolean(activeThreadId),
+    ...(isPendingInterruptedFirstTurn(activeThreadId) ? { staleTime: 0 } : {}),
+    refetchInterval: (query) => {
+      if (!activeThreadId) return false;
+      if (query.state.data?.messages.length || query.state.data?.focus) {
+        pendingInterruptedFirstTurns.delete(activeThreadId);
+        return false;
+      }
+      return isPendingInterruptedFirstTurn(activeThreadId) ? 500 : false;
+    },
   });
 
   const pendingFocus = !temporary && !activeThreadId ? focusContract : null;
@@ -863,10 +889,22 @@ export function ChatPanel({
           }
           assertCurrent();
         }
+        const startedFocusForTurn: ChatThreadFocus | null =
+          !temporary && pendingFocusId && focusContractIdToSend
+            ? { contractId: pendingFocusId, title: pendingFocusTitle }
+            : null;
+        const focusForTurn: ChatThreadFocus | null =
+          startedFocusForTurn ??
+          (!temporary && threadId
+            ? (startedFocusRef.current[threadId] ?? null)
+            : null);
         if (!temporary && threadId && threadId !== activeThreadId) {
-          if (pendingFocusId && focusContractIdToSend) {
-            const started = { contractId: pendingFocusId, title: pendingFocusTitle };
-            setStartedFocus((previous) => ({ ...previous, [threadId!]: started }));
+          if (startedFocusForTurn) {
+            startedFocusRef.current[threadId] = startedFocusForTurn;
+            setStartedFocus((previous) => ({
+              ...previous,
+              [threadId!]: startedFocusForTurn,
+            }));
           }
           newlyCreatedThreadIdsRef.current.add(threadId);
           setActiveThreadId(threadId);
@@ -923,48 +961,52 @@ export function ChatPanel({
           temporary,
         );
 
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            threadId: temporary ? undefined : threadId,
-            // Retry resends the same user message, so it sends the same turn id, and the server
-            // returns that turn if it was already saved instead of answering and saving it twice.
-            turnId:
-              !temporary && latestMessage?.role === "user"
-                ? turnIdFor(latestMessage.id)
-                : undefined,
-            ...(!temporary && focusContractIdToSend
-              ? { focusContractId: focusContractIdToSend }
-              : {}),
-            messages: payloadMessages,
-            temporary,
-            stream: true,
-          }),
-          signal: abortSignal,
-        });
-        assertCurrent();
-
-        if (!response.ok) {
-          const failure = chatRequestFailure(
-            await response.json().catch(() => null),
-            response.status,
-            response.headers.get("Retry-After"),
-          );
-          assertCurrent();
-          // Any failure may follow admission (e.g. a provider error before streaming), so refresh
-          // usage for all of them; 429s also carry the current quota.
-          void syncUsage(queryClient, failure.quota);
-          yield { metadata: { custom: { requestError: failure } } };
-          throw new Error(failure.message);
-        }
-
         let completedSnapshot: ChatApiStreamSnapshot | null = null;
+        let streamStarted = false;
+        let httpRejected = false;
 
-        // An admitted request counts against the hourly quota however it ends.
         try {
+          const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              threadId: temporary ? undefined : threadId,
+              // Retry resends the same user message, so it sends the same turn id, and the server
+              // returns that turn if it was already saved instead of answering and saving it twice.
+              turnId:
+                !temporary && latestMessage?.role === "user"
+                  ? turnIdFor(latestMessage.id)
+                  : undefined,
+              ...(!temporary && focusContractIdToSend
+                ? { focusContractId: focusContractIdToSend }
+                : {}),
+              messages: payloadMessages,
+              temporary,
+              stream: true,
+            }),
+            signal: abortSignal,
+          });
+          assertCurrent();
+
+          if (!response.ok) {
+            httpRejected = true;
+            const failure = chatRequestFailure(
+              await response.json().catch(() => null),
+              response.status,
+              response.headers.get("Retry-After"),
+            );
+            assertCurrent();
+            // Any failure may follow admission (e.g. a provider error before streaming), so refresh
+            // usage for all of them; 429s also carry the current quota.
+            void syncUsage(queryClient, failure.quota);
+            yield { metadata: { custom: { requestError: failure } } };
+            throw new Error(failure.message);
+          }
+
+          // An admitted request counts against the hourly quota however it ends.
+          streamStarted = true;
           for await (const snapshot of readChatApiResponse(
             response,
             abortSignal,
@@ -992,7 +1034,32 @@ export function ChatPanel({
             };
           }
         } finally {
-          void syncUsage(queryClient, completedSnapshot?.quota);
+          if (streamStarted) {
+            void syncUsage(queryClient, completedSnapshot?.quota);
+          }
+          if (
+            !httpRejected &&
+            !completedSnapshot &&
+            !temporary &&
+            threadId &&
+            focusForTurn
+          ) {
+            // Even a stop before headers return can race a server-side `persistInterruptedTurn`:
+            // mark the thread pending across remounts so an immediate reopen retries an empty
+            // response instead of caching it as fresh for 60s.
+            pendingInterruptedFirstTurns.set(
+              threadId,
+              Date.now() + PENDING_INTERRUPTED_FIRST_TURN_MS,
+            );
+            void queryClient
+              .cancelQueries({ queryKey: ["chat-thread", threadId] })
+              .then(() =>
+                queryClient.invalidateQueries({
+                  queryKey: ["chat-thread", threadId],
+                  refetchType: "none",
+                }),
+              );
+          }
         }
 
         assertCurrent();
@@ -1001,6 +1068,7 @@ export function ChatPanel({
         }
 
         if (!temporary) {
+          if (threadId) pendingInterruptedFirstTurns.delete(threadId);
           setPersistenceWarning(completedSnapshot.persisted === false);
           if (completedSnapshot.persisted !== false) {
             void refreshWorkspaceList(
@@ -1014,6 +1082,11 @@ export function ChatPanel({
             completedSnapshot.storedMessages?.length
           ) {
             const stored = completedSnapshot.storedMessages;
+            // Cancel any pre-turn empty fetch for this thread before writing the persisted turn,
+            // so a slower initial GET cannot overwrite the saved messages or focus with empty data.
+            await queryClient.cancelQueries({
+              queryKey: ["chat-thread", threadId],
+            });
             queryClient.setQueryData<ChatThreadDetail>(
               ["chat-thread", threadId],
               (previous) => {
@@ -1027,11 +1100,16 @@ export function ChatPanel({
                   title: previous?.title ?? "Chat",
                   hasMore: previous?.hasMore ?? false,
                   messages,
-                  // Keep what the thread is about; the scope line reads it from here.
-                  focus: previous?.focus,
+                  // Keep what the thread is about, seeding the newly persisted first-turn (or
+                  // retried first-turn) focus so reopening within the freshness window keeps About.
+                  focus: previous?.focus ?? focusForTurn ?? null,
                 };
               },
             );
+            if (focusForTurn && focusForTurn.title === undefined) {
+              // The turn started before contract metadata arrived; refresh so the real title loads.
+              void invalidateAfterWrite(queryClient, ["chat-thread", threadId]);
+            }
           }
         }
       },

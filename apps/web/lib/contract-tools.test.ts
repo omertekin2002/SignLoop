@@ -115,7 +115,7 @@ describe("contract focus note", () => {
     expect(contractToolExtension(null, focus).createTools).toBeUndefined();
   });
 
-  it("adds the title to the egress guard, so searches and fetches cannot carry it out", () => {
+  it("adds the title to the egress guard, including shorter identifying titles, so searches and fetches cannot carry it out", () => {
     const longTitle = {
       ...focus,
       title: "Master services agreement between Acme Widgets Limited and Example Holdings PLC",
@@ -125,8 +125,15 @@ describe("contract focus note", () => {
     expect(toolContext.egressGuard.check(`search ${longTitle.title}`)).toEqual({
       error: CONTRACT_EGRESS_ERROR,
     });
+    const shortTitle = { ...focus, title: "Acme Acquisition Draft" };
+    const shortContext = context();
+    contractToolExtension("owner", shortTitle).createTools!(shortContext);
+    expect(shortContext.egressGuard.check("search Acme Acquisition Draft")).toEqual({
+      error: CONTRACT_EGRESS_ERROR,
+    });
     const unfocused = context();
     contractToolExtension("owner").createTools!(unfocused);
     expect(unfocused.egressGuard.check(`search ${longTitle.title}`)).toBeNull();
+    expect(unfocused.egressGuard.check("search Acme Acquisition Draft")).toBeNull();
   });
 });

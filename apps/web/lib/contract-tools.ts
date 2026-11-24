@@ -85,7 +85,7 @@ export function contractToolExtension(
           createTools: (context: ChatToolContext) => {
             // The title is the user's private text too: outbound searches and fetches must not
             // carry it, as for titles list_contracts returns.
-            if (focus) context.egressGuard.addContractText(focus.title);
+            if (focus) context.egressGuard.addPrivatePhrase(focus.title);
             return createContractTools({ userId, ...context });
           },
         }
@@ -121,7 +121,7 @@ export function createContractTools(deps: {
           { offset, query },
         );
         for (const contract of contracts) {
-          deps.egressGuard?.addContractText(contract.title);
+          deps.egressGuard?.addPrivatePhrase(contract.title);
           deps.onContractEvidence?.({ id: contract.id, revision: contract.revision });
         }
         return {

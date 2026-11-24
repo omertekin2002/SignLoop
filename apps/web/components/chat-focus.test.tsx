@@ -181,6 +181,117 @@ describe("a new saved chat about a contract", () => {
     expect(screen.getByRole("link", { name: "Office lease" })).toBeInTheDocument();
   });
 
+  it("caches the newly persisted focus so reopening the thread after a panel remount keeps the About line", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <Host focusContract={{ contractId, title: "Office lease" }} />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(composer()).toHaveValue(contractChatDraft("Office lease")));
+    const user = userEvent.setup();
+    await user.type(composer(), "can I end it early?");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("Clause 9 allows it.");
+    // Wait for the adapter's post-stream cache write to finish before remounting.
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData<{ messages?: unknown[]; focus?: unknown }>([
+          "chat-thread",
+          threadId,
+        ])?.messages,
+      ).toHaveLength(2),
+    );
+    const fetchesBeforeRemount = requests.filter(
+      (request) => request.url === `/api/chat/threads/${threadId}`,
+    ).length;
+
+    // Remount ChatPanel (as clicking New Chat does) and reopen the thread within the freshness window.
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <Host key="remounted" selectedThreadId={threadId} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Clause 9 allows it.");
+    expect(screen.getByRole("link", { name: "Office lease" })).toHaveAttribute(
+      "href",
+      `/contracts/${contractId}`,
+    );
+    // Served from the fresh cache without needing a refetch.
+    expect(
+      requests.filter((request) => request.url === `/api/chat/threads/${threadId}`),
+    ).toHaveLength(fetchesBeforeRemount);
+  });
+
+  it("retries an empty thread detail when a focused first turn is stopped before headers arrive", async () => {
+    const baseFetch = globalThis.fetch;
+    let threadGetCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url === "/api/chat" && method === "POST") {
+          return await new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError")),
+            );
+          });
+        }
+        if (url === `/api/chat/threads/${threadId}`) {
+          threadGetCount += 1;
+          // Initial empty GETs before `persistInterruptedTurn` commits, then the persisted turn.
+          const committed = threadGetCount >= 3;
+          return respond({
+            data: {
+              id: threadId,
+              title: "Lease",
+              hasMore: false,
+              messages: committed ? [message("q", 1, "user", "About “Office lease”: stop early")] : [],
+              focus: committed ? { contractId, title: "Office lease" } : null,
+            },
+          });
+        }
+        return baseFetch(input, init);
+      }),
+    );
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+    });
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <Host focusContract={{ contractId, title: "Office lease" }} />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(composer()).toHaveValue(contractChatDraft("Office lease")));
+    const user = userEvent.setup();
+    await user.type(composer(), "stop early");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel generation" }));
+
+    // Immediately remount and reopen while the server's interrupted save is still committing.
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <Host key="reopened" selectedThreadId={threadId} />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(
+      () =>
+        expect(screen.getByRole("link", { name: "Office lease" })).toHaveAttribute(
+          "href",
+          `/contracts/${contractId}`,
+        ),
+      { timeout: 3000 },
+    );
+  });
+
   it("leaves a draft the user already started alone", async () => {
     const view = renderPanel({ focusContract: { contractId } });
     await waitFor(() => expect(composer()).toBeEnabled());

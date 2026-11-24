@@ -337,6 +337,7 @@ const ContractDetails = () => {
         ["contracts"],
         ["projects"],
         ["project"],
+        ["chat-thread"],
       );
       queryClient.removeQueries({ queryKey: ["contract", id] });
       router.push("/dashboard");
