@@ -3163,6 +3163,11 @@ describe.skipIf(!connectionString)("database integration", () => {
         });
         expect(await saveContractNotesForUser(userId, item.id, { acceptanceReasons: "Fair", openQuestions: "Deposit?" }, null))
           .toMatchObject({ status: "saved" });
+        await pool.current!.query(
+          `INSERT INTO clarify_decisions(contract_id, user_id, item_key, source_revision, state, item_label)
+           VALUES ($1, $2, 'v1:unstated:term', $3, 'accepted', 'Term')`,
+          [item.id, userId, `sha256:${"a".repeat(64)}`],
+        );
       }
       // A legacy file row: no contract, and its object key in blob_path.
       const legacyKey = `account-legacy-${crypto.randomUUID()}`;
@@ -3212,6 +3217,7 @@ describe.skipIf(!connectionString)("database integration", () => {
       analyses: await count("analyses", "contract_id = ANY($1::uuid[])", [account.contractIds]),
       contractFiles: await count("contract_files", "user_id = $1", [account.userId]),
       contractNotes: await count("contract_notes", "contract_id = ANY($1::uuid[])", [account.contractIds]),
+      clarifyDecisions: await count("clarify_decisions", "contract_id = ANY($1::uuid[])", [account.contractIds]),
       contextDocuments: await count("context_documents", "project_id = ANY($1::uuid[])", [account.projectIds]),
       threads: await count("chat_threads", "user_id = $1", [account.userId]),
       messages: await count("chat_messages", "thread_id = ANY($1::uuid[])", [account.threadIds]),
@@ -3328,6 +3334,11 @@ describe.skipIf(!connectionString)("database integration", () => {
       });
       const notes = { acceptanceReasons: `Accept ${tag}`, openQuestions: `Ask ${tag}` };
       expect(await saveContractNotesForUser(userId, contract.id, notes, null)).toMatchObject({ status: "saved" });
+      await pool.current!.query(
+        `INSERT INTO clarify_decisions(contract_id, user_id, item_key, source_revision, state, reason, item_label)
+         VALUES ($1, $2, 'v1:unstated:term', $3, 'accepted', $4, 'Term')`,
+        [contract.id, userId, `sha256:${"a".repeat(64)}`, `Decided ${tag}`],
+      );
       // A contract without notes exports null.
       const unnoted = await createContractForUser({ userId, title: "Unnoted" });
       const thread = await createChatThreadForUser({ userId, title: "Questions" });
@@ -3369,6 +3380,9 @@ describe.skipIf(!connectionString)("database integration", () => {
       expect(data.contractNotes).toEqual([
         { contractId: owner.contract.id, ...owner.notes, createdAt: expect.any(Date), updatedAt: expect.any(Date) },
       ]);
+      expect(data.clarifyDecisions.map((row) => [row.contractId, row.reason])).toEqual([
+        [owner.contract.id, `Decided ${owner.tag}`],
+      ]);
       expect(data.analyses.map((row) => [row.contractId, row.resultJson])).toEqual([
         [owner.contract.id, { summary: `Analysis ${owner.tag}` }],
       ]);
@@ -3396,10 +3410,15 @@ describe.skipIf(!connectionString)("database integration", () => {
         id: string;
         files: Array<{ path: string }>;
         notes: Record<string, unknown> | null;
+        decisions: Array<Record<string, unknown>>;
       }>;
       expect(contractsJson.map((row) => [row.id, row.notes])).toEqual([
         [owner.contract.id, { ...owner.notes, createdAt: expect.any(String), updatedAt: expect.any(String) }],
         [owner.unnoted.id, null],
+      ]);
+      expect(contractsJson.map((row) => row.decisions.map((decision) => decision.reason))).toEqual([
+        [`Decided ${owner.tag}`],
+        [],
       ]);
       expect(contractsJson[0]!.files.map((file) => file.path)).toEqual([
         `files/contracts/${owner.contract.id}/lease.txt`,
@@ -3420,7 +3439,7 @@ describe.skipIf(!connectionString)("database integration", () => {
       // An account with nothing in it exports empty collections.
       const empty = await getAccountExportForUser(await resolveWorkOSUserId({ id: `user_${crypto.randomUUID()}` }));
       expect(empty).toEqual({
-        contracts: [], contractFiles: [], contractNotes: [], analyses: [], projects: [], contextDocuments: [],
+        contracts: [], contractFiles: [], contractNotes: [], clarifyDecisions: [], analyses: [], projects: [], contextDocuments: [],
         chatThreads: [], chatMessages: [], chatFiles: [], chatImages: [], settings: null,
       });
     } finally {
