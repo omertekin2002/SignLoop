@@ -276,6 +276,32 @@ describe("BeforeYouSign decisions", () => {
     expect(screen.queryByLabelText("Reason for your decision on Term")).toBeNull();
   });
 
+  it("does not let a list read started before a save land over it", async () => {
+    fetchMock.mockResolvedValueOnce(json({ decisions: [] }));
+    const { user, queryClient } = renderCard();
+    await user.click(await screen.findByRole("button", { name: "Record decision on Term" }));
+    await user.click(screen.getByRole("radio", { name: "Resolved" }));
+
+    // A reload of another item is still waiting for its list when this save finishes.
+    let answerOldRead: (response: Response) => void = () => {};
+    fetchMock.mockReturnValueOnce(new Promise<Response>((done) => (answerOldRead = done)));
+    act(() => void queryClient.invalidateQueries({ queryKey: ["clarify-decisions", CONTRACT_ID], exact: true }));
+    await waitFor(() => expect(requests(fetchMock, "GET")).toHaveLength(2));
+
+    const saved = decision({ itemKey: unstatedDecisionKey("Term"), itemLabel: "Term: Not specified", reason: "" });
+    fetchMock.mockResolvedValueOnce(json(saved));
+    fetchMock.mockResolvedValueOnce(json({ decisions: [saved] }));
+    await user.click(screen.getByRole("button", { name: "Save decision on Term" }));
+    expect(await screen.findByRole("button", { name: "Edit decision on Term" })).toBeInTheDocument();
+    // The list is read again after the write.
+    await waitFor(() => expect(requests(fetchMock, "GET")).toHaveLength(3));
+
+    // The older read answers late, without the new decision; it is ignored.
+    await act(async () => answerOldRead(json({ decisions: [] })));
+    expect(screen.getByRole("button", { name: "Edit decision on Term" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record decision on Term" })).toBeNull();
+  });
+
   it("cancels an edit without sending anything", async () => {
     fetchMock.mockResolvedValueOnce(json({ decisions: [decision()] }));
     const { user } = renderCard();

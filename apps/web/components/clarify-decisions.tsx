@@ -206,21 +206,34 @@ function dropFromCache(queryClient: QueryClient, contractId: string, id: string)
 /** Applies a write's outcome to the cached list; a conflict's stored row only on "Reload". */
 function useDecisionWrites(contractId: string) {
   const queryClient = useQueryClient();
-  const refresh = () => void invalidateAfterWrite(queryClient, decisionsKey(contractId));
-  const apply = (result: WriteResult, removedId?: string) => {
-    if (result.status === "saved") storeInCache(queryClient, contractId, result.decision);
-    else if (result.status === "removed" && removedId) dropFromCache(queryClient, contractId, removedId);
-    else if (result.status === "stale") {
+  /**
+   * Applies `change` to the cached list. A list read still in flight (say, another item's reload)
+   * started before this write and would land over it, so it is cancelled first and the list is
+   * fetched again afterwards; `refetch` fetches again in any case.
+   */
+  const writeThrough = async (change: () => void, refetch: boolean) => {
+    const key = decisionsKey(contractId);
+    const inFlight = queryClient.isFetching({ queryKey: key, exact: true }) > 0;
+    if (inFlight) await queryClient.cancelQueries({ queryKey: key, exact: true });
+    change();
+    if (inFlight || refetch) await invalidateAfterWrite(queryClient, key);
+  };
+  const apply = async (result: WriteResult, removedId?: string) => {
+    if (result.status === "saved") {
+      await writeThrough(() => storeInCache(queryClient, contractId, result.decision), false);
+    } else if (result.status === "removed" && removedId) {
+      await writeThrough(() => dropFromCache(queryClient, contractId, removedId), false);
+    } else if (result.status === "stale") {
       // The analysis shown was replaced elsewhere: reload it and the decisions.
-      void invalidateAfterWrite(queryClient, decisionsKey(contractId), ["contract", contractId]);
+      await invalidateAfterWrite(queryClient, decisionsKey(contractId), ["contract", contractId]);
     }
   };
   /** Shows what a 409 returned as stored, then refetches the whole list. */
-  const reload = (stored: StoredClarifyDecision | null, replacedId: string | null) => {
-    if (stored) storeInCache(queryClient, contractId, stored);
-    else if (replacedId) dropFromCache(queryClient, contractId, replacedId);
-    refresh();
-  };
+  const reload = (stored: StoredClarifyDecision | null, replacedId: string | null) =>
+    void writeThrough(() => {
+      if (stored) storeInCache(queryClient, contractId, stored);
+      else if (replacedId) dropFromCache(queryClient, contractId, replacedId);
+    }, true);
   return { apply, reload };
 }
 
@@ -292,28 +305,32 @@ type Conflict = { stored: StoredClarifyDecision | null; verb: "saved" | "removed
 type EditorState = { draft: Draft | null; conflict: Conflict | null };
 
 /**
- * An item's open editor and unresolved conflict, kept in the query cache rather than the component.
- * The contract page remounts the report when an analysis finishes or another one is shown, and the
- * person's unsaved draft must survive that, as the notes card's does. Keyed by the contract, the
- * source revision and the item, so it returns only on the same item of the same text.
+ * An item's open editor and unresolved conflict. The contract page remounts the report when an
+ * analysis finishes or another one is shown, and the person's unsaved draft must survive that, as
+ * the notes card's does, so every change is also written to the query cache, keyed by the contract,
+ * the source revision and the item: it returns only on the same item of the same text. Component
+ * state stays the source while mounted, because a cache update reaches observers a tick later and
+ * a controlled input would first snap back. A write that finishes after an unmount still updates
+ * the cached copy.
  */
 function useEditorState(contractId: string, sourceRevision: string, itemKey: string) {
   const queryClient = useQueryClient();
   const key = ["clarify-decisions", contractId, "editor", sourceRevision, itemKey] as const;
-  const entry = useQuery({
-    queryKey: key,
-    queryFn: () => null as EditorState | null,
-    enabled: false,
-    staleTime: Infinity,
-    // Nothing refetches this entry, and it must outlive the default five-minute collection.
-    gcTime: Infinity,
-  });
-  const update = (change: Partial<EditorState>) =>
-    queryClient.setQueryData<EditorState | null>(key, (previous) => {
-      const next = { draft: null, conflict: null, ...previous, ...change };
-      return next.draft || next.conflict ? next : null;
-    });
-  return { state: entry.data ?? null, update };
+  const [state, setState] = useState<EditorState | null>(
+    () => queryClient.getQueryData<EditorState | null>(key) ?? null,
+  );
+  const update = (change: Partial<EditorState>) => {
+    const next = (previous: EditorState | null | undefined): EditorState | null => {
+      const merged = { draft: null, conflict: null, ...previous, ...change };
+      return merged.draft || merged.conflict ? merged : null;
+    };
+    setState(next);
+    // Nothing fetches or observes these entries, and they must outlive the default five-minute
+    // collection, so they are created with no collection at all.
+    queryClient.setQueryDefaults(["clarify-decisions", contractId, "editor"], { gcTime: Infinity });
+    queryClient.setQueryData<EditorState | null>(key, next);
+  };
+  return { state, update };
 }
 
 /** The decision control on one keyed item: its saved decision, or a way to record one. */
@@ -355,8 +372,10 @@ function DecisionControl({
             expectedUpdatedAt: action.draft.base?.updatedAt ?? null,
           })
         : deleteDecision(contractId, action.decision),
-    onSuccess: (result, action) => {
-      apply(result, action.kind === "remove" ? action.decision.id : undefined);
+    onSuccess: async (result, action) => {
+      // The stale case refetches in the background; the message shows at once.
+      const applied = apply(result, action.kind === "remove" ? action.decision.id : undefined);
+      if (result.status !== "stale") await applied;
       if (result.status === "conflict") {
         setConflict({ stored: result.decision, verb: action.kind === "save" ? "saved" : "removed" });
       } else if (result.status === "stale") {
@@ -559,8 +578,8 @@ function EarlierDecision({
   const [message, setMessage] = useState<string | null>(null);
   const remove = useMutation({
     mutationFn: () => deleteDecision(contractId, decision),
-    onSuccess: (result) => {
-      apply(result, decision.id);
+    onSuccess: async (result) => {
+      await apply(result, decision.id);
       if (result.status === "conflict") setConflict(result.decision);
       else setMessage(null);
     },
