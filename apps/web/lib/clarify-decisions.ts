@@ -11,6 +11,13 @@ import type { AnalysisResult } from "@/lib/schemas";
 export const CLARIFY_DECISION_STATES = ["resolved", "accepted", "open"] as const;
 export type ClarifyDecisionState = (typeof CLARIFY_DECISION_STATES)[number];
 
+/** How each state is named on the page and in the decision brief. */
+export const CLARIFY_DECISION_STATE_LABELS: Record<ClarifyDecisionState, string> = {
+  resolved: "Resolved",
+  accepted: "Accepted",
+  open: "Still open",
+};
+
 export const CLARIFY_DECISION_REASON_MAX_CHARACTERS = 2_000;
 export const CLARIFY_DECISION_LABEL_MAX_CHARACTERS = 500;
 export const CLARIFY_DECISION_KEY_MAX_CHARACTERS = 200;

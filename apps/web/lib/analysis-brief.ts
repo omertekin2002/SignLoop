@@ -13,6 +13,7 @@ import {
 import { keyDateCitationRef } from "@/lib/key-date-citations";
 import {
   clarifyBeforeSigning,
+  type ClarifyChecklist,
   KEY_DATE_LABELS,
   NO_VERIFIED_QUOTATION,
   NOT_SPECIFIED,
@@ -29,10 +30,39 @@ import {
   TERM_CITATION,
   type CitationRef,
 } from "@/lib/source-citations";
+import {
+  analysisSourceRevision,
+  clarifyChecklistKeys,
+  matchClarifyDecisions,
+  type ClarifyChecklistKeys,
+  type ClarifyDecisionRef,
+} from "@/lib/clarify-keys";
+import {
+  CLARIFY_DECISION_STATE_LABELS,
+  type ClarifyDecisionState,
+} from "@/lib/clarify-decisions";
 import { formatDate, isRecord } from "@/lib/utils";
 
 /** The stored disclaimer's schema default, for reports saved without one. */
 const DEFAULT_DISCLAIMER = "This is an AI analysis, not legal advice.";
+
+/**
+ * One of the person's stored decisions on a "Before you sign" item, as the decisions API returns it
+ * (`StoredClarifyDecision` in `components/clarify-decisions.tsx`); only what the brief shows.
+ */
+export type BriefDecision = ClarifyDecisionRef & {
+  state: ClarifyDecisionState;
+  reason: string;
+  /** The item's wording when the decision was saved, shown once the item is gone. */
+  itemLabel: string;
+  updatedAt: string | Date;
+};
+
+/** The contract's decisions, or why they are not available. */
+export type BriefDecisions =
+  | { status: "loaded"; decisions: readonly BriefDecision[] }
+  | { status: "loading" }
+  | { status: "error" };
 
 export type AnalysisBriefInput = {
   /** What the contract page already holds; `id` checks that citations belong to this contract. */
@@ -51,6 +81,11 @@ export type AnalysisBriefInput = {
   historical?: boolean;
   /** IANA zone for dates; the runtime's local zone when omitted, as the page shows them. */
   timeZone?: string;
+  /**
+   * The person's own decisions on the checklist's items, listed under "Your decisions" after
+   * "Before you sign". Left out, the brief has no such section.
+   */
+  decisions?: BriefDecisions;
 };
 
 function text(value: unknown): string | null {
@@ -627,12 +662,7 @@ function findingsSection(
  * escaped stored values only. It never says there is nothing to clarify, and lists every coverage
  * gap again even though the Coverage section above has them.
  */
-function clarifySection(input: AnalysisBriefInput): string[] {
-  const checklist = clarifyBeforeSigning({
-    contractId: input.contract.id,
-    extractionWarning: input.contract.extractionWarning,
-    resultJson: input.analysis.resultJson,
-  });
+function clarifySection(checklist: ClarifyChecklist): string[] {
   const lines = [
     "## Before you sign: what to clarify",
     "",
@@ -700,10 +730,114 @@ function clarifySection(input: AnalysisBriefInput): string[] {
   return lines;
 }
 
+/** Each keyed checklist item's key with the wording the brief gives it, in checklist order. */
+function keyedItemLabels(
+  checklist: ClarifyChecklist,
+  keys: ClarifyChecklistKeys,
+): Map<string, string> {
+  const labels = new Map<string, string>();
+  const add = (key: string | undefined, label: string) => {
+    if (key !== undefined && !labels.has(key)) labels.set(key, label);
+  };
+  checklist.unverified.forEach((fact, index) =>
+    add(keys.unverified[index]?.key, `**${inline(fact.fact)}:** ${inline(fact.value)}`),
+  );
+  checklist.unstated.forEach((fact, index) =>
+    add(keys.unstated[index]?.key, `**${inline(fact.fact)}:** ${NOT_SPECIFIED}`),
+  );
+  checklist.findings.forEach((finding, index) =>
+    add(keys.findings[index]?.key, `**Finding ${finding.number}:** ${inline(finding.type)}`),
+  );
+  checklist.questions.forEach((question, index) =>
+    add(keys.questions[index]?.key, `**Question ${index + 1}:** ${inline(question)}`),
+  );
+  return labels;
+}
+
+/** A decision's state, date and reason, as sub-items of its item's line. */
+function decisionLines(decision: BriefDecision, timeZone: string | undefined): string[] {
+  const state = CLARIFY_DECISION_STATE_LABELS[decision.state] ?? "Unknown";
+  const updated = formatDate(decision.updatedAt, "MMM d, yyyy", "", timeZone) || "Unknown date";
+  const reason = typeof decision.reason === "string" ? decision.reason.trim() : "";
+  return [
+    `  - Your decision: ${state}`,
+    `  - Last updated: ${updated}`,
+    ...(reason
+      ? ["  - Your reason:", ...blockquote(reason).map((line) => `    ${line}`)]
+      : ["  - Your reason: None given."]),
+  ];
+}
+
+/**
+ * The person's own decisions on "Before you sign" items, matched to the exported analysis as the
+ * page matches them (`matchClarifyDecisions`): attached ones under their item, in checklist order;
+ * every other one, with the wording it was saved with, under "From earlier analyses". Reasons are
+ * the person's own text and escaped like any other. Nothing here changes another section.
+ */
+function decisionsSection(
+  checklist: ClarifyChecklist,
+  input: AnalysisBriefInput,
+  decisions: BriefDecisions,
+): string[] {
+  const lines = ["## Your decisions", ""];
+  if (decisions.status === "loading") {
+    lines.push(
+      "Your decisions are not included: they had not finished loading when this brief was made. Try again in a moment.",
+    );
+    return lines;
+  }
+  if (decisions.status === "error") {
+    lines.push(
+      "Your decisions are not included: they could not be loaded. They have not been lost.",
+    );
+    return lines;
+  }
+  if (!decisions.decisions.length) {
+    lines.push("You haven't recorded any decisions.");
+    return lines;
+  }
+  lines.push(
+    "These are your own notes on the items in Before you sign, in your own words. They are not part of the analysis.",
+  );
+
+  const keys = clarifyChecklistKeys(checklist, {
+    contractId: input.contract.id,
+    resultJson: input.analysis.resultJson,
+  });
+  const { matched, earlier } = matchClarifyDecisions(
+    decisions.decisions,
+    keys,
+    analysisSourceRevision(input.contract.id, input.analysis.resultJson),
+  );
+  for (const [key, label] of keyedItemLabels(checklist, keys)) {
+    const decision = matched.get(key);
+    if (decision) lines.push("", `- ${label}`, ...decisionLines(decision, input.timeZone));
+  }
+  if (earlier.length) {
+    lines.push(
+      "",
+      "### From earlier analyses",
+      "",
+      "You recorded these on an earlier analysis or an earlier version of the contract's text. Each is shown with the item's wording when you saved it.",
+    );
+    for (const decision of earlier) {
+      lines.push(
+        "",
+        `- **Item when saved:** ${inline(text(decision.itemLabel) ?? "Unnamed item")}`,
+        "  - No longer matches an item in this analysis.",
+        ...decisionLines(decision, input.timeZone),
+      );
+    }
+  }
+  return lines;
+}
+
 /**
  * The stored analysis as a portable Markdown decision brief. Pure: it reads only its input and
- * runs no inference. Every piece of contract or model text is escaped, so it cannot change the
- * brief's structure, and the coverage notices and extraction warning are never dropped.
+ * runs no inference. Every piece of contract or model text, and every decision reason, is escaped,
+ * so it cannot change the brief's structure, and the coverage notices and extraction warning are
+ * never dropped. With `decisions`, the person's own decisions follow "Before you sign" and change
+ * no other section.
  */
 export function renderAnalysisBriefMarkdown(input: AnalysisBriefInput): {
   filename: string;
@@ -722,12 +856,19 @@ export function renderAnalysisBriefMarkdown(input: AnalysisBriefInput): {
     (point) => !coverageNotices.includes(point),
   );
 
+  const checklist = clarifyBeforeSigning({
+    contractId,
+    extractionWarning: input.contract.extractionWarning,
+    resultJson: input.analysis.resultJson,
+  });
+
   const sections = [
     identitySection(input, title),
     overviewSection(result, keyPoints),
     coverageSection(extractionWarning, reportNotices),
     jurisdictionSection(result, contractId),
-    clarifySection(input),
+    clarifySection(checklist),
+    ...(input.decisions ? [decisionsSection(checklist, input, input.decisions)] : []),
     paymentsSection(result, contractId),
     termSection(result, contractId),
     obligationsSection(result, contractId),

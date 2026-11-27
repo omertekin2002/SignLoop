@@ -3,7 +3,12 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BeforeYouSign } from "@/components/before-you-sign";
-import { decisionItemLabel, type StoredClarifyDecision } from "@/components/clarify-decisions";
+import {
+  decisionItemLabel,
+  useBriefDecisions,
+  type StoredClarifyDecision,
+} from "@/components/clarify-decisions";
+import { DownloadBriefButton } from "@/components/download-brief-button";
 import { CLARIFY_DECISION_LABEL_MAX_CHARACTERS } from "@/lib/clarify-decisions";
 import {
   findingDecisionKey,
@@ -577,5 +582,118 @@ describe("decisionItemLabel", () => {
     expect(decisionItemLabel("   ", "question 1")).toBe("question 1");
     const long = "é".repeat(CLARIFY_DECISION_LABEL_MAX_CHARACTERS + 20);
     expect([...decisionItemLabel(long, "x")]).toHaveLength(CLARIFY_DECISION_LABEL_MAX_CHARACTERS);
+  });
+});
+
+describe("useBriefDecisions", () => {
+  const fetchMock = vi.fn();
+  const createObjectURL = vi.fn((_: Blob) => "blob:brief");
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    createObjectURL.mockClear();
+    vi.stubGlobal("fetch", fetchMock);
+    Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  });
+
+  function BriefButton({ enabled = true }: { enabled?: boolean }) {
+    const decisions = useBriefDecisions(CONTRACT_ID, enabled);
+    return (
+      <>
+        <p data-testid="status">{decisions.status}</p>
+        <DownloadBriefButton
+          contract={{ id: CONTRACT_ID, title: "Gym membership", status: "ANALYZED" }}
+          analysis={{ createdAt: FIRST_SAVE, riskBadge: "LOW", resultJson: RESULT }}
+          decisions={decisions}
+        />
+      </>
+    );
+  }
+
+  async function downloaded(user: ReturnType<typeof userEvent.setup>): Promise<string> {
+    createObjectURL.mockClear();
+    await user.click(screen.getByRole("button", { name: "Download brief" }));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    return createObjectURL.mock.calls[0]![0].text();
+  }
+
+  it("reads the checklist's decisions from its cache entry, with no request of its own", async () => {
+    fetchMock.mockResolvedValueOnce(json({ decisions: [decision()] }));
+    const { user, queryClient } = renderCard();
+    await screen.findByText("The club confirmed it in writing.");
+    expect(requests(fetchMock, "GET")).toHaveLength(1);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BriefButton />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("status")).toHaveTextContent("loaded");
+    const markdown = await downloaded(user);
+    expect(markdown).toContain(
+      "## Your decisions\n\nThese are your own notes on the items in Before you sign, in your own words.",
+    );
+    // The date is in the runtime's zone, which these tests do not set.
+    expect(markdown).toMatch(
+      /- \*\*Question 1:\*\* Can I cancel early\?\n {2}- Your decision: Resolved\n {2}- Last updated: Nov 2[01], 2026\n {2}- Your reason:\n {4}> The club confirmed it in writing\./,
+    );
+    expect(requests(fetchMock, "GET")).toHaveLength(1);
+  });
+
+  it("is loading until the list arrives, and says so in the brief", async () => {
+    let resolve: (response: Response) => void = () => {};
+    fetchMock.mockReturnValueOnce(new Promise<Response>((done) => (resolve = done)));
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BriefButton />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("status")).toHaveTextContent("loading");
+    expect(await downloaded(user)).toContain(
+      "## Your decisions\n\nYour decisions are not included: they had not finished loading",
+    );
+
+    await act(async () => resolve(json({ decisions: [] })));
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("loaded"));
+    expect(await downloaded(user)).toContain("## Your decisions\n\nYou haven't recorded any decisions.");
+    expect(fetchMock).toHaveBeenCalledWith(DECISIONS_URL, expect.objectContaining({ cache: "no-store" }));
+  });
+
+  it("reports a failed load, and keeps a list it already has when a refetch fails", async () => {
+    fetchMock.mockResolvedValueOnce(json({ error: "nope" }, 500));
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BriefButton />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("error"));
+    expect(await downloaded(user)).toContain(
+      "## Your decisions\n\nYour decisions are not included: they could not be loaded.",
+    );
+
+    fetchMock.mockResolvedValueOnce(json({ decisions: [decision()] }));
+    await act(() => queryClient.refetchQueries());
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("loaded"));
+    fetchMock.mockResolvedValueOnce(json({ error: "nope" }, 500));
+    await act(() => queryClient.refetchQueries());
+    expect(screen.getByTestId("status")).toHaveTextContent("loaded");
+    expect(await downloaded(user)).toContain("> The club confirmed it in writing.");
+  });
+
+  it("sends no request while disabled", () => {
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BriefButton enabled={false} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("status")).toHaveTextContent("loading");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

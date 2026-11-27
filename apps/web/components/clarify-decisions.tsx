@@ -12,6 +12,7 @@ import { Loader2, PenLine, RefreshCw } from "lucide-react";
 import type { ClarifyChecklist } from "@/lib/analysis-clarify";
 import {
   CLARIFY_DECISION_LABEL_MAX_CHARACTERS,
+  CLARIFY_DECISION_STATE_LABELS,
   CLARIFY_DECISION_REASON_MAX_CHARACTERS,
   CLARIFY_DECISION_STATES,
   type ClarifyDecisionState,
@@ -22,6 +23,7 @@ import {
   matchClarifyDecisions,
   type ClarifyChecklistKeys,
 } from "@/lib/clarify-keys";
+import type { BriefDecisions } from "@/lib/analysis-brief";
 import type { AnalysisResult } from "@/lib/schemas";
 import { invalidateAfterWrite } from "@/lib/invalidate-after-write";
 import { cn, formatDate } from "@/lib/utils";
@@ -72,12 +74,6 @@ export type ClarifyDecisionsView = {
   earlier: ReactNode;
 };
 
-export const CLARIFY_DECISION_STATE_LABELS: Record<ClarifyDecisionState, string> = {
-  resolved: "Resolved",
-  accepted: "Accepted",
-  open: "Still open",
-};
-
 export const AMBIGUOUS_ITEM_LINE =
   "Appears more than once in this analysis, so a decision can't be attached.";
 export const NO_REVISION_HINT =
@@ -102,6 +98,35 @@ function codePoints(value: string): number {
 export function decisionItemLabel(label: string, fallback: string): string {
   const clean = label.replaceAll("\u0000", "").replace(/\s+/g, " ").trim() || fallback;
   return [...clean].slice(0, CLARIFY_DECISION_LABEL_MAX_CHARACTERS).join("").trim();
+}
+
+/**
+ * The contract's decisions list. The checklist and the brief buttons share this one cache entry,
+ * so the brief adds no request once the checklist has loaded it.
+ */
+function decisionsQueryOptions(contractId: string) {
+  return {
+    queryKey: decisionsKey(contractId),
+    queryFn: ({ signal }: { signal: AbortSignal }) => fetchDecisions(contractId, signal),
+    // Saves update the list in place and a 409 shows what another tab stored, so a refetch on
+    // focus would only replace what the person is looking at.
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  };
+}
+
+/**
+ * The contract's decisions for the decision brief (`renderAnalysisBriefMarkdown`'s `decisions`),
+ * read from the checklist's cache entry: loaded, still loading, or failed to load. A failed
+ * refetch keeps the list it already has, as the checklist does.
+ */
+export function useBriefDecisions(contractId: string, enabled: boolean): BriefDecisions {
+  const query = useQuery({ ...decisionsQueryOptions(contractId), enabled });
+  const { data, isError } = query;
+  return useMemo<BriefDecisions>(() => {
+    if (data) return { status: "loaded", decisions: data };
+    return isError ? { status: "error" } : { status: "loading" };
+  }, [data, isError]);
 }
 
 class DecisionRequestError extends Error {
@@ -652,14 +677,7 @@ export function ClarifyDecisions({
   );
   const revision = useMemo(() => analysisSourceRevision(contractId, result), [contractId, result]);
 
-  const decisions = useQuery({
-    queryKey: decisionsKey(contractId),
-    queryFn: ({ signal }) => fetchDecisions(contractId, signal),
-    // Saves update the list in place and a 409 shows what another tab stored, so a refetch on
-    // focus would only replace what the person is looking at.
-    staleTime: Infinity,
-    refetchOnWindowFocus: false,
-  });
+  const decisions = useQuery(decisionsQueryOptions(contractId));
 
   const match = useMemo(
     () => (decisions.data ? matchClarifyDecisions(decisions.data, keys, revision) : null),
