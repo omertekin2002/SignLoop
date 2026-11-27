@@ -989,6 +989,24 @@ export async function getChatFocusContractForUser(
 }
 
 /**
+ * The contract a saved thread is about, as SQL: the `focusContractId` on its earliest user message
+ * that carries one, so a later turn naming another id never moves it. `threadId` is the SQL
+ * expression for the thread's id. Both a thread's restored focus and a contract's chat list read
+ * this one rule, so the two cannot disagree; it walks `chat_messages_thread_position_idx`.
+ */
+function threadFocusContractIdSql(threadId: string): string {
+  return `(
+    select m.metadata_json->>'focusContractId'
+    from chat_messages m
+    where m.thread_id = ${threadId}
+      and m.role = 'user'
+      and m.metadata_json->>'focusContractId' is not null
+    order by m.position asc
+    limit 1
+  )`;
+}
+
+/**
  * The focus a saved thread took from its stored turns: the contract id on its earliest focused
  * user message, and that contract while the owner still has it (null once it was deleted). Null
  * when the thread has no focus, or is missing or another user's.
@@ -1001,31 +1019,29 @@ export async function getChatThreadFocusForUser(
   contract: ChatFocusContractRecord | null;
 } | null> {
   await ensureSchema();
-  const { rows } = await sql<{
+  const { rows } = await sql.query<{
     contractId: string;
     id: string | null;
     title: string | null;
     confirmedJurisdiction: string | null;
-  }>`
-    select
+  }>(
+    `select
       focus.contract_id as "contractId",
       c.id,
       c.title,
       c.confirmed_jurisdiction as "confirmedJurisdiction"
     from (
-      select m.metadata_json->>'focusContractId' as contract_id
-      from chat_messages m
-      join chat_threads t on t.id = m.thread_id and t.user_id = ${userId}
-      where m.thread_id = ${threadId}
-        and m.role = 'user'
-        and m.metadata_json->>'focusContractId' is not null
-      order by m.position asc
-      limit 1
+      select ${threadFocusContractIdSql("t.id")} as contract_id
+      from chat_threads t
+      where t.id = $2
+        and t.user_id = $1
     ) focus
     left join contracts c
       on c.id::text = focus.contract_id
-      and c.user_id = ${userId}
-  `;
+      and c.user_id = $1
+    where focus.contract_id is not null`,
+    [userId, threadId],
+  );
   const row = rows[0];
   if (!row) return null;
   return {
@@ -2443,19 +2459,36 @@ export async function createChatThreadForUser(input: {
   return created;
 }
 
+/**
+ * The owner's saved chats, most recently active first. A search matches titles; a contract id keeps
+ * only the chats about that contract by the same rule as `getChatThreadFocusForUser`, and only
+ * while the owner has that contract, so another user's contract id lists nothing.
+ */
 export async function listChatThreadsByUserId(
   userId: string,
   pagination?: PaginationOptions,
   search: string | null = null,
+  contractId: string | null = null,
 ): Promise<PaginatedResult<ChatThreadSummaryRecord>> {
   await ensureSchema();
 
   const { limit, offset } = clampPagination(pagination);
   const pattern = search ? `%${escapeLikePattern(search)}%` : null;
+  const filters = `
+    where t.user_id = $1
+      and ($2::text is null or t.title ilike $2::text escape '\\')
+      and (
+        $3::text is null
+        or (
+          exists (select 1 from contracts c where c.id = $3::text::uuid and c.user_id = $1)
+          and ${threadFocusContractIdSql("t.id")} = $3::text
+        )
+      )`;
+  const params = [userId, pattern, contractId];
 
   const [{ rows }, { rows: countRows }] = await Promise.all([
-    sql<ChatThreadSummaryRecord>`
-      select
+    sql.query<ChatThreadSummaryRecord>(
+      `select
         t.id,
         t.user_id as "userId",
         t.title,
@@ -2467,17 +2500,17 @@ export async function listChatThreadsByUserId(
           where m.thread_id = t.id
         ) as "messageCount"
       from chat_threads t
-      where t.user_id = ${userId}
-        and (${pattern}::text is null or t.title ilike ${pattern}::text escape '\\')
+      ${filters}
       order by t.updated_at desc
-      limit ${limit} offset ${offset}
-    `,
-    sql<{ count: number }>`
-      select count(*)::integer as count
+      limit $4 offset $5`,
+      [...params, limit, offset],
+    ),
+    sql.query<{ count: number }>(
+      `select count(*)::integer as count
       from chat_threads t
-      where t.user_id = ${userId}
-        and (${pattern}::text is null or t.title ilike ${pattern}::text escape '\\')
-    `,
+      ${filters}`,
+      params,
+    ),
   ]);
 
   return { data: rows, total: countRows[0]?.count ?? 0, limit, offset };

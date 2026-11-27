@@ -88,6 +88,11 @@ for (const theme of THEMES) {
     await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
     const ask = page.getByRole("link", { name: "Ask about this contract" });
     await expect(ask).toHaveAttribute("href", `/dashboard?contract=${id}`);
+    // No chat is about the contract yet.
+    const chatsCard = page.getByRole("region", { name: "Chats about this contract" });
+    await expect(
+      chatsCard.getByText("No chats about this contract yet. Start one with Ask about this contract."),
+    ).toBeVisible();
     await expectNoA11yViolations(page, { theme });
 
     const chatRequests = recordChatRequests(page);
@@ -187,6 +192,47 @@ for (const theme of THEMES) {
     );
     await expect(composer).toHaveValue("");
     await expectNoA11yViolations(page, { theme });
+
+    // An unscoped chat of the same user is never one of the contract's chats.
+    const unscopedTitle = `E2E unscoped chat ${theme} ${Date.now()}`;
+    const unscoped = await page.request.post("/api/chat/threads", { data: { title: unscopedTitle } });
+    expect(unscoped.status()).toBe(201);
+    const listed = await page.request.get(`/api/chat/threads?contract=${id}`);
+    expect(listed.status()).toBe(200);
+    expect(await listed.json()).toMatchObject({ data: [{ id: data.id, title: chatTitle }], total: 1 });
+    expect((await page.request.get("/api/chat/threads?contract=not-a-uuid")).status()).toBe(400);
+
+    // The contract page lists the chat by title and reopens it in the dashboard.
+    await page.goto(`/contracts/${id}`);
+    await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
+    const listedChat = chatsCard.getByRole("link");
+    await expect(listedChat).toHaveCount(1);
+    await expect(listedChat).toContainText(chatTitle.replace(/…$/, ""));
+    await expect(listedChat).toContainText("2 messages");
+    await expect(listedChat).toHaveAttribute("href", `/dashboard?thread=${data.id}`);
+    await expect(chatsCard).not.toContainText(unscopedTitle);
+    await expectNoA11yViolations(page, { theme });
+    await listedChat.click();
+    await expect(page).toHaveURL(`${SIGNED_IN_ORIGIN}/dashboard`);
+    await expect(main.getByText(`Stub reply to: ${question}`, { exact: true })).toBeVisible();
+    await expectQuotationChecks(page);
+    await expect(main.getByText("About:", { exact: true })).toBeVisible();
+    await expect(main.getByRole("link", { name: title, exact: true })).toHaveAttribute(
+      "href",
+      `/contracts/${id}`,
+    );
+    await expect(composer).toHaveValue("");
+    await expectNoA11yViolations(page, { theme });
+
+    // A thread id that is not the user's shows the not-found state and nothing from any thread;
+    // a malformed one is a plain dashboard.
+    await page.goto(`/dashboard?thread=${crypto.randomUUID()}`);
+    await expect(page).toHaveURL(`${SIGNED_IN_ORIGIN}/dashboard`);
+    await expect(main.getByRole("alert")).toContainText("Couldn't load this conversation");
+    await expect(main.getByText(`Stub reply to: ${question}`, { exact: true })).toHaveCount(0);
+    await page.goto("/dashboard?thread=not-a-uuid");
+    await expect(composer).toBeEnabled();
+    await expect(main.getByRole("alert")).toHaveCount(0);
 
     expectNoCspViolations(violations, `a saved chat about a contract (${theme} theme)`);
     expect(pageErrors).toEqual([]);

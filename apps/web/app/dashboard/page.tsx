@@ -10,11 +10,16 @@ type DashboardPageProps = {
 
 /**
  * Only ids (and a "Before you sign" item's structural key) travel in the URL; the page loads the
- * contract's title and the item from the user's own data, and drops anything malformed.
+ * thread, the contract's title and the item from the user's own data, and drops anything malformed.
  */
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
-  const { focusContractId, focusAsk } = dashboardFocusFromSearchParams(
-    await searchParams,
+  const { focusThreadId, focusContractId, focusAsk } =
+    dashboardFocusFromSearchParams(await searchParams);
+  return (
+    <Dashboard
+      focusThreadId={focusThreadId}
+      focusContractId={focusContractId}
+      focusAsk={focusAsk}
+    />
   );
-  return <Dashboard focusContractId={focusContractId} focusAsk={focusAsk} />;
 }

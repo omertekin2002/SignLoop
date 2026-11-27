@@ -3,6 +3,7 @@ import { dashboardFocusFromSearchParams } from "@/lib/dashboard-focus";
 
 const CONTRACT = "33333333-3333-4333-8333-333333333333";
 const ANALYSIS = "44444444-4444-4444-8444-444444444444";
+const THREAD = "55555555-5555-4555-8555-555555555555";
 
 describe("dashboardFocusFromSearchParams", () => {
   it("keeps a contract id, an analysis id and a key from the grammar", () => {
@@ -38,6 +39,28 @@ describe("dashboardFocusFromSearchParams", () => {
     expect(
       dashboardFocusFromSearchParams({ contract: "x", analysis: ANALYSIS, ask: "question-1" }),
     ).toEqual({});
+  });
+
+  it("opens a saved thread by id, ahead of a contract, an analysis and a key", () => {
+    expect(dashboardFocusFromSearchParams({ thread: THREAD.toUpperCase() })).toEqual({
+      focusThreadId: THREAD,
+    });
+    expect(
+      dashboardFocusFromSearchParams({
+        thread: [THREAD, "x"],
+        contract: CONTRACT,
+        analysis: ANALYSIS,
+        ask: "finding-2",
+      }),
+    ).toEqual({ focusThreadId: THREAD });
+  });
+
+  it("drops a malformed thread id like a malformed contract id", () => {
+    for (const thread of ["x", "", `${THREAD}x`, "../contracts"])
+      expect(dashboardFocusFromSearchParams({ thread }), thread).toEqual({});
+    expect(
+      dashboardFocusFromSearchParams({ thread: "x", contract: CONTRACT }),
+    ).toEqual({ focusContractId: CONTRACT });
   });
 
   it("reads the first value of a repeated parameter", () => {

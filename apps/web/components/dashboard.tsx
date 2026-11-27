@@ -271,6 +271,8 @@ type DashboardProps = {
   landingHero?: boolean;
   startTemporary?: boolean;
   initialTemporaryPrompt?: string;
+  /** Open this saved chat (from a contract page's list of its chats). */
+  focusThreadId?: string;
   /** Open a new saved chat about this contract (from its page's "Ask about this contract"). */
   focusContractId?: string;
   /**
@@ -284,9 +286,14 @@ const Dashboard = ({
   landingHero = false,
   startTemporary = false,
   initialTemporaryPrompt,
-  focusContractId: initialFocusContractId,
+  focusThreadId: initialFocusThreadId,
+  focusContractId: requestedFocusContractId,
   focusAsk: initialFocusAsk,
 }: DashboardProps) => {
+  // A saved thread wins over starting a new chat about a contract.
+  const initialFocusContractId = initialFocusThreadId
+    ? undefined
+    : requestedFocusContractId;
   const { user, loading, signOut } = useAuth();
   const isLoaded = !loading;
   const isSignedIn = !!user;
@@ -305,9 +312,11 @@ const Dashboard = ({
     projects: false,
     chat: true,
   });
+  // A thread named in the URL opens like one picked from the sidebar; a missing or another user's
+  // id reaches the chat panel's "Couldn't load this conversation" state.
   const [selectedChatThreadId, setSelectedChatThreadId] = useState<
     string | null
-  >(null);
+  >(initialFocusThreadId ?? null);
   // The contract a new saved chat will be about, until the user leaves that new chat.
   const [focusContractId, setFocusContractId] = useState(
     initialFocusContractId ?? null,
@@ -508,9 +517,9 @@ const Dashboard = ({
 
   // The id has done its job once read; a reload should not start another draft.
   useEffect(() => {
-    if (initialFocusContractId)
+    if (initialFocusContractId || initialFocusThreadId)
       window.history.replaceState(null, "", "/dashboard");
-  }, [initialFocusContractId]);
+  }, [initialFocusContractId, initialFocusThreadId]);
 
   const selectSavedChatThread = (threadId: string) => {
     setFocusContractId(null);
