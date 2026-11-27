@@ -23,6 +23,7 @@ const empty: AccountExportData = {
   contracts: [],
   contractFiles: [],
   contractNotes: [],
+  clarifyDecisions: [],
   analyses: [],
   projects: [],
   contextDocuments: [],
@@ -55,6 +56,10 @@ const workspace: AccountExportData = {
   ],
   contractNotes: [
     { contractId: "c1", acceptanceReasons: "Rent is fixed for two years.", openQuestions: "Who repairs the boiler?", createdAt: at, updatedAt: at },
+  ],
+  clarifyDecisions: [
+    { id: "cd1", contractId: "c1", analysisId: "a1", itemKey: "v1:unstated:term", sourceRevision: `sha256:${"a".repeat(64)}`, state: "accepted", reason: "Monthly is fine.", itemLabel: "Term: Not specified", createdAt: at, updatedAt: at },
+    { id: "cd2", contractId: "c1", analysisId: null, itemKey: "v1:question:0123456789abcdef", sourceRevision: `sha256:${"b".repeat(64)}`, state: "open", reason: "", itemLabel: "Who pays for repairs?", createdAt: at, updatedAt: at },
   ],
   analyses: [
     { id: "a1", contractId: "c1", riskBadge: "LOW", resultJson: { summary: "Fine" }, llmProvider: "openrouter", llmModel: "model", llmPromptTokens: 10, llmCompletionTokens: 5, processingTimeMs: 100, createdAt: at },
@@ -154,6 +159,10 @@ describe("GET /api/account/export", () => {
           { id: "f2", fileName: "../lease.pdf", contentType: "application/pdf", sizeBytes: 1, extractionMethod: null, extractionConfidence: null, uploadedAt: at, path: "files/contracts/c1/_lease.pdf" },
         ],
         notes: { acceptanceReasons: "Rent is fixed for two years.", openQuestions: "Who repairs the boiler?", createdAt: at, updatedAt: at },
+        decisions: [
+          { id: "cd1", analysisId: "a1", itemKey: "v1:unstated:term", sourceRevision: `sha256:${"a".repeat(64)}`, state: "accepted", reason: "Monthly is fine.", itemLabel: "Term: Not specified", createdAt: at, updatedAt: at },
+          { id: "cd2", analysisId: null, itemKey: "v1:question:0123456789abcdef", sourceRevision: `sha256:${"b".repeat(64)}`, state: "open", reason: "", itemLabel: "Who pays for repairs?", createdAt: at, updatedAt: at },
+        ],
       },
     ]);
     expect(json(entries, `${root}/analyses.json`)).toEqual(workspace.analyses);

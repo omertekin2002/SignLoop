@@ -53,7 +53,9 @@ import { ContractSourceProvider, OpenContractSource } from "@/components/contrac
 import { ContractDecisionSections } from "@/components/contract-decision-sections";
 import { DownloadBriefButton } from "@/components/download-brief-button";
 import { PrintBrief } from "@/components/print-brief";
+import { useBriefDecisions } from "@/components/clarify-decisions";
 import { ContractNotes } from "@/components/contract-notes";
+import { ContractChats } from "@/components/contract-chats";
 import { ContractJurisdiction } from "@/components/contract-jurisdiction";
 import { AnalysisCoverageNotice } from "@/components/analysis-coverage-notice";
 import type { AnalysisResult } from "@/lib/schemas";
@@ -236,6 +238,8 @@ const ContractDetails = () => {
     ? (historicalAnalysisQuery.data ?? null)
     : latestAnalysisRecord;
   const olderAnalyses = sortedAnalyses.slice(1);
+  // The checklist's own cache entry, so the brief buttons add no request once it has loaded.
+  const briefDecisions = useBriefDecisions(id, Boolean(analysis?.resultJson));
   const isViewingHistoricalAnalysis = Boolean(
     analysis?.id &&
     latestAnalysisRecord?.id &&
@@ -400,6 +404,9 @@ const ContractDetails = () => {
     );
   }
 
+  // A chat reads the extracted text, so asking needs text, not an analysis.
+  const chatAvailable = (contract.analysisCoverage?.characterCount ?? 0) > 0;
+
   const jurisdiction = (
     <ContractJurisdiction
       contractId={id}
@@ -454,9 +461,8 @@ const ContractDetails = () => {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              {/* A chat reads the extracted text, so it needs text, not an analysis. Only the id
-                  travels in the URL; the chat loads the title itself. */}
-              {(contract.analysisCoverage?.characterCount ?? 0) > 0 ? (
+              {/* Only the id travels in the URL; the chat loads the title itself. */}
+              {chatAvailable ? (
                 <Button variant="outline" asChild>
                   <Link href={`/dashboard?contract=${encodeURIComponent(id)}`}>
                     <MessagesSquare className="mr-2 h-4 w-4" aria-hidden="true" />
@@ -469,11 +475,13 @@ const ContractDetails = () => {
                 contract={{ ...contract, id }}
                 analysis={analysis}
                 historical={isViewingHistoricalAnalysis}
+                decisions={briefDecisions}
               />
               <PrintBrief
                 contract={{ ...contract, id }}
                 analysis={analysis}
                 historical={isViewingHistoricalAnalysis}
+                decisions={briefDecisions}
               />
               {analysis && (
                 <Button
@@ -579,9 +587,7 @@ const ContractDetails = () => {
             <ContractDecisionSections
               contractId={id}
               analysisId={analysis.id}
-              chatAvailable={
-                (contract.analysisCoverage?.characterCount ?? 0) > 0
-              }
+              chatAvailable={chatAvailable}
               result={resultJson ?? {}}
               extractionWarning={extractionWarning}
               riskBadge={riskBadge}
@@ -642,6 +648,10 @@ const ContractDetails = () => {
 
         {/* With an analysis, the Jurisdiction card sits in its decision group, after the Overview. */}
         {!analysis && jurisdiction}
+
+        {/* After the last decision group: the questions asked about this contract and their
+            answers, before the owner's own notes, which stay last. */}
+        <ContractChats contractId={id} canAsk={chatAvailable} />
 
         {/* The owner's own writing, after everything generated, so it never reads as analysis. */}
         <ContractNotes contractId={id} />

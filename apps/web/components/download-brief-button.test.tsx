@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DownloadBriefButton } from "@/components/download-brief-button";
+import { questionDecisionKey } from "@/lib/clarify-keys";
 import type { AnalysisResult } from "@/lib/schemas";
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +16,13 @@ const CONTRACT = {
   status: "ANALYZED",
   extractionWarning: "Scanned pages were read with OCR.",
 };
+
+const SOURCE = {
+  contract_id: CONTRACT.id,
+  revision: `sha256:${"a".repeat(64)}`,
+  index_unit: "unicode-code-points" as const,
+};
+const QUESTION = "Can I cancel early?";
 
 const RESULT: Partial<AnalysisResult> = {
   risk_badge: "MEDIUM",
@@ -102,5 +110,61 @@ describe("DownloadBriefButton", () => {
     expect(revokeObjectURL).not.toHaveBeenCalled();
     vi.advanceTimersByTime(60_000);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:brief");
+  });
+  it("adds the person's decisions under Your decisions, and leaves them out without them", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const analysis = {
+      ...ANALYSIS,
+      resultJson: {
+        ...RESULT,
+        source: SOURCE,
+        next_actions: { questions_to_ask: [QUESTION], email_templates: [] },
+      },
+    };
+    const { rerender } = render(
+      <DownloadBriefButton
+        contract={CONTRACT}
+        analysis={analysis}
+        decisions={{
+          status: "loaded",
+          decisions: [
+            {
+              itemKey: questionDecisionKey(QUESTION),
+              sourceRevision: SOURCE.revision,
+              state: "accepted",
+              reason: "# Fine by me\n- no penalty <b>at all</b>",
+              itemLabel: QUESTION,
+              updatedAt: "2026-11-20T12:00:00.000Z",
+            },
+          ],
+        }}
+      />,
+    );
+    const download = async (call: number) => {
+      await user.click(screen.getByRole("button", BUTTON));
+      return createObjectURL.mock.calls[call]![0].text();
+    };
+
+    const markdown = await download(0);
+    const sections: string[] = markdown.match(/^## .+$/gm) ?? [];
+    expect(sections.indexOf("## Your decisions")).toBe(
+      sections.indexOf("## Before you sign: what to clarify") + 1,
+    );
+    expect(markdown).toContain(`- **Question 1:** ${QUESTION}\n  - Your decision: Accepted\n`);
+    // The reason's heading, list marker and HTML are escaped, line by line, inside its quote.
+    expect(markdown).toContain(
+      "  - Your reason:\n    > \\# Fine by me\n    > \\- no penalty \\<b\\>at all\\</b\\>\n",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    rerender(
+      <DownloadBriefButton contract={CONTRACT} analysis={analysis} decisions={{ status: "error" }} />,
+    );
+    expect(await download(1)).toContain(
+      "## Your decisions\n\nYour decisions are not included: they could not be loaded. They have not been lost.\n",
+    );
+
+    rerender(<DownloadBriefButton contract={CONTRACT} analysis={analysis} />);
+    expect(await download(2)).not.toContain("Your decisions");
   });
 });

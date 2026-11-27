@@ -457,6 +457,48 @@ describe("opening a chat about a contract", () => {
   });
 });
 
+describe("opening a saved chat from a contract page", () => {
+  const threadId = "55555555-5555-4555-8555-555555555555";
+  const contractId = "33333333-3333-4333-8333-333333333333";
+
+  const savedPanel = () =>
+    mocks.chatPanel.mock.calls
+      .map(([props]) => props as Record<string, unknown>)
+      .filter((props) => !props.temporary)
+      .at(-1);
+
+  it("selects the named thread, not the newest one, and clears the URL", async () => {
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    mocks.get.mockImplementation(async (url: string) => {
+      const { pathname } = new URL(url, "https://app.test");
+      if (pathname === "/settings")
+        return { data: { primaryModel: "model", availablePrimaryModels: ["model"] } };
+      // The named thread is not on the sidebar's first page; it must stay selected anyway.
+      if (pathname === "/chat/threads") return page([draft, renewal]);
+      return page([]);
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        {/* A thread wins over a contract in the same URL. */}
+        <Dashboard focusThreadId={threadId} focusContractId={contractId} />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(savedPanel()?.selectedThreadId).toBe(threadId));
+    expect(savedPanel()?.focusContract).toBeNull();
+    expect(replaceState).toHaveBeenCalledWith(null, "", "/dashboard");
+    await waitFor(() =>
+      expect(mocks.get).toHaveBeenCalledWith(expect.stringMatching(/^\/chat\/threads/), expect.anything()),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(savedPanel()?.selectedThreadId).toBe(threadId);
+    // No new chat about the contract was started, so its detail was never read.
+    expect(mocks.get).not.toHaveBeenCalledWith(`/contracts/${contractId}`, expect.anything());
+    replaceState.mockRestore();
+  });
+});
+
 describe("asking about one Before you sign item", () => {
   const contractId = "33333333-3333-4333-8333-333333333333";
   const latestId = "44444444-4444-4444-8444-444444444444";

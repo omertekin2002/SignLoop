@@ -6,6 +6,7 @@ import {
   NO_VERIFIED_QUOTATION,
   NOT_SPECIFIED,
   quotationStatusLine,
+  type ClarifyChecklist,
 } from "@/lib/analysis-clarify";
 import {
   askAboutItemHref,
@@ -16,6 +17,11 @@ import {
   type ClarifyItemKey,
 } from "@/lib/clarify-ask";
 import type { AnalysisResult } from "@/lib/schemas";
+import {
+  ClarifyDecisions,
+  type ClarifyDecisionItem,
+  type ClarifyDecisionsView,
+} from "@/components/clarify-decisions";
 import {
   Card,
   CardContent,
@@ -77,25 +83,66 @@ function AskLink({
  * With `askAnalysisId` (the analysis shown, given only when the contract has text a chat can read),
  * every item except coverage gaps gets an Ask link. Coverage gaps get none: a chat reads the same
  * extracted text, so it cannot see what the analysis did not.
+ *
+ * With `analysisId` (the analysis shown, whether or not a chat can read the contract), every keyed
+ * item also takes the owner's own decision (`ClarifyDecisions`), and decisions that no longer attach
+ * to an item are listed at the end. Decisions never change the items, their order, their
+ * severities or their Ask links.
  */
 export function BeforeYouSign({
   contractId,
   extractionWarning,
   result,
   askAnalysisId = null,
+  analysisId = null,
 }: {
   contractId: string;
   extractionWarning: string | null;
   result: Partial<AnalysisResult> | null;
   askAnalysisId?: string | null;
+  analysisId?: string | null;
 }) {
   const checklist = useMemo(
     () =>
       clarifyBeforeSigning({ contractId, extractionWarning, resultJson: result }),
     [contractId, extractionWarning, result],
   );
+  const card = (decisions: ClarifyDecisionsView | null) => (
+    <ChecklistCard
+      contractId={contractId}
+      checklist={checklist}
+      askAnalysisId={askAnalysisId}
+      decisions={decisions}
+    />
+  );
+  return analysisId ? (
+    <ClarifyDecisions
+      contractId={contractId}
+      analysisId={analysisId}
+      result={result}
+      checklist={checklist}
+    >
+      {card}
+    </ClarifyDecisions>
+  ) : (
+    card(null)
+  );
+}
+
+function ChecklistCard({
+  contractId,
+  checklist,
+  askAnalysisId,
+  decisions,
+}: {
+  contractId: string;
+  checklist: ClarifyChecklist;
+  askAnalysisId: string | null;
+  decisions: ClarifyDecisionsView | null;
+}) {
   const status = quotationStatusLine(checklist);
   const titleId = useId();
+  const decide = (item: ClarifyDecisionItem) => decisions?.control(item) ?? null;
   const ask = (itemKey: ClarifyItemKey, label: string) =>
     askAnalysisId ? (
       <AskLink
@@ -119,6 +166,8 @@ export function BeforeYouSign({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5 text-sm">
+        {decisions?.notice}
+
         {checklist.coverageGaps.length > 0 && (
           <Group title="Coverage gaps">
             <ul className="space-y-2 rounded-card border border-highlight/40 bg-highlight/[0.06] px-4 py-3">
@@ -147,6 +196,12 @@ export function BeforeYouSign({
                       unverifiedItemKey(index),
                       `Ask about ${fact.fact}: ${fact.value}`,
                     )}
+                    {decide({
+                      group: "unverified",
+                      index,
+                      label: `${fact.fact}: ${fact.value}`,
+                      name: `${fact.fact}: ${fact.value}`,
+                    })}
                   </li>
                 ))}
               </ul>
@@ -157,11 +212,17 @@ export function BeforeYouSign({
         {checklist.unstated.length > 0 && (
           <Group title="Not stated">
             <ul className="list-disc space-y-2 pl-5">
-              {checklist.unstated.map((fact) => (
+              {checklist.unstated.map((fact, index) => (
                 <li key={fact.fact}>
                   <span className="font-medium">{fact.fact}:</span>
                   <span className={MARKER}>{NOT_SPECIFIED}</span>
                   {ask(unstatedItemKey(fact.fact), `Ask about ${fact.fact}`)}
+                  {decide({
+                    group: "unstated",
+                    index,
+                    label: `${fact.fact}: ${NOT_SPECIFIED}`,
+                    name: fact.fact,
+                  })}
                 </li>
               ))}
             </ul>
@@ -171,7 +232,7 @@ export function BeforeYouSign({
         {checklist.findings.length > 0 && (
           <Group title="Findings">
             <ul className="list-disc space-y-2 pl-5">
-              {checklist.findings.map((finding) => {
+              {checklist.findings.map((finding, index) => {
                 const duplicateType =
                   checklist.findings.filter(
                     (other) =>
@@ -197,6 +258,14 @@ export function BeforeYouSign({
                         ? `Ask about finding ${finding.number}: ${finding.type}`
                         : `Ask about finding: ${finding.type}`,
                     )}
+                    {decide({
+                      group: "findings",
+                      index,
+                      label: `Finding: ${finding.type}`,
+                      name: duplicateType
+                        ? `finding ${finding.number}: ${finding.type}`
+                        : `finding: ${finding.type}`,
+                    })}
                   </li>
                 );
               })}
@@ -212,11 +281,19 @@ export function BeforeYouSign({
                   {/* Its own element, so the question's text stays whole beside its Ask link. */}
                   <span>{question}</span>
                   {ask(questionItemKey(index), `Ask question ${index + 1}`)}
+                  {decide({
+                    group: "questions",
+                    index,
+                    label: question,
+                    name: `question ${index + 1}`,
+                  })}
                 </li>
               ))}
             </ol>
           </Group>
         )}
+
+        {decisions?.earlier}
       </CardContent>
     </Card>
   );

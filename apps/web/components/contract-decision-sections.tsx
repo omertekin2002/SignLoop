@@ -417,7 +417,7 @@ export function ContractDecisionSections({
   jurisdiction,
 }: {
   contractId: string;
-  /** The analysis shown, which the checklist's Ask links name. */
+  /** The analysis shown, which the checklist's Ask links and the owner's decisions name. */
   analysisId?: string | null;
   /** The contract has extracted text, so a chat can read it and its Ask links are offered. */
   chatAvailable?: boolean;
@@ -460,6 +460,7 @@ export function ContractDecisionSections({
         extractionWarning={extractionWarning}
         result={result}
         askAnalysisId={chatAvailable ? analysisId : null}
+        analysisId={analysisId}
       />
 
       <DecisionCard

@@ -69,6 +69,7 @@ describe("GET /api/chat/threads", () => {
       "owner",
       { limit: undefined, offset: undefined },
       null,
+      null,
     );
   });
 
@@ -87,6 +88,7 @@ describe("GET /api/chat/threads", () => {
     expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
       "owner",
       { limit: 5, offset: 10 },
+      null,
       null,
     );
   });
@@ -109,6 +111,7 @@ describe("GET /api/chat/threads", () => {
       "owner",
       { limit: Number.NaN, offset: -3 },
       null,
+      null,
     );
   });
 
@@ -126,6 +129,7 @@ describe("GET /api/chat/threads", () => {
     expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
       "owner",
       expect.any(Object),
+      null,
       null,
     );
   });
@@ -145,6 +149,7 @@ describe("GET /api/chat/threads", () => {
       "owner",
       { limit: 50, offset: 50 },
       "Lease",
+      null,
     );
   });
 
@@ -160,6 +165,7 @@ describe("GET /api/chat/threads", () => {
       "owner",
       expect.any(Object),
       "50%_off\\v2",
+      null,
     );
   });
 
@@ -175,6 +181,7 @@ describe("GET /api/chat/threads", () => {
       expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
         "owner",
         expect.any(Object),
+        null,
         null,
       );
     },
@@ -194,6 +201,7 @@ describe("GET /api/chat/threads", () => {
       "owner",
       expect.any(Object),
       term,
+      null,
     );
   });
 
@@ -232,6 +240,68 @@ describe("GET /api/chat/threads", () => {
 
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Unauthorized" });
+    expect(listChatThreadsByUserId).not.toHaveBeenCalled();
+  });
+
+  it("lists only one contract's chats, lowercasing the id, with search and paging alongside", async () => {
+    const page = { data: [threadSummary], total: 1, limit: 10, offset: 10 };
+    auth.mockResolvedValue({ userId: "owner" });
+    listChatThreadsByUserId.mockResolvedValue(page);
+    const contract = "33333333-3333-4333-8333-33333333AAAA";
+
+    const response = await GET(
+      new Request(`${threadsUrl}?contract=${contract}&q=lease&limit=10&offset=10`),
+    );
+
+    expect(response.status).toBe(200);
+    // The response shape is the unfiltered list's.
+    expect(await response.json()).toEqual(page);
+    expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      { limit: 10, offset: 10 },
+      "lease",
+      contract.toLowerCase(),
+    );
+  });
+
+  it("passes another user's contract id through for the owner-scoped query to answer empty", async () => {
+    auth.mockResolvedValue({ userId: "owner" });
+    listChatThreadsByUserId.mockResolvedValue(emptyPage);
+    const contract = "44444444-4444-4444-8444-444444444444";
+
+    const response = await GET(new Request(`${threadsUrl}?contract=${contract}`));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: [], total: 0 });
+    expect(listChatThreadsByUserId).toHaveBeenCalledExactlyOnceWith(
+      "owner",
+      expect.any(Object),
+      null,
+      contract,
+    );
+  });
+
+  it.each(["", "not-a-uuid", "33333333-3333-4333-8333-33333333333", "' or 1=1 --"])(
+    "returns a JSON 400 without touching the database for contract=%j",
+    async (value) => {
+      auth.mockResolvedValue({ userId: "owner" });
+
+      const response = await GET(
+        new Request(`${threadsUrl}?contract=${encodeURIComponent(value)}`),
+      );
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "contract must be a UUID" });
+      expect(listChatThreadsByUserId).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns 401 before validating a contract id when unauthenticated", async () => {
+    auth.mockResolvedValue({ userId: null });
+
+    const response = await GET(new Request(`${threadsUrl}?contract=nope`));
+
+    expect(response.status).toBe(401);
     expect(listChatThreadsByUserId).not.toHaveBeenCalled();
   });
 

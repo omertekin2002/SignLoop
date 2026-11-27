@@ -100,7 +100,7 @@ async function expectStubAnalysis(page: Page) {
   await expect(
     onScreen(page.getByText("Stub key point: the agreement renews automatically each year.", { exact: true })),
   ).toBeVisible();
-  // The cards follow the brief's sections, in the same order.
+  // The cards follow the brief's sections, in the same order, then the contract's chats and notes.
   await expect(onScreen(page.getByRole("heading", { level: 3 }))).toHaveText([
     "Overview",
     "Jurisdiction",
@@ -110,6 +110,7 @@ async function expectStubAnalysis(page: Page) {
     "Obligations in the contract",
     "Key dates",
     "Findings and draft emails",
+    "Chats about this contract",
     "Your notes",
   ]);
   await expect(page.locator("#red-flags [id^='finding-']")).toHaveCount(STUB_ANALYSIS_FLAGS.length);

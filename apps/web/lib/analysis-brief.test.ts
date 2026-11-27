@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   renderAnalysisBriefMarkdown,
   type AnalysisBriefInput,
+  type BriefDecision,
 } from "@/lib/analysis-brief";
+import { clarifyBeforeSigning } from "@/lib/analysis-clarify";
+import { clarifyChecklistKeys } from "@/lib/clarify-keys";
 import type { AnalysisResult } from "@/lib/schemas";
 
 const CONTRACT_ID = "11111111-2222-4333-8444-555555555555";
@@ -1427,5 +1430,261 @@ describe("renderAnalysisBriefMarkdown: decision order", () => {
     }
     // Every list item is one of the brief's own: no contract text starts a list of its own.
     expect(markdown).not.toMatch(/^\s*- item/m);
+  });
+});
+
+describe("renderAnalysisBriefMarkdown: Your decisions", () => {
+  const DECISIONS = "Your decisions";
+  const OTHER_REVISION = `sha256:${"b".repeat(64)}`;
+
+  /** The keys of FULL_RESULT's checklist items, as the page builds them. */
+  function keysOf(result: Partial<AnalysisResult> = FULL_RESULT) {
+    const checklist = clarifyBeforeSigning({ contractId: CONTRACT_ID, resultJson: result });
+    return clarifyChecklistKeys(checklist, { contractId: CONTRACT_ID, resultJson: result });
+  }
+
+  function decision(overrides: Partial<BriefDecision> = {}): BriefDecision {
+    return {
+      itemKey: keysOf().findings[0]!.key,
+      sourceRevision: REVISION,
+      state: "accepted",
+      reason: "The gym agreed to send a reminder.",
+      itemLabel: "Finding: Auto-renewal",
+      updatedAt: "2026-11-20T09:30:00.000Z",
+      ...overrides,
+    };
+  }
+
+  function withDecisions(
+    decisions: BriefDecision[],
+    result: Partial<AnalysisResult> = FULL_RESULT,
+    overrides: Parameters<typeof brief>[1] = {},
+  ) {
+    return brief(result, { ...overrides, decisions: { status: "loaded", decisions } }).markdown;
+  }
+
+  /** The brief with its Your decisions section taken out. */
+  function withoutSection(markdown: string): string {
+    return markdown.replace(section(markdown, DECISIONS), "");
+  }
+
+  it("lists attached decisions right after Before you sign, in checklist order, with label, state, reason and date", () => {
+    const keys = keysOf();
+    const markdown = withDecisions([
+      // Input order is not checklist order: the question comes last in the checklist.
+      decision({
+        itemKey: keys.questions[0]!.key,
+        state: "open",
+        reason: "Asked by email; no answer yet.",
+        itemLabel: "Can the renewal be switched off?",
+        updatedAt: "2026-11-21T10:00:00.000Z",
+      }),
+      decision({ itemKey: keys.findings[2]!.key, state: "resolved", reason: "", itemLabel: "Finding: Price increase" }),
+      decision(),
+    ]);
+
+    expect(markdown.match(/^## .+$/gm)).toEqual([
+      "## Overview",
+      "## Coverage",
+      "## Jurisdiction",
+      "## Before you sign: what to clarify",
+      "## Your decisions",
+      "## Payments and fees",
+      "## Term, renewal and how it ends",
+      "## Obligations in the contract",
+      "## Key dates",
+      "## Findings and draft emails",
+    ]);
+    expect(section(markdown, DECISIONS).trim().split("\n")).toEqual([
+      "## Your decisions",
+      "",
+      "These are your own notes on the items in Before you sign, in your own words. They are not part of the analysis.",
+      "",
+      "- **Finding 1:** Auto-renewal",
+      "  - Your decision: Accepted",
+      "  - Last updated: Nov 20, 2026",
+      "  - Your reason:",
+      "    > The gym agreed to send a reminder.",
+      "",
+      // The checklist lists findings by severity: finding 2 has none, so it comes after finding 3.
+      "- **Finding 2:** Price increase",
+      "  - Your decision: Resolved",
+      "  - Last updated: Nov 20, 2026",
+      "  - Your reason: None given.",
+      "",
+      "- **Question 1:** Can the renewal be switched off?",
+      "  - Your decision: Still open",
+      "  - Last updated: Nov 21, 2026",
+      "  - Your reason:",
+      "    > Asked by email; no answer yet.",
+    ]);
+  });
+
+  it("lists every decision that does not match this analysis under From earlier analyses, with its saved label", () => {
+    const markdown = withDecisions([
+      decision({ sourceRevision: OTHER_REVISION, itemLabel: "Finding: Auto-renewal (old text)" }),
+      decision({ itemKey: "v1:question:0123456789abcdef", itemLabel: "Is parking included?", state: "resolved" }),
+    ]);
+    const decisions = section(markdown, DECISIONS);
+
+    expect(decisions).not.toContain("- **Finding 1:**");
+    expect(decisions.trim().split("\n").slice(4)).toEqual([
+      "### From earlier analyses",
+      "",
+      "You recorded these on an earlier analysis or an earlier version of the contract's text. Each is shown with the item's wording when you saved it.",
+      "",
+      "- **Item when saved:** Finding: Auto-renewal (old text)",
+      "  - No longer matches an item in this analysis.",
+      "  - Your decision: Accepted",
+      "  - Last updated: Nov 20, 2026",
+      "  - Your reason:",
+      "    > The gym agreed to send a reminder.",
+      "",
+      "- **Item when saved:** Is parking included?",
+      "  - No longer matches an item in this analysis.",
+      "  - Your decision: Resolved",
+      "  - Last updated: Nov 20, 2026",
+      "  - Your reason:",
+      "    > The gym agreed to send a reminder.",
+    ]);
+  });
+
+  it("matches against the exported analysis's own revision and keys, so an earlier analysis gets its own decisions", () => {
+    const earlierResult: AnalysisResult = {
+      ...FULL_RESULT,
+      source: { ...SOURCE, revision: OTHER_REVISION },
+      red_flags: [flag({ type: "Late fees" })],
+      next_actions: { ...FULL_RESULT.next_actions, questions_to_ask: [] },
+    };
+    const onEarlier = decision({
+      itemKey: keysOf(earlierResult).findings[0]!.key,
+      sourceRevision: OTHER_REVISION,
+      itemLabel: "Finding: Late fees",
+      reason: "Capped at £5.",
+    });
+    const onLatest = decision();
+
+    const historical = section(
+      withDecisions([onEarlier, onLatest], earlierResult, { historical: true }),
+      DECISIONS,
+    );
+    expect(historical).toMatch(/- \*\*Finding 1:\*\* Late fees\n {2}- Your decision: Accepted\n.*\n {2}- Your reason:\n {4}> Capped at £5\./);
+    expect(historical).toContain("- **Item when saved:** Finding: Auto-renewal");
+
+    const latest = section(withDecisions([onEarlier, onLatest]), DECISIONS);
+    expect(latest).toContain("- **Finding 1:** Auto-renewal\n  - Your decision: Accepted");
+    expect(latest).toContain("- **Item when saved:** Finding: Late fees");
+  });
+
+  it("puts every decision under From earlier analyses when the analysis has no source revision", () => {
+    const legacy = { ...FULL_RESULT } as Record<string, unknown>;
+    delete legacy.source;
+    const decisions = section(withDecisions([decision()], legacy as AnalysisResult), DECISIONS);
+    expect(decisions).toContain("### From earlier analyses");
+    expect(decisions).toContain("- **Item when saved:** Finding: Auto-renewal");
+    expect(decisions).not.toContain("- **Finding 1:**");
+  });
+
+  it("dates each decision in the brief's time zone", () => {
+    const late = decision({ updatedAt: "2026-11-27T22:30:00.000Z" });
+    expect(section(withDecisions([late]), DECISIONS)).toContain("  - Last updated: Nov 27, 2026");
+    expect(
+      section(withDecisions([late], FULL_RESULT, { timeZone: "Europe/Istanbul" }), DECISIONS),
+    ).toContain("  - Last updated: Nov 28, 2026");
+  });
+
+  it("states when there are no decisions, or when they are still loading or could not be loaded", () => {
+    const lines = (decisions: NonNullable<AnalysisBriefInput["decisions"]>) =>
+      section(brief(FULL_RESULT, { decisions }).markdown, DECISIONS).trim().split("\n");
+
+    expect(lines({ status: "loaded", decisions: [] })).toEqual([
+      "## Your decisions",
+      "",
+      "You haven't recorded any decisions.",
+    ]);
+    expect(lines({ status: "loading" })).toEqual([
+      "## Your decisions",
+      "",
+      "Your decisions are not included: they had not finished loading when this brief was made. Try again in a moment.",
+    ]);
+    expect(lines({ status: "error" })).toEqual([
+      "## Your decisions",
+      "",
+      "Your decisions are not included: they could not be loaded. They have not been lost.",
+    ]);
+  });
+
+  it("leaves the section out without decisions, and changes no other section with them", () => {
+    const without = brief(FULL_RESULT).markdown;
+    expect(without).not.toContain("## Your decisions");
+    expect(brief(FULL_RESULT, { decisions: undefined }).markdown).toBe(without);
+
+    const keys = keysOf();
+    for (const decisions of [
+      { status: "loaded" as const, decisions: [decision(), decision({ itemKey: keys.questions[0]!.key })] },
+      { status: "loaded" as const, decisions: [decision({ sourceRevision: OTHER_REVISION })] },
+      { status: "loaded" as const, decisions: [] },
+      { status: "loading" as const },
+      { status: "error" as const },
+    ]) {
+      const withThem = brief(FULL_RESULT, { decisions });
+      expect(withoutSection(withThem.markdown)).toBe(without);
+      expect(withThem.filename).toBe("signloop-brief-gym-membership-2026-10-29.md");
+    }
+  });
+
+  it("keeps a reason with Markdown, HTML, headings, list markers or newlines as plain text", () => {
+    const hostile = [
+      "# Injected heading",
+      "## Payments and fees",
+      "- injected item",
+      "1. injected step",
+      "> fake quote",
+      "```js",
+      "    indented code",
+      "<script>alert(1)</script> <b>bold</b> [click](https://evil.example) ![x](https://evil.example/x.png)",
+      "| a | b |",
+      "| - | - |",
+      "**bold** _em_ ~~strike~~ $x$ &copy;",
+      "",
+      "---",
+    ].join("\n");
+    const markdown = withDecisions([
+      decision({ reason: hostile }),
+      decision({ sourceRevision: OTHER_REVISION, reason: hostile, itemLabel: hostile }),
+    ]);
+    const decisions = section(markdown, DECISIONS);
+    expect(withoutSection(markdown)).toBe(brief(FULL_RESULT).markdown);
+
+    const tokens = allTokens(marked.lexer(decisions));
+    for (const type of ["html", "image", "table", "em", "del", "code", "hr"]) {
+      expect(tokens.map((token) => token.type), type).not.toContain(type);
+    }
+    expect(
+      tokens.filter((token) => token.type === "heading").map((token) => "text" in token && token.text),
+    ).toEqual(["Your decisions", "From earlier analyses"]);
+    // Each reason stays one blockquote, with no quote nested inside it.
+    const quotes = tokens.filter((token) => token.type === "blockquote");
+    expect(quotes).toHaveLength(2);
+    for (const quote of quotes) {
+      expect(allTokens("tokens" in quote ? (quote.tokens as Token[]) : []).map((t) => t.type))
+        .not.toContain("blockquote");
+    }
+    for (const link of tokens.filter((token) => token.type === "link")) {
+      expect("text" in link && link.text).toBe(link.raw);
+    }
+    for (const strong of tokens.filter((token) => token.type === "strong")) {
+      expect("text" in strong && strong.text).not.toMatch(/bold|Injected/);
+    }
+    // Only the brief's own list items: two decisions, with three and four sub-items. Nothing in a
+    // reason adds one.
+    expect(tokens.filter((token) => token.type === "list_item")).toHaveLength(2 + 3 + 4);
+    expect(decisions).not.toMatch(/^\s*- injected item/m);
+    expect(decisions).not.toMatch(/^\s*1\. injected step/m);
+
+    const html = marked.parse(decisions, { async: false });
+    expect(html).not.toMatch(/<script|<b>|<img|<table|<del|<em>|<pre|<hr|>click</);
+    expect(html).toContain("# Injected heading");
+    expect(html).toContain("&lt;script&gt;");
   });
 });

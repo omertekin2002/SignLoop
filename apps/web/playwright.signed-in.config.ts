@@ -112,6 +112,14 @@ export default defineConfig({
       use: { storageState: AUTH_STATE_PATH },
     },
     {
+      // Also after the workspace checks: it uploads a contract, analyses it twice with the stub
+      // model and records a decision on one of its "Before you sign" items.
+      name: "clarify-decisions",
+      testMatch: "clarify-decisions.spec.ts",
+      dependencies: ["workspace"],
+      use: { storageState: AUTH_STATE_PATH },
+    },
+    {
       name: "sign-out",
       testMatch: "sign-out.spec.ts",
       dependencies: [
@@ -123,6 +131,7 @@ export default defineConfig({
         "saved-chat",
         "contract-analysis",
         "contract-chat",
+        "clarify-decisions",
       ],
       use: { storageState: AUTH_STATE_PATH },
     },

@@ -27,6 +27,12 @@ import { parseChatQuoteChecks, type ChatQuoteChecks } from "@/lib/chat-quote-che
 import type { GeneratedChatFile } from "@/lib/chat-file-generation";
 import type { ContractNotes } from "@/lib/contract-notes";
 import {
+  clarifyItemKeyStatus,
+  type ClarifyDecisionSave,
+  type ClarifyDecisionState,
+} from "@/lib/clarify-decisions";
+import { analysisSourceRevision } from "@/lib/clarify-keys";
+import {
   CONTRACT_ADDED_FILTERS,
   CONTRACT_SEARCH_EXCERPT_LENGTH,
   CONTRACT_STATUS_FILTERS,
@@ -989,6 +995,24 @@ export async function getChatFocusContractForUser(
 }
 
 /**
+ * The contract a saved thread is about, as SQL: the `focusContractId` on its earliest user message
+ * that carries one, so a later turn naming another id never moves it. `threadId` is the SQL
+ * expression for the thread's id. Both a thread's restored focus and a contract's chat list read
+ * this one rule, so the two cannot disagree; it walks `chat_messages_thread_position_idx`.
+ */
+function threadFocusContractIdSql(threadId: string): string {
+  return `(
+    select m.metadata_json->>'focusContractId'
+    from chat_messages m
+    where m.thread_id = ${threadId}
+      and m.role = 'user'
+      and m.metadata_json->>'focusContractId' is not null
+    order by m.position asc
+    limit 1
+  )`;
+}
+
+/**
  * The focus a saved thread took from its stored turns: the contract id on its earliest focused
  * user message, and that contract while the owner still has it (null once it was deleted). Null
  * when the thread has no focus, or is missing or another user's.
@@ -1001,31 +1025,29 @@ export async function getChatThreadFocusForUser(
   contract: ChatFocusContractRecord | null;
 } | null> {
   await ensureSchema();
-  const { rows } = await sql<{
+  const { rows } = await sql.query<{
     contractId: string;
     id: string | null;
     title: string | null;
     confirmedJurisdiction: string | null;
-  }>`
-    select
+  }>(
+    `select
       focus.contract_id as "contractId",
       c.id,
       c.title,
       c.confirmed_jurisdiction as "confirmedJurisdiction"
     from (
-      select m.metadata_json->>'focusContractId' as contract_id
-      from chat_messages m
-      join chat_threads t on t.id = m.thread_id and t.user_id = ${userId}
-      where m.thread_id = ${threadId}
-        and m.role = 'user'
-        and m.metadata_json->>'focusContractId' is not null
-      order by m.position asc
-      limit 1
+      select ${threadFocusContractIdSql("t.id")} as contract_id
+      from chat_threads t
+      where t.id = $2
+        and t.user_id = $1
     ) focus
     left join contracts c
       on c.id::text = focus.contract_id
-      and c.user_id = ${userId}
-  `;
+      and c.user_id = $1
+    where focus.contract_id is not null`,
+    [userId, threadId],
+  );
   const row = rows[0];
   if (!row) return null;
   return {
@@ -1416,6 +1438,215 @@ export async function saveContractNotesForUser(
     await client.query("ROLLBACK").catch(() => {});
     // The contract was deleted between the ownership check and the insert's foreign-key check.
     if ((error as { code?: string }).code === "23503") return { status: "not_found" };
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/** The owner's decision on one "Before you sign" item (migration 025). */
+export type ClarifyDecisionRecord = {
+  id: string;
+  contractId: string;
+  /** The analysis it was last saved on; null once that analysis is replaced or deleted. */
+  analysisId: string | null;
+  itemKey: string;
+  /** The analysed text's revision, read from that analysis by the server. */
+  sourceRevision: string;
+  state: ClarifyDecisionState;
+  reason: string;
+  itemLabel: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ClarifyDecisionInput = Omit<ClarifyDecisionSave, "expectedUpdatedAt">;
+
+export type SaveClarifyDecisionResult =
+  | { status: "saved"; decision: ClarifyDecisionRecord }
+  /** Another save landed after expectedUpdatedAt; `decision` is what is stored now, if anything. */
+  | { status: "conflict"; decision: ClarifyDecisionRecord | null }
+  /** The contract or analysis is missing or not the owner's. */
+  | { status: "not_found" }
+  /** The analysis has no source revision, so no decision made on it could ever match. */
+  | { status: "no_revision" }
+  /** The key names no item of the analysis's checklist, or more than one. */
+  | { status: "unknown_item" | "ambiguous_item" };
+
+export type DeleteClarifyDecisionResult =
+  | { status: "deleted" }
+  | { status: "conflict"; decision: ClarifyDecisionRecord }
+  | { status: "not_found" };
+
+const CLARIFY_DECISION_COLUMNS = `id, contract_id AS "contractId", analysis_id AS "analysisId",
+  item_key AS "itemKey", source_revision AS "sourceRevision", state, reason,
+  item_label AS "itemLabel", created_at AS "createdAt", updated_at AS "updatedAt"`;
+
+/**
+ * Every decision on the owner's contract, oldest first, or null when the contract is not theirs.
+ * Decisions on items a re-analysis no longer lists are included; matching them to the current
+ * checklist is `matchClarifyDecisions`'s job.
+ */
+export async function listClarifyDecisionsForUser(
+  userId: string,
+  contractId: string,
+): Promise<ClarifyDecisionRecord[] | null> {
+  await ensureSchema();
+  const { rows } = await sql.query<ClarifyDecisionRecord>(
+    `SELECT ${CLARIFY_DECISION_COLUMNS} FROM clarify_decisions
+     WHERE contract_id = $1 AND user_id = $2
+       AND EXISTS (SELECT 1 FROM contracts WHERE id = $1 AND user_id = $2)
+     ORDER BY created_at, id`,
+    [contractId, userId],
+  );
+  if (rows.length) return rows;
+  const owned = await sql.query("SELECT 1 FROM contracts WHERE id = $1 AND user_id = $2", [
+    contractId,
+    userId,
+  ]);
+  return owned.rowCount ? [] : null;
+}
+
+/**
+ * Save the owner's decision on one item of an analysis's "Before you sign" checklist. The source
+ * revision is read from the stored analysis, never taken from the client, and the key must name
+ * exactly one item of that analysis's checklist. With `expectedUpdatedAt` null this creates the
+ * decision; otherwise it updates the one stored for (contract, key, revision) while
+ * `expectedUpdatedAt` is still its revision, so a save from a stale tab cannot overwrite a newer
+ * one. A mismatch changes nothing and returns what is stored as a conflict.
+ */
+export async function saveClarifyDecisionForUser(
+  userId: string,
+  contractId: string,
+  input: ClarifyDecisionInput,
+  expectedUpdatedAt: string | null,
+): Promise<SaveClarifyDecisionResult> {
+  await ensureSchema();
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
+    // The insert below is owner-rooted, so this read share-locks the owner's application_users row
+    // (see deleteAccountForUser) before anything is written.
+    const { rows: analyses } = await client.query<{ resultJson: unknown }>(
+      `SELECT a.result_json AS "resultJson"
+       FROM analyses a
+       JOIN contracts c ON c.id = a.contract_id
+       JOIN application_users u ON u.id = c.user_id
+       WHERE a.id = $1 AND c.id = $2 AND c.user_id = $3
+       FOR SHARE OF u`,
+      [input.analysisId, contractId, userId],
+    );
+    const analysis = analyses[0];
+    if (!analysis) {
+      await client.query("ROLLBACK");
+      return { status: "not_found" };
+    }
+    const resultJson = parseJsonObject(analysis.resultJson);
+    const sourceRevision = analysisSourceRevision(contractId, resultJson);
+    if (!sourceRevision) {
+      await client.query("ROLLBACK");
+      return { status: "no_revision" };
+    }
+    const item = clarifyItemKeyStatus(contractId, resultJson, input.itemKey);
+    if (item !== "ok") {
+      await client.query("ROLLBACK");
+      return { status: item === "unknown" ? "unknown_item" : "ambiguous_item" };
+    }
+
+    const { rows } =
+      expectedUpdatedAt === null
+        ? await client.query<ClarifyDecisionRecord>(
+            `INSERT INTO clarify_decisions(contract_id, user_id, item_key, source_revision,
+               analysis_id, state, reason, item_label)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (contract_id, item_key, source_revision) DO NOTHING
+             RETURNING ${CLARIFY_DECISION_COLUMNS}`,
+            [
+              contractId,
+              userId,
+              input.itemKey,
+              sourceRevision,
+              input.analysisId,
+              input.state,
+              input.reason,
+              input.itemLabel,
+            ],
+          )
+        : await client.query<ClarifyDecisionRecord>(
+            `UPDATE clarify_decisions
+             SET analysis_id = $5, state = $6, reason = $7, item_label = $8,
+               updated_at = greatest(date_trunc('milliseconds', now()), updated_at + interval '1 millisecond')
+             WHERE contract_id = $1 AND user_id = $2 AND item_key = $3 AND source_revision = $4
+               AND updated_at = $9::timestamptz
+             RETURNING ${CLARIFY_DECISION_COLUMNS}`,
+            [
+              contractId,
+              userId,
+              input.itemKey,
+              sourceRevision,
+              input.analysisId,
+              input.state,
+              input.reason,
+              input.itemLabel,
+              expectedUpdatedAt,
+            ],
+          );
+    const saved = rows[0];
+    const current = saved
+      ? null
+      : (
+          await client.query<ClarifyDecisionRecord>(
+            `SELECT ${CLARIFY_DECISION_COLUMNS} FROM clarify_decisions
+             WHERE contract_id = $1 AND user_id = $2 AND item_key = $3 AND source_revision = $4`,
+            [contractId, userId, input.itemKey, sourceRevision],
+          )
+        ).rows[0] ?? null;
+    await client.query("COMMIT");
+    return saved ? { status: "saved", decision: saved } : { status: "conflict", decision: current };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    // The contract or analysis was deleted between the ownership check and the foreign-key check.
+    if ((error as { code?: string }).code === "23503") return { status: "not_found" };
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Delete one of the owner's decisions while `expectedUpdatedAt` is still its revision, including
+ * one whose item a re-analysis no longer lists. A mismatch changes nothing and returns the stored
+ * decision as a conflict.
+ */
+export async function deleteClarifyDecisionForUser(
+  userId: string,
+  contractId: string,
+  decisionId: string,
+  expectedUpdatedAt: string,
+): Promise<DeleteClarifyDecisionResult> {
+  await ensureSchema();
+  const client = await sql.connect();
+  try {
+    await client.query("BEGIN");
+    const { rowCount } = await client.query(
+      `DELETE FROM clarify_decisions
+       WHERE id = $1 AND contract_id = $2 AND user_id = $3 AND updated_at = $4::timestamptz`,
+      [decisionId, contractId, userId, expectedUpdatedAt],
+    );
+    const current = rowCount
+      ? null
+      : (
+          await client.query<ClarifyDecisionRecord>(
+            `SELECT ${CLARIFY_DECISION_COLUMNS} FROM clarify_decisions
+             WHERE id = $1 AND contract_id = $2 AND user_id = $3`,
+            [decisionId, contractId, userId],
+          )
+        ).rows[0] ?? null;
+    await client.query("COMMIT");
+    if (rowCount) return { status: "deleted" };
+    return current ? { status: "conflict", decision: current } : { status: "not_found" };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
     client.release();
@@ -2079,6 +2310,7 @@ const DELETE_ACCOUNT_STATEMENTS = [
   "DELETE FROM analyses a USING contracts c WHERE c.id = a.contract_id AND c.user_id = $1",
   "DELETE FROM contract_files WHERE user_id = $1 OR contract_id IN (SELECT id FROM contracts WHERE user_id = $1)",
   "DELETE FROM contract_notes WHERE user_id = $1",
+  "DELETE FROM clarify_decisions WHERE user_id = $1",
   "DELETE FROM contracts WHERE user_id = $1",
   "DELETE FROM context_documents d USING projects p WHERE p.id = d.project_id AND p.user_id = $1",
   "DELETE FROM projects WHERE user_id = $1",
@@ -2093,7 +2325,8 @@ const DELETE_ACCOUNT_STATEMENTS = [
  * removed by storage cleanup, never inline. Repeating the call deletes whatever is left. Saved chat
  * replay needs no scrubbing, because the threads go with the contracts they cite.
  *
- * Every owner-rooted insert (contracts, projects, settings, chat threads, contract notes)
+ * Every owner-rooted insert (contracts, projects, settings, chat threads, contract notes,
+ * clarify decisions)
  * share-locks the owner's application_users row, and every other owned row hangs off one of those.
  * Locking that row first waits for writes already under way, so the deletes below see them, and
  * blocks new ones until commit. Once the row is gone they insert nothing, so a request
@@ -2183,6 +2416,7 @@ export type AccountExportData = {
   }>;
   contractFiles: AccountExportContractFile[];
   contractNotes: Array<ContractNotes & { contractId: string; createdAt: string; updatedAt: string }>;
+  clarifyDecisions: ClarifyDecisionRecord[];
   analyses: AnalysisRecord[];
   projects: Array<{
     id: string;
@@ -2227,6 +2461,8 @@ const ACCOUNT_EXPORT_QUERIES = {
     ORDER BY created_at, id`,
   contractNotes: `SELECT ${CONTRACT_NOTES_COLUMNS}
     FROM contract_notes WHERE user_id = $1 ORDER BY created_at, contract_id`,
+  clarifyDecisions: `SELECT ${CLARIFY_DECISION_COLUMNS}
+    FROM clarify_decisions WHERE user_id = $1 ORDER BY created_at, id`,
   analyses: `SELECT a.id, a.contract_id AS "contractId", a.risk_badge AS "riskBadge",
       a.result_json AS "resultJson", a.llm_provider AS "llmProvider", a.llm_model AS "llmModel",
       a.llm_prompt_tokens AS "llmPromptTokens", a.llm_completion_tokens AS "llmCompletionTokens",
@@ -2277,6 +2513,7 @@ export async function getAccountExportForUser(userId: string): Promise<AccountEx
       contracts: await read(ACCOUNT_EXPORT_QUERIES.contracts),
       contractFiles: await read(ACCOUNT_EXPORT_QUERIES.contractFiles),
       contractNotes: await read(ACCOUNT_EXPORT_QUERIES.contractNotes),
+      clarifyDecisions: await read(ACCOUNT_EXPORT_QUERIES.clarifyDecisions),
       analyses: (await read<AnalysisRow>(ACCOUNT_EXPORT_QUERIES.analyses)).map(mapAnalysisRow),
       projects: await read(ACCOUNT_EXPORT_QUERIES.projects),
       contextDocuments: await read(ACCOUNT_EXPORT_QUERIES.contextDocuments),
@@ -2443,19 +2680,36 @@ export async function createChatThreadForUser(input: {
   return created;
 }
 
+/**
+ * The owner's saved chats, most recently active first. A search matches titles; a contract id keeps
+ * only the chats about that contract by the same rule as `getChatThreadFocusForUser`, and only
+ * while the owner has that contract, so another user's contract id lists nothing.
+ */
 export async function listChatThreadsByUserId(
   userId: string,
   pagination?: PaginationOptions,
   search: string | null = null,
+  contractId: string | null = null,
 ): Promise<PaginatedResult<ChatThreadSummaryRecord>> {
   await ensureSchema();
 
   const { limit, offset } = clampPagination(pagination);
   const pattern = search ? `%${escapeLikePattern(search)}%` : null;
+  const filters = `
+    where t.user_id = $1
+      and ($2::text is null or t.title ilike $2::text escape '\\')
+      and (
+        $3::text is null
+        or (
+          exists (select 1 from contracts c where c.id = $3::text::uuid and c.user_id = $1)
+          and ${threadFocusContractIdSql("t.id")} = $3::text
+        )
+      )`;
+  const params = [userId, pattern, contractId];
 
   const [{ rows }, { rows: countRows }] = await Promise.all([
-    sql<ChatThreadSummaryRecord>`
-      select
+    sql.query<ChatThreadSummaryRecord>(
+      `select
         t.id,
         t.user_id as "userId",
         t.title,
@@ -2467,17 +2721,17 @@ export async function listChatThreadsByUserId(
           where m.thread_id = t.id
         ) as "messageCount"
       from chat_threads t
-      where t.user_id = ${userId}
-        and (${pattern}::text is null or t.title ilike ${pattern}::text escape '\\')
+      ${filters}
       order by t.updated_at desc
-      limit ${limit} offset ${offset}
-    `,
-    sql<{ count: number }>`
-      select count(*)::integer as count
+      limit $4 offset $5`,
+      [...params, limit, offset],
+    ),
+    sql.query<{ count: number }>(
+      `select count(*)::integer as count
       from chat_threads t
-      where t.user_id = ${userId}
-        and (${pattern}::text is null or t.title ilike ${pattern}::text escape '\\')
-    `,
+      ${filters}`,
+      params,
+    ),
   ]);
 
   return { data: rows, total: countRows[0]?.count ?? 0, limit, offset };

@@ -105,7 +105,8 @@ if (process.env.REQUIRE_DB_TESTS === "1" && !connectionString)
 const TEST_OWNERS = [
   "another-user", "bounded-followup-owner", "chat-owner", "chat-pagination-owner",
   "chat-search-intruder", "chat-search-owner", "chat-search-paging-owner",
-  "content-receipt-owner", "empty-lookup-intruder", "empty-lookup-owner", "file-owner",
+  "content-receipt-owner", "contract-chats-intruder", "contract-chats-owner",
+  "contract-chats-scale-owner", "empty-lookup-intruder", "empty-lookup-owner", "file-owner",
   "filter-intruder", "filter-owner", "filter-paging-owner", "focus-intruder", "focus-owner",
   "interrupted-turn-owner", "intruder", "late-reply-owner", "legacy-receipt-owner", "other", "owner", "OWNER",
   "project-analysis-owner", "project-search-intruder", "project-search-owner",
@@ -2384,6 +2385,144 @@ describe.skipIf(!connectionString)("database integration", () => {
     expect((await listChatThreadsByUserId(owner, {}, null)).total).toBe(9);
   });
 
+  it("lists a contract's chats by the earliest focused user turn, owner-scoped, agreeing with the thread's focus", async () => {
+    const owner = "contract-chats-owner";
+    const intruder = "contract-chats-intruder";
+    const lease = await createContractForUser({ userId: owner, title: "Lease" });
+    const loan = await createContractForUser({ userId: owner, title: "Loan" });
+    const foreign = await createContractForUser({ userId: intruder, title: "Not yours" });
+    let minutesAgo = 100;
+    const thread = async (
+      title: string,
+      turns: (string | null)[],
+      userId = owner,
+    ) => {
+      const created = await createChatThreadForUser({ userId, title });
+      for (const focus of turns)
+        await appendChatMessagesToThread({ userId, threadId: created.id, messages: [
+          { role: "user", content: "Question", metadata: focus ? { focusContractId: focus } : {} },
+          // An assistant message naming a contract never decides the focus.
+          { role: "assistant", content: "Answer", metadata: { focusContractId: loan.id } },
+        ] });
+      await pool.current!.query(
+        "update chat_threads set updated_at = now() - $2 * interval '1 minute' where id = $1",
+        [created.id, minutesAgo--],
+      );
+      return created;
+    };
+    const first = await thread("Lease: notice period", [lease.id]);
+    // Started unscoped, focused later: it belongs to the contract its first focused turn named.
+    const laterFocused = await thread("Lease: deposit", [null, lease.id]);
+    // Refocused later: it stays with the contract it was first about.
+    const refocused = await thread("Lease, then loan", [lease.id, loan.id]);
+    const aboutLoan = await thread("Loan: rate", [loan.id, lease.id]);
+    const unscoped = await thread("General question", [null, null]);
+    const empty = await thread("Empty", []);
+    // A stored focus naming another user's contract is never that contract's chat for anyone.
+    const forged = await thread("Forged", [foreign.id]);
+    // Another user's chat naming the owner's contract never reaches the owner's list.
+    await thread("Intruder about lease", [lease.id], intruder);
+    await thread("Intruder about own", [foreign.id], intruder);
+
+    const ids = async (contractId: string, userId = owner, search: string | null = null) => {
+      const page = await listChatThreadsByUserId(userId, {}, search, contractId);
+      return { total: page.total, ids: page.data.map((row) => row.id) };
+    };
+    // Newest activity first, with the list's usual summary fields.
+    expect(await ids(lease.id)).toEqual({
+      total: 3,
+      ids: [refocused.id, laterFocused.id, first.id],
+    });
+    const [summary] = (await listChatThreadsByUserId(owner, {}, null, lease.id)).data;
+    expect(summary).toMatchObject({ id: refocused.id, userId: owner, title: "Lease, then loan", messageCount: 4 });
+    expect(await ids(loan.id)).toEqual({ total: 1, ids: [aboutLoan.id] });
+
+    // The list and the thread's restored focus apply one rule.
+    for (const contract of [lease, loan]) {
+      const listed = new Set((await ids(contract.id)).ids);
+      for (const candidate of [first, laterFocused, refocused, aboutLoan, unscoped, empty, forged]) {
+        const focus = await getChatThreadFocusForUser(owner, candidate.id);
+        expect(listed.has(candidate.id), candidate.title).toBe(focus?.contractId === contract.id);
+      }
+    }
+
+    // Another user's contract, a missing one, and the owner's contract asked for by someone else
+    // all list nothing.
+    expect(await ids(foreign.id)).toEqual({ total: 0, ids: [] });
+    expect(await ids(crypto.randomUUID())).toEqual({ total: 0, ids: [] });
+    expect(await ids(lease.id, intruder)).toEqual({ total: 0, ids: [] });
+
+    // A title search and paging compose with the filter; the count follows both.
+    expect(await ids(lease.id, owner, "deposit")).toEqual({ total: 1, ids: [laterFocused.id] });
+    expect(await ids(loan.id, owner, "deposit")).toEqual({ total: 0, ids: [] });
+    const second = await listChatThreadsByUserId(owner, { limit: 1, offset: 1 }, null, lease.id);
+    expect([second.total, second.limit, second.offset, second.data.map((row) => row.id)])
+      .toEqual([3, 1, 1, [laterFocused.id]]);
+
+    // Without the filter the list is unchanged.
+    expect((await listChatThreadsByUserId(owner, {})).total).toBe(7);
+
+    // Deleting a chat takes it off the contract's list; deleting the contract leaves its chats.
+    await deleteChatThreadForUser({ userId: owner, threadId: laterFocused.id });
+    expect(await ids(lease.id)).toEqual({ total: 2, ids: [refocused.id, first.id] });
+    await deleteContractForUser({ userId: owner, contractId: lease.id });
+    expect(await ids(lease.id)).toEqual({ total: 0, ids: [] });
+    expect((await listChatThreadsByUserId(owner, {})).total).toBe(6);
+    expect(await getChatThreadFocusForUser(owner, first.id)).toEqual({ contractId: lease.id, contract: null });
+  });
+
+  it("lists a contract's chats quickly for an owner with 200 chats and 5,000 messages", async () => {
+    const owner = "contract-chats-scale-owner";
+    const contracts = await Promise.all(
+      [1, 2, 3, 4].map((n) => createContractForUser({ userId: owner, title: `Scale ${n}` })),
+    );
+    // 200 threads of 25 messages: every fifth unscoped, the rest focused on one of four contracts
+    // from their first user turn, and every user turn after that naming the next contract.
+    await pool.current!.query(
+      `with threads as (
+         insert into chat_threads (user_id, title, updated_at)
+         select $1, 'Scale chat ' || n, now() - n * interval '1 minute'
+         from generate_series(1, 200) as n
+         returning id, title
+       )
+       insert into chat_messages (thread_id, role, content, position, metadata_json)
+       select t.id,
+              case when p % 2 = 1 then 'user' else 'assistant' end,
+              'Message ' || p,
+              p,
+              case
+                when p % 2 = 0 or n % 5 = 0 then '{}'::jsonb
+                else jsonb_build_object('focusContractId', ($2::text[])[1 + (n + (p > 1)::int) % 4])
+              end
+       from threads t
+       cross join lateral (select substring(t.title from '[0-9]+$')::int as n) k
+       cross join generate_series(1, 25) as p`,
+      [owner, contracts.map((contract) => contract.id)],
+    );
+    const counted = await pool.current!.query(
+      "select count(*)::int as count from chat_messages m join chat_threads t on t.id = m.thread_id where t.user_id = $1",
+      [owner],
+    );
+    expect(counted.rows[0].count).toBe(5_000);
+
+    const target = contracts[1]!;
+    await listChatThreadsByUserId(owner, { limit: 10 }, null, target.id);
+    const timings: number[] = [];
+    let page: Awaited<ReturnType<typeof listChatThreadsByUserId>> | null = null;
+    for (let run = 0; run < 10; run++) {
+      const started = performance.now();
+      page = await listChatThreadsByUserId(owner, { limit: 10 }, null, target.id);
+      timings.push(performance.now() - started);
+    }
+    timings.sort((a, b) => a - b);
+    // Threads n with n % 5 != 0 and 1 + n % 4 === 2 (n % 4 === 1): 40 threads.
+    expect(page!.total).toBe(40);
+    expect(page!.data).toHaveLength(10);
+    expect(page!.data.every((row) => row.messageCount === 25)).toBe(true);
+    // Generous enough for a busy CI runner; the measured numbers go in the pull request.
+    expect(timings[5]).toBeLessThan(500);
+  });
+
   it("pages through more than one page of chat search results with the filtered total", async () => {
     const owner = "chat-search-paging-owner";
     await pool.current!.query(
@@ -3024,6 +3163,11 @@ describe.skipIf(!connectionString)("database integration", () => {
         });
         expect(await saveContractNotesForUser(userId, item.id, { acceptanceReasons: "Fair", openQuestions: "Deposit?" }, null))
           .toMatchObject({ status: "saved" });
+        await pool.current!.query(
+          `INSERT INTO clarify_decisions(contract_id, user_id, item_key, source_revision, state, item_label)
+           VALUES ($1, $2, 'v1:unstated:term', $3, 'accepted', 'Term')`,
+          [item.id, userId, `sha256:${"a".repeat(64)}`],
+        );
       }
       // A legacy file row: no contract, and its object key in blob_path.
       const legacyKey = `account-legacy-${crypto.randomUUID()}`;
@@ -3073,6 +3217,7 @@ describe.skipIf(!connectionString)("database integration", () => {
       analyses: await count("analyses", "contract_id = ANY($1::uuid[])", [account.contractIds]),
       contractFiles: await count("contract_files", "user_id = $1", [account.userId]),
       contractNotes: await count("contract_notes", "contract_id = ANY($1::uuid[])", [account.contractIds]),
+      clarifyDecisions: await count("clarify_decisions", "contract_id = ANY($1::uuid[])", [account.contractIds]),
       contextDocuments: await count("context_documents", "project_id = ANY($1::uuid[])", [account.projectIds]),
       threads: await count("chat_threads", "user_id = $1", [account.userId]),
       messages: await count("chat_messages", "thread_id = ANY($1::uuid[])", [account.threadIds]),
@@ -3189,6 +3334,11 @@ describe.skipIf(!connectionString)("database integration", () => {
       });
       const notes = { acceptanceReasons: `Accept ${tag}`, openQuestions: `Ask ${tag}` };
       expect(await saveContractNotesForUser(userId, contract.id, notes, null)).toMatchObject({ status: "saved" });
+      await pool.current!.query(
+        `INSERT INTO clarify_decisions(contract_id, user_id, item_key, source_revision, state, reason, item_label)
+         VALUES ($1, $2, 'v1:unstated:term', $3, 'accepted', $4, 'Term')`,
+        [contract.id, userId, `sha256:${"a".repeat(64)}`, `Decided ${tag}`],
+      );
       // A contract without notes exports null.
       const unnoted = await createContractForUser({ userId, title: "Unnoted" });
       const thread = await createChatThreadForUser({ userId, title: "Questions" });
@@ -3230,6 +3380,9 @@ describe.skipIf(!connectionString)("database integration", () => {
       expect(data.contractNotes).toEqual([
         { contractId: owner.contract.id, ...owner.notes, createdAt: expect.any(Date), updatedAt: expect.any(Date) },
       ]);
+      expect(data.clarifyDecisions.map((row) => [row.contractId, row.reason])).toEqual([
+        [owner.contract.id, `Decided ${owner.tag}`],
+      ]);
       expect(data.analyses.map((row) => [row.contractId, row.resultJson])).toEqual([
         [owner.contract.id, { summary: `Analysis ${owner.tag}` }],
       ]);
@@ -3257,10 +3410,15 @@ describe.skipIf(!connectionString)("database integration", () => {
         id: string;
         files: Array<{ path: string }>;
         notes: Record<string, unknown> | null;
+        decisions: Array<Record<string, unknown>>;
       }>;
       expect(contractsJson.map((row) => [row.id, row.notes])).toEqual([
         [owner.contract.id, { ...owner.notes, createdAt: expect.any(String), updatedAt: expect.any(String) }],
         [owner.unnoted.id, null],
+      ]);
+      expect(contractsJson.map((row) => row.decisions.map((decision) => decision.reason))).toEqual([
+        [`Decided ${owner.tag}`],
+        [],
       ]);
       expect(contractsJson[0]!.files.map((file) => file.path)).toEqual([
         `files/contracts/${owner.contract.id}/lease.txt`,
@@ -3281,7 +3439,7 @@ describe.skipIf(!connectionString)("database integration", () => {
       // An account with nothing in it exports empty collections.
       const empty = await getAccountExportForUser(await resolveWorkOSUserId({ id: `user_${crypto.randomUUID()}` }));
       expect(empty).toEqual({
-        contracts: [], contractFiles: [], contractNotes: [], analyses: [], projects: [], contextDocuments: [],
+        contracts: [], contractFiles: [], contractNotes: [], clarifyDecisions: [], analyses: [], projects: [], contextDocuments: [],
         chatThreads: [], chatMessages: [], chatFiles: [], chatImages: [], settings: null,
       });
     } finally {

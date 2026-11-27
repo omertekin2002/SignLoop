@@ -18,8 +18,9 @@ function readme(exportedAt: Date, missing: string[], unlinked: string[]): string
     "SignLoop data export",
     `Exported: ${exportedAt.toISOString()}`,
     "",
-    "contracts.json   Your contracts with their extracted text, uploaded files and your notes",
-    "                 (null if you never wrote any).",
+    "contracts.json   Your contracts with their extracted text, uploaded files, your notes",
+    "                 (null if you never wrote any) and your decisions on their",
+    '                 "Before you sign" items.',
     "analyses.json    Every analysis of those contracts, by contractId.",
     "projects.json    Your projects with their reference documents and extracted text.",
     "chats.json       Your saved chats with their messages, files and images.",
@@ -99,6 +100,13 @@ export function createAccountExport(input: {
     data.contractNotes.map(({ contractId, ...notes }) => [contractId, notes]),
   );
 
+  const decisionsByContract = new Map<string, unknown[]>();
+  for (const { contractId, ...decision } of data.clarifyDecisions) {
+    const decisions = decisionsByContract.get(contractId) ?? [];
+    decisions.push(decision);
+    decisionsByContract.set(contractId, decisions);
+  }
+
   const documentsByProject = new Map<string, unknown[]>();
   for (const { storageKey, projectId, ...document } of data.contextDocuments) {
     const path = storageKey
@@ -142,6 +150,7 @@ export function createAccountExport(input: {
         text: textContent,
         files: filesByContract.get(contract.id) ?? [],
         notes: notesByContract.get(contract.id) ?? null,
+        decisions: decisionsByContract.get(contract.id) ?? [],
       })),
       "analyses.json": data.analyses,
       "projects.json": data.projects.map((project) => ({

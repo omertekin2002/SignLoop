@@ -5,6 +5,7 @@ import {
   listChatThreadsByUserId,
 } from "@/lib/server-db";
 import { MAX_CONTRACT_SEARCH_LENGTH } from "@/lib/contract-search";
+import { isUuid } from "@/lib/utils";
 
 export async function GET(req: Request) {
   const authed = await requireUserId();
@@ -20,12 +21,18 @@ export async function GET(req: Request) {
       { status: 400 },
     );
   }
+  // Only the chats about one of the owner's contracts; another user's contract lists nothing.
+  const contract = searchParams.get("contract");
+  if (contract !== null && !isUuid(contract)) {
+    return NextResponse.json({ error: "contract must be a UUID" }, { status: 400 });
+  }
 
   try {
     const result = await listChatThreadsByUserId(
       userId,
       parsePaginationParams(req),
       search,
+      contract?.toLowerCase() ?? null,
     );
     return NextResponse.json(result);
   } catch (error) {
