@@ -53,6 +53,7 @@ import { ContractSourceProvider, OpenContractSource } from "@/components/contrac
 import { ContractDecisionSections } from "@/components/contract-decision-sections";
 import { DownloadBriefButton } from "@/components/download-brief-button";
 import { PrintBrief } from "@/components/print-brief";
+import { useBriefDecisions } from "@/components/clarify-decisions";
 import { ContractNotes } from "@/components/contract-notes";
 import { ContractChats } from "@/components/contract-chats";
 import { ContractJurisdiction } from "@/components/contract-jurisdiction";
@@ -237,6 +238,8 @@ const ContractDetails = () => {
     ? (historicalAnalysisQuery.data ?? null)
     : latestAnalysisRecord;
   const olderAnalyses = sortedAnalyses.slice(1);
+  // The checklist's own cache entry, so the brief buttons add no request once it has loaded.
+  const briefDecisions = useBriefDecisions(id, Boolean(analysis?.resultJson));
   const isViewingHistoricalAnalysis = Boolean(
     analysis?.id &&
     latestAnalysisRecord?.id &&
@@ -472,11 +475,13 @@ const ContractDetails = () => {
                 contract={{ ...contract, id }}
                 analysis={analysis}
                 historical={isViewingHistoricalAnalysis}
+                decisions={briefDecisions}
               />
               <PrintBrief
                 contract={{ ...contract, id }}
                 analysis={analysis}
                 historical={isViewingHistoricalAnalysis}
+                decisions={briefDecisions}
               />
               {analysis && (
                 <Button

@@ -145,6 +145,8 @@ for (const theme of THEMES) {
       "Coverage",
       "Jurisdiction",
       "Before you sign: what to clarify",
+      // The person's own decisions; this contract has none.
+      "Your decisions",
       "Payments and fees",
       "Term, renewal and how it ends",
       "Obligations in the contract",
@@ -187,6 +189,7 @@ for (const theme of THEMES) {
     await expect(brief).toContainText("Scanned pages were read with OCR.");
     await expect(brief).toContainText("Only part of this contract was analysed");
     await expect(brief).toContainText(`Source revision: ${REVISION}`);
+    await expect(brief).toContainText("You haven't recorded any decisions.");
 
     // The interactive page is not printed.
     await expect(page.getByRole("heading", { level: 1, name: title, exact: true })).toBeHidden();

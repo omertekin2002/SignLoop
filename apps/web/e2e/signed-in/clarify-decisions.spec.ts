@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { expectNoA11yViolations, startInTheme } from "../axe";
 import { expectNoCspViolations, recordCspViolations } from "../csp";
@@ -132,6 +133,35 @@ test("a decision on a Before you sign item survives a reload and a re-analysis, 
   await page.reload();
   await expect(item).toContainText(REASON);
   await expectNoA11yViolations(page, { theme: "light" });
+
+  // The downloaded and the printed brief carry it under Your decisions, right after Before you
+  // sign, from the list the checklist already loaded: building them sends no request.
+  const requested: string[] = [];
+  const recordRequest = (request: { url(): string }) => requested.push(request.url());
+  page.on("request", recordRequest);
+  const downloading = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download brief" }).click();
+  const download = await downloading;
+  expect(await download.failure()).toBeNull();
+  const markdown = await readFile((await download.path())!, "utf8");
+  const sections: string[] = markdown.match(/^## .+$/gm) ?? [];
+  expect(sections.indexOf("## Your decisions")).toBe(
+    sections.indexOf("## Before you sign: what to clarify") + 1,
+  );
+  const yours = markdown.slice(
+    markdown.indexOf("\n## Your decisions\n"),
+    markdown.indexOf("\n## Payments and fees\n"),
+  );
+  expect(yours).toContain(`- **Finding 1:** ${flag.type}\n  - Your decision: Accepted\n`);
+  expect(yours).toContain(`  - Your reason:\n    > ${REASON}\n`);
+  expect(yours).not.toContain("From earlier analyses");
+  const printed = page.locator("body > [data-print-brief]");
+  await expect(
+    printed.getByRole("heading", { level: 2, name: "Your decisions", includeHidden: true }),
+  ).toHaveCount(1);
+  await expect(printed).toContainText(REASON);
+  page.off("request", recordRequest);
+  expect(requested.filter((url) => new URL(url).pathname.startsWith("/api/"))).toEqual([]);
 
   // Remove it.
   const removed = decisionsResponse(page, id, "DELETE");

@@ -11,6 +11,7 @@ import { useIsClient } from "@/components/theme-toggle";
 import {
   renderAnalysisBriefMarkdown,
   type AnalysisBriefInput,
+  type BriefDecisions,
 } from "@/lib/analysis-brief";
 
 function PlainText({ children }: { children?: ReactNode }) {
@@ -34,10 +35,13 @@ export function PrintBrief({
   contract,
   analysis,
   historical,
+  decisions,
 }: {
   contract: AnalysisBriefInput["contract"];
   analysis: AnalysisBriefInput["analysis"] | null;
   historical?: boolean;
+  /** The person's own decisions (`useBriefDecisions`), listed under "Your decisions". */
+  decisions?: BriefDecisions;
 }) {
   // The brief is portalled into <body>, which only exists on the client.
   const isClient = useIsClient();
@@ -53,11 +57,21 @@ export function PrintBrief({
         contract: { id, title, status, extractionWarning },
         analysis,
         historical,
+        decisions,
       }).markdown;
     } catch {
       return null;
     }
-  }, [hasAnalysis, analysis, id, title, status, extractionWarning, historical]);
+  }, [
+    hasAnalysis,
+    analysis,
+    id,
+    title,
+    status,
+    extractionWarning,
+    historical,
+    decisions,
+  ]);
 
   const brief = useMemo(
     () =>

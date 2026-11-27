@@ -4,6 +4,8 @@ import { marked, type Tokens } from "marked";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrintBrief } from "@/components/print-brief";
 import { renderAnalysisBriefMarkdown } from "@/lib/analysis-brief";
+import { clarifyBeforeSigning } from "@/lib/analysis-clarify";
+import { clarifyChecklistKeys } from "@/lib/clarify-keys";
 import type { AnalysisResult } from "@/lib/schemas";
 
 const mocks = vi.hoisted(() => ({
@@ -393,5 +395,96 @@ describe("PrintBrief", () => {
     expect(printMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.toast.error).not.toHaveBeenCalled();
+  });
+  it("prints the person's decisions right after Before you sign, with hostile reasons as plain text", () => {
+    const keys = clarifyChecklistKeys(
+      clarifyBeforeSigning({ contractId: CONTRACT_ID, resultJson: RESULT }),
+      { contractId: CONTRACT_ID, resultJson: RESULT },
+    );
+    const hostile = "# Not a heading\n- not an item\n<script>alert(1)</script> <b>bold</b>";
+    render(
+      <PrintBrief
+        contract={CONTRACT}
+        analysis={ANALYSIS}
+        decisions={{
+          status: "loaded",
+          decisions: [
+            {
+              itemKey: keys.questions[0]!.key,
+              sourceRevision: REVISION,
+              state: "open",
+              reason: "Waiting for the club to reply.",
+              itemLabel: "Can I cancel early?",
+              updatedAt: "2026-11-20T12:00:00.000Z",
+            },
+            {
+              itemKey: keys.findings[0]!.key,
+              sourceRevision: REVISION,
+              state: "accepted",
+              reason: hostile,
+              itemLabel: "Finding: Auto-renewal",
+              updatedAt: "2026-11-20T12:00:00.000Z",
+            },
+            {
+              itemKey: keys.findings[0]!.key,
+              sourceRevision: `sha256:${"b".repeat(64)}`,
+              state: "resolved",
+              reason: "Settled before the contract changed.",
+              itemLabel: "Finding: Old clause",
+              updatedAt: "2026-11-01T12:00:00.000Z",
+            },
+          ],
+        }}
+      />,
+    );
+    const brief = printedBrief();
+
+    const headings = headingsOf(brief);
+    const sections = headings.filter((heading) => heading.startsWith("h2 "));
+    expect(sections.indexOf("h2 Your decisions")).toBe(
+      sections.indexOf("h2 Before you sign: what to clarify") + 1,
+    );
+    expect(headings).toContain("h3 From earlier analyses");
+    expect(headings).not.toContain("h1 Not a heading");
+
+    // The decisions' own items: each item's line, then its decision.
+    const items = Array.from(brief.querySelectorAll("li"))
+      .map((item) => item.textContent?.trim() ?? "")
+      .filter((text) => /^(Finding|Question) \d+: .*\n\nYour decision: /.test(text));
+    expect(items).toHaveLength(2);
+    const finding = items.findIndex((text) => text.startsWith("Finding 1: Auto-renewal\n"));
+    const question = items.findIndex((text) => text.startsWith("Question 1: Can I cancel early?\n"));
+    // Checklist order: findings before questions.
+    expect([finding, question]).toEqual([0, 1]);
+    expect(items[finding]).toContain("Your decision: Accepted");
+    // Kiritimati is UTC+14, so noon UTC is the next day there.
+    expect(items[question]).toContain("Your decision: Still open");
+    expect(items[question]).toContain("Last updated: Nov 21, 2026");
+    expect(items[question]).toContain("Waiting for the club to reply.");
+    expect(brief).toHaveTextContent("Item when saved: Finding: Old clause");
+    expect(brief).toHaveTextContent("No longer matches an item in this analysis.");
+    expect(brief).toHaveTextContent("Settled before the contract changed.");
+
+    // The hostile reason is one quote of plain text: no heading, list item, script or bold of its own.
+    expect(brief).toHaveTextContent("# Not a heading - not an item <script>alert(1)</script> <b>bold</b>");
+    expect(brief.querySelector("script, b")).toBeNull();
+    const listItems = Array.from(brief.querySelectorAll("li"), (item) => item.textContent?.trim());
+    expect(listItems.some((text) => text?.startsWith("not an item"))).toBe(false);
+  });
+
+  it("states that decisions are not included while they load, and prints no section without them", () => {
+    const { rerender } = render(
+      <PrintBrief contract={CONTRACT} analysis={ANALYSIS} decisions={{ status: "loading" }} />,
+    );
+    expect(headingsOf(printedBrief())).toContain("h2 Your decisions");
+    expect(printedBrief()).toHaveTextContent(
+      "Your decisions are not included: they had not finished loading when this brief was made.",
+    );
+
+    rerender(<PrintBrief contract={CONTRACT} analysis={ANALYSIS} decisions={{ status: "loaded", decisions: [] }} />);
+    expect(printedBrief()).toHaveTextContent("You haven't recorded any decisions.");
+
+    rerender(<PrintBrief contract={CONTRACT} analysis={ANALYSIS} />);
+    expect(headingsOf(printedBrief())).not.toContain("h2 Your decisions");
   });
 });

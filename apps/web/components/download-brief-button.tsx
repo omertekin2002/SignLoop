@@ -6,20 +6,25 @@ import { Button } from "@/components/ui/button";
 import {
   renderAnalysisBriefMarkdown,
   type AnalysisBriefInput,
+  type BriefDecisions,
 } from "@/lib/analysis-brief";
 
 /**
  * Downloads the analysis on screen as a Markdown decision brief. The file is built in the browser
- * from data the page already holds, so it calls no API. Renders nothing without an analysis.
+ * from data the page already holds, so it calls no API: the decisions come from the checklist's
+ * cached list. Renders nothing without an analysis.
  */
 export function DownloadBriefButton({
   contract,
   analysis,
   historical,
+  decisions,
 }: {
   contract: AnalysisBriefInput["contract"];
   analysis: AnalysisBriefInput["analysis"] | null;
   historical?: boolean;
+  /** The person's own decisions (`useBriefDecisions`), listed under "Your decisions". */
+  decisions?: BriefDecisions;
 }) {
   if (!analysis?.resultJson || typeof analysis.resultJson !== "object") {
     return null;
@@ -29,7 +34,12 @@ export function DownloadBriefButton({
     let url: string;
     let filename: string;
     try {
-      const brief = renderAnalysisBriefMarkdown({ contract, analysis, historical });
+      const brief = renderAnalysisBriefMarkdown({
+        contract,
+        analysis,
+        historical,
+        decisions,
+      });
       filename = brief.filename;
       url = URL.createObjectURL(
         new Blob([brief.markdown], { type: "text/markdown;charset=utf-8" }),
