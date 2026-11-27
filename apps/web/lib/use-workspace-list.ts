@@ -8,18 +8,22 @@ import {
 } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 
+const DEFAULT_PAGE_SIZE = 50;
+
 /** Extra query parameters a list request carries, such as the contracts list's filters; empty values are left out. */
 export type WorkspaceListFilters = Record<string, string | null | undefined>;
 
 /**
  * A search term and any filters join the key under the list's prefix, so invalidating `[key]`
- * refreshes searches and filtered lists too.
+ * refreshes searches and filtered lists too. A smaller page size joins the key as well, so lists
+ * paged differently never share pages.
  */
 export function workspaceListOptions<T>(
   key: string,
   path: string,
   search = "",
   filters: WorkspaceListFilters = {},
+  pageSize = DEFAULT_PAGE_SIZE,
 ) {
   const params: Record<string, string> = {};
   if (search) params.q = search;
@@ -29,8 +33,10 @@ export function workspaceListOptions<T>(
   const searchParam = Object.entries(params)
     .map(([name, value]) => `${name}=${encodeURIComponent(value)}&`)
     .join("");
+  const keyParams =
+    pageSize === DEFAULT_PAGE_SIZE ? params : { ...params, limit: String(pageSize) };
   return infiniteQueryOptions({
-    queryKey: searchParam ? [key, params] : [key],
+    queryKey: Object.keys(keyParams).length ? [key, keyParams] : [key],
     initialPageParam: 0,
     queryFn: async ({ pageParam, signal }) =>
       (
@@ -40,7 +46,7 @@ export function workspaceListOptions<T>(
           limit: number;
           offset: number;
         }>(
-          `${path}${path.includes("?") ? "&" : "?"}${searchParam}limit=50&offset=${pageParam}`,
+          `${path}${path.includes("?") ? "&" : "?"}${searchParam}limit=${pageSize}&offset=${pageParam}`,
           { signal },
         )
       ).data,
@@ -83,9 +89,10 @@ export function useWorkspaceList<T>(
   enabled: boolean,
   search = "",
   filters: WorkspaceListFilters = {},
+  pageSize = DEFAULT_PAGE_SIZE,
 ) {
   const query = useInfiniteQuery({
-    ...workspaceListOptions<T>(key, path, search, filters),
+    ...workspaceListOptions<T>(key, path, search, filters, pageSize),
     enabled,
   });
   const data = useMemo(
