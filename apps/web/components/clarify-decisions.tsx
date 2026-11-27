@@ -271,7 +271,16 @@ function ConflictBox({
   );
 }
 
-type Draft = { state: ClarifyDecisionState | null; reason: string };
+type Draft = {
+  state: ClarifyDecisionState | null;
+  reason: string;
+  /**
+   * The stored decision the draft started from, or null for a new one. Its `updatedAt` is the
+   * revision every write from this editor sends, so a refetch that brings in another tab's change
+   * cannot turn a stale draft into an accepted overwrite: the write gets a 409 instead.
+   */
+  base: StoredClarifyDecision | null;
+};
 
 /** The decision control on one keyed item: its saved decision, or a way to record one. */
 function DecisionControl({
@@ -305,7 +314,7 @@ function DecisionControl({
             state: action.draft.state!,
             reason: action.draft.reason,
             itemLabel: decisionItemLabel(item.label, item.name),
-            expectedUpdatedAt: decision?.updatedAt ?? null,
+            expectedUpdatedAt: action.draft.base?.updatedAt ?? null,
           })
         : deleteDecision(contractId, action.decision),
     onSuccess: (result, action) => {
@@ -331,7 +340,11 @@ function DecisionControl({
   const startEditing = () => {
     setMessage(null);
     setConflict(null);
-    setDraft(decision ? { state: decision.state, reason: decision.reason } : { state: null, reason: "" });
+    setDraft(
+      decision
+        ? { state: decision.state, reason: decision.reason, base: decision }
+        : { state: null, reason: "", base: null },
+    );
   };
   const cancel = () => {
     setDraft(null);
@@ -341,7 +354,7 @@ function DecisionControl({
   };
   const reloadStored = () => {
     if (!conflict) return;
-    reload(conflict.stored, decision?.id ?? null);
+    reload(conflict.stored, (draft?.base ?? decision)?.id ?? null);
     cancel();
   };
 
@@ -357,9 +370,11 @@ function DecisionControl({
     write.mutate({ kind: "save", draft });
   };
   const remove = () => {
-    if (!decision || busy) return;
+    // From the editor, remove the decision the draft started from, at the revision it was read.
+    const target = draft ? draft.base : decision;
+    if (!target || busy) return;
     setMessage(null);
-    write.mutate({ kind: "remove", decision });
+    write.mutate({ kind: "remove", decision: target });
   };
 
   const status = message ? (
@@ -481,7 +496,7 @@ function DecisionControl({
           <Button type="button" variant="ghost" size="sm" onClick={cancel} disabled={busy}>
             Cancel
           </Button>
-          {decision ? (
+          {draft.base ? (
             <Button type="button" variant="ghost" size="sm" onClick={remove} disabled={busy}>
               Remove decision{" "}<span className="sr-only">on {item.name}</span>
             </Button>

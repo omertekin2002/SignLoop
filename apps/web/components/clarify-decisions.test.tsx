@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BeforeYouSign } from "@/components/before-you-sign";
@@ -200,6 +200,39 @@ describe("BeforeYouSign decisions", () => {
       expectedUpdatedAt: FIRST_SAVE,
     });
     expect(await within(item).findByText("Still open")).toBeInTheDocument();
+  });
+
+  it("saves and removes from an open editor at the revision it was opened on, even after a refetch", async () => {
+    fetchMock.mockResolvedValueOnce(json({ decisions: [decision()] }));
+    const { user, queryClient } = renderCard();
+    await user.click(await screen.findByRole("button", { name: "Edit decision on question 1" }));
+    const reason = screen.getByLabelText("Reason for your decision on question 1");
+    await user.clear(reason);
+    await user.type(reason, "My stale draft.");
+
+    // Another tab's change arrives through a refetch (for example after reloading another item).
+    const newer = decision({ reason: "Saved in another tab.", updatedAt: SECOND_SAVE });
+    act(() => queryClient.setQueryData(["clarify-decisions", CONTRACT_ID], [newer]));
+    expect(reason).toHaveValue("My stale draft.");
+
+    fetchMock.mockResolvedValueOnce(json({ error: "Changed elsewhere.", decision: newer }, 409));
+    await user.click(screen.getByRole("button", { name: "Save decision on question 1" }));
+    expect(requests(fetchMock, "PUT")[0]!.body.expectedUpdatedAt).toBe(FIRST_SAVE);
+    expect(await screen.findByText("This decision was changed elsewhere")).toBeInTheDocument();
+
+    // Removing from the editor also uses the revision the draft started from.
+    fetchMock.mockImplementation(async () => json({ decisions: [newer] }));
+    await user.click(screen.getByRole("button", { name: "Reload the saved decision" }));
+    await user.click(screen.getByRole("button", { name: "Edit decision on question 1" }));
+    act(() =>
+      queryClient.setQueryData(
+        ["clarify-decisions", CONTRACT_ID],
+        [decision({ reason: "Third tab.", updatedAt: "2026-11-22T12:00:00.000Z" })],
+      ),
+    );
+    fetchMock.mockResolvedValueOnce(json({ error: "Changed elsewhere.", decision: newer }, 409));
+    await user.click(screen.getByRole("button", { name: "Remove decision on question 1" }));
+    expect(requests(fetchMock, "DELETE")[0]!.body).toEqual({ expectedUpdatedAt: SECOND_SAVE });
   });
 
   it("cancels an edit without sending anything", async () => {
