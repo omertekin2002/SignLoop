@@ -1,7 +1,13 @@
 "use client";
 
 import { useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { Loader2, PenLine, RefreshCw } from "lucide-react";
 import type { ClarifyChecklist } from "@/lib/analysis-clarify";
 import {
@@ -282,30 +288,62 @@ type Draft = {
   base: StoredClarifyDecision | null;
 };
 
+type Conflict = { stored: StoredClarifyDecision | null; verb: "saved" | "removed" };
+type EditorState = { draft: Draft | null; conflict: Conflict | null };
+
+/**
+ * An item's open editor and unresolved conflict, kept in the query cache rather than the component.
+ * The contract page remounts the report when an analysis finishes or another one is shown, and the
+ * person's unsaved draft must survive that, as the notes card's does. Keyed by the contract, the
+ * source revision and the item, so it returns only on the same item of the same text.
+ */
+function useEditorState(contractId: string, sourceRevision: string, itemKey: string) {
+  const queryClient = useQueryClient();
+  const key = ["clarify-decisions", contractId, "editor", sourceRevision, itemKey] as const;
+  const entry = useQuery({
+    queryKey: key,
+    queryFn: () => null as EditorState | null,
+    enabled: false,
+    staleTime: Infinity,
+    // Nothing refetches this entry, and it must outlive the default five-minute collection.
+    gcTime: Infinity,
+  });
+  const update = (change: Partial<EditorState>) =>
+    queryClient.setQueryData<EditorState | null>(key, (previous) => {
+      const next = { draft: null, conflict: null, ...previous, ...change };
+      return next.draft || next.conflict ? next : null;
+    });
+  return { state: entry.data ?? null, update };
+}
+
 /** The decision control on one keyed item: its saved decision, or a way to record one. */
 function DecisionControl({
   contractId,
   analysisId,
+  sourceRevision,
   itemKey,
   item,
   decision,
 }: {
   contractId: string;
   analysisId: string;
+  sourceRevision: string;
   itemKey: string;
   item: ClarifyDecisionItem;
   decision: StoredClarifyDecision | null;
 }) {
   const fieldId = useId();
   const { apply, reload } = useDecisionWrites(contractId);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [conflict, setConflict] = useState<{
-    stored: StoredClarifyDecision | null;
-    verb: "saved" | "removed";
-  } | null>(null);
+  const editor = useEditorState(contractId, sourceRevision, itemKey);
+  const draft = editor.state?.draft ?? null;
+  const conflict = editor.state?.conflict ?? null;
+  const setDraft = (next: Draft | null) => editor.update({ draft: next });
+  const setConflict = (next: Conflict | null) => editor.update({ conflict: next });
   const [message, setMessage] = useState<string | null>(null);
+  const writeKey = ["clarify-decisions", contractId, "write", sourceRevision, itemKey];
 
   const write = useMutation({
+    mutationKey: writeKey,
     mutationFn: (action: { kind: "save"; draft: Draft } | { kind: "remove"; decision: StoredClarifyDecision }) =>
       action.kind === "save"
         ? putDecision(contractId, {
@@ -335,20 +373,20 @@ function DecisionControl({
       setMessage(error instanceof DecisionRequestError ? error.message : fallback);
     },
   });
-  const busy = write.isPending;
+  // Counts a write started before a remount too.
+  const busy = useIsMutating({ mutationKey: writeKey }) > 0;
 
   const startEditing = () => {
     setMessage(null);
-    setConflict(null);
-    setDraft(
-      decision
+    editor.update({
+      conflict: null,
+      draft: decision
         ? { state: decision.state, reason: decision.reason, base: decision }
         : { state: null, reason: "", base: null },
-    );
+    });
   };
   const cancel = () => {
-    setDraft(null);
-    setConflict(null);
+    editor.update({ draft: null, conflict: null });
     setMessage(null);
     write.reset();
   };
@@ -621,6 +659,7 @@ export function ClarifyDecisions({
         key={keyed.key}
         contractId={contractId}
         analysisId={analysisId}
+        sourceRevision={revision}
         itemKey={keyed.key}
         item={item}
         decision={match.matched.get(keyed.key) ?? null}

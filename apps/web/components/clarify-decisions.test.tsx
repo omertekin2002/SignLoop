@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BeforeYouSign } from "@/components/before-you-sign";
@@ -233,6 +233,47 @@ describe("BeforeYouSign decisions", () => {
     fetchMock.mockResolvedValueOnce(json({ error: "Changed elsewhere.", decision: newer }, 409));
     await user.click(screen.getByRole("button", { name: "Remove decision on question 1" }));
     expect(requests(fetchMock, "DELETE")[0]!.body).toEqual({ expectedUpdatedAt: SECOND_SAVE });
+  });
+
+  it("keeps an unsaved draft when the report remounts, as it does when an analysis finishes", async () => {
+    fetchMock.mockImplementation(async () => json({ decisions: [] }));
+    const { user, queryClient } = renderCard();
+    await user.click(await screen.findByRole("button", { name: "Record decision on Term" }));
+    await user.click(screen.getByRole("radio", { name: "Accepted" }));
+    await user.type(screen.getByLabelText("Reason for your decision on Term"), "Half-typed reason");
+
+    // The contract page remounts the report under a new key; the query cache stays.
+    cleanup();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BeforeYouSign
+          contractId={CONTRACT_ID}
+          extractionWarning={null}
+          result={RESULT}
+          askAnalysisId={null}
+          analysisId={"77777777-7777-4888-8999-aaaaaaaaaaaa"}
+        />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByLabelText("Reason for your decision on Term")).toHaveValue(
+      "Half-typed reason",
+    );
+    expect(screen.getByRole("radio", { name: "Accepted" })).toBeChecked();
+
+    // Another text's analysis does not show it: the draft is keyed by source revision.
+    cleanup();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BeforeYouSign
+          contractId={CONTRACT_ID}
+          extractionWarning={null}
+          result={{ ...RESULT, source: { ...SOURCE, revision: OTHER_REVISION } } as Partial<AnalysisResult>}
+          analysisId={ANALYSIS_ID}
+        />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("button", { name: "Record decision on Term" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Reason for your decision on Term")).toBeNull();
   });
 
   it("cancels an edit without sending anything", async () => {
